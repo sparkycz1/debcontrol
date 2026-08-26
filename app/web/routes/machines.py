@@ -186,7 +186,9 @@ async def test_connection_endpoint(
         result = await job.result(timeout=settings.ssh_connect_timeout + 5)
     except TimeoutError:
         error = "Úloha v pozadí neodpověděla včas."
-    except Exception as exc:  # noqa: BLE001 - výsledek chceme zobrazit uživateli, ne shodit request
+    except Exception as exc:
+        # arq přes `.result()` re-raisuje i výjimku, která nastala uvnitř úlohy —
+        # tu chceme ukázat uživateli jako chybu testu, ne shodit celý request.
         error = str(exc)
 
     return templates.TemplateResponse(
