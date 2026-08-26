@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Přehled — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Přehled</h1>
+
+  {% if machine_count == 0 %}
+    <div class="empty-state">
+      <p>Zatím tu nejsou žádné spravované stroje.</p>
+      <a class="button" href="/machines/new">Přidat první stroj</a>
+    </div>
+  {% else %}
+    <p>Spravovaných strojů: <strong>{{ machine_count }}</strong></p>
+    <a class="button" href="/machines">Zobrazit seznam strojů</a>
+  {% endif %}
+{% endblock %}

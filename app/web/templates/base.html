@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}debcontrol{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">debcontrol</a>
+    <nav>
+      <a href="/">Přehled</a>
+      <a href="/machines">Stroje</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <p>debcontrol — správa Debian strojů přes SSH</p>
+  </footer>
+
+  <script src="/static/js/htmx.min.js" defer></script>
+</body>
+</html>

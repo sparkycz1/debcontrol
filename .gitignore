@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Virtual envs
+.venv/
+venv/
+
+# uv
+uv.lock.tmp
+
+# Secrets / config — never commit real values
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# SSH known_hosts store (runtime data, not source)
+data/known_hosts
+data/*.db
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml

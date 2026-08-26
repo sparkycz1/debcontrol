@@ -1,0 +1,25 @@
+<h2>Otisk SSH host klíče</h2>
+
+{% if error %}
+  <div class="alert alert-error">
+    <p>Nepodařilo se zjistit otisk klíče: {{ error }}</p>
+  </div>
+{% elif fingerprint %}
+  <div class="alert alert-warn">
+    <p><strong>Server prezentuje tento otisk klíče:</strong></p>
+    <p><code>{{ fingerprint }}</code></p>
+    <p class="hint">
+      Než ho potvrdíš, ověř si ho jiným, důvěryhodným kanálem — např. přímo na
+      konzoli poskytovatele serveru, nebo příkazem <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>
+      spuštěným na samotném stroji. Pokud otisk nesedí, spojení NEpotvrzuj — může jít
+      o útok typu Man-in-the-Middle.
+    </p>
+    <form hx-post="/machines/{{ machine.id }}/trust-host-key">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
+      <button type="submit" class="button">Potvrzuji, otisk odpovídá</button>
+    </form>
+  </div>
+{% else %}
+  <p>Otisk se nepodařilo zjistit.</p>
+{% endif %}

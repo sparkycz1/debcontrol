@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Stroje — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Stroje</h1>
+    <a class="button" href="/machines/new">Přidat stroj</a>
+  </div>
+
+  {% if not machines %}
+    <div class="empty-state">
+      <p>Zatím tu nejsou žádné spravované stroje.</p>
+      <a class="button" href="/machines/new">Přidat první stroj</a>
+    </div>
+  {% else %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Hostname</th>
+          <th>Port</th>
+          <th>Uživatel</th>
+          <th>Autentizace</th>
+          <th>Otisk klíče</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for machine in machines %}
+          <tr>
+            <td><a href="/machines/{{ machine.id }}">{{ machine.hostname }}</a></td>
+            <td>{{ machine.port }}</td>
+            <td>{{ machine.username }}</td>
+            <td>{{ machine.auth_method.value }}</td>
+            <td>
+              {% if machine.host_key_fingerprint %}
+                <span class="badge badge-ok">připnutý</span>
+              {% else %}
+                <span class="badge badge-warn">nepotvrzený</span>
+              {% endif %}
+            </td>
+            <td><a href="/machines/{{ machine.id }}">Detail</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

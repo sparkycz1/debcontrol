@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}{{ machine.hostname }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.hostname }}</h1>
+    <form method="post" action="/machines/{{ machine.id }}/delete"
+          onsubmit="return confirm('Opravdu smazat tento stroj?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger">Smazat</button>
+    </form>
+  </div>
+
+  <dl class="detail-list">
+    <dt>Port</dt><dd>{{ machine.port }}</dd>
+    <dt>Uživatel</dt><dd>{{ machine.username }}</dd>
+    <dt>Autentizace</dt><dd>{{ machine.auth_method.value }}</dd>
+    <dt>Poznámka</dt><dd>{{ machine.description or '—' }}</dd>
+  </dl>
+
+  <section class="panel" id="host-key-panel">
+    <h2>Otisk SSH host klíče</h2>
+    {% if machine.host_key_fingerprint %}
+      <p>Připnutý otisk: <code>{{ machine.host_key_fingerprint }}</code></p>
+      <p class="hint">
+        Spojení se strojem bude odmítnuto, pokud server jednou prezentuje jiný klíč.
+      </p>
+    {% else %}
+      <p class="hint">
+        Stroj ještě nemá potvrzený otisk klíče — dokud ho nepotvrdíš, nepůjde se
+        s ním bezpečně spojit (žádné automatické "důvěřuj napoprvé").
+      </p>
+      <button
+        class="button"
+        hx-post="/machines/{{ machine.id }}/discover-host-key"
+        hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+        hx-target="#host-key-panel"
+        hx-swap="innerHTML"
+      >
+        Zjistit otisk klíče
+      </button>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Test spojení</h2>
+    <button
+      class="button"
+      hx-post="/machines/{{ machine.id }}/test-connection"
+      hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+      hx-target="#test-result"
+      hx-swap="innerHTML"
+      {% if not machine.host_key_fingerprint %}disabled{% endif %}
+    >
+      Otestovat spojení
+    </button>
+    {% if not machine.host_key_fingerprint %}
+      <p class="hint">Nejdřív je potřeba potvrdit otisk klíče serveru výše.</p>
+    {% endif %}
+    <div id="test-result"></div>
+  </section>
+{% endblock %}

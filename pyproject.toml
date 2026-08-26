@@ -1,0 +1,74 @@
+[project]
+name = "debcontrol"
+version = "0.1.0"
+description = "Webová aplikace pro správu Debian strojů přes SSH"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "asyncpg>=0.31.0",
+    "alembic>=1.19.1",
+    # Pozn.: klientská knihovna `redis-py` je nezávislá na verzi Redis SERVERU (8.8) —
+    # držíme ji na řadě <6, protože `arq` (fronta úloh) zatím podporuje jen redis-py <6.
+    # Viz README.md, sekce "Poznámky k verzím závislostí".
+    "redis[hiredis]>=5.3.1,<6",
+    "arq>=0.28.0",
+    "asyncssh>=2.24.0",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.32",
+    "cryptography>=50.0.1",
+    "itsdangerous>=2.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "aiosqlite>=0.22.1",
+    "ruff>=0.16.4",
+    "mypy>=2.3.1",
+    "python-dotenv>=1.2.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "ASYNC"]
+# S101: assert used (fine v testech).
+# B008: Depends()/Form() jako výchozí hodnota parametru je idiomatický a nutný
+# vzor pro dependency injection ve FastAPI, ne chyba.
+ignore = ["S101", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+# "password" je tu jen popisek hodnoty enumu (způsob autentizace), ne heslo.
+"app/db/models/machine.py" = ["S105"]
+
+[tool.mypy]
+python_version = "3.14"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# Striktní typování má smysl hlavně v `app/` — testovací fixtury a asserty
+# ho nepotřebují a psaní typů pro ně jen zpomaluje bez reálného přínosu.
+module = "tests.*"
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
