@@ -1,5 +1,5 @@
-"""Sdílená instance Jinja2 šablon (odděleno od `app.main`, aby ji šlo importovat
-z routerů bez cyklické závislosti)."""
+"""Shared Jinja2 templates instance (kept separate from `app.main` so it can be
+imported from routers without a circular dependency)."""
 
 from __future__ import annotations
 

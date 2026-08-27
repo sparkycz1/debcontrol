@@ -1,0 +1,38 @@
+# Optional Caddy reverse proxy: TLS 1.3 only, HTTP/3, automatic HTTPS via
+# Let's Encrypt, and basic hardening (see ./Caddyfile).
+#
+# Use this if you don't already have your own reverse proxy in front of
+# this host. Run alongside the base stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+#
+# Requires DOMAIN and ACME_EMAIL in .env, and DNS for DOMAIN pointing at
+# this host's public IP, with ports 80/tcp, 443/tcp and 443/udp reachable
+# from the internet (443/udp is needed for HTTP/3 / QUIC).
+#
+# If you already run nginx, Traefik, or your own Caddy elsewhere, skip this
+# file entirely and see the reverse-proxy guides in the wiki instead — just
+# run `docker compose up -d --build` (the base file) and point your proxy
+# at 127.0.0.1:8000 on this host.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

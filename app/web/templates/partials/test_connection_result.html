@@ -1,14 +1,14 @@
 {% if error %}
   <div class="alert alert-error">
-    <p>Test selhal: {{ error }}</p>
+    <p>Test failed: {{ error }}</p>
   </div>
 {% elif result and result.ok %}
   <div class="alert alert-ok">
-    <p>Spojení funguje. Výstup <code>uname -a</code>:</p>
+    <p>Connection works. Output of <code>uname -a</code>:</p>
     <pre>{{ result.output }}</pre>
   </div>
 {% else %}
   <div class="alert alert-error">
-    <p>Test selhal: {{ result.error if result else 'neznámá chyba' }}</p>
+    <p>Test failed: {{ result.error if result else 'unknown error' }}</p>
   </div>
 {% endif %}

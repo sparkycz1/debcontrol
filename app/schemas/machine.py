@@ -1,7 +1,7 @@
-"""Pydantic schémata pro formuláře/API kolem strojů.
+"""Pydantic schemas for machine forms/API.
 
-`secret` se do odpovědí nikdy nevrací — schémata pro čtení ho neobsahují
-vůbec, aby nešlo tajemství omylem vyzradit v JSON/HTML výstupu.
+`secret` is never returned in responses — the read schema doesn't include
+it at all, so a secret can't accidentally leak into JSON/HTML output.
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ class MachineCreate(BaseModel):
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(min_length=1, max_length=255)
     auth_method: AuthMethod
-    secret: str | None = Field(default=None, description="Heslo nebo obsah privátního klíče.")
+    secret: str | None = Field(default=None, description="Password or private key content.")
+    group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
 
 
@@ -29,6 +30,7 @@ class MachineUpdate(BaseModel):
     username: str | None = Field(default=None, min_length=1, max_length=255)
     auth_method: AuthMethod | None = None
     secret: str | None = None
+    group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
     is_active: bool | None = None
 
@@ -42,6 +44,7 @@ class MachineRead(BaseModel):
     username: str
     auth_method: AuthMethod
     host_key_fingerprint: str | None
+    group_id: uuid.UUID | None
     description: str | None
     is_active: bool
     created_at: datetime

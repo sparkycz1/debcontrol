@@ -1,4 +1,4 @@
-"""Vstupní bod FastAPI aplikace."""
+"""FastAPI application entry point."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ from pathlib import Path
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.web.routes import dashboard, machines
+from app.web.routes import machine_groups, machines, users
+from app.web.routes import settings as settings_routes
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -21,7 +23,7 @@ configure_logging(settings.log_level)
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "web" / "static"
 
-# Přísná CSP: žádné inline skripty/styly, žádný externí CDN (htmx je vendorovaný lokálně).
+# Strict CSP: no inline scripts/styles, no external CDN (htmx is vendored locally).
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -48,7 +50,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="debcontrol",
         lifespan=lifespan,
-        # V produkci nevystavovat interaktivní API dokumentaci veřejně.
+        # Don't expose interactive API docs publicly in production.
         docs_url=None if settings.is_production else "/docs",
         redoc_url=None,
         openapi_url=None if settings.is_production else "/openapi.json",
@@ -70,8 +72,14 @@ def create_app() -> FastAPI:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
 
-    app.include_router(dashboard.router)
     app.include_router(machines.router)
+    app.include_router(machine_groups.router)
+    app.include_router(users.router)
+    app.include_router(settings_routes.router)
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> Response:
+        return RedirectResponse(url="/machines")
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:

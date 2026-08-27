@@ -1,25 +1,26 @@
-<h2>Otisk SSH host klíče</h2>
+<h2>SSH host key fingerprint</h2>
 
 {% if error %}
   <div class="alert alert-error">
-    <p>Nepodařilo se zjistit otisk klíče: {{ error }}</p>
+    <p>Could not determine the key fingerprint: {{ error }}</p>
   </div>
 {% elif fingerprint %}
   <div class="alert alert-warn">
-    <p><strong>Server prezentuje tento otisk klíče:</strong></p>
+    <p><strong>The server presents this key fingerprint:</strong></p>
     <p><code>{{ fingerprint }}</code></p>
     <p class="hint">
-      Než ho potvrdíš, ověř si ho jiným, důvěryhodným kanálem — např. přímo na
-      konzoli poskytovatele serveru, nebo příkazem <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>
-      spuštěným na samotném stroji. Pokud otisk nesedí, spojení NEpotvrzuj — může jít
-      o útok typu Man-in-the-Middle.
+      Before confirming it, verify it through a different, trusted channel —
+      e.g. directly on the hosting provider's console, or by running
+      <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> on the machine
+      itself. If it doesn't match, do NOT confirm — this could be a
+      Man-in-the-Middle attack.
     </p>
     <form hx-post="/machines/{{ machine.id }}/trust-host-key">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
-      <button type="submit" class="button">Potvrzuji, otisk odpovídá</button>
+      <button type="submit" class="button">Confirm, fingerprint matches</button>
     </form>
   </div>
 {% else %}
-  <p>Otisk se nepodařilo zjistit.</p>
+  <p>Could not determine the fingerprint.</p>
 {% endif %}

@@ -1,6 +1,6 @@
-"""arq worker — zpracovává úlohy z fronty v Redisu.
+"""arq worker — processes jobs from the Redis queue.
 
-Spuštění (v Dockeru řeší služba `worker` v docker-compose.yml):
+Run (the `worker` service in docker-compose.yml handles this in Docker):
     arq app.tasks.worker.WorkerSettings
 """
 
@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 
 async def startup(ctx: dict[str, object]) -> None:
     configure_logging(get_settings().log_level)
-    logger.info("arq worker naběhl.")
+    logger.info("arq worker started.")
 
 
 async def shutdown(ctx: dict[str, object]) -> None:
-    logger.info("arq worker se vypíná.")
+    logger.info("arq worker shutting down.")
 
 
 def _redis_settings() -> RedisSettings:

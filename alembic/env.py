@@ -1,4 +1,4 @@
-"""Alembic prostředí — async engine, URL bere z aplikační konfigurace."""
+"""Alembic environment — async engine, URL comes from the application config."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models import Machine  # noqa: F401 - import zaregistruje model do metadat
+from app.db.models import Machine, MachineGroup  # noqa: F401 - registers models with metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -20,7 +20,7 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# Jediný zdroj pravdy pro DB URL je aplikační konfigurace (.env), ne alembic.ini.
+# The single source of truth for the DB URL is the app config (.env), not alembic.ini.
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 

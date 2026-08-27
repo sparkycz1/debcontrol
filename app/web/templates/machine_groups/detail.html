@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}{{ group.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ group.name }}</h1>
+    <form method="post" action="/machine-groups/{{ group.id }}/delete"
+          onsubmit="return confirm('Delete this group? Machines in it will be unassigned, not deleted.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger">Delete group</button>
+    </form>
+  </div>
+
+  {% if group.description %}
+    <p>{{ group.description }}</p>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Machines in this group</h2>
+    {% if not group.machines %}
+      <p class="hint">No machines in this group yet.</p>
+    {% else %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Hostname</th>
+            <th>User</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for machine in group.machines %}
+            <tr>
+              <td><a href="/machines/{{ machine.id }}">{{ machine.hostname }}</a></td>
+              <td>{{ machine.username }}</td>
+              <td>
+                <form method="post"
+                      action="/machine-groups/{{ group.id }}/machines/{{ machine.id }}/remove">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button button-secondary">Remove</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Add a machine to this group</h2>
+    {% if not available_machines %}
+      <p class="hint">No other machines available to add.</p>
+    {% else %}
+      <form method="post" action="/machine-groups/{{ group.id }}/machines" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="machine_id">Machine</label>
+        <select id="machine_id" name="machine_id" required>
+          {% for machine in available_machines %}
+            <option value="{{ machine.id }}">
+              {{ machine.hostname }}{% if machine.group %} (currently in {{ machine.group.name }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="button">Add to group</button>
+      </form>
+    {% endif %}
+  </section>
+{% endblock %}

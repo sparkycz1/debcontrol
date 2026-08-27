@@ -19,8 +19,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg_data:/var/lib/postgresql/data
-    # Port se ven do hostitele záměrně nepublikuje — DB je dostupná jen
-    # z docker sítě. Pro lokální psql přístup odkomentuj:
+    # Not published to the host on purpose — the DB is only reachable from
+    # the docker network. Uncomment for local psql access:
     # ports:
     #   - "127.0.0.1:5432:5432"
     healthcheck:
@@ -52,7 +52,13 @@ services:
   web:
     <<: *app-image
     ports:
-      - "8000:8000"
+      # Bound to loopback only, and plain HTTP — this app is meant to sit
+      # behind a TLS-terminating reverse proxy (the bundled `caddy` service
+      # from docker-compose.caddy.yml, or your own; see the wiki). Any
+      # reverse proxy running on this host can reach it at 127.0.0.1:8000;
+      # one running as its own container needs to join this compose
+      # project's network instead.
+      - "127.0.0.1:8000:8000"
     volumes:
       - ssh_data:/app/data
     depends_on:

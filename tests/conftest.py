@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 
-# Nastavit ještě PŘED importem `app.main` — konfigurace (`Settings`) se
-# validuje hned při importu a testy neběží proti reálné infrastruktuře
-# (DB dependency se přepojuje na SQLite níže, Redis se v testech přes
-# ASGITransport vůbec nezakládá, protože ten lifecycle FastAPI netriggeruje).
+# Set these BEFORE importing `app.main` — configuration (`Settings`) is
+# validated right at import time, and tests don't run against real
+# infrastructure (the DB dependency is swapped for SQLite below; Redis is
+# never touched in tests via ASGITransport, since that doesn't trigger
+# FastAPI's lifespan).
 os.environ.setdefault("SECRET_KEY", "test-only-secret-key-not-for-real-use-000000")
 os.environ.setdefault("ENCRYPTION_KEY", "IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -23,7 +24,7 @@ from app.main import app
 
 @pytest_asyncio.fixture
 async def db_session_factory():
-    """Izolovaná in-memory SQLite DB pro každý test (žádný reálný Postgres)."""
+    """Isolated in-memory SQLite DB for each test (no real Postgres)."""
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},

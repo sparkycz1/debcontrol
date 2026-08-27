@@ -1,12 +1,12 @@
-"""Ochrana proti CSRF pro formuláře (double-submit cookie).
+"""CSRF protection for forms (double-submit cookie).
 
-Aplikace zatím nemá přihlašování / session, takže nejde postavit na tom.
-Vzor: při GETu, který vykresluje formulář, se nastaví (pokud chybí) náhodná
-cookie `csrftoken` a stejná hodnota se vloží jako skryté pole do formuláře.
-Při POSTu se obě hodnoty musí shodovat — útočníkova cizí stránka cookie
-uživatele přečíst ani nastavit nedokáže (SameSite=Strict, HttpOnly).
+The app doesn't have login/sessions yet, so we can't build on those.
+Pattern: a GET that renders a form sets (if missing) a random `csrftoken`
+cookie, and the same value is embedded as a hidden form field. On POST,
+both values must match — an attacker's cross-site page can neither read
+nor set the user's cookie (SameSite=Strict, HttpOnly).
 
-Použití v routeru, který vykresluje formulář:
+Usage in a router that renders a form:
 
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(request, "tpl.html", {"csrf_token": csrf_token, ...})
@@ -14,9 +14,10 @@ Použití v routeru, který vykresluje formulář:
         set_csrf_cookie(response, new_cookie)
     return response
 
-Token musí být v `context` už PŘED vykreslením šablony (`TemplateResponse`
-tělo vykreslí okamžitě v konstruktoru) — proto je rozdělené na "získej
-hodnotu" a "ulož do cookie" místo jedné funkce nad hotovou odpovědí.
+The token must be in `context` BEFORE the template renders (`TemplateResponse`
+renders the body immediately in its constructor) — that's why this is split
+into "get the value" and "store it in a cookie" instead of one function
+operating on an already-built response.
 """
 
 from __future__ import annotations
@@ -33,10 +34,11 @@ _COOKIE_MAX_AGE_SECONDS = 60 * 60 * 8
 
 
 def get_or_create_csrf_token(request: Request) -> tuple[str, str | None]:
-    """Vrátí (token_pro_šablonu, hodnota_pro_novou_cookie_nebo_None).
+    """Return (token_for_template, value_for_new_cookie_or_None).
 
-    Druhý prvek je `None`, pokud klient už platnou cookie má — pak se nemá
-    znovu nastavovat (zbytečně by se prodlužovala její platnost).
+    The second element is `None` when the client already has a valid
+    cookie — in that case it shouldn't be re-set (that would needlessly
+    extend its lifetime).
     """
     existing = request.cookies.get(CSRF_COOKIE_NAME)
     if existing:
@@ -57,7 +59,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
 
 
 async def verify_csrf(request: Request) -> None:
-    """FastAPI dependency — zařaď do každého stav měnícího (POST/PUT/DELETE) endpointu."""
+    """FastAPI dependency — add to every state-changing (POST/PUT/DELETE) endpoint."""
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
     form = await request.form()
     form_token = form.get(CSRF_FORM_FIELD)
@@ -68,5 +70,5 @@ async def verify_csrf(request: Request) -> None:
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Neplatný nebo chybějící CSRF token — obnov stránku a zkus to znovu.",
+            detail="Invalid or missing CSRF token — reload the page and try again.",
         )

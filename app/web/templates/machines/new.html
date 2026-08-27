@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}Přidat stroj — debcontrol{% endblock %}
+{% block title %}Add machine — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Přidat stroj</h1>
+  <h1>Add machine</h1>
 
   {% if errors %}
     <div class="alert alert-error">
@@ -14,7 +14,7 @@
   <form method="post" action="/machines" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="hostname">Hostname / IP adresa</label>
+    <label for="hostname">Hostname / IP address</label>
     <input type="text" id="hostname" name="hostname" required maxlength="255"
            value="{{ form.hostname or '' }}">
 
@@ -22,27 +22,35 @@
     <input type="number" id="port" name="port" min="1" max="65535"
            value="{{ form.port or 22 }}">
 
-    <label for="username">Uživatelské jméno</label>
+    <label for="username">Username</label>
     <input type="text" id="username" name="username" required maxlength="255"
            value="{{ form.username or '' }}">
 
-    <label for="auth_method">Způsob autentizace</label>
+    <label for="auth_method">Authentication method</label>
     <select id="auth_method" name="auth_method">
       {% for method in auth_methods %}
         <option value="{{ method.value }}" {% if form.auth_method == method %}selected{% endif %}>
-          {{ 'Heslo' if method.value == 'password' else 'Privátní SSH klíč' }}
+          {{ 'Password' if method.value == 'password' else 'Private SSH key' }}
         </option>
       {% endfor %}
     </select>
 
-    <label for="secret">Heslo / privátní klíč</label>
+    <label for="secret">Password / private key</label>
     <textarea id="secret" name="secret" rows="4"
-      placeholder="Uloží se zašifrovaně. Nech prázdné, pokud ho doplníš později."></textarea>
+      placeholder="Stored encrypted. Leave empty if you'll add it later."></textarea>
 
-    <label for="description">Poznámka</label>
+    <label for="group_id">Group</label>
+    <select id="group_id" name="group_id">
+      <option value="">— none —</option>
+      {% for group in groups %}
+        <option value="{{ group.id }}">{{ group.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="description">Notes</label>
     <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
 
-    <button type="submit" class="button">Uložit</button>
-    <a class="button button-secondary" href="/machines">Zrušit</a>
+    <button type="submit" class="button">Save</button>
+    <a class="button button-secondary" href="/machines">Cancel</a>
   </form>
 {% endblock %}

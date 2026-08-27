@@ -1,0 +1,41 @@
+# Caddy config for debcontrol — TLS 1.3 only, HTTP/3, hardened defaults.
+# See docker-compose.caddy.yml and the wiki page "Reverse Proxy - Caddy"
+# for how this is wired up.
+
+{
+	email {$ACME_EMAIL}
+
+	servers {
+		protocols h1 h2 h3
+		timeouts {
+			read_body   10s
+			read_header 5s
+			idle        2m
+		}
+	}
+}
+
+{$DOMAIN} {
+	# Only negotiate TLS 1.3 — no TLS 1.2/1.1/1.0 fallback.
+	tls {
+		protocols tls1.3 tls1.3
+	}
+
+	encode zstd gzip
+
+	header {
+		# HSTS: tell browsers to only ever use HTTPS for this host (and
+		# subdomains) for the next two years. Remove "preload" until you've
+		# verified everything works over HTTPS — it's very hard to undo once
+		# submitted to browser preload lists.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		# Don't advertise the proxy software/version to the world.
+		-Server
+	}
+
+	reverse_proxy web:8000 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

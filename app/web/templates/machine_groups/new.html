@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Add machine group — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Add machine group</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/machine-groups" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" required maxlength="255"
+           value="{{ form.name or '' }}">
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
+
+    <button type="submit" class="button">Save</button>
+    <a class="button button-secondary" href="/machine-groups">Cancel</a>
+  </form>
+{% endblock %}

@@ -1,7 +1,7 @@
 [project]
 name = "debcontrol"
 version = "0.1.0"
-description = "Webová aplikace pro správu Debian strojů přes SSH"
+description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "Proprietary" }
@@ -14,9 +14,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.52",
     "asyncpg>=0.31.0",
     "alembic>=1.19.1",
-    # Pozn.: klientská knihovna `redis-py` je nezávislá na verzi Redis SERVERU (8.8) —
-    # držíme ji na řadě <6, protože `arq` (fronta úloh) zatím podporuje jen redis-py <6.
-    # Viz README.md, sekce "Poznámky k verzím závislostí".
+    # Note: the `redis-py` client library is independent from the Redis SERVER
+    # version (8.8) — it's pinned to the <6 line because `arq` (task queue)
+    # currently only supports redis-py <6. See README.md, "Dependency version notes".
     "redis[hiredis]>=5.3.1,<6",
     "arq>=0.28.0",
     "asyncssh>=2.24.0",
@@ -46,14 +46,14 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S", "ASYNC"]
-# S101: assert used (fine v testech).
-# B008: Depends()/Form() jako výchozí hodnota parametru je idiomatický a nutný
-# vzor pro dependency injection ve FastAPI, ne chyba.
+# S101: assert used (fine in tests).
+# B008: Depends()/Form() as a parameter default is the idiomatic, required
+# dependency-injection pattern in FastAPI, not a bug.
 ignore = ["S101", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106"]
-# "password" je tu jen popisek hodnoty enumu (způsob autentizace), ne heslo.
+# "password" here is just an enum value label (authentication method), not a secret.
 "app/db/models/machine.py" = ["S105"]
 
 [tool.mypy]
@@ -63,8 +63,8 @@ strict = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-# Striktní typování má smysl hlavně v `app/` — testovací fixtury a asserty
-# ho nepotřebují a psaní typů pro ně jen zpomaluje bez reálného přínosu.
+# Strict typing pays off mainly in `app/` — test fixtures and asserts don't
+# need it, and annotating them just slows things down for no real benefit.
 module = "tests.*"
 disallow_untyped_defs = false
 check_untyped_defs = true

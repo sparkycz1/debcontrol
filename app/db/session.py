@@ -1,4 +1,4 @@
-"""Async DB engine a session factory."""
+"""Async DB engine and session factory."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-# pool_pre_ping ověří spojení před použitím (Postgres/síť umí spojení tiše zavřít).
+# pool_pre_ping checks the connection before use (Postgres/the network can
+# silently drop idle connections).
 engine = create_async_engine(
     settings.database_url,
     pool_pre_ping=True,
@@ -25,6 +26,6 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
-    """FastAPI dependency poskytující DB session na dobu jednoho requestu."""
+    """FastAPI dependency providing a DB session for the lifetime of one request."""
     async with AsyncSessionLocal() as session:
         yield session

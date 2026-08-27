@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 
-{% block title %}Stroje — debcontrol{% endblock %}
+{% block title %}Machines — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Stroje</h1>
-    <a class="button" href="/machines/new">Přidat stroj</a>
+    <h1>Machines</h1>
+    <a class="button" href="/machines/new">Add machine</a>
   </div>
 
   {% if not machines %}
     <div class="empty-state">
-      <p>Zatím tu nejsou žádné spravované stroje.</p>
-      <a class="button" href="/machines/new">Přidat první stroj</a>
+      <p>No managed machines yet.</p>
+      <a class="button" href="/machines/new">Add your first machine</a>
     </div>
   {% else %}
     <table class="data-table">
@@ -19,9 +19,10 @@
         <tr>
           <th>Hostname</th>
           <th>Port</th>
-          <th>Uživatel</th>
-          <th>Autentizace</th>
-          <th>Otisk klíče</th>
+          <th>User</th>
+          <th>Auth</th>
+          <th>Group</th>
+          <th>Host key</th>
           <th></th>
         </tr>
       </thead>
@@ -33,13 +34,20 @@
             <td>{{ machine.username }}</td>
             <td>{{ machine.auth_method.value }}</td>
             <td>
-              {% if machine.host_key_fingerprint %}
-                <span class="badge badge-ok">připnutý</span>
+              {% if machine.group %}
+                <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
               {% else %}
-                <span class="badge badge-warn">nepotvrzený</span>
+                <span class="hint">—</span>
               {% endif %}
             </td>
-            <td><a href="/machines/{{ machine.id }}">Detail</a></td>
+            <td>
+              {% if machine.host_key_fingerprint %}
+                <span class="badge badge-ok">pinned</span>
+              {% else %}
+                <span class="badge badge-warn">unconfirmed</span>
+              {% endif %}
+            </td>
+            <td><a href="/machines/{{ machine.id }}">Details</a></td>
           </tr>
         {% endfor %}
       </tbody>

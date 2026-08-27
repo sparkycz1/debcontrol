@@ -3,7 +3,7 @@
 # --- Stage 1: build the virtualenv with uv -----------------------------------
 FROM python:3.14.7-slim AS builder
 
-# Oficiální statický binární uv, žádná instalace přes pip do image.
+# Official static uv binary — no need to pip-install it into the image.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
@@ -13,7 +13,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /build
 
-# Nejdřív jen manifesty — vrstva se závislostmi se cachuje odděleně od zdrojového kódu.
+# Manifests first — the dependency layer is cached separately from the source code.
 COPY pyproject.toml uv.lock ./
 
 RUN --mount=type=cache,target=/root/.cache/uv \

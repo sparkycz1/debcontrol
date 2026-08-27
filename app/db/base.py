@@ -1,12 +1,12 @@
-"""Základ pro SQLAlchemy modely."""
+"""Base class for SQLAlchemy models."""
 
 from __future__ import annotations
 
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
-# Pojmenovací konvence pro constrainty — bez ní Alembic autogenerate
-# produkuje nekonzistentní/neanonymizovatelné názvy indexů a klíčů.
+# Naming convention for constraints — without it, Alembic autogenerate
+# produces inconsistent, hard-to-reference names for indexes and keys.
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",

@@ -1,7 +1,8 @@
-"""Konfigurace aplikace.
+"""Application configuration.
 
-Veškeré nastavení se čte z prostředí (12-factor app) přes pydantic-settings.
-Nic citlivého se nesmí zapisovat natvrdo do kódu ani commitovat — viz `.env.example`.
+All settings are read from the environment (12-factor app) via
+pydantic-settings. Nothing sensitive should ever be hardcoded here or
+committed — see `.env.example`.
 """
 
 from __future__ import annotations
@@ -38,8 +39,8 @@ class Settings(BaseSettings):
         raw = value.get_secret_value()
         if raw.startswith("change-me") or len(raw) < 16:
             raise ValueError(
-                "Placeholder nebo příliš krátký secret v konfiguraci. "
-                "Vygeneruj skutečnou hodnotu (viz .env.example) před spuštěním."
+                "Placeholder or too-short secret in configuration. "
+                "Generate a real value (see .env.example) before starting the app."
             )
         return value
 
@@ -50,5 +51,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Nastavení se načte jednou a cachuje — validace proběhne při prvním importu."""
-    return Settings()  # hodnoty přichází z env/.env (pydantic-settings)
+    """Settings are loaded once and cached — validation happens on first import."""
+    return Settings()  # values come from the environment / .env (pydantic-settings)

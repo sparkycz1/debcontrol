@@ -1,7 +1,7 @@
-"""Základní konfigurace logování.
+"""Baseline logging configuration.
 
-Cíl: čitelné strukturované logy, žádné citlivé údaje (hesla, klíče, tokeny)
-se nikdy nelogují — dbej na to i v nově přidávaném kódu.
+Goal: readable structured logs. Never log sensitive values (passwords,
+keys, tokens) — keep that in mind in any new code too.
 """
 
 from __future__ import annotations
@@ -24,6 +24,6 @@ def configure_logging(level: str = "INFO") -> None:
     root.handlers.clear()
     root.addHandler(handler)
 
-    # Utlumit velmi ukecané knihovny, ať v logu nezaniknou naše zprávy.
+    # Quiet down very chatty libraries so our own messages don't get lost.
     logging.getLogger("asyncssh").setLevel(max(logging.INFO, root.level))
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)

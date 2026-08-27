@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Machine groups — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Machine groups</h1>
+    <a class="button" href="/machine-groups/new">Add group</a>
+  </div>
+
+  {% if not groups %}
+    <div class="empty-state">
+      <p>No machine groups yet.</p>
+      <a class="button" href="/machine-groups/new">Add your first group</a>
+    </div>
+  {% else %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Machines</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for group in groups %}
+          <tr>
+            <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
+            <td>{{ group.description or '—' }}</td>
+            <td>{{ group.machines | length }}</td>
+            <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

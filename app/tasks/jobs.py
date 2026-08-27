@@ -1,7 +1,7 @@
-"""Úlohy zpracovávané na pozadí přes arq (fronta v Redisu).
+"""Background jobs processed by arq (queue in Redis).
 
-Zatím jen jedna ukázková úloha, která ověří dostupnost stroje — slouží
-jako základ pro budoucí hromadné/dlouho běžící operace na více strojích.
+Just one example job for now, which checks machine reachability — a
+foundation for future bulk/long-running operations across many machines.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 async def ping_machine(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
-    """Zkusí se připojit na stroj a vrátit výstup `uname -a`."""
+    """Try to connect to a machine and return the output of `uname -a`."""
     from app.db.models.machine import Machine
 
     settings = get_settings()
@@ -28,14 +28,14 @@ async def ping_machine(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
     async with AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
-            return {"ok": False, "error": "Stroj nenalezen."}
+            return {"ok": False, "error": "Machine not found."}
 
         secret = decrypt_secret(machine.secret_encrypted) if machine.secret_encrypted else None
 
         try:
             output = await test_connection(machine, secret, settings.ssh_connect_timeout)
         except SSHConnectionError as exc:
-            logger.warning("ping_machine selhal pro %s: %s", machine.hostname, exc)
+            logger.warning("ping_machine failed for %s: %s", machine.hostname, exc)
             return {"ok": False, "error": str(exc)}
 
         return {"ok": True, "output": output}

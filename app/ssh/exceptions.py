@@ -1,19 +1,19 @@
-"""Výjimky pro SSH vrstvu."""
+"""Exceptions for the SSH layer."""
 
 from __future__ import annotations
 
 
 class SSHConnectionError(Exception):
-    """Obecná chyba při navazování SSH spojení (síť, autentizace, timeout, ...)."""
+    """Generic SSH connection failure (network, auth, timeout, ...)."""
 
 
 class HostKeyError(SSHConnectionError):
-    """Nadtřída pro problémy s ověřením host klíče serveru."""
+    """Base class for problems verifying the server's host key."""
 
 
 class UnknownHostKeyError(HostKeyError):
-    """Stroj ještě nemá připnutý (potvrzený) otisk SSH host klíče."""
+    """The machine doesn't have a pinned (confirmed) SSH host key fingerprint yet."""
 
 
 class HostKeyMismatchError(HostKeyError):
-    """Server prezentoval jiný klíč, než jaký má stroj připnutý — možný MITM."""
+    """The server presented a different key than the one pinned — possible MITM."""

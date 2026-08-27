@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Vygeneruje bezpečné náhodné hodnoty pro `.env` (SECRET_KEY, ENCRYPTION_KEY, hesla).
+"""Generate secure random values for `.env` (SECRET_KEY, ENCRYPTION_KEY, passwords).
 
-Použití:
+Usage:
     python scripts/generate_secrets.py
 
-Vypíše hotové řádky k vložení do `.env` — nikam je needitujte automaticky,
-ať máte kontrolu nad tím, co se přepíše.
+Prints ready-to-paste lines for `.env` — it never edits the file for you,
+so you stay in control of what gets overwritten.
 """
 
 from __future__ import annotations

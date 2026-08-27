@@ -1,105 +1,133 @@
 # debcontrol
 
-Webová aplikace pro správu Debian strojů přes SSH. Zatím bez přihlašování —
-běží se v důvěryhodné síti / na localhostu, dokud se nepřidá autentizace.
+A web application for managing Debian machines over SSH. There's no login
+yet — run it on a trusted network / behind a reverse proxy you control
+until authentication is added.
 
-## Technologie
+Full documentation (installation, reverse proxy guides, architecture,
+security model) lives in the [wiki](wiki/Home.md) — it's written to be
+published as the GitHub wiki once this repo is pushed there (see
+[wiki/README.md](wiki/README.md)).
 
-| Vrstva | Volba | Poznámka |
+## Technology
+
+| Layer | Choice | Notes |
 |---|---|---|
-| Jazyk | Python 3.14.7 | |
-| Web framework | FastAPI | async, OpenAPI schéma zdarma |
-| Šablony / UI | Jinja2 + [htmx](https://htmx.org) (vendorováno lokálně) | žádný SPA build, žádný CDN |
-| DB | PostgreSQL 18 | přes `asyncpg` + SQLAlchemy 2.0 (async) |
-| Migrace | Alembic | async engine |
-| Cache / fronta úloh | Redis 8.8 | fronta přes [`arq`](https://github.com/python-arq/arq) |
-| SSH klient | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, striktní ověření host klíče |
-| Balíčky / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` je commitnutý |
-| Kontejnery | Docker (multi-stage build) + Docker Compose | |
+| Language | Python 3.14.7 | |
+| Web framework | FastAPI | async, OpenAPI schema for free |
+| Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
+| Database | PostgreSQL 18 | via `asyncpg` + SQLAlchemy 2.0 (async) |
+| Migrations | Alembic | async engine |
+| Cache / task queue | Redis 8.8 | queue via [`arq`](https://github.com/python-arq/arq) |
+| SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
+| Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
+| Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
+| Containers | Docker (multi-stage build) + Docker Compose | |
 
-### Poznámky k verzím závislostí
+### Dependency version notes
 
-- **`redis-py` (klientská knihovna) je záměrně na řadě `<6`**, i když Redis
-  *server* v `docker-compose.yml` běží na `redis:8.8`. Verze klientské
-  knihovny a verze serveru jsou nezávislé věci — `arq` (fronta úloh) k
-  srpnu 2026 podporuje jen `redis-py <6` (viz jeho `pyproject.toml`), ale
-  redis-py 5.x umí s Redis 8.x serverem komunikovat bez problémů. Až/pokud
-  `arq` zvedne horní hranici, dá se `redis[hiredis]` v `pyproject.toml`
-  odpinout.
-- `arq` je aktuálně v "maintenance only" režimu (nepřibývají nové
-  funkce, jen opravy). Pro v1 je to v pořádku — je to nejlehčí volba nad
-  Redisem, která nevyžaduje Celery. Pokud by to v budoucnu vadilo, alternativa
-  je `Celery` nebo `ReArq` (fork navazující na `arq`).
-- Verze v `pyproject.toml` jsou dolní meze (`>=`); přesné, reprodukovatelné
-  verze pro instalaci drží `uv.lock`.
+- **`redis-py` (the client library) is intentionally pinned to the `<6` line**,
+  even though the Redis *server* in `docker-compose.yml` runs `redis:8.8`.
+  The client library version and the server version are independent —
+  `arq` (the task queue) only supports `redis-py <6` as of August 2026 (see
+  its `pyproject.toml`), but redis-py 5.x talks to a Redis 8.x server just
+  fine. If/when `arq` raises that ceiling, `redis[hiredis]` in
+  `pyproject.toml` can be unpinned.
+- `arq` is currently in "maintenance only" mode (bugfixes, no new
+  features). That's fine for v1 — it's the lightest queue option on top of
+  Redis, no Celery required. If that becomes a problem later, alternatives
+  are `Celery` or `ReArq` (a fork that continues `arq`).
+- Versions in `pyproject.toml` are lower bounds (`>=`); exact,
+  reproducible versions for installation come from `uv.lock`.
 
-## Bezpečnostní rozhodnutí (v1)
+## Security decisions (v1)
 
-Aplikace nemá přihlašování, ale i tak řeší několik věcí od začátku, protože
-se s nimi špatně přidává dodatečně:
+The app has no login yet, but a few things are handled from the start
+because they're painful to retrofit later:
 
-- **Žádné "trust on first use" u SSH host klíčů.** Otisk klíče serveru se
-  musí explicitně zjistit (`Zjistit otisk klíče`) a ručně potvrdit (mimo
-  aplikaci, např. přes konzoli poskytovatele). Teprve poté se k němu smí
-  cokoliv připojit. Neshoda otisku při pozdějším spojení = tvrdé odmítnutí
-  (možný MITM), nikdy tichá ignorace. Viz [`app/ssh/client.py`](app/ssh/client.py).
-- **Hesla/privátní klíče se v DB ukládají šifrovaně** (Fernet/AES z balíčku
-  `cryptography`, klíč jen v `ENCRYPTION_KEY` v prostředí). Viz
-  [`app/core/security.py`](app/core/security.py).
-- **CSRF ochrana** (double-submit cookie) na všech formulářích, i bez
-  session/přihlášení. Viz [`app/core/csrf.py`](app/core/csrf.py).
-- **Přísná Content-Security-Policy** a další security hlavičky
-  (`X-Frame-Options`, `X-Content-Type-Options`, ...) — žádné inline
-  skripty/styly, žádný externí CDN. Viz [`app/main.py`](app/main.py).
-- **Non-root uživatel v Dockeru**, minimální multi-stage image, žádné
-  DB/Redis porty publikované na hostitele ve výchozím `docker-compose.yml`.
-- **Validace konfigurace při startu** — aplikace odmítne nastartovat s
-  placeholder/krátkými secrets z `.env.example` (viz `Settings` v
-  [`app/core/config.py`](app/core/config.py)).
-- V produkci (`APP_ENV=production`) se vypíná `/docs` a `/openapi.json`.
+- **No blind "trust on first use" for SSH host keys.** A machine's key
+  fingerprint must be explicitly discovered ("Discover key fingerprint")
+  and manually confirmed (outside the app, e.g. via the hosting provider's
+  console) before anything connects to it. A fingerprint mismatch on a
+  later connection = hard refusal (possible MITM), never silently ignored.
+  See [app/ssh/client.py](app/ssh/client.py).
+- **Passwords/private keys are stored encrypted** in the DB (Fernet/AES
+  from the `cryptography` package, key only in `ENCRYPTION_KEY` in the
+  environment). See [app/core/security.py](app/core/security.py).
+- **CSRF protection** (double-submit cookie) on every form, even without
+  sessions/login. See [app/core/csrf.py](app/core/csrf.py).
+- **Strict Content-Security-Policy** and other security headers
+  (`X-Frame-Options`, `X-Content-Type-Options`, ...) — no inline
+  scripts/styles, no external CDN. See [app/main.py](app/main.py).
+- **Non-root user in Docker**, minimal multi-stage image, no DB/Redis
+  ports published to the host by default, and the app's own HTTP port is
+  bound to loopback only (`127.0.0.1:8000`) — it's meant to sit behind a
+  TLS-terminating reverse proxy.
+- **Optional bundled Caddy reverse proxy** with TLS 1.3 only, HTTP/3, and
+  hardened headers — or bring your own (nginx/Traefik/Caddy guides in the
+  wiki).
+- **Configuration is validated at startup** — the app refuses to start
+  with placeholder/short secrets copied from `.env.example` (see
+  `Settings` in [app/core/config.py](app/core/config.py)).
+- `/docs` and `/openapi.json` are disabled in production (`APP_ENV=production`).
 
-Co **zatím chybí** a je to vědomě odloženo na další fázi (přihlašování):
-autentizace/autorizace uživatelů aplikace, audit log akcí, rate limiting.
-Do té doby aplikaci nevystavuj do nedůvěryhodné sítě/internetu.
+What's **deliberately missing** and left for a later phase (login):
+authentication/authorization of app users, an audit log, rate limiting.
+Don't expose the app to an untrusted network/the internet until then.
 
-## Rychlý start (Docker)
+## Quick start (Docker)
 
 ```bash
 cp .env.example .env
 python scripts/generate_secrets.py
 ```
 
-Vypsané hodnoty (`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`,
-`REDIS_PASSWORD`) ručně vlož do `.env` — a `DATABASE_URL`/`REDIS_URL` uprav
-tak, aby obsahovaly stejné heslo jako `POSTGRES_PASSWORD`/`REDIS_PASSWORD`.
+Paste the printed values (`SECRET_KEY`, `ENCRYPTION_KEY`,
+`POSTGRES_PASSWORD`, `REDIS_PASSWORD`) into `.env`, and make sure
+`DATABASE_URL`/`REDIS_URL` use the same passwords as
+`POSTGRES_PASSWORD`/`REDIS_PASSWORD`.
+
+**Without a reverse proxy in front (or if you already run your own):**
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-Tím se: postaví image, rozjede Postgres 18 a Redis 8.8, spustí se
-jednorázová služba `migrate` (Alembic `upgrade head`) a až po jejím úspěšném
-doběhnutí naběhnou `web` (http://localhost:8000) a `worker` (arq).
+The app listens on `127.0.0.1:8000` (plain HTTP, loopback only). Point
+your own nginx/Traefik/Caddy at that address — see the reverse-proxy
+guides in the wiki:
+[nginx](wiki/Reverse-Proxy-Nginx.md) ·
+[Traefik](wiki/Reverse-Proxy-Traefik.md) ·
+[Caddy (standalone)](wiki/Reverse-Proxy-Caddy.md).
 
-Pro vývoj s hot-reloadem a bez rebuildu image při každé změně:
+**With the bundled Caddy** (automatic HTTPS via Let's Encrypt, TLS 1.3
+only, HTTP/3): set `DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's
+DNS at this host, make sure ports 80/tcp, 443/tcp and 443/udp are open,
+then:
 
 ```bash
-cp docker-compose.override.yml.example docker-compose.override.yml
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 ```
 
-## Lokální vývoj bez Dockeru (jen aplikace, DB/Redis přes Docker)
+See [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md) for details
+and troubleshooting.
+
+This brings up: the image build, Postgres 18, Redis 8.8, a one-off
+`migrate` service (Alembic `upgrade head`), and — once that finishes
+successfully — `web`, `worker` (arq), and optionally `caddy`.
+
+## Local development without Docker (DB/Redis still via Docker)
 
 ```bash
 uv sync
 docker compose up -d db redis
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
-# v druhém terminálu:
+# in a second terminal:
 uv run arq app.tasks.worker.WorkerSettings
 ```
 
-## Testy a kontrola kvality
+## Tests and quality checks
 
 ```bash
 uv run pytest
@@ -107,32 +135,43 @@ uv run ruff check .
 uv run mypy app
 ```
 
-Testy neběží proti reálné Postgres/Redis — `get_db` se v testech přepojuje
-na izolovanou in-memory SQLite (viz [`tests/conftest.py`](tests/conftest.py)),
-takže jedou rychle a bez vedlejších závislostí. SSH k reálným strojům je
-otestované jen na úrovni logiky (odmítnutí spojení bez připnutého otisku) —
-end-to-end ověření proti skutečnému Debian stroji je potřeba udělat ručně
-přes UI (`Otestovat spojení`).
+Tests don't run against real infrastructure — `get_db` is swapped for an
+isolated in-memory SQLite session in tests (see
+[tests/conftest.py](tests/conftest.py)), so they're fast and have no side
+dependencies. SSH against real machines is only unit-tested at the logic
+level (refusing to connect without a pinned fingerprint) — end-to-end
+verification against an actual Debian machine has to be done manually via
+the UI ("Test connection").
 
-## Struktura projektu
+## Project structure
 
 ```
 app/
-  core/       konfigurace, logování, šifrování, CSRF
-  db/         SQLAlchemy modely + async session
-  schemas/    Pydantic schémata pro formuláře
-  ssh/        AsyncSSH klient (host key pinning)
-  tasks/      arq worker + úlohy na pozadí
-  web/        FastAPI routery, Jinja2 šablony, statické soubory
-alembic/      DB migrace
-tests/        pytest (async, izolované od reálné infrastruktury)
-scripts/      pomocné skripty (generování secrets)
+  core/       config, logging, encryption, CSRF
+  db/         SQLAlchemy models + async session
+  schemas/    Pydantic schemas for forms
+  ssh/        AsyncSSH client (host key pinning)
+  tasks/      arq worker + background jobs
+  web/        FastAPI routers, Jinja2 templates, static files
+alembic/      DB migrations
+tests/        pytest (async, isolated from real infrastructure)
+scripts/      helper scripts (secret generation)
+wiki/         documentation, meant to become the GitHub wiki
 ```
 
-## Co je záměrně prázdné / na později
+## Navigation / features
 
-- Přihlašování a autorizace uživatelů aplikace.
-- Spouštění libovolných příkazů / hromadné operace na více strojích
-  (základ ve `app/tasks/jobs.py` a `app/ssh/client.py` už existuje).
+- **Machines** — add, view, and remove managed Debian machines; pin SSH
+  host key fingerprints; test connectivity.
+- **Machine groups** — organize machines into named groups (e.g. by
+  environment or role); assign/remove machines from a group.
+- **Users** — placeholder; no authentication yet.
+- **Settings** — placeholder; nothing user-configurable yet.
+
+## What's deliberately empty / for later
+
+- Login and authorization for app users.
+- Running arbitrary commands / bulk operations across many machines (the
+  groundwork already exists in `app/tasks/jobs.py` and `app/ssh/client.py`).
 - Audit log.
-- Import stávajících `known_hosts` / hromadné přidání strojů.
+- Bulk machine import / importing an existing `known_hosts` file.

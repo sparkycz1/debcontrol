@@ -1,17 +1,19 @@
-"""Tenká vrstva nad AsyncSSH pro připojování na spravované Debian stroje.
+"""A thin layer over AsyncSSH for connecting to managed Debian machines.
 
-Bezpečnostní princip — žádné "trust on first use" naslepo:
+Security principle — no blind "trust on first use":
 
-1. `discover_host_key_fingerprint()` se strojem naváže spojení POUZE za
-   účelem zjištění otisku jeho SSH host klíče a spojení vždy záměrně
-   ukončí bez autentizace. Otisk se zobrazí obsluze, která ho musí ověřit
-   mimo tuto aplikaci (např. přes konzoli poskytovatele serveru, `ssh-keygen
-   -lf` na samotném stroji apod.) a teprve pak explicitně potvrdit.
-2. Až po tomto lidském potvrzení se otisk uloží k danému stroji
-   (`Machine.host_key_fingerprint`).
-3. Všechna další spojení (`open_connection`) pak ověřují prezentovaný klíč
-   striktně proti tomuto uloženému otisku — neshoda okamžitě ukončí spojení
-   jako možný Man-in-the-Middle útok, nikdy se tiše neignoruje.
+1. `discover_host_key_fingerprint()` connects to a machine ONLY to learn its
+   SSH host key fingerprint, and always deliberately aborts before
+   authenticating. The fingerprint is shown to an operator, who must verify
+   it through a channel outside this application (e.g. the hosting
+   provider's console, or `ssh-keygen -lf` run on the machine itself) and
+   only then explicitly confirm it.
+2. Only after that human confirmation is the fingerprint stored against the
+   machine (`Machine.host_key_fingerprint`).
+3. Every subsequent connection (`open_connection`) then strictly verifies
+   the presented key against that stored fingerprint — a mismatch
+   immediately aborts the connection as a possible Man-in-the-Middle
+   attack; it is never silently ignored.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ FINGERPRINT_HASH = "sha256"
 
 
 class _DiscoverySSHClient(asyncssh.SSHClient):
-    """Zjistí otisk klíče serveru a spojení vždy odmítne — nikdy neautentizuje."""
+    """Learns the server's key fingerprint and always rejects — never authenticates."""
 
     def __init__(self) -> None:
         self.discovered_fingerprint: str | None = None
@@ -44,7 +46,7 @@ class _DiscoverySSHClient(asyncssh.SSHClient):
 
 
 class _PinnedSSHClient(asyncssh.SSHClient):
-    """Přijme spojení jen pokud klíč serveru odpovídá připnutému otisku."""
+    """Accepts the connection only if the server's key matches the pinned fingerprint."""
 
     def __init__(self, expected_fingerprint: str) -> None:
         self._expected_fingerprint = expected_fingerprint
@@ -58,9 +60,10 @@ class _PinnedSSHClient(asyncssh.SSHClient):
 
 
 async def discover_host_key_fingerprint(hostname: str, port: int, timeout_seconds: int) -> str:
-    """Zjistí SHA256 otisk host klíče serveru, aniž by se s ním kdy autentizovala.
+    """Learn the server's SHA256 host key fingerprint without ever trusting it.
 
-    Vrací otisk k lidskému ověření. Nikdy sama o sobě nic "nedůvěřuje".
+    Returns the fingerprint for human verification. Never "trusts" anything
+    on its own.
     """
     holder: dict[str, _DiscoverySSHClient] = {}
 
@@ -79,12 +82,12 @@ async def discover_host_key_fingerprint(hostname: str, port: int, timeout_second
                 username="debcontrol-key-discovery",
             )
     except (asyncssh.Error, OSError, TimeoutError):
-        pass  # očekávané: factory záměrně odmítá každé spojení
+        pass  # expected: the factory deliberately rejects every connection
 
     client = holder.get("client")
     if client is None or client.discovered_fingerprint is None:
         raise SSHConnectionError(
-            f"Nepodařilo se zjistit otisk SSH klíče serveru {hostname}:{port}."
+            f"Could not determine the SSH host key fingerprint for {hostname}:{port}."
         )
     return client.discovered_fingerprint
 
@@ -94,7 +97,7 @@ def _build_connect_kwargs(
     secret: str | None,
     client_factory: Callable[[], asyncssh.SSHClient],
 ) -> dict[str, object]:
-    from app.db.models.machine import AuthMethod  # lokální import kvůli TYPE_CHECKING výše
+    from app.db.models.machine import AuthMethod  # local import, see TYPE_CHECKING above
 
     kwargs: dict[str, object] = {
         "host": machine.hostname,
@@ -108,7 +111,7 @@ def _build_connect_kwargs(
         kwargs["password"] = secret
     else:
         if not secret:
-            raise SSHConnectionError("Chybí privátní klíč pro autentizaci.")
+            raise SSHConnectionError("Missing private key for authentication.")
         kwargs["client_keys"] = [asyncssh.import_private_key(secret)]
     return kwargs
 
@@ -116,11 +119,11 @@ def _build_connect_kwargs(
 async def open_connection(
     machine: Machine, secret: str | None, timeout_seconds: int
 ) -> asyncssh.SSHClientConnection:
-    """Otevře SSH spojení na stroj se striktním ověřením připnutého host klíče."""
+    """Open an SSH connection to a machine with strict pinned host-key verification."""
     if not machine.host_key_fingerprint:
         raise UnknownHostKeyError(
-            f"Stroj {machine.hostname} nemá připnutý otisk SSH klíče serveru — "
-            "nejdřív ho zjisti a potvrď."
+            f"Machine {machine.hostname} has no pinned SSH host key fingerprint — "
+            "discover and confirm it first."
         )
 
     holder: dict[str, _PinnedSSHClient] = {}
@@ -140,17 +143,18 @@ async def open_connection(
         presented = client.presented_fingerprint if client else None
         if presented and presented != machine.host_key_fingerprint:
             raise HostKeyMismatchError(
-                f"Server {machine.hostname}:{machine.port} prezentoval jiný otisk klíče "
-                f"({presented}) než je připnutý ({machine.host_key_fingerprint}). "
-                "Spojení bylo odmítnuto — může jít o útok typu Man-in-the-Middle."
+                f"Server {machine.hostname}:{machine.port} presented a different key "
+                f"fingerprint ({presented}) than the pinned one "
+                f"({machine.host_key_fingerprint}). Connection refused — this could be "
+                "a Man-in-the-Middle attack."
             ) from exc
         raise SSHConnectionError(
-            f"Spojení na {machine.hostname}:{machine.port} selhalo: {exc}"
+            f"Connection to {machine.hostname}:{machine.port} failed: {exc}"
         ) from exc
 
 
 async def test_connection(machine: Machine, secret: str | None, timeout_seconds: int) -> str:
-    """Ověří dostupnost stroje a vrátí výstup jednoduchého diagnostického příkazu."""
+    """Check machine reachability and return the output of a simple diagnostic command."""
     async with await open_connection(machine, secret, timeout_seconds) as conn:
         result = await conn.run("uname -a", check=False, timeout=timeout_seconds)
 
