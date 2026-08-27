@@ -8,6 +8,49 @@
     <a class="button" href="/machines/new">Add machine</a>
   </div>
 
+  {% if pending_machines %}
+    <section class="panel">
+      <h2>Pending machines</h2>
+      <p class="hint">
+        Self-registered via <code>POST /api/inform</code> — not yet added, not
+        trusted for anything. Review each entry and either add it (you'll
+        still go through the normal host-key confirmation flow) or dismiss it.
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>IP address</th>
+            <th>Reported hostname</th>
+            <th>OS</th>
+            <th>Seen</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pending in pending_machines %}
+            <tr>
+              <td>{{ pending.ip_address }}</td>
+              <td>{{ pending.reported_hostname or '—' }}</td>
+              <td>{{ pending.os_version or '—' }}</td>
+              <td>{{ pending.created_at.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+              <td>
+                <a class="button"
+                   href="/machines/new?ip_address={{ pending.ip_address | urlencode }}&name={{ (pending.reported_hostname or '') | urlencode }}">
+                  Use this
+                </a>
+                <form action="/machines/pending/{{ pending.id }}/dismiss" method="post"
+                      class="inline-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button button-secondary">Dismiss</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+
   {% if not machines %}
     <div class="empty-state">
       <p>No managed machines yet.</p>
@@ -17,11 +60,11 @@
     <table class="data-table">
       <thead>
         <tr>
+          <th>Name</th>
+          <th>IP address</th>
           <th>Hostname</th>
-          <th>Port</th>
-          <th>User</th>
-          <th>Auth</th>
           <th>Group</th>
+          <th>Status</th>
           <th>Host key</th>
           <th></th>
         </tr>
@@ -29,15 +72,23 @@
       <tbody>
         {% for machine in machines %}
           <tr>
-            <td><a href="/machines/{{ machine.id }}">{{ machine.hostname }}</a></td>
-            <td>{{ machine.port }}</td>
-            <td>{{ machine.username }}</td>
-            <td>{{ machine.auth_method.value }}</td>
+            <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
+            <td>{{ machine.ip_address }}</td>
+            <td>{{ machine.discovered_hostname or '—' }}</td>
             <td>
               {% if machine.group %}
                 <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
               {% else %}
                 <span class="hint">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if machine.is_reachable is none %}
+                <span class="badge badge-warn">unknown</span>
+              {% elif machine.is_reachable %}
+                <span class="badge badge-ok">online</span>
+              {% else %}
+                <span class="badge badge-error">offline</span>
               {% endif %}
             </td>
             <td>

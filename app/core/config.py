@@ -31,9 +31,19 @@ class Settings(BaseSettings):
     ssh_data_dir: Path = Field(default=Path("./data"), alias="SSH_DATA_DIR")
     ssh_connect_timeout: int = Field(default=10, alias="SSH_CONNECT_TIMEOUT")
 
+    # How often (seconds) the background worker re-checks OS/kernel/hostname/
+    # CPU/RAM/disk facts for every machine. The per-minute reachability check
+    # (the "is it alive" status badge) is intentionally fixed, not configurable.
+    facts_refresh_interval_seconds: int = Field(
+        default=3600, alias="FACTS_REFRESH_INTERVAL_SECONDS"
+    )
+
+    # Bearer token machines must present when self-registering via POST /api/inform.
+    inform_token: SecretStr = Field(alias="INFORM_TOKEN")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    @field_validator("secret_key", "encryption_key")
+    @field_validator("secret_key", "encryption_key", "inform_token")
     @classmethod
     def _reject_placeholder_secrets(cls, value: SecretStr) -> SecretStr:
         raw = value.get_secret_value()

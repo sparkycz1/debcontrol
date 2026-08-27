@@ -85,6 +85,8 @@ body {
 
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.inline-form { display: inline; }
+
 .empty-state {
   border: 1px dashed var(--color-border);
   border-radius: var(--radius);
@@ -115,6 +117,7 @@ body {
 
 .badge-ok { background: rgba(63, 178, 127, 0.15); color: var(--color-ok); }
 .badge-warn { background: rgba(217, 164, 65, 0.15); color: var(--color-warn); }
+.badge-error { background: rgba(224, 82, 82, 0.15); color: var(--color-danger); }
 
 .form {
   display: flex;

@@ -12,6 +12,8 @@ security model and what's intentionally deferred.
   structure, and the security decisions made from day one.
 - **[SSH Host Key Verification](SSH-Host-Key-Verification.md)** — how
   debcontrol pins SSH host keys and why it never "trusts on first use".
+- **[Managed Machine Requirements](Managed-Machine-Requirements.md)** —
+  what a Debian machine needs (network, account, packages) to be added.
 - **[Development](Development.md)** — running the app locally without
   Docker, tests, linting, and database migrations.
 
@@ -33,7 +35,7 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 
 | Tab | Status |
 |---|---|
-| Machines | Add/view/remove managed machines, pin host keys, test connectivity |
+| Machines | Add/view/remove managed machines, pin host keys, test connectivity, auto-discovered facts, online/offline status, self-registration review |
 | Machine groups | Organize machines into named groups |
 | Users | Placeholder — no login/authentication yet |
-| Settings | Placeholder — nothing user-configurable yet |
+| Settings | Shows the app's SSH public key and background-check intervals |

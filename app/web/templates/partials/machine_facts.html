@@ -1,0 +1,48 @@
+<h2>Facts</h2>
+
+{% if error %}
+  <div class="alert alert-error">
+    <p>Could not refresh facts: {{ error }}</p>
+  </div>
+{% endif %}
+
+{% if not machine.facts_updated_at %}
+  <p class="hint">
+    Not gathered yet — this happens automatically once the host key
+    fingerprint is confirmed above, and refreshes periodically after that.
+  </p>
+{% else %}
+  <dl class="detail-list">
+    <dt>Hostname</dt><dd>{{ machine.discovered_hostname or '—' }}</dd>
+    <dt>OS version</dt><dd>{{ machine.os_version or '—' }}</dd>
+    <dt>Kernel</dt><dd>{{ machine.kernel_version or '—' }}</dd>
+    <dt>CPU cores</dt><dd>{{ machine.cpu_cores if machine.cpu_cores is not none else '—' }}</dd>
+    <dt>RAM</dt>
+    <dd>{{ '%.1f GB' % (machine.ram_bytes / 1073741824) if machine.ram_bytes else '—' }}</dd>
+    <dt>Disks</dt>
+    <dd>
+      {% if machine.disks %}
+        {% for disk in machine.disks %}
+          {{ disk.name }} ({{ '%.1f GB' % (disk.size_bytes / 1073741824) }}){% if not loop.last %}, {% endif %}
+        {% endfor %}
+      {% else %}
+        —
+      {% endif %}
+    </dd>
+    <dt>Last refreshed</dt><dd>{{ machine.facts_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC</dd>
+  </dl>
+{% endif %}
+
+<button
+  class="button"
+  hx-post="/machines/{{ machine.id }}/refresh-facts"
+  hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+  hx-target="#facts-panel"
+  hx-swap="innerHTML"
+  {% if not machine.host_key_fingerprint %}disabled{% endif %}
+>
+  Refresh facts now
+</button>
+{% if not machine.host_key_fingerprint %}
+  <p class="hint">Confirm the server's key fingerprint above first.</p>
+{% endif %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Settings</h1>
+
+  <section class="panel">
+    <h2>App SSH identity</h2>
+    <p class="hint">
+      debcontrol connects to machines using this one shared key when
+      "SSH key" is chosen as the authentication method — there's no key
+      upload/generation to do per machine. To let it manage a machine,
+      append the public key below to that machine's
+      <code>~/.ssh/authorized_keys</code> for the user debcontrol will
+      connect as. This is a manual step for now.
+    </p>
+    <p>Fingerprint: <code>{{ identity.fingerprint }}</code></p>
+    <textarea readonly rows="3">{{ identity.public_key }}</textarea>
+  </section>
+
+  <section class="panel">
+    <h2>Background checks</h2>
+    <dl class="detail-list">
+      <dt>Reachability check</dt>
+      <dd>every minute (fixed, TCP connect to the SSH port)</dd>
+      <dt>Facts refresh</dt>
+      <dd>every {{ settings.facts_refresh_interval_seconds }} seconds
+        (<code>FACTS_REFRESH_INTERVAL_SECONDS</code> in <code>.env</code>)</dd>
+    </dl>
+  </section>
+
+  <div class="empty-state">
+    <p>User accounts and preferences: coming soon.</p>
+  </div>
+{% endblock %}

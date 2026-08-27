@@ -20,6 +20,7 @@ def main() -> None:
     print(f"ENCRYPTION_KEY={Fernet.generate_key().decode()}")
     print(f"POSTGRES_PASSWORD={secrets.token_urlsafe(24)}")
     print(f"REDIS_PASSWORD={secrets.token_urlsafe(24)}")
+    print(f"INFORM_TOKEN={secrets.token_urlsafe(32)}")
 
 
 if __name__ == "__main__":

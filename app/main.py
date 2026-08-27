@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.web.routes import machine_groups, machines, users
+from app.web.routes import inform, machine_groups, machines, users
 from app.web.routes import settings as settings_routes
 
 settings = get_settings()
@@ -74,6 +74,7 @@ def create_app() -> FastAPI:
 
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
+    app.include_router(inform.router)
     app.include_router(users.router)
     app.include_router(settings_routes.router)
 

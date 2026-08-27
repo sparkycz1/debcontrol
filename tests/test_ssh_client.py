@@ -10,7 +10,8 @@ from app.ssh.exceptions import UnknownHostKeyError
 async def test_open_connection_refuses_without_pinned_fingerprint():
     """No connection may be attempted at all without a confirmed key fingerprint."""
     machine = Machine(
-        hostname="unpinned.example.com",
+        name="unpinned",
+        ip_address="203.0.113.10",
         port=22,
         username="admin",
         auth_method=AuthMethod.PASSWORD,

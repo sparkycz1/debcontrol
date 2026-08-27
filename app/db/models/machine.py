@@ -5,9 +5,19 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Enum, ForeignKey, LargeBinary, String, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Enum,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -17,30 +27,41 @@ if TYPE_CHECKING:
 
 
 class AuthMethod(enum.StrEnum):
+    SSH_KEY = "ssh_key"
     PASSWORD = "password"
-    PRIVATE_KEY = "private_key"
 
 
 class Machine(Base):
     """A single Debian machine managed over SSH.
 
     Security notes:
-    - `secret_encrypted` holds a password or private key, encrypted via
-      `app.core.security.encrypt_secret` — nothing sensitive is ever stored
-      in the DB in plaintext.
+    - `secret_encrypted` only holds a value for `AuthMethod.PASSWORD` (the
+      discouraged fallback) — encrypted via `app.core.security.encrypt_secret`.
+      For `AuthMethod.SSH_KEY` (the default/recommended method), the app
+      connects using its own shared identity key (see
+      `app.db.models.ssh_identity.SSHIdentity`), so there's nothing
+      machine-specific to store.
     - `host_key_fingerprint` is the SSH host key fingerprint this machine is
       "pinned" to. Until it's set, no connection to the machine will be
       established automatically (no silent "trust on first use") — the
       fingerprint must be explicitly confirmed by an operator outside this
       application (e.g. via the hosting provider's console) and only then
       stored here.
+
+    Facts (`os_version`, `kernel_version`, `cpu_cores`, `ram_bytes`, `disks`,
+    `discovered_hostname`) are read from the machine itself over SSH — see
+    `app.ssh.facts` — once a host key fingerprint is pinned, and refreshed
+    periodically by the background worker (`FACTS_REFRESH_INTERVAL_SECONDS`).
+    `is_reachable`/`last_ping_at` come from a much cheaper, unauthenticated
+    TCP-reachability check run every minute.
     """
 
     __tablename__ = "machines"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
-    hostname: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    ip_address: Mapped[str] = mapped_column(String(255), nullable=False)
     port: Mapped[int] = mapped_column(default=22, nullable=False)
     username: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -60,10 +81,23 @@ class Machine(Base):
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
+    # --- Facts, discovered over SSH (see app.ssh.facts) ---
+    discovered_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    os_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    kernel_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cpu_cores: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ram_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
+    is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_ping_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
-        return f"Machine(id={self.id!r}, hostname={self.hostname!r})"
+        return f"Machine(id={self.id!r}, name={self.name!r})"

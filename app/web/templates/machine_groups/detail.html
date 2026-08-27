@@ -6,7 +6,7 @@
   <div class="page-header">
     <h1>{{ group.name }}</h1>
     <form method="post" action="/machine-groups/{{ group.id }}/delete"
-          onsubmit="return confirm('Delete this group? Machines in it will be unassigned, not deleted.');">
+          data-confirm="Delete this group? Machines in it will be unassigned, not deleted.">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button button-danger">Delete group</button>
     </form>
@@ -24,7 +24,7 @@
       <table class="data-table">
         <thead>
           <tr>
-            <th>Hostname</th>
+            <th>Name</th>
             <th>User</th>
             <th></th>
           </tr>
@@ -32,7 +32,7 @@
         <tbody>
           {% for machine in group.machines %}
             <tr>
-              <td><a href="/machines/{{ machine.id }}">{{ machine.hostname }}</a></td>
+              <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
               <td>{{ machine.username }}</td>
               <td>
                 <form method="post"
@@ -59,7 +59,7 @@
         <select id="machine_id" name="machine_id" required>
           {% for machine in available_machines %}
             <option value="{{ machine.id }}">
-              {{ machine.hostname }}{% if machine.group %} (currently in {{ machine.group.name }}){% endif %}
+              {{ machine.name }}{% if machine.group %} (currently in {{ machine.group.name }}){% endif %}
             </option>
           {% endfor %}
         </select>

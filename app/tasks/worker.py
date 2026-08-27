@@ -7,22 +7,35 @@ Run (the `worker` service in docker-compose.yml handles this in Docker):
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
+from typing import Any
 
+from arq import cron
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.tasks.jobs import ping_machine
+from app.tasks.jobs import (
+    ping_all_machines,
+    refresh_all_machine_facts,
+    refresh_machine_facts,
+    test_machine_connection,
+)
 
 logger = logging.getLogger(__name__)
 
 
-async def startup(ctx: dict[str, object]) -> None:
+async def startup(ctx: dict[str, Any]) -> None:
     configure_logging(get_settings().log_level)
     logger.info("arq worker started.")
+    # Kick off the first facts sweep shortly after startup rather than
+    # waiting a full FACTS_REFRESH_INTERVAL_SECONDS; it then keeps
+    # rescheduling itself (see `refresh_all_machine_facts`).
+    redis = ctx["redis"]
+    await redis.enqueue_job("refresh_all_machine_facts", _defer_by=timedelta(seconds=10))
 
 
-async def shutdown(ctx: dict[str, object]) -> None:
+async def shutdown(ctx: dict[str, Any]) -> None:
     logger.info("arq worker shutting down.")
 
 
@@ -31,7 +44,8 @@ def _redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [ping_machine]
+    functions = [test_machine_connection, refresh_machine_facts, refresh_all_machine_facts]
+    cron_jobs = [cron(ping_all_machines, second=0, unique=True)]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = _redis_settings()

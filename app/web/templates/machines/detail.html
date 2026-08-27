@@ -1,27 +1,42 @@
 {% extends "base.html" %}
 
-{% block title %}{{ machine.hostname }} — debcontrol{% endblock %}
+{% block title %}{{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>{{ machine.hostname }}</h1>
+    <h1>{{ machine.name }}</h1>
     <form method="post" action="/machines/{{ machine.id }}/delete"
-          onsubmit="return confirm('Delete this machine?');">
+          data-confirm="Delete this machine?">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button button-danger">Delete</button>
     </form>
   </div>
 
   <dl class="detail-list">
+    <dt>IP address</dt><dd>{{ machine.ip_address }}</dd>
     <dt>Port</dt><dd>{{ machine.port }}</dd>
     <dt>User</dt><dd>{{ machine.username }}</dd>
-    <dt>Auth method</dt><dd>{{ machine.auth_method.value }}</dd>
+    <dt>Auth method</dt>
+    <dd>{{ 'SSH key' if machine.auth_method.value == 'ssh_key' else 'Password' }}</dd>
     <dt>Group</dt>
     <dd>
       {% if machine.group %}
         <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
       {% else %}
         —
+      {% endif %}
+    </dd>
+    <dt>Status</dt>
+    <dd>
+      {% if machine.is_reachable is none %}
+        <span class="badge badge-warn">unknown</span>
+      {% elif machine.is_reachable %}
+        <span class="badge badge-ok">online</span>
+      {% else %}
+        <span class="badge badge-error">offline</span>
+      {% endif %}
+      {% if machine.last_ping_at %}
+        <span class="hint">(checked {{ machine.last_ping_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span>
       {% endif %}
     </dd>
     <dt>Notes</dt><dd>{{ machine.description or '—' }}</dd>
@@ -38,7 +53,7 @@
       <p class="hint">
         This machine doesn't have a confirmed host key fingerprint yet — until it
         does, no connection can be safely established (no automatic "trust on
-        first use").
+        first use"), and facts can't be gathered.
       </p>
       <button
         class="button"
@@ -50,6 +65,10 @@
         Discover key fingerprint
       </button>
     {% endif %}
+  </section>
+
+  <section class="panel" id="facts-panel">
+    {% include "partials/machine_facts.html" %}
   </section>
 
   <section class="panel">

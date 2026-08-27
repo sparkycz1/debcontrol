@@ -33,12 +33,18 @@ connection is attempted.
      machine.
 4. Only if it matches, click **Confirm, fingerprint matches**. The
    fingerprint is now stored on the machine record
-   (`Machine.host_key_fingerprint`).
-5. From then on, **Test connection** (and any future feature that connects
-   over SSH) verifies the presented key against this stored fingerprint on
-   every single connection. A mismatch immediately aborts with an explicit
-   "possible Man-in-the-Middle" error — it is never silently accepted, and
-   the stored fingerprint is never auto-updated.
+   (`Machine.host_key_fingerprint`), and this is the point where the app
+   first gathers facts (OS/kernel/hostname/CPU/RAM/disks — see
+   `app/ssh/facts.py`), since that requires a real, authenticated
+   connection. (The online/offline status badge is different: it's a plain
+   TCP connect with no authentication at all, so it runs for every active
+   machine regardless of whether a fingerprint is pinned yet.)
+5. From then on, **Test connection** (and every background job that
+   connects over SSH: facts refresh, etc.) verifies the presented key
+   against this stored fingerprint on every single connection. A mismatch
+   immediately aborts with an explicit "possible Man-in-the-Middle" error —
+   it is never silently accepted, and the stored fingerprint is never
+   auto-updated.
 
 ## Why not just use `~/.ssh/known_hosts`?
 

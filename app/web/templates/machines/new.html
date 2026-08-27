@@ -14,9 +14,19 @@
   <form method="post" action="/machines" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="hostname">Hostname / IP address</label>
-    <input type="text" id="hostname" name="hostname" required maxlength="255"
-           value="{{ form.hostname or '' }}">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" required maxlength="255"
+           placeholder="e.g. web1, db-primary"
+           value="{{ form.name or '' }}">
+
+    <label for="ip_address">IP address</label>
+    <input type="text" id="ip_address" name="ip_address" required maxlength="255"
+           placeholder="e.g. 192.0.2.10"
+           value="{{ form.ip_address or '' }}">
+    <p class="hint">
+      The machine's own hostname is discovered automatically once its SSH
+      host key is confirmed — no need to enter it here.
+    </p>
 
     <label for="port">SSH port</label>
     <input type="number" id="port" name="port" min="1" max="65535"
@@ -30,14 +40,20 @@
     <select id="auth_method" name="auth_method">
       {% for method in auth_methods %}
         <option value="{{ method.value }}" {% if form.auth_method == method %}selected{% endif %}>
-          {{ 'Password' if method.value == 'password' else 'Private SSH key' }}
+          {{ 'SSH key (recommended)' if method.value == 'ssh_key' else 'Password (not recommended)' }}
         </option>
       {% endfor %}
     </select>
+    <p class="hint">
+      <strong>SSH key</strong> uses debcontrol's own shared identity — see
+      <a href="/settings">Settings</a> for the public key to add to the
+      machine's <code>~/.ssh/authorized_keys</code>. <strong>Password</strong>
+      is only there as a fallback; prefer the key above whenever possible.
+    </p>
 
-    <label for="secret">Password / private key</label>
-    <textarea id="secret" name="secret" rows="4"
-      placeholder="Stored encrypted. Leave empty if you'll add it later."></textarea>
+    <label for="secret">Password</label>
+    <textarea id="secret" name="secret" rows="2"
+      placeholder="Only used if 'Password' is selected above. Stored encrypted."></textarea>
 
     <label for="group_id">Group</label>
     <select id="group_id" name="group_id">

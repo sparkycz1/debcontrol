@@ -1,4 +1,4 @@
-"""Managed machines — CRUD, host key pinning, connection testing."""
+"""Managed machines — CRUD, host key pinning, connection testing, facts."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.pending_machine import PendingMachine
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate
 from app.ssh.client import discover_host_key_fingerprint
@@ -46,13 +47,30 @@ async def _get_groups(db: AsyncSession) -> list[MachineGroup]:
     return list(result.scalars().all())
 
 
+async def _get_pending_machines(db: AsyncSession) -> list[PendingMachine]:
+    result = await db.execute(select(PendingMachine).order_by(PendingMachine.created_at.desc()))
+    return list(result.scalars().all())
+
+
 @router.get("")
 async def list_machines(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     result = await db.execute(
-        select(Machine).options(selectinload(Machine.group)).order_by(Machine.hostname)
+        select(Machine).options(selectinload(Machine.group)).order_by(Machine.name)
     )
     machines = result.scalars().all()
-    return templates.TemplateResponse(request, "machines/list.html", {"machines": machines})
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/list.html",
+        {
+            "machines": machines,
+            "pending_machines": await _get_pending_machines(db),
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
 
 
 @router.get("/new")
@@ -65,7 +83,10 @@ async def new_machine_form(request: Request, db: AsyncSession = Depends(get_db))
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db),
             "errors": [],
-            "form": {},
+            "form": {
+                "name": request.query_params.get("name", ""),
+                "ip_address": request.query_params.get("ip_address", ""),
+            },
             "csrf_token": csrf_token,
         },
     )
@@ -78,7 +99,8 @@ async def new_machine_form(request: Request, db: AsyncSession = Depends(get_db))
 async def create_machine(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    hostname: str = Form(...),
+    name: str = Form(...),
+    ip_address: str = Form(...),
     port: int = Form(22),
     username: str = Form(...),
     auth_method: AuthMethod = Form(...),
@@ -88,7 +110,8 @@ async def create_machine(
 ) -> Response:
     try:
         payload = MachineCreate(
-            hostname=hostname,
+            name=name,
+            ip_address=ip_address,
             port=port,
             username=username,
             auth_method=auth_method,
@@ -106,7 +129,8 @@ async def create_machine(
                 "groups": await _get_groups(db),
                 "errors": [str(exc)],
                 "form": {
-                    "hostname": hostname,
+                    "name": name,
+                    "ip_address": ip_address,
                     "port": port,
                     "username": username,
                     "auth_method": auth_method,
@@ -121,7 +145,8 @@ async def create_machine(
         return response
 
     machine = Machine(
-        hostname=payload.hostname,
+        name=payload.name,
+        ip_address=payload.ip_address,
         port=payload.port,
         username=payload.username,
         auth_method=payload.auth_method,
@@ -161,7 +186,7 @@ async def discover_host_key(
     context: dict[str, object] = {"machine": machine, "csrf_token": csrf_token}
     try:
         context["fingerprint"] = await discover_host_key_fingerprint(
-            machine.hostname, machine.port, settings.ssh_connect_timeout
+            machine.ip_address, machine.port, settings.ssh_connect_timeout
         )
     except SSHConnectionError as exc:
         context["error"] = str(exc)
@@ -188,6 +213,10 @@ async def trust_host_key(
     machine.host_key_fingerprint = fingerprint
     await db.commit()
 
+    # Now that the machine can be safely connected to, kick off an initial
+    # facts gathering pass in the background — don't block the redirect on it.
+    await request.app.state.arq_redis.enqueue_job("refresh_machine_facts", str(machine.id))
+
     redirect_url = f"/machines/{machine.id}"
     # The fingerprint-confirmation form only ever renders inside an htmx fragment —
     # a plain 3xx redirect would be silently followed by htmx and the returned HTML
@@ -205,7 +234,7 @@ async def test_connection_endpoint(
     machine = await _get_machine_or_404(machine_id, db)
     settings = get_settings()
 
-    job = await request.app.state.arq_redis.enqueue_job("ping_machine", str(machine.id))
+    job = await request.app.state.arq_redis.enqueue_job("test_machine_connection", str(machine.id))
     result: dict[str, object] | None = None
     error: str | None = None
     try:
@@ -222,6 +251,50 @@ async def test_connection_endpoint(
         "partials/test_connection_result.html",
         {"machine": machine, "result": result, "error": error},
     )
+
+
+@router.post("/{machine_id}/refresh-facts", dependencies=[Depends(verify_csrf)])
+async def refresh_facts_endpoint(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+    settings = get_settings()
+
+    job = await request.app.state.arq_redis.enqueue_job("refresh_machine_facts", str(machine.id))
+    error: str | None = None
+    try:
+        result = await job.result(timeout=settings.ssh_connect_timeout + 5)
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except TimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    if error is None:
+        # Facts were updated in the DB by the job — reload to pick them up.
+        machine = await _get_machine_or_404(machine_id, db)
+
+    # The partial has its own "Refresh facts" button, which needs a CSRF
+    # token too — reuse the one already set on this client rather than
+    # minting (and trying to re-set) a fresh cookie from inside an htmx swap.
+    csrf_token, _ = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/machine_facts.html",
+        {"machine": machine, "error": error, "csrf_token": csrf_token},
+    )
+
+
+@router.post("/pending/{pending_id}/dismiss", dependencies=[Depends(verify_csrf)])
+async def dismiss_pending_machine(
+    pending_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    pending = await db.get(PendingMachine, pending_id)
+    if pending is not None:
+        await db.delete(pending)
+        await db.commit()
+    return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{machine_id}/delete", dependencies=[Depends(verify_csrf)])

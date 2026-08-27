@@ -54,6 +54,16 @@ because they're painful to retrofit later:
 - **Passwords/private keys are stored encrypted** in the DB (Fernet/AES
   from the `cryptography` package, key only in `ENCRYPTION_KEY` in the
   environment). See [app/core/security.py](app/core/security.py).
+- **One shared, app-managed SSH identity**, generated on first use and
+  never written to disk in plaintext (see
+  [app/db/models/ssh_identity.py](app/db/models/ssh_identity.py)). Its
+  public half is shown on the Settings page for an operator to distribute
+  manually — plain passwords are still supported per machine, but the UI
+  calls that out as not recommended.
+- **Self-registration (`POST /api/inform`) requires a bearer token**
+  (`INFORM_TOKEN`) and only ever creates a *pending* entry for a human to
+  review — nothing it submits is trusted for actually connecting to the
+  machine. See [app/web/routes/inform.py](app/web/routes/inform.py).
 - **CSRF protection** (double-submit cookie) on every form, even without
   sessions/login. See [app/core/csrf.py](app/core/csrf.py).
 - **Strict Content-Security-Policy** and other security headers
@@ -162,11 +172,26 @@ wiki/         documentation, meant to become the GitHub wiki
 ## Navigation / features
 
 - **Machines** — add, view, and remove managed Debian machines; pin SSH
-  host key fingerprints; test connectivity.
+  host key fingerprints; test connectivity. Once a fingerprint is
+  confirmed, the app automatically discovers and periodically refreshes
+  OS version, kernel version, hostname, CPU cores, RAM, and disks (see
+  [app/ssh/facts.py](app/ssh/facts.py); interval configurable via
+  `FACTS_REFRESH_INTERVAL_SECONDS`), and shows an online/offline status
+  badge from a lightweight per-minute reachability check
+  ([app/ssh/reachability.py](app/ssh/reachability.py)). Machines can also
+  self-register via `POST /api/inform` (bearer-token authenticated) and
+  show up as "pending" for review before being added.
 - **Machine groups** — organize machines into named groups (e.g. by
   environment or role); assign/remove machines from a group.
 - **Users** — placeholder; no authentication yet.
-- **Settings** — placeholder; nothing user-configurable yet.
+- **Settings** — shows the app's SSH public key/fingerprint (for manual
+  distribution to machines) and the current background-check intervals.
+  No user-configurable preferences yet (no auth).
+
+See the wiki's
+[Managed Machine Requirements](wiki/Managed-Machine-Requirements.md) for
+what a Debian machine needs (and, spoiler: mostly already has) to be
+managed this way.
 
 ## What's deliberately empty / for later
 
@@ -174,4 +199,6 @@ wiki/         documentation, meant to become the GitHub wiki
 - Running arbitrary commands / bulk operations across many machines (the
   groundwork already exists in `app/tasks/jobs.py` and `app/ssh/client.py`).
 - Audit log.
-- Bulk machine import / importing an existing `known_hosts` file.
+- Automated SSH key distribution (currently a manual step — see Settings)
+  and turning a pending self-registered machine directly into a managed
+  one without re-entering its IP/name.

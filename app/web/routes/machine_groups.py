@@ -115,7 +115,7 @@ async def group_detail(
         select(Machine)
         .options(selectinload(Machine.group))
         .where(or_(Machine.group_id.is_(None), Machine.group_id != group_id))
-        .order_by(Machine.hostname)
+        .order_by(Machine.name)
     )
     available_machines = result.scalars().all()
 

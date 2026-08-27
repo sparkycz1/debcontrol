@@ -100,7 +100,7 @@ def _build_connect_kwargs(
     from app.db.models.machine import AuthMethod  # local import, see TYPE_CHECKING above
 
     kwargs: dict[str, object] = {
-        "host": machine.hostname,
+        "host": machine.ip_address,
         "port": machine.port,
         "username": machine.username,
         "known_hosts": None,
@@ -122,7 +122,7 @@ async def open_connection(
     """Open an SSH connection to a machine with strict pinned host-key verification."""
     if not machine.host_key_fingerprint:
         raise UnknownHostKeyError(
-            f"Machine {machine.hostname} has no pinned SSH host key fingerprint — "
+            f"Machine {machine.ip_address} has no pinned SSH host key fingerprint — "
             "discover and confirm it first."
         )
 
@@ -143,13 +143,13 @@ async def open_connection(
         presented = client.presented_fingerprint if client else None
         if presented and presented != machine.host_key_fingerprint:
             raise HostKeyMismatchError(
-                f"Server {machine.hostname}:{machine.port} presented a different key "
+                f"Server {machine.ip_address}:{machine.port} presented a different key "
                 f"fingerprint ({presented}) than the pinned one "
                 f"({machine.host_key_fingerprint}). Connection refused — this could be "
                 "a Man-in-the-Middle attack."
             ) from exc
         raise SSHConnectionError(
-            f"Connection to {machine.hostname}:{machine.port} failed: {exc}"
+            f"Connection to {machine.ip_address}:{machine.port} failed: {exc}"
         ) from exc
 
 

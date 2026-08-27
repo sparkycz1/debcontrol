@@ -74,12 +74,38 @@ the connection instead of silently reconnecting.
 
 ### Secrets at rest
 
-Machine passwords and private keys are encrypted in Postgres using Fernet
-(AES + HMAC, from the `cryptography` package). The key lives only in the
-`ENCRYPTION_KEY` environment variable — never in the database or the repo.
-This does **not** replace user authentication; it protects the SSH
-credentials of *managed machines* from a database-only compromise (a
-leaked backup, a misconfigured read replica, etc.).
+Machine passwords and the app's own SSH private key are encrypted in
+Postgres using Fernet (AES + HMAC, from the `cryptography` package). The
+encryption key lives only in the `ENCRYPTION_KEY` environment variable —
+never in the database or the repo. This does **not** replace user
+authentication; it protects SSH credentials from a database-only
+compromise (a leaked backup, a misconfigured read replica, etc.).
+
+### One shared SSH identity, not one key per machine
+
+Rather than asking an operator to generate and paste a private key per
+machine, debcontrol generates a single ed25519 keypair for itself on first
+use (`app/ssh/identity.py`, `app/db/models/ssh_identity.py`) and reuses it
+everywhere "SSH key" is the chosen auth method. The private half never
+touches disk in plaintext — it's decrypted in memory only for the
+duration of a connection. The public half is shown on the **Settings**
+page; appending it to a machine's `~/.ssh/authorized_keys` is a manual
+step today (see
+[Managed Machine Requirements](Managed-Machine-Requirements.md)).
+Per-machine passwords remain available as a fallback, with the UI calling
+that out as not recommended.
+
+### Self-registration is not the same as trust
+
+`POST /api/inform` lets a machine announce itself (IP, hostname, basic
+facts it can read locally) using a shared bearer token
+(`INFORM_TOKEN`) — meant for a first-boot/cloud-init script, see
+[Managed Machine Requirements](Managed-Machine-Requirements.md). This only
+ever creates a `PendingMachine` row for a human to look at; it grants no
+access and establishes no trust. Turning a pending entry into a real,
+manageable `Machine` still goes through the ordinary add-machine form and
+the mandatory host-key discovery/confirmation flow — self-registration
+just pre-fills the IP/name so there's less retyping.
 
 ### CSRF protection without sessions
 

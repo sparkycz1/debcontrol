@@ -19,7 +19,8 @@ async def test_create_machine_requires_csrf_token(client):
     response = await client.post(
         "/machines",
         data={
-            "hostname": "db1.example.com",
+            "name": "db1",
+            "ip_address": "10.0.0.10",
             "username": "admin",
             "auth_method": "password",
             "secret": "",
@@ -38,7 +39,8 @@ async def test_create_and_list_machine(client):
     create = await client.post(
         "/machines",
         data={
-            "hostname": "db1.example.com",
+            "name": "db1",
+            "ip_address": "10.0.0.10",
             "port": "22",
             "username": "admin",
             "auth_method": "password",
@@ -51,9 +53,35 @@ async def test_create_and_list_machine(client):
 
     listing = await client.get("/machines")
     assert listing.status_code == 200
-    assert "db1.example.com" in listing.text
+    assert "db1" in listing.text
+    assert "10.0.0.10" in listing.text
     # The password must never show up in HTML output.
     assert "s3cret" not in listing.text
+
+    machine_url = create.headers["location"]
+    detail = await client.get(machine_url)
+    assert detail.status_code == 200
+    assert "Not gathered yet" in detail.text
+    assert "s3cret" not in detail.text
+
+
+async def test_create_machine_rejects_invalid_ip_address(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/machines",
+        data={
+            "name": "db1",
+            "ip_address": "not-an-ip-address",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert response.status_code == 422
 
 
 async def test_new_machine_form_rejects_invalid_port(client):
@@ -63,7 +91,8 @@ async def test_new_machine_form_rejects_invalid_port(client):
     response = await client.post(
         "/machines",
         data={
-            "hostname": "db1.example.com",
+            "name": "db1",
+            "ip_address": "10.0.0.10",
             "port": "70000",  # outside the valid 1-65535 range
             "username": "admin",
             "auth_method": "password",
@@ -72,6 +101,13 @@ async def test_new_machine_form_rejects_invalid_port(client):
         },
     )
     assert response.status_code == 422
+
+
+async def test_new_machine_form_prefills_from_query_params(client):
+    response = await client.get("/machines/new?ip_address=10.0.0.20&name=fromform")
+    assert response.status_code == 200
+    assert "10.0.0.20" in response.text
+    assert "fromform" in response.text
 
 
 async def test_machine_group_lifecycle(client):
@@ -88,7 +124,8 @@ async def test_machine_group_lifecycle(client):
     create_machine = await client.post(
         "/machines",
         data={
-            "hostname": "prod1.example.com",
+            "name": "prod1",
+            "ip_address": "10.0.0.11",
             "port": "22",
             "username": "admin",
             "auth_method": "password",
@@ -110,7 +147,7 @@ async def test_machine_group_lifecycle(client):
     assert add.status_code == 303
 
     group_detail = await client.get(group_url)
-    assert "prod1.example.com" in group_detail.text
+    assert "prod1" in group_detail.text
 
     remove = await client.post(
         f"{group_url}/machines/{machine_id}/remove",
@@ -122,11 +159,14 @@ async def test_machine_group_lifecycle(client):
     assert "No machines in this group yet" in group_detail.text
 
 
-async def test_users_and_settings_are_placeholders(client):
+async def test_users_is_a_placeholder(client):
     users = await client.get("/users")
     assert users.status_code == 200
     assert "Coming soon" in users.text
 
-    settings_page = await client.get("/settings")
-    assert settings_page.status_code == 200
-    assert "Coming soon" in settings_page.text
+
+async def test_settings_shows_ssh_identity(client):
+    response = await client.get("/settings")
+    assert response.status_code == 200
+    assert "ssh-ed25519" in response.text
+    assert "SHA256:" in response.text
