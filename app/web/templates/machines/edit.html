@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Edit {{ machine.name }}</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/machines/{{ machine.id }}/edit" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" required maxlength="255" value="{{ machine.name }}">
+
+    <label for="ip_address">IP address</label>
+    <input type="text" id="ip_address" name="ip_address" required maxlength="255"
+           value="{{ machine.ip_address }}">
+    {% if machine.host_key_fingerprint %}
+      <p class="hint">
+        Changing the IP address or port resets the pinned host key
+        fingerprint and gathered facts below — you'll need to
+        re-discover and re-confirm the fingerprint before connecting again.
+      </p>
+    {% endif %}
+
+    <label for="port">SSH port</label>
+    <input type="number" id="port" name="port" min="1" max="65535" value="{{ machine.port }}">
+
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" required maxlength="255"
+           value="{{ machine.username }}">
+
+    <label for="auth_method">Authentication method</label>
+    <select id="auth_method" name="auth_method">
+      {% for method in auth_methods %}
+        <option value="{{ method.value }}" {% if machine.auth_method == method %}selected{% endif %}>
+          {{ 'SSH key (recommended)' if method.value == 'ssh_key' else 'Password (not recommended)' }}
+        </option>
+      {% endfor %}
+    </select>
+    <p class="hint">
+      See <a href="/settings">Settings</a> for the app's SSH public key.
+    </p>
+
+    <label for="secret">Password</label>
+    <textarea id="secret" name="secret" rows="2"
+      placeholder="{% if machine.secret_encrypted %}Leave empty to keep the current password unchanged.{% else %}Only used if 'Password' is selected above.{% endif %}"></textarea>
+
+    <label for="group_id">Group</label>
+    <select id="group_id" name="group_id">
+      <option value="">— none —</option>
+      {% for group in groups %}
+        <option value="{{ group.id }}" {% if machine.group_id == group.id %}selected{% endif %}>
+          {{ group.name }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <label for="description">Notes</label>
+    <textarea id="description" name="description" rows="2">{{ machine.description or '' }}</textarea>
+
+    <label>
+      <input type="checkbox" name="is_active" {% if machine.is_active %}checked{% endif %}>
+      Active (included in reachability checks and facts refresh)
+    </label>
+
+    <button type="submit" class="button">Save</button>
+    <a class="button button-secondary" href="/machines/{{ machine.id }}">Cancel</a>
+  </form>
+{% endblock %}

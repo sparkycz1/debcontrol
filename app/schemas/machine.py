@@ -16,6 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.db.models.machine import AuthMethod
 
 
+def _check_ip_address(value: str) -> str:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise ValueError(f'"{value}" is not a valid IP address.') from exc
+    return value
+
+
 class MachineCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     ip_address: str = Field(min_length=1, max_length=255)
@@ -31,23 +39,27 @@ class MachineCreate(BaseModel):
     @field_validator("ip_address")
     @classmethod
     def _validate_ip_address(cls, value: str) -> str:
-        try:
-            ipaddress.ip_address(value)
-        except ValueError as exc:
-            raise ValueError(f'"{value}" is not a valid IP address.') from exc
-        return value
+        return _check_ip_address(value)
 
 
 class MachineUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    ip_address: str | None = Field(default=None, min_length=1, max_length=255)
-    port: int | None = Field(default=None, ge=1, le=65535)
-    username: str | None = Field(default=None, min_length=1, max_length=255)
-    auth_method: AuthMethod | None = None
-    secret: str | None = None
+    name: str = Field(min_length=1, max_length=255)
+    ip_address: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=255)
+    auth_method: AuthMethod
+    secret: str | None = Field(
+        default=None,
+        description="Password — leave empty to keep the current one unchanged.",
+    )
     group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
-    is_active: bool | None = None
+    is_active: bool = True
+
+    @field_validator("ip_address")
+    @classmethod
+    def _validate_ip_address(cls, value: str) -> str:
+        return _check_ip_address(value)
 
 
 class MachineRead(BaseModel):

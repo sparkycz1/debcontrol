@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import uuid
+
+from app.db.models.machine import Machine
+
 
 async def test_healthz(client):
     response = await client.get("/healthz")
@@ -63,6 +67,68 @@ async def test_create_and_list_machine(client):
     assert detail.status_code == 200
     assert "Not gathered yet" in detail.text
     assert "s3cret" not in detail.text
+
+
+async def test_edit_machine_updates_fields_and_resets_pinning_on_ip_change(
+    client, db_session_factory
+):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    create = await client.post(
+        "/machines",
+        data={
+            "name": "edit-me",
+            "ip_address": "10.0.0.40",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "original-secret",
+            "csrf_token": csrf_token,
+        },
+    )
+    machine_id = uuid.UUID(create.headers["location"].rsplit("/", 1)[-1])
+
+    # Simulate a previously confirmed host key / gathered facts directly in
+    # the DB — there's no live machine in tests to actually discover one from.
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        machine.host_key_fingerprint = "SHA256:abcdefg"
+        machine.os_version = "Debian GNU/Linux 12 (bookworm)"
+        original_secret_encrypted = bytes(machine.secret_encrypted)
+        await session.commit()
+
+    edit_form = await client.get(f"/machines/{machine_id}/edit")
+    assert edit_form.status_code == 200
+    assert "edit-me" in edit_form.text
+    assert "10.0.0.40" in edit_form.text
+
+    # Change the IP and leave the password blank; also uncheck "active"
+    # (HTML omits unchecked checkboxes from the submitted form entirely).
+    update = await client.post(
+        f"/machines/{machine_id}/edit",
+        data={
+            "name": "edited-name",
+            "ip_address": "10.0.0.41",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert update.status_code == 303
+
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine.name == "edited-name"
+        assert machine.ip_address == "10.0.0.41"
+        assert machine.is_active is False
+        # Changing the IP must reset trust/facts established for the old target.
+        assert machine.host_key_fingerprint is None
+        assert machine.os_version is None
+        # Blank password on edit means "keep the existing one".
+        assert bytes(machine.secret_encrypted) == original_secret_encrypted
 
 
 async def test_create_machine_rejects_invalid_ip_address(client):

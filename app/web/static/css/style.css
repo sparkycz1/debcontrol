@@ -63,6 +63,12 @@ body {
   margin-bottom: 1.5rem;
 }
 
+.page-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .button {
   display: inline-block;
   padding: 0.5rem 1rem;

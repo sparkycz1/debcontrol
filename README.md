@@ -171,8 +171,10 @@ wiki/         documentation, meant to become the GitHub wiki
 
 ## Navigation / features
 
-- **Machines** — add, view, and remove managed Debian machines; pin SSH
-  host key fingerprints; test connectivity. Once a fingerprint is
+- **Machines** — add, view, edit, and remove managed Debian machines; pin
+  SSH host key fingerprints; test connectivity. Editing the IP address or
+  port resets the pinned fingerprint and gathered facts, since those
+  belonged to whatever was previously reachable there. Once a fingerprint is
   confirmed, the app automatically discovers and periodically refreshes
   OS version, kernel version, hostname, CPU cores, RAM, and disks (see
   [app/ssh/facts.py](app/ssh/facts.py); interval configurable via

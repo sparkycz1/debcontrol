@@ -5,11 +5,14 @@
 {% block content %}
   <div class="page-header">
     <h1>{{ machine.name }}</h1>
-    <form method="post" action="/machines/{{ machine.id }}/delete"
-          data-confirm="Delete this machine?">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-danger">Delete</button>
-    </form>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machines/{{ machine.id }}/edit">Edit</a>
+      <form method="post" action="/machines/{{ machine.id }}/delete"
+            class="inline-form" data-confirm="Delete this machine?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-danger">Delete</button>
+      </form>
+    </div>
   </div>
 
   <dl class="detail-list">

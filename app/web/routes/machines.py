@@ -18,7 +18,7 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.pending_machine import PendingMachine
 from app.db.session import get_db
-from app.schemas.machine import MachineCreate
+from app.schemas.machine import MachineCreate, MachineUpdate
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
 from app.web.templating import templates
@@ -173,6 +173,116 @@ async def machine_detail(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.get("/{machine_id}/edit")
+async def edit_machine_form(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/edit.html",
+        {
+            "machine": machine,
+            "auth_methods": list(AuthMethod),
+            "groups": await _get_groups(db),
+            "errors": [],
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/{machine_id}/edit", dependencies=[Depends(verify_csrf)])
+async def update_machine(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    name: str = Form(...),
+    ip_address: str = Form(...),
+    port: int = Form(22),
+    username: str = Form(...),
+    auth_method: AuthMethod = Form(...),
+    secret: str = Form(""),
+    group_id: str = Form(""),
+    description: str = Form(""),
+    is_active: str = Form(""),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+
+    try:
+        payload = MachineUpdate(
+            name=name,
+            ip_address=ip_address,
+            port=port,
+            username=username,
+            auth_method=auth_method,
+            secret=secret or None,
+            group_id=uuid.UUID(group_id) if group_id else None,
+            description=description or None,
+            # HTML only sends a checkbox field when it's checked.
+            is_active=bool(is_active),
+        )
+    except ValueError as exc:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "machines/edit.html",
+            {
+                "machine": machine,
+                "auth_methods": list(AuthMethod),
+                "groups": await _get_groups(db),
+                "errors": [str(exc)],
+                "csrf_token": csrf_token,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    # Changing where/how we connect invalidates the trust and facts we
+    # previously established for whatever was at the old address — force
+    # host-key re-discovery/re-confirmation rather than silently keeping
+    # trust that no longer applies to the same physical/logical machine.
+    connection_target_changed = (
+        payload.ip_address != machine.ip_address or payload.port != machine.port
+    )
+
+    machine.name = payload.name
+    machine.ip_address = payload.ip_address
+    machine.port = payload.port
+    machine.username = payload.username
+    machine.auth_method = payload.auth_method
+    machine.group_id = payload.group_id
+    machine.description = payload.description
+    machine.is_active = payload.is_active
+
+    if payload.auth_method == AuthMethod.PASSWORD:
+        if payload.secret:
+            machine.secret_encrypted = encrypt_secret(payload.secret)
+        # else: keep whatever password is already stored, unchanged.
+    else:
+        # SSH_KEY doesn't need a per-machine secret — don't leave a stale
+        # password sitting around encrypted but unused.
+        machine.secret_encrypted = None
+
+    if connection_target_changed:
+        machine.host_key_fingerprint = None
+        machine.discovered_hostname = None
+        machine.os_version = None
+        machine.kernel_version = None
+        machine.cpu_cores = None
+        machine.ram_bytes = None
+        machine.disks = None
+        machine.facts_updated_at = None
+
+    await db.commit()
+    return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{machine_id}/discover-host-key", dependencies=[Depends(verify_csrf)])
