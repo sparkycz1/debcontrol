@@ -8,31 +8,37 @@
     <a class="button" href="/machine-groups/new">Add group</a>
   </div>
 
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Description</th>
+        <th>Machines</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><a href="/machine-groups/all">All machines</a> <span class="badge badge-ok">automatic</span></td>
+        <td>Every machine, always — built in, nothing to manage.</td>
+        <td>{{ all_machines_count }}</td>
+        <td><a href="/machine-groups/all">Details</a></td>
+      </tr>
+      {% for group in groups %}
+        <tr>
+          <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
+          <td>{{ group.description or '—' }}</td>
+          <td>{{ group.machines | length }}</td>
+          <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
   {% if not groups %}
     <div class="empty-state">
-      <p>No machine groups yet.</p>
-      <a class="button" href="/machine-groups/new">Add your first group</a>
+      <p>No custom groups yet — "All machines" above is built in and always there.</p>
+      <a class="button" href="/machine-groups/new">Add your first custom group</a>
     </div>
-  {% else %}
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Description</th>
-          <th>Machines</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for group in groups %}
-          <tr>
-            <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
-            <td>{{ group.description or '—' }}</td>
-            <td>{{ group.machines | length }}</td>
-            <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
   {% endif %}
 {% endblock %}

@@ -16,7 +16,7 @@ published as the GitHub wiki once this repo is pushed there (see
 | Language | Python 3.14.7 | |
 | Web framework | FastAPI | async, OpenAPI schema for free |
 | Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
-| Database | PostgreSQL 18 | via `asyncpg` + SQLAlchemy 2.0 (async) |
+| Database | PostgreSQL 18.6 | via `asyncpg` + SQLAlchemy 2.0 (async); image pinned to an exact patch version |
 | Migrations | Alembic | async engine |
 | Cache / task queue | Redis 8.8 | queue via [`arq`](https://github.com/python-arq/arq) |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
@@ -39,6 +39,12 @@ published as the GitHub wiki once this repo is pushed there (see
   are `Celery` or `ReArq` (a fork that continues `arq`).
 - Versions in `pyproject.toml` are lower bounds (`>=`); exact,
   reproducible versions for installation come from `uv.lock`.
+- **Docker images for stateful services are pinned to an exact patch
+  version** — `postgres:18.6`, `redis:8.8.2` — rather than the floating
+  `postgres:18` / `redis:8.8`. A floating tag gets silently rebuilt onto
+  newer minor/patch releases, and an unplanned Postgres/Redis upgrade on
+  `docker compose up` is exactly the kind of surprise this project avoids
+  elsewhere too. Bump the pin deliberately (and test against it) instead.
 
 ## Security decisions (v1)
 
@@ -122,7 +128,7 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 See [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md) for details
 and troubleshooting.
 
-This brings up: the image build, Postgres 18, Redis 8.8, a one-off
+This brings up: the image build, Postgres 18.6, Redis 8.8, a one-off
 `migrate` service (Alembic `upgrade head`), and — once that finishes
 successfully — `web`, `worker` (arq), and optionally `caddy`.
 

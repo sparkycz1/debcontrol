@@ -225,6 +225,62 @@ async def test_machine_group_lifecycle(client):
     assert "No machines in this group yet" in group_detail.text
 
 
+async def test_all_machines_group_always_shows_every_machine(client):
+    listing = await client.get("/machine-groups")
+    assert listing.status_code == 200
+    assert "All machines" in listing.text
+
+    all_page = await client.get("/machine-groups/all")
+    assert all_page.status_code == 200
+    assert "No managed machines yet" in all_page.text
+
+    await client.get("/machine-groups/new")
+    csrf_token = client.cookies.get("csrftoken")
+    create_group = await client.post(
+        "/machine-groups",
+        data={"name": "custom", "description": "", "csrf_token": csrf_token},
+    )
+    group_url = create_group.headers["location"]
+
+    create_machine = await client.post(
+        "/machines",
+        data={
+            "name": "any1",
+            "ip_address": "10.0.0.50",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "",
+            "csrf_token": csrf_token,
+        },
+    )
+    machine_id = create_machine.headers["location"].rsplit("/", 1)[-1]
+
+    # Assign the machine to a real group — it must still show up under "All".
+    await client.post(
+        f"{group_url}/machines",
+        data={"machine_id": machine_id, "csrf_token": csrf_token},
+    )
+
+    all_page = await client.get("/machine-groups/all")
+    assert "any1" in all_page.text
+
+    listing = await client.get("/machine-groups")
+    assert "custom" in listing.text
+    assert "All machines" in listing.text
+
+
+async def test_group_name_all_is_reserved(client):
+    await client.get("/machine-groups/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/machine-groups",
+        data={"name": "All", "description": "", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 422
+
+
 async def test_users_is_a_placeholder(client):
     users = await client.get("/users")
     assert users.status_code == 200

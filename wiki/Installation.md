@@ -1,6 +1,6 @@
 # Installation
 
-debcontrol ships as a Docker Compose stack: PostgreSQL 18, Redis 8.8, the
+debcontrol ships as a Docker Compose stack: PostgreSQL 18.6, Redis 8.8.2, the
 web app, a background worker, and an optional Caddy reverse proxy.
 
 ## Prerequisites
@@ -102,3 +102,10 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 
 The `migrate` service re-runs on every `up`, applying any new Alembic
 migrations before `web`/`worker` start.
+
+Postgres and Redis are pinned to exact patch versions in
+`docker-compose.yml` (`postgres:18.6`, `redis:8.8.2`) precisely so that
+`git pull && docker compose up -d --build` never silently upgrades either
+of them. Bumping those versions is a deliberate, separate step: edit the
+tag in `docker-compose.yml`, test against it, and commit that change on
+its own.

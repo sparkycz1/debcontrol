@@ -7,9 +7,9 @@
 | Language | Python 3.14.7 | |
 | Web framework | FastAPI | async, OpenAPI schema for free |
 | Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
-| Database | PostgreSQL 18 | via `asyncpg` + SQLAlchemy 2.0 (async) |
+| Database | PostgreSQL 18.6 | via `asyncpg` + SQLAlchemy 2.0 (async); image pinned to an exact patch |
 | Migrations | Alembic | async engine |
-| Cache / task queue | Redis 8.8 | queue via [`arq`](https://github.com/python-arq/arq) |
+| Cache / task queue | Redis 8.8.2 | queue via [`arq`](https://github.com/python-arq/arq); image pinned to an exact patch |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |

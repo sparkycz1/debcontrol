@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}All machines — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>All machines</h1>
+  </div>
+
+  <p class="hint">
+    Built-in group — every machine is always here automatically, regardless
+    of which other group (if any) it's also assigned to. There's nothing to
+    add, remove, or delete.
+  </p>
+
+  {% if not machines %}
+    <div class="empty-state">
+      <p>No managed machines yet.</p>
+      <a class="button" href="/machines/new">Add your first machine</a>
+    </div>
+  {% else %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>IP address</th>
+          <th>Group</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for machine in machines %}
+          <tr>
+            <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
+            <td>{{ machine.ip_address }}</td>
+            <td>
+              {% if machine.group %}
+                <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
+              {% else %}
+                <span class="hint">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if machine.is_reachable is none %}
+                <span class="badge badge-warn">unknown</span>
+              {% elif machine.is_reachable %}
+                <span class="badge badge-ok">online</span>
+              {% else %}
+                <span class="badge badge-error">offline</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

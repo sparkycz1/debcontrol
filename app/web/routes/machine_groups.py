@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -39,7 +39,12 @@ async def list_groups(request: Request, db: AsyncSession = Depends(get_db)) -> R
         select(MachineGroup).options(selectinload(MachineGroup.machines)).order_by(MachineGroup.name)
     )
     groups = result.scalars().all()
-    return templates.TemplateResponse(request, "machine_groups/list.html", {"groups": groups})
+    all_machines_count = await db.scalar(select(func.count()).select_from(Machine))
+    return templates.TemplateResponse(
+        request,
+        "machine_groups/list.html",
+        {"groups": groups, "all_machines_count": all_machines_count or 0},
+    )
 
 
 @router.get("/new")
@@ -102,6 +107,27 @@ async def create_group(
     await db.refresh(group)
     return RedirectResponse(
         url=f"/machine-groups/{group.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/all")
+async def all_machines_group(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    """The "All machines" virtual group — every machine, always, automatically.
+
+    Unlike real groups, this isn't backed by any membership data (a machine
+    can only have one real `group_id`, so it couldn't also "belong" to a
+    stored All-machines group without a bigger many-to-many rework). Instead
+    this just queries every machine unconditionally, which trivially and
+    always satisfies "always all machines" without anything to keep in sync.
+    Registered before `/{group_id}` — `uuid.UUID` there won't match the
+    literal "all" anyway, but route order is what actually decides it.
+    """
+    result = await db.execute(
+        select(Machine).options(selectinload(Machine.group)).order_by(Machine.name)
+    )
+    machines = result.scalars().all()
+    return templates.TemplateResponse(
+        request, "machine_groups/all.html", {"machines": machines}
     )
 
 
