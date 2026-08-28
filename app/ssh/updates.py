@@ -1,11 +1,16 @@
-"""Run the apt update/upgrade/autoremove/autoclean sequence on a machine.
+"""Run (or just check for) apt updates on a machine.
 
-Always the same shape: `apt-get update`, then the chosen upgrade strategy,
-then `autoremove` and `autoclean` — the cleanup steps run unconditionally,
-even if the upgrade step failed, since they're independently useful and
-shouldn't be skipped just because the upgrade itself hit a problem.
+`run_system_update`: always the same shape — `apt-get update`, then the
+chosen upgrade strategy, then `autoremove` and `autoclean` — the cleanup
+steps run unconditionally, even if the upgrade step failed, since they're
+independently useful and shouldn't be skipped just because the upgrade
+itself hit a problem.
 
-Requires root — either the machine's configured username *is* root, or
+`check_updates`: a read-only dry run — refreshes the package cache and
+reports how many packages are upgradable (and how many of those are from
+a `*-security` suite) without installing anything.
+
+Both require root — either the machine's configured username *is* root, or
 (recommended) it has passwordless sudo for `apt-get` specifically. See the
 wiki page "Managed Machine Requirements" for a sudoers example. `sudo -n`
 (non-interactive) is used throughout: if sudo would need a password, the
@@ -83,3 +88,73 @@ async def run_system_update(
     output = stdout if isinstance(stdout, str) else stdout.decode()
     exit_status = result.exit_status if result.exit_status is not None else -1
     return UpdateResult(exit_status=exit_status, output=output)
+
+
+_CHECK_MARKER = "===UPGRADABLE==="
+
+# Refreshes the package lists (needs root, same as an actual upgrade) and
+# then lists what's upgradable (doesn't need root) — only if the refresh
+# succeeded, so a stale/absent cache never gets reported as "0 updates".
+_CHECK_UPDATES_COMMAND = (
+    "{ "
+    "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null; "
+    'status=$?; '
+    f"echo {_CHECK_MARKER}; "
+    'if [ "$status" -eq 0 ]; then apt list --upgradable 2>/dev/null | tail -n +2; fi; '
+    'exit "$status"; '
+    "} 2>&1"
+)
+
+
+def parse_upgradable_output(raw: str) -> tuple[int, int]:
+    """Count upgradable / security-upgradable packages from the part of
+    `_CHECK_UPDATES_COMMAND`'s output after the marker — each remaining
+    line looks like `pkgname/suite version arch [upgradable from: ...]`.
+
+    Pure function, no I/O — kept separate from `check_updates` so the
+    parsing logic can be unit-tested against canned output.
+    """
+    _, _, tail = raw.partition(_CHECK_MARKER)
+    lines = [line for line in tail.strip().splitlines() if line.strip()]
+
+    security_count = 0
+    for line in lines:
+        first_token = line.split(" ", 1)[0]  # "pkgname/suite"
+        suite = first_token.partition("/")[2]
+        if "security" in suite:
+            security_count += 1
+
+    return len(lines), security_count
+
+
+@dataclass
+class UpdateCheckResult:
+    exit_status: int
+    upgradable_count: int
+    security_upgradable_count: int
+    output: str
+
+
+async def check_updates(
+    machine: Machine,
+    secret: str | None,
+    connect_timeout_seconds: int,
+    run_timeout_seconds: int,
+) -> UpdateCheckResult:
+    """Refresh the package cache and report how many packages are
+    upgradable, without installing anything. Same root/sudo requirement as
+    `run_system_update` — see the module docstring.
+    """
+    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
+        result = await conn.run(_CHECK_UPDATES_COMMAND, check=False, timeout=run_timeout_seconds)
+
+    stdout = result.stdout or ""
+    output = stdout if isinstance(stdout, str) else stdout.decode()
+    exit_status = result.exit_status if result.exit_status is not None else -1
+    upgradable_count, security_upgradable_count = parse_upgradable_output(output)
+    return UpdateCheckResult(
+        exit_status=exit_status,
+        upgradable_count=upgradable_count,
+        security_upgradable_count=security_upgradable_count,
+        output=output,
+    )

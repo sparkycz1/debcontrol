@@ -22,6 +22,7 @@ from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
+from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
 
@@ -199,6 +200,9 @@ async def machine_detail(
             "machine": machine,
             "csrf_token": csrf_token,
             "update_runs": await _get_recent_update_runs(machine_id, db),
+            # One-time notice after a power action redirect — not persisted
+            # anywhere, just echoed back from the query string.
+            "power_sent": request.query_params.get("power_sent"),
         },
     )
     if new_cookie:
@@ -427,6 +431,35 @@ async def refresh_facts_endpoint(
     )
 
 
+@router.post("/{machine_id}/check-updates", dependencies=[Depends(verify_csrf)])
+async def check_updates_endpoint(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+    settings = get_settings()
+
+    job = await request.app.state.arq_redis.enqueue_job("check_machine_updates", str(machine.id))
+    error: str | None = None
+    try:
+        result = await job.result(timeout=settings.update_timeout_seconds + 5)
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except TimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    # Counts were updated in the DB by the job (even on failure, they're
+    # reset to "unknown" rather than left stale) — reload either way.
+    machine = await _get_machine_or_404(machine_id, db)
+    csrf_token, _ = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/update_availability.html",
+        {"machine": machine, "error": error, "csrf_token": csrf_token},
+    )
+
+
 @router.post("/{machine_id}/updates", dependencies=[Depends(verify_csrf)])
 async def trigger_machine_update(
     request: Request,
@@ -487,6 +520,72 @@ async def machine_update_run_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
     return templates.TemplateResponse(
         request, "partials/update_run_status.html", {"run": run}
+    )
+
+
+@router.get("/{machine_id}/power/{action}")
+async def power_confirm_form(
+    request: Request, machine_id: uuid.UUID, action: PowerAction, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """First confirmation step: a dedicated page stating exactly what's
+    about to happen. The second step — typing the machine's name — is
+    enforced server-side in `power_action`, not just disabled-until-typed
+    in the browser."""
+    machine = await _get_machine_or_404(machine_id, db)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/power_confirm.html",
+        {"machine": machine, "action": action, "error": None, "csrf_token": csrf_token},
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/{machine_id}/power", dependencies=[Depends(verify_csrf)])
+async def power_action(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    action: PowerAction = Form(...),
+    confirm_name: str = Form(...),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+
+    if confirm_name.strip() != machine.name:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "machines/power_confirm.html",
+            {
+                "machine": machine,
+                "action": action,
+                "error": f'That doesn\'t match — type "{machine.name}" exactly to confirm.',
+                "csrf_token": csrf_token,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before sending power commands.",
+        )
+
+    # Fire-and-forget, same reasoning as system updates: the connection can
+    # legitimately drop once the machine actually reboots/shuts down, so
+    # there's nothing meaningful to wait for here.
+    await request.app.state.arq_redis.enqueue_job(
+        "send_machine_power_command", str(machine.id), action.value
+    )
+
+    return RedirectResponse(
+        url=f"/machines/{machine.id}?power_sent={action.value}",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 

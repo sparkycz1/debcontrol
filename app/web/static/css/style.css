@@ -91,6 +91,9 @@ body {
 
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* For <a> "buttons" that can't use the disabled attribute. */
+.button-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
 .inline-form { display: inline; }
 
 .search-form {
@@ -122,6 +125,8 @@ body {
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
 }
 
 .data-table th, .data-table td {

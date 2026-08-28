@@ -64,36 +64,49 @@ deliberately only uses tools present on a stock Debian install — see
 | Hostname | `hostname` | `hostname` |
 | OS version | `/etc/os-release` | `base-files` |
 | Kernel version | `uname -r` | `coreutils` |
+| Latest installed kernel (for reboot-required) | `dpkg --list 'linux-image-*'` | `dpkg` |
 | CPU cores | `nproc` | `coreutils` |
 | RAM | `/proc/meminfo` via `awk` | kernel + `mawk` (Debian's default `awk`) |
 | Disks | `lsblk` | `util-linux` |
 
-None of these need root. If a command is missing (e.g. a container-like
-minimal rootfs without `util-linux`), that one fact is simply left empty
-rather than failing the whole refresh.
+None of these need root — including "reboot required," which is worked
+out by comparing the running kernel (`uname -r`) against the newest
+`linux-image-*` package `dpkg` knows is installed; if they differ, a
+reboot would pick up the newer one. If a command is missing (e.g. a
+container-like minimal rootfs without `util-linux`), that one fact is
+simply left empty/unknown rather than failing the whole refresh.
 
-## System updates — requires root
+## System updates and power actions — require root
 
-Unlike fact gathering, running updates (**Machines → a machine → System
-updates**) always needs root: it runs `apt-get update`, then `dist-upgrade`
-or `full-upgrade` (your choice), then `autoremove` and `autoclean`
-unconditionally — see `app/ssh/updates.py` for the exact commands. Two
-ways to satisfy that:
+Three things always need root: running updates (**Machines → a machine →
+System updates**: `apt-get update`, then `dist-upgrade` or `full-upgrade`,
+then `autoremove`/`autoclean`), checking what's available without
+installing anything (the same panel's "Check for updates now" — still
+needs to `apt-get update` to get an accurate count), and reboot/shutdown
+(**Machines → a machine → Power**, `shutdown -r now` / `shutdown -h now`).
+See `app/ssh/updates.py` and `app/ssh/power.py` for the exact commands.
+Two ways to satisfy that:
 
 - Connect as `root` directly (simplest, least isolated — many hardened
   Debian images disable direct root SSH login by policy, so this may not
   even be available).
 - **(Recommended)** Connect as a non-root user with passwordless sudo
-  scoped to just `apt-get`:
+  scoped to just what's needed:
   ```
   # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
-  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown
   ```
-  (replace `debcontrol` with whatever username you configured). debcontrol
-  always calls sudo as `sudo -n ...` (non-interactive) — if passwordless
-  sudo isn't set up correctly, the update fails immediately with a clear
-  error instead of hanging forever waiting for a password that can never
-  arrive over a non-interactive SSH command.
+  (replace `debcontrol` with whatever username you configured; on a
+  pre-usrmerge system the paths are `/sbin/shutdown` instead — check with
+  `which shutdown`). debcontrol always calls sudo as `sudo -n ...`
+  (non-interactive) — if passwordless sudo isn't set up correctly, the
+  action fails immediately with a clear error instead of hanging forever
+  waiting for a password that can never arrive over a non-interactive SSH
+  command.
+
+Reboot and shutdown are double-confirmed in the UI (a dedicated warning
+page, then typing the machine's — or group's — name exactly) precisely
+because there's no undo once sent.
 
 Config-file conflicts during an upgrade are resolved automatically in
 favor of keeping your existing config (`--force-confdef --force-confold`)
@@ -155,6 +168,6 @@ shell history.
 - [ ] A user account for debcontrol to connect as
 - [ ] debcontrol's public key added to that user's `authorized_keys`
       (or password auth explicitly enabled, if you're using that instead)
-- [ ] *(for System updates)* passwordless sudo for `apt-get` configured
-      for that user (or it's `root`)
+- [ ] *(for System updates and Power)* passwordless sudo for `apt-get`
+      and `shutdown` configured for that user (or it's `root`)
 - [ ] *(optional)* `curl` installed, if using self-registration

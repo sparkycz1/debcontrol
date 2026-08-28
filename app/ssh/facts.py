@@ -1,8 +1,9 @@
 """Gather basic facts about a managed machine over SSH.
 
 Deliberately uses only tools present on a stock Debian install (coreutils,
-util-linux, base-files) — no agent, no extra packages required on the
-target. See the wiki page "Managed Machine Requirements".
+util-linux, dpkg, base-files) — no agent, no extra packages required on
+the target, and nothing here needs root. See the wiki page "Managed
+Machine Requirements".
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any, TypedDict
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
 
-_SECTION_MARKERS = ("HOSTNAME", "OS", "KERNEL", "CPU", "RAM_KB", "DISKS")
+_SECTION_MARKERS = ("HOSTNAME", "OS", "KERNEL", "KERNEL_LATEST", "CPU", "RAM_KB", "DISKS")
 
 # One round trip: each section is delimited by a "===NAME===" marker so the
 # output can be split reliably even if a command prints nothing or errors.
@@ -22,6 +23,9 @@ FACTS_COMMAND = (
     "echo ===OS===; "
     "(grep -m1 '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"'); "
     "echo ===KERNEL===; uname -r 2>/dev/null; "
+    "echo ===KERNEL_LATEST===; "
+    "dpkg --list 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' "
+    "| sed -E 's/^linux-image-//' | grep -E '^[0-9]' | sort -V | tail -1; "
     "echo ===CPU===; nproc 2>/dev/null; "
     "echo ===RAM_KB===; awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null; "
     "echo ===DISKS===; "
@@ -36,6 +40,8 @@ class MachineFacts(TypedDict):
     cpu_cores: int | None
     ram_bytes: int | None
     disks: list[dict[str, Any]]
+    # None means "couldn't tell" (e.g. dpkg unavailable), not "no reboot needed".
+    reboot_required: bool | None
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -69,13 +75,24 @@ def parse_facts_output(raw: str) -> MachineFacts:
         if len(fields) == 2 and fields[1].isdigit():
             disks.append({"name": fields[0], "size_bytes": int(fields[1])})
 
+    kernel_version = sections.get("KERNEL") or None
+    kernel_latest = sections.get("KERNEL_LATEST") or None
+    # A newer kernel *package* than the one actually running means a reboot
+    # would pick it up. If we couldn't determine the latest installed
+    # kernel at all (e.g. no dpkg, or no linux-image-* packages — some
+    # minimal/container images), we simply don't know either way.
+    reboot_required: bool | None = None
+    if kernel_version and kernel_latest:
+        reboot_required = kernel_latest != kernel_version
+
     return MachineFacts(
         hostname=sections.get("HOSTNAME") or None,
         os_version=sections.get("OS") or None,
-        kernel_version=sections.get("KERNEL") or None,
+        kernel_version=kernel_version,
         cpu_cores=cpu_cores,
         ram_bytes=ram_bytes,
         disks=disks,
+        reboot_required=reboot_required,
     )
 
 

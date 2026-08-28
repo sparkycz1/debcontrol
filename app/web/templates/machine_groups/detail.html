@@ -16,6 +16,12 @@
     <p>{{ group.description }}</p>
   {% endif %}
 
+  {% if power_skipped %}
+    <div class="alert alert-warn">
+      <p>{{ power_skipped }} machine(s) were skipped — no confirmed host key fingerprint yet.</p>
+    </div>
+  {% endif %}
+
   <section class="panel">
     <h2>Machines in this group</h2>
     {% include "partials/machine_search_form.html" %}
@@ -31,6 +37,7 @@
           <tr>
             <th>Name</th>
             <th>User</th>
+            <th>Updates</th>
             <th></th>
           </tr>
         </thead>
@@ -39,6 +46,7 @@
             <tr>
               <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
               <td>{{ machine.username }}</td>
+              <td>{% include "partials/machine_update_status_cell.html" %}</td>
               <td>
                 <form method="post"
                       action="/machine-groups/{{ group.id }}/machines/{{ machine.id }}/remove">
@@ -84,5 +92,29 @@
       {% include "partials/upgrade_strategy_fields.html" %}
       <button type="submit" class="button">Run update on this group</button>
     </form>
+
+    <h3>Check for updates</h3>
+    <p class="hint">
+      Dry run — refreshes each machine's package list and records how many
+      updates are available, without installing anything. Results appear
+      on each machine's page (and the table above) as each check finishes.
+    </p>
+    <form method="post" action="/machine-groups/{{ group.id }}/check-updates" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Check for updates on this group</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Power</h2>
+    <p class="hint">
+      Sends the command to every machine in this group with a confirmed
+      host key fingerprint — others are skipped. Requires typing the group
+      name to confirm.
+    </p>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machine-groups/{{ group.id }}/power/reboot">Reboot group</a>
+      <a class="button button-danger" href="/machine-groups/{{ group.id }}/power/shutdown">Shut down group</a>
+    </div>
   </section>
 {% endblock %}

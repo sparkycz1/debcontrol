@@ -432,3 +432,130 @@ async def test_trigger_group_update_batches_and_skips_unpinned(client, db_sessio
     assert f"/machines/{pinned_id}" in batch_page.text
     assert f"/machines/{unpinned_id}" not in batch_page.text
     assert "1 machine(s) were skipped" in batch_page.text
+
+
+async def test_check_updates_requires_pinned_host_key(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token)
+
+    response = await client.get(f"/machines/{machine_id}")
+    assert "Check for updates now" in response.text
+    # The button itself is disabled (rendered with the `disabled` attribute)
+    # rather than the endpoint refusing outright — confirm that's the case.
+    assert 'disabled' in response.text
+
+
+async def test_check_updates_endpoint_updates_machine_record(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token)
+    await _pin_host_key(db_session_factory, machine_id)
+
+    response = await client.post(
+        f"/machines/{machine_id}/check-updates", data={"csrf_token": csrf_token}
+    )
+    assert response.status_code == 200
+    assert "check_machine_updates" in [call[0] for call in app.state.arq_redis.enqueued]
+
+
+async def test_power_action_requires_matching_confirmation(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="power-me")
+    await _pin_host_key(db_session_factory, machine_id)
+
+    confirm_page = await client.get(f"/machines/{machine_id}/power/reboot")
+    assert confirm_page.status_code == 200
+    assert "power-me" in confirm_page.text
+
+    wrong = await client.post(
+        f"/machines/{machine_id}/power",
+        data={"action": "reboot", "confirm_name": "not-the-name", "csrf_token": csrf_token},
+    )
+    assert wrong.status_code == 422
+    assert "exactly to confirm" in wrong.text
+    assert "send_machine_power_command" not in [
+        call[0] for call in app.state.arq_redis.enqueued
+    ]
+
+    right = await client.post(
+        f"/machines/{machine_id}/power",
+        data={"action": "reboot", "confirm_name": "power-me", "csrf_token": csrf_token},
+    )
+    assert right.status_code == 303
+    assert right.headers["location"] == f"/machines/{machine_id}?power_sent=reboot"
+    assert "send_machine_power_command" in [call[0] for call in app.state.arq_redis.enqueued]
+
+
+async def test_power_action_requires_pinned_host_key(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="unpinned-power")
+
+    response = await client.post(
+        f"/machines/{machine_id}/power",
+        data={"action": "reboot", "confirm_name": "unpinned-power", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 400
+
+
+async def test_group_check_updates_and_power_endpoints(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    create_group = await client.post(
+        "/machine-groups", data={"name": "powergroup", "description": "", "csrf_token": csrf_token}
+    )
+    group_url = create_group.headers["location"]
+
+    machine_id = await _create_machine(client, csrf_token, name="grouped", ip_address="10.6.6.1")
+    await _pin_host_key(db_session_factory, machine_id)
+    await client.post(
+        f"{group_url}/machines", data={"machine_id": str(machine_id), "csrf_token": csrf_token}
+    )
+
+    check = await client.post(f"{group_url}/check-updates", data={"csrf_token": csrf_token})
+    assert check.status_code == 303
+
+    confirm_page = await client.get(f"{group_url}/power/shutdown")
+    assert confirm_page.status_code == 200
+    assert "powergroup" in confirm_page.text
+
+    power = await client.post(
+        f"{group_url}/power",
+        data={"action": "shutdown", "confirm_name": "powergroup", "csrf_token": csrf_token},
+    )
+    assert power.status_code == 303
+    assert power.headers["location"] == group_url
+
+    enqueued_functions = [call[0] for call in app.state.arq_redis.enqueued]
+    assert "check_machine_updates" in enqueued_functions
+    assert "send_machine_power_command" in enqueued_functions
+
+
+async def test_all_machines_check_updates_and_power_endpoints(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="anymachine", ip_address="10.6.6.2")
+    await _pin_host_key(db_session_factory, machine_id)
+
+    check = await client.post("/machine-groups/all/check-updates", data={"csrf_token": csrf_token})
+    assert check.status_code == 303
+
+    confirm_page = await client.get("/machine-groups/all/power/reboot")
+    assert confirm_page.status_code == 200
+    assert "ALL MACHINES" in confirm_page.text
+
+    wrong = await client.post(
+        "/machine-groups/all/power",
+        data={"action": "reboot", "confirm_name": "nope", "csrf_token": csrf_token},
+    )
+    assert wrong.status_code == 422
+
+    right = await client.post(
+        "/machine-groups/all/power",
+        data={"action": "reboot", "confirm_name": "ALL MACHINES", "csrf_token": csrf_token},
+    )
+    assert right.status_code == 303
+    assert right.headers["location"] == "/machine-groups/all"

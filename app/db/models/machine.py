@@ -49,11 +49,15 @@ class Machine(Base):
       stored here.
 
     Facts (`os_version`, `kernel_version`, `cpu_cores`, `ram_bytes`, `disks`,
-    `discovered_hostname`) are read from the machine itself over SSH — see
-    `app.ssh.facts` — once a host key fingerprint is pinned, and refreshed
-    periodically by the background worker (`FACTS_REFRESH_INTERVAL_SECONDS`).
+    `discovered_hostname`, `reboot_required`) are read from the machine
+    itself over SSH — see `app.ssh.facts` — once a host key fingerprint is
+    pinned, and refreshed periodically by the background worker
+    (`FACTS_REFRESH_INTERVAL_SECONDS`). None of that needs root.
     `is_reachable`/`last_ping_at` come from a much cheaper, unauthenticated
-    TCP-reachability check run every minute.
+    TCP-reachability check run every minute. `upgradable_count` /
+    `security_upgradable_count` / `updates_checked_at` come from a
+    separate, root-requiring check (see `app.ssh.updates.check_updates`) on
+    the same refresh schedule.
     """
 
     __tablename__ = "machines"
@@ -88,11 +92,18 @@ class Machine(Base):
     cpu_cores: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ram_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # None = never determined either way (e.g. no dpkg/linux-image-* found).
+    reboot_required: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # --- apt update availability (requires root/sudo — see app.ssh.updates) ---
+    upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    security_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updates_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

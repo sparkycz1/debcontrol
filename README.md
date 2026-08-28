@@ -193,14 +193,23 @@ wiki/         documentation, meant to become the GitHub wiki
   machine list. Each machine has a **System updates** panel: always
   `apt-get update`, then `dist-upgrade` or `full-upgrade` (your choice),
   then `autoremove`/`autoclean` unconditionally — runs in the background
-  (can take a while) with a live-updating status page; requires root or
-  passwordless sudo for `apt-get` on the machine (see the wiki: Managed
-  Machine Requirements). See [app/ssh/updates.py](app/ssh/updates.py).
+  (can take a while) with a live-updating status page; a "Check for
+  updates now" dry run shows how many packages (and how many security
+  ones) are available without installing anything; a reboot-required
+  badge appears automatically when a newer kernel is installed but not
+  yet running. Both the update and the check require root or passwordless
+  sudo for `apt-get` (see the wiki: Managed Machine Requirements). See
+  [app/ssh/updates.py](app/ssh/updates.py). A **Power** panel sends
+  `shutdown -r/-h now` (reboot/shut down), gated behind a dedicated
+  confirmation page that requires typing the machine's exact name — see
+  [app/ssh/power.py](app/ssh/power.py).
 - **Machine groups** — organize machines into named groups (e.g. by
-  environment or role); assign/remove machines from a group. The search
-  and system-update features above work here too, scoped to the group
-  (or to **All machines**, a built-in group that's always literally every
-  machine — see the "All machines" details on the Machine groups page).
+  environment or role); assign/remove machines from a group. Search,
+  system updates, update checks, and power actions all work here too,
+  scoped to the group (or to **All machines**, a built-in group that's
+  always literally every machine — see the "All machines" details on the
+  Machine groups page) — machines without a pinned host key are silently
+  skipped and the count surfaced.
 - **Users** — placeholder; no authentication yet.
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
   distribution to machines) and the current background-check intervals.
@@ -218,8 +227,10 @@ managed this way.
   first bulk/group-scoped SSH operation (see `app/ssh/updates.py`,
   `app/db/models/machine_update_run.py`); the same `batch_id` grouping
   pattern is meant to extend to other commands later.
-- Audit log (who ran what update and when — right now a run just records
-  what happened, not who triggered it, since there's no login yet).
+- Audit log (who ran what update, or sent a reboot/shutdown, and when —
+  right now an update run records what happened but not who triggered it,
+  and power actions record nothing at all beyond the reachability check
+  reflecting the outcome, since there's no login yet).
 - Automated SSH key distribution (currently a manual step — see Settings)
   and turning a pending self-registered machine directly into a managed
   one without re-entering its IP/name.

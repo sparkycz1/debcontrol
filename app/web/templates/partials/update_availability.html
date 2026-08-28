@@ -1,0 +1,43 @@
+<div id="update-availability">
+  {% if error %}
+    <div class="alert alert-error">
+      <p>Could not check for updates: {{ error }}</p>
+    </div>
+  {% endif %}
+
+  {% if not machine.updates_checked_at %}
+    <p class="hint">Not checked yet.</p>
+  {% elif machine.upgradable_count is none %}
+    <p class="hint">
+      Last check (checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)
+      couldn't determine what's available — see the error above, or try again.
+    </p>
+  {% elif machine.upgradable_count == 0 %}
+    <p><span class="badge badge-ok">up to date</span>
+      <span class="hint">(checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span></p>
+  {% else %}
+    <p>
+      <span class="badge badge-warn">
+        {{ machine.upgradable_count }} update{{ 's' if machine.upgradable_count != 1 else '' }}
+        {%- if machine.security_upgradable_count %}, {{ machine.security_upgradable_count }} security{% endif %}
+      </span>
+      <span class="hint">(checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span>
+    </p>
+  {% endif %}
+
+  {% if machine.reboot_required %}
+    <p><span class="badge badge-error">reboot needed</span>
+      <span class="hint">a newer kernel is installed but not yet running</span></p>
+  {% endif %}
+
+  <button
+    class="button button-secondary"
+    hx-post="/machines/{{ machine.id }}/check-updates"
+    hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+    hx-target="#update-availability"
+    hx-swap="outerHTML"
+    {% if not machine.host_key_fingerprint %}disabled{% endif %}
+  >
+    Check for updates now
+  </button>
+</div>

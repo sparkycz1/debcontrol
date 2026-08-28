@@ -15,6 +15,15 @@
     </div>
   </div>
 
+  {% if power_sent %}
+    <div class="alert alert-warn">
+      <p>
+        {{ 'Reboot' if power_sent == 'reboot' else 'Shutdown' }} command sent — the
+        status below will reflect it once it takes effect.
+      </p>
+    </div>
+  {% endif %}
+
   <dl class="detail-list">
     <dt>IP address</dt><dd>{{ machine.ip_address }}</dd>
     <dt>Port</dt><dd>{{ machine.port }}</dd>
@@ -102,6 +111,9 @@
       has passwordless sudo for <code>apt-get</code>. See the wiki page
       "Managed Machine Requirements" for a sudoers example.
     </p>
+
+    {% include "partials/update_availability.html" %}
+
     <form method="post" action="/machines/{{ machine.id }}/updates" class="form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% include "partials/upgrade_strategy_fields.html" %}
@@ -143,6 +155,27 @@
           {% endfor %}
         </tbody>
       </table>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Power</h2>
+    <p class="hint">
+      Requires root/sudo, same as System updates above. Both ask you to
+      type the machine's name to confirm before doing anything.
+    </p>
+    <div class="page-header-actions">
+      <a class="button button-secondary{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
+         href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/reboot{% else %}#{% endif %}">
+        Reboot
+      </a>
+      <a class="button button-danger{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
+         href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/shutdown{% else %}#{% endif %}">
+        Shut down
+      </a>
+    </div>
+    {% if not machine.host_key_fingerprint %}
+      <p class="hint">Confirm the server's key fingerprint above first.</p>
     {% endif %}
   </section>
 {% endblock %}

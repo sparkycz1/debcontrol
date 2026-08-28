@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Reboot' if action.value == 'reboot' else 'Shut down' }} {{ target_label }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ 'Reboot' if action.value == 'reboot' else 'Shut down' }} {{ target_label }}?</h1>
+
+  <div class="alert alert-warn">
+    <p>
+      This sends <code>sudo shutdown {{ '-r' if action.value == 'reboot' else '-h' }} now</code>
+      to {{ target_label }} that has a confirmed host key fingerprint
+      (others are skipped) — immediately, no going back once sent.
+    </p>
+  </div>
+
+  {% if error %}
+    <div class="alert alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  <form method="post" action="{{ action_url }}" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="{{ action.value }}">
+
+    <label for="confirm_name">
+      Type <code>{{ confirm_phrase }}</code> to confirm
+    </label>
+    <input type="text" id="confirm_name" name="confirm_name" required autocomplete="off">
+
+    <button type="submit" class="button button-danger">
+      Yes, {{ 'reboot' if action.value == 'reboot' else 'shut down' }} {{ target_label }}
+    </button>
+    <a class="button button-secondary" href="{{ cancel_url }}">Cancel</a>
+  </form>
+{% endblock %}

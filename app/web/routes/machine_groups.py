@@ -17,10 +17,15 @@ from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
+from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
 
 router = APIRouter(prefix="/machine-groups")
+
+# Typed phrase to confirm a power action against literally every machine —
+# "All machines" doesn't have a single name of its own to ask someone to type.
+ALL_MACHINES_CONFIRM_PHRASE = "ALL MACHINES"
 
 
 async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGroup:
@@ -55,6 +60,30 @@ async def _trigger_updates(
         await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
 
     return batch_id, len(machines) - len(eligible)
+
+
+async def _trigger_check_updates(request: Request, machines: list[Machine]) -> int:
+    """Enqueue a `check_machine_updates` job for every eligible (pinned)
+    machine. No batch tracking — unlike an actual update run, there's
+    nothing meaningful to show on a results page; counts land on each
+    machine's own record as each check finishes. Returns skipped count."""
+    eligible = [m for m in machines if m.host_key_fingerprint]
+    for machine in eligible:
+        await request.app.state.arq_redis.enqueue_job("check_machine_updates", str(machine.id))
+    return len(machines) - len(eligible)
+
+
+async def _send_power_to_machines(
+    request: Request, machines: list[Machine], action: PowerAction
+) -> int:
+    """Enqueue a `send_machine_power_command` job for every eligible
+    (pinned) machine. Returns skipped count."""
+    eligible = [m for m in machines if m.host_key_fingerprint]
+    for machine in eligible:
+        await request.app.state.arq_redis.enqueue_job(
+            "send_machine_power_command", str(machine.id), action.value
+        )
+    return len(machines) - len(eligible)
 
 
 @router.get("")
@@ -156,7 +185,14 @@ async def all_machines_group(
 
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
-        request, "machine_groups/all.html", {"machines": machines, "q": q, "csrf_token": csrf_token}
+        request,
+        "machine_groups/all.html",
+        {
+            "machines": machines,
+            "q": q,
+            "csrf_token": csrf_token,
+            "power_skipped": request.query_params.get("power_skipped"),
+        },
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
@@ -177,6 +213,74 @@ async def trigger_all_machines_update(
     redirect_url = f"/machine-groups/batches/{batch_id}"
     if skipped:
         redirect_url += f"?skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/all/check-updates", dependencies=[Depends(verify_csrf)])
+async def trigger_all_check_updates(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> Response:
+    result = await db.execute(select(Machine))
+    await _trigger_check_updates(request, list(result.scalars().all()))
+    return RedirectResponse(url="/machine-groups/all", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/all/power/{action}")
+async def all_power_confirm(request: Request, action: PowerAction) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machine_groups/power_confirm.html",
+        {
+            "action": action,
+            "target_label": "every machine",
+            "confirm_phrase": ALL_MACHINES_CONFIRM_PHRASE,
+            "action_url": "/machine-groups/all/power",
+            "cancel_url": "/machine-groups/all",
+            "error": None,
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/all/power", dependencies=[Depends(verify_csrf)])
+async def all_power_action(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    action: PowerAction = Form(...),
+    confirm_name: str = Form(...),
+) -> Response:
+    if confirm_name.strip() != ALL_MACHINES_CONFIRM_PHRASE:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "machine_groups/power_confirm.html",
+            {
+                "action": action,
+                "target_label": "every machine",
+                "confirm_phrase": ALL_MACHINES_CONFIRM_PHRASE,
+                "action_url": "/machine-groups/all/power",
+                "cancel_url": "/machine-groups/all",
+                "error": (
+                    f'That doesn\'t match — type "{ALL_MACHINES_CONFIRM_PHRASE}" '
+                    "exactly to confirm."
+                ),
+                "csrf_token": csrf_token,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    result = await db.execute(select(Machine))
+    skipped = await _send_power_to_machines(request, list(result.scalars().all()), action)
+    redirect_url = "/machine-groups/all"
+    if skipped:
+        redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -212,6 +316,7 @@ async def group_detail(
             "available_machines": available_machines,
             "q": q,
             "csrf_token": csrf_token,
+            "power_skipped": request.query_params.get("power_skipped"),
         },
     )
     if new_cookie:
@@ -263,6 +368,78 @@ async def trigger_group_update(
     redirect_url = f"/machine-groups/batches/{batch_id}"
     if skipped:
         redirect_url += f"?skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{group_id}/check-updates", dependencies=[Depends(verify_csrf)])
+async def trigger_group_check_updates(
+    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    group = await _get_group_or_404(group_id, db)
+    await _trigger_check_updates(request, group.machines)
+    return RedirectResponse(
+        url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/{group_id}/power/{action}")
+async def group_power_confirm(
+    request: Request, group_id: uuid.UUID, action: PowerAction, db: AsyncSession = Depends(get_db)
+) -> Response:
+    group = await _get_group_or_404(group_id, db)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machine_groups/power_confirm.html",
+        {
+            "action": action,
+            "target_label": f'every machine in "{group.name}"',
+            "confirm_phrase": group.name,
+            "action_url": f"/machine-groups/{group_id}/power",
+            "cancel_url": f"/machine-groups/{group_id}",
+            "error": None,
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/{group_id}/power", dependencies=[Depends(verify_csrf)])
+async def group_power_action(
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    action: PowerAction = Form(...),
+    confirm_name: str = Form(...),
+) -> Response:
+    group = await _get_group_or_404(group_id, db)
+
+    if confirm_name.strip() != group.name:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "machine_groups/power_confirm.html",
+            {
+                "action": action,
+                "target_label": f'every machine in "{group.name}"',
+                "confirm_phrase": group.name,
+                "action_url": f"/machine-groups/{group_id}/power",
+                "cancel_url": f"/machine-groups/{group_id}",
+                "error": f'That doesn\'t match — type "{group.name}" exactly to confirm.',
+                "csrf_token": csrf_token,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    skipped = await _send_power_to_machines(request, group.machines, action)
+    redirect_url = f"/machine-groups/{group_id}"
+    if skipped:
+        redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 

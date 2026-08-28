@@ -13,6 +13,12 @@
     add, remove, or delete.
   </p>
 
+  {% if power_skipped %}
+    <div class="alert alert-warn">
+      <p>{{ power_skipped }} machine(s) were skipped — no confirmed host key fingerprint yet.</p>
+    </div>
+  {% endif %}
+
   {% include "partials/machine_search_form.html" %}
 
   {% if not machines %}
@@ -32,6 +38,7 @@
           <th>IP address</th>
           <th>Group</th>
           <th>Status</th>
+          <th>Updates</th>
         </tr>
       </thead>
       <tbody>
@@ -55,6 +62,7 @@
                 <span class="badge badge-error">offline</span>
               {% endif %}
             </td>
+            <td>{% include "partials/machine_update_status_cell.html" %}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -73,5 +81,28 @@
       {% include "partials/upgrade_strategy_fields.html" %}
       <button type="submit" class="button">Run update on all machines</button>
     </form>
+
+    <h3>Check for updates</h3>
+    <p class="hint">
+      Dry run — refreshes each machine's package list and records how many
+      updates are available, without installing anything.
+    </p>
+    <form method="post" action="/machine-groups/all/check-updates" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Check for updates on all machines</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Power</h2>
+    <p class="hint">
+      Sends the command to every machine with a confirmed host key
+      fingerprint — others are skipped. Requires typing a confirmation
+      phrase.
+    </p>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machine-groups/all/power/reboot">Reboot all machines</a>
+      <a class="button button-danger" href="/machine-groups/all/power/shutdown">Shut down all machines</a>
+    </div>
   </section>
 {% endblock %}

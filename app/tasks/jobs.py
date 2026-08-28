@@ -18,8 +18,9 @@ from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.facts import gather_facts
+from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
-from app.ssh.updates import run_system_update
+from app.ssh.updates import check_updates, run_system_update
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[st
         machine.cpu_cores = facts["cpu_cores"]
         machine.ram_bytes = facts["ram_bytes"]
         machine.disks = facts["disks"]
+        machine.reboot_required = facts["reboot_required"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
 
@@ -197,3 +199,99 @@ async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
 
         run.finished_at = datetime.now(UTC)
         await session.commit()
+
+
+async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
+    """Dry-run: refresh the apt cache and record how many packages are
+    upgradable, without installing anything. Requires root/sudo, same as
+    `run_machine_update` — see `app.ssh.updates`."""
+    settings = get_settings()
+
+    async with AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            result = await check_updates(
+                machine, secret, settings.ssh_connect_timeout, settings.update_timeout_seconds
+            )
+        except SSHConnectionError as exc:
+            logger.warning("check_machine_updates failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        machine.updates_checked_at = datetime.now(UTC)
+        if result.exit_status == 0:
+            machine.upgradable_count = result.upgradable_count
+            machine.security_upgradable_count = result.security_upgradable_count
+            await session.commit()
+            return {"ok": True}
+
+        # `apt-get update` itself failed (commonly: no passwordless sudo
+        # configured for this machine yet) — record that we tried and when,
+        # but leave the counts as "unknown" rather than implying 0 updates.
+        machine.upgradable_count = None
+        machine.security_upgradable_count = None
+        await session.commit()
+        error = f"apt-get update exited with status {result.exit_status}."
+        logger.warning("check_machine_updates failed for %s: %s", machine.name, error)
+        return {"ok": False, "error": error}
+
+
+async def check_all_machine_updates(ctx: dict[str, Any]) -> None:
+    """Periodic sweep scheduling an update check for every machine with a
+    pinned host key — same fan-out pattern (and the same
+    `FACTS_REFRESH_INTERVAL_SECONDS` cadence) as `refresh_all_machine_facts`,
+    for the same reason: this only enqueues, it never awaits the checks
+    inline, so one slow/unreachable/misconfigured machine can't hold up the
+    rest.
+    """
+    settings = get_settings()
+    redis = ctx["redis"]
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
+        )
+        machine_ids = [row[0] for row in result.all()]
+
+    for machine_id in machine_ids:
+        await redis.enqueue_job("check_machine_updates", str(machine_id))
+
+    await redis.enqueue_job(
+        "check_all_machine_updates",
+        _defer_by=timedelta(seconds=settings.facts_refresh_interval_seconds),
+    )
+
+
+async def send_machine_power_command(
+    ctx: dict[str, Any], machine_id: str, action: str
+) -> dict[str, Any]:
+    """Reboot or shut down one machine. Fire-and-forget — see
+    `app.ssh.power` for why there's no persistent result to report beyond
+    ok/error; the reachability check reflects the actual outcome over the
+    following minutes."""
+    settings = get_settings()
+
+    async with AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            await send_power_command(
+                machine, secret, PowerAction(action), settings.ssh_connect_timeout
+            )
+        except SSHConnectionError as exc:
+            logger.warning(
+                "send_machine_power_command(%s) failed for %s: %s", action, machine.name, exc
+            )
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True}

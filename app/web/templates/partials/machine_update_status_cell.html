@@ -1,0 +1,11 @@
+{% if machine.updates_checked_at is none %}
+  <span class="hint">—</span>
+{% elif machine.upgradable_count is none %}
+  <span class="hint">unknown</span>
+{% elif machine.upgradable_count == 0 %}
+  <span class="badge badge-ok">up to date</span>
+{% else %}
+  <span class="badge badge-warn"
+    >{{ machine.upgradable_count }}{% if machine.security_upgradable_count %} ({{ machine.security_upgradable_count }} sec){% endif %}</span>
+{% endif %}
+{% if machine.reboot_required %}<span class="badge badge-error">reboot</span>{% endif %}

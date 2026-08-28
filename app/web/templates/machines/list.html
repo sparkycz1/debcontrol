@@ -71,6 +71,7 @@
           <th>Hostname</th>
           <th>Group</th>
           <th>Status</th>
+          <th>Updates</th>
           <th>Host key</th>
           <th></th>
         </tr>
@@ -97,6 +98,7 @@
                 <span class="badge badge-error">offline</span>
               {% endif %}
             </td>
+            <td>{% include "partials/machine_update_status_cell.html" %}</td>
             <td>
               {% if machine.host_key_fingerprint %}
                 <span class="badge badge-ok">pinned</span>

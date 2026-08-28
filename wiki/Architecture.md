@@ -148,6 +148,56 @@ shaped the design:
   doesn't: one slow or unreachable machine can't be allowed to hold up
   the others or the triggering request.
 
+### Checking for updates without installing them
+
+"Check for updates now" (`app/ssh/updates.check_updates`) still needs
+root — an accurate count means actually refreshing the apt cache
+(`apt-get update`), not trusting whatever's already cached — but the
+enumeration step after that (`apt list --upgradable`) doesn't. It shares
+`run_system_update`'s long timeout (via the same `func(...,
+timeout=UPDATE_TIMEOUT_SECONDS)` pattern) and its own periodic sweep,
+`check_all_machine_updates`, is the same fan-out-then-reschedule shape as
+`refresh_all_machine_facts` — both run on the same
+`FACTS_REFRESH_INTERVAL_SECONDS` cadence rather than introducing a
+separate config knob for what's conceptually the same kind of periodic
+check. A failed check (most commonly: sudo not configured yet) resets the
+counts to "unknown" rather than leaving a stale number on screen or,
+worse, implying zero updates.
+
+Reboot-required detection is different: it needs no privileges at all
+(comparing `uname -r` against the newest installed `linux-image-*`
+package via `dpkg`), so it rides along in the regular, unprivileged facts
+command instead of the root-requiring update check — see
+`app/ssh/facts.py`.
+
+### Power actions: fire-and-forget, double-confirmed, untracked
+
+Reboot and shutdown (`app/ssh/power.py`) are deliberately the simplest
+SSH action in the app:
+
+- **No persistent history**, unlike `MachineUpdateRun`. There's nothing
+  reliable to report — `shutdown -r/-h now` typically returns almost
+  immediately, but the SSH connection can legitimately be torn down
+  mid-response the moment the remote actually goes down, and that's
+  treated as an expected outcome, not an error, rather than something
+  worth recording as a "failure." The existing per-minute reachability
+  check already shows the machine going offline (and, for a reboot,
+  coming back online) — reusing that instead of inventing a second status
+  system.
+- **Confirmed twice, deliberately not with two stacked JS `confirm()`
+  dialogs** (those get reflexively clicked through). The first step is a
+  dedicated page stating exactly what's about to happen to which
+  machine/group; the second is typing that machine's or group's exact
+  name — checked server-side (`power_action` / `group_power_action` /
+  `all_power_action` in the route layer), not just disabled-until-typed
+  in the browser. "All machines" has no single name of its own, so it
+  uses a fixed phrase (`ALL_MACHINES_CONFIRM_PHRASE = "ALL MACHINES"`)
+  instead.
+- **Same eligibility rule as updates**: a group/all action silently skips
+  any machine without a pinned host key fingerprint (surfaced as a
+  skipped-count message), since `open_connection` would refuse those
+  anyway.
+
 ### CSRF protection without sessions
 
 Since there's no login yet, there's no session to hang CSRF protection
