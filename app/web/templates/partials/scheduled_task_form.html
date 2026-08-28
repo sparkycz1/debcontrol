@@ -1,0 +1,86 @@
+{% if errors %}
+  <div class="alert alert-error">
+    {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" action="{{ form_action }}" class="form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <label for="name">Name</label>
+  <input type="text" id="name" name="name" required maxlength="255"
+         value="{{ form.get('name', '') }}" placeholder="e.g. Nightly updates — dev">
+
+  <label for="target">Applies to</label>
+  <select id="target" name="target">
+    <option value="all" {% if form.get('target', 'all') == 'all' %}selected{% endif %}>
+      All machines
+    </option>
+    {% for group in groups %}
+      <option value="group:{{ group.id }}" {% if form.get('target') == 'group:' ~ group.id %}selected{% endif %}>
+        Group: {{ group.name }}
+      </option>
+    {% endfor %}
+    {% for machine in machines %}
+      <option value="machine:{{ machine.id }}" {% if form.get('target') == 'machine:' ~ machine.id %}selected{% endif %}>
+        Machine: {{ machine.name }}
+      </option>
+    {% endfor %}
+  </select>
+  <p class="hint">
+    Machines without a pinned host key fingerprint are silently skipped when
+    the schedule fires, same as the manual buttons.
+  </p>
+
+  <label for="action">Action</label>
+  <select id="action" name="action">
+    {% for action in actions %}
+      <option value="{{ action.key }}" {% if form.get('action', actions[0].key if actions else '') == action.key %}selected{% endif %}>
+        {{ action.label }}{% if action.destructive %} ⚠{% endif %}
+      </option>
+    {% endfor %}
+  </select>
+  <ul class="hint">
+    {% for action in actions %}
+      <li><strong>{{ action.label }}</strong> — {{ action.description }}</li>
+    {% endfor %}
+  </ul>
+
+  {% for action in actions %}
+    {% for param in action.params %}
+      <label for="param_{{ param.key }}">
+        {{ param.label }} <span class="hint">(only used for "{{ action.label }}")</span>
+      </label>
+      <select id="param_{{ param.key }}" name="param_{{ param.key }}">
+        {% for value, label in param.choices %}
+          <option value="{{ value }}" {% if form.get('param_' ~ param.key, param.default) == value %}selected{% endif %}>
+            {{ label }}
+          </option>
+        {% endfor %}
+      </select>
+    {% endfor %}
+  {% endfor %}
+
+  <label for="cron_expression">Cron expression (UTC)</label>
+  <input type="text" id="cron_expression" name="cron_expression" required maxlength="100"
+         list="cron-presets" value="{{ form.get('cron_expression', '') }}"
+         placeholder="0 3 * * *">
+  <datalist id="cron-presets">
+    <option value="0 3 * * *" label="Every day at 03:00">
+    <option value="0 3 * * 0" label="Every Sunday at 03:00">
+    <option value="0 */6 * * *" label="Every 6 hours">
+    <option value="0 0 1 * *" label="First of the month at 00:00">
+  </datalist>
+  <p class="hint">
+    Standard 5-field cron: minute hour day-of-month month day-of-week, always
+    interpreted in UTC. E.g. <code>0 3 * * *</code> = every day at 03:00 UTC.
+  </p>
+
+  <label>
+    <input type="checkbox" name="is_enabled" {% if form.get('is_enabled') %}checked{% endif %}>
+    Enabled
+  </label>
+
+  <button type="submit" class="button">Save</button>
+  <a class="button button-secondary" href="/scheduling">Cancel</a>
+</form>

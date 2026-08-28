@@ -15,6 +15,8 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.scheduling.builtin_actions import register_builtin_actions
+from app.scheduling.jobs import run_due_scheduled_tasks, run_scheduled_task
 from app.tasks.jobs import (
     check_all_machine_updates,
     check_machine_updates,
@@ -27,6 +29,10 @@ from app.tasks.jobs import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Populates app.scheduling.actions' registry — must happen before the worker
+# (or anything else in this process) evaluates or runs a scheduled task.
+register_builtin_actions()
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -55,12 +61,20 @@ class WorkerSettings:
         refresh_all_machine_facts,
         check_all_machine_updates,
         send_machine_power_command,
+        run_due_scheduled_tasks,
+        run_scheduled_task,
         # apt update/upgrade(-check) can legitimately run far longer than
         # the default job_timeout below — give both their own budget.
         func(run_machine_update, timeout=get_settings().update_timeout_seconds),
         func(check_machine_updates, timeout=get_settings().update_timeout_seconds),
     ]
-    cron_jobs = [cron(ping_all_machines, second=0, unique=True)]
+    cron_jobs = [
+        cron(ping_all_machines, second=0, unique=True),
+        # Cron expressions are minute-grained anyway, so a fixed per-minute
+        # tick (rather than a configurable self-rescheduling interval, like
+        # facts/update-check sweeps use) is the natural fit here.
+        cron(run_due_scheduled_tasks, second=0, unique=True),
+    ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = _redis_settings()

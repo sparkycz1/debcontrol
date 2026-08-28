@@ -106,7 +106,12 @@ Two ways to satisfy that:
 
 Reboot and shutdown are double-confirmed in the UI (a dedicated warning
 page, then typing the machine's — or group's — name exactly) precisely
-because there's no undo once sent.
+because there's no undo once sent. All three actions — update, check for
+updates, reboot/shutdown — can also be put on a cron schedule (see
+**Scheduling** in the nav); a schedule someone deliberately created doesn't
+get a second confirmation prompt each time it fires, but destructive
+actions are clearly flagged when setting one up. There's no scheduled
+"power on" — the app has no way to turn on a machine that's already off.
 
 Config-file conflicts during an upgrade are resolved automatically in
 favor of keeping your existing config (`--force-confdef --force-confold`)

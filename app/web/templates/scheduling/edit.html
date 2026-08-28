@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ task.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Edit {{ task.name }}</h1>
+  {% if task.last_run_summary %}
+    <p class="hint">
+      Last run: {{ task.last_run_at.strftime('%Y-%m-%d %H:%M UTC') if task.last_run_at else '—' }}
+      — {{ task.last_run_summary }}
+    </p>
+  {% endif %}
+  {% set form_action = "/scheduling/" ~ task.id ~ "/edit" %}
+  {% include "partials/scheduled_task_form.html" with context %}
+{% endblock %}

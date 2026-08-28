@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Scheduling — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Scheduling</h1>
+    <a class="button" href="/scheduling/new">New scheduled task</a>
+  </div>
+
+  {% if ran %}
+    <div class="alert alert-ok"><p>Run enqueued — check the machine/group/batch page shortly.</p></div>
+  {% endif %}
+
+  {% if tasks %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Applies to</th>
+          <th>Action</th>
+          <th>Cron (UTC)</th>
+          <th>Next run</th>
+          <th>Last run</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in tasks %}
+          <tr>
+            <td><a href="/scheduling/{{ task.id }}/edit">{{ task.name }}</a></td>
+            <td>
+              {% if task.target_type.value == 'all_machines' %}
+                All machines
+              {% elif task.target_type.value == 'machine' %}
+                Machine: {{ task.target_machine.name if task.target_machine else '(deleted)' }}
+              {% else %}
+                Group: {{ task.target_group.name if task.target_group else '(deleted)' }}
+              {% endif %}
+            </td>
+            <td>{{ task.action }}</td>
+            <td><code>{{ task.cron_expression }}</code></td>
+            <td>
+              {% if task.is_enabled and task.next_run_at %}
+                {{ task.next_run_at.strftime('%Y-%m-%d %H:%M') }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if task.last_run_at %}
+                {{ task.last_run_at.strftime('%Y-%m-%d %H:%M') }}
+                <br><span class="hint">{{ task.last_run_summary }}</span>
+              {% else %}
+                never
+              {% endif %}
+            </td>
+            <td>
+              {% if task.is_enabled %}
+                <span class="badge badge-ok">enabled</span>
+              {% else %}
+                <span class="badge badge-warn">disabled</span>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" action="/scheduling/{{ task.id }}/run-now" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button button-secondary">Run now</button>
+              </form>
+              <form method="post" action="/scheduling/{{ task.id }}/toggle" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button button-secondary">
+                  {{ 'Disable' if task.is_enabled else 'Enable' }}
+                </button>
+              </form>
+              <a class="button button-secondary" href="/scheduling/{{ task.id }}/edit">Edit</a>
+              <form method="post" action="/scheduling/{{ task.id }}/delete" class="inline-form"
+                    data-confirm="Delete the scheduled task &quot;{{ task.name }}&quot;?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button button-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state">
+      <p>No scheduled tasks yet.</p>
+      <a class="button" href="/scheduling/new">Create your first schedule</a>
+    </div>
+  {% endif %}
+{% endblock %}

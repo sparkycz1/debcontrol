@@ -198,6 +198,66 @@ SSH action in the app:
   skipped-count message), since `open_connection` would refuse those
   anyway.
 
+### Scheduling: reusing actions, not reimplementing them
+
+**Scheduling** (`app.scheduling`) runs an existing action — system update,
+update check, reboot, shut down — against a machine, a group, or "All
+machines" on a cron expression, instead of a human clicking a button. A few
+decisions shaped it:
+
+- **An action registry, not a hardcoded list.** `app.scheduling.actions`
+  defines a `ScheduledActionSpec` (key, label, description, optional
+  per-action params, and a `run` function) and a `register_action()` call.
+  `app.scheduling.builtin_actions.register_builtin_actions()` registers the
+  four that exist today by wrapping the same functions the manual
+  buttons use (see below) — nothing about the `ScheduledTask` model, the
+  scheduler tick, or the "New scheduled task" form needs to change to add a
+  future fifth action; it only needs one more `register_action()` call.
+  It's idempotent and called from both `app.main` (so the web UI has
+  something to list) and `app.tasks.worker` (so the scheduler tick does
+  too) — either process can run without importing the other.
+- **One shared implementation for "trigger this against N machines".**
+  `_trigger_updates` / `_trigger_check_updates` / `_send_power_to_machines`
+  used to live only in the machine-groups routes; they moved to
+  `app.services.machine_actions` (taking the arq redis pool directly rather
+  than a `Request`) so a scheduled run and a human clicking "Update now" on
+  a group go through the exact same code path, including the same
+  skip-unpinned-machines behavior.
+- **A fixed one-minute tick, not a configurable self-rescheduling interval.**
+  Unlike the facts/update-check sweeps (`FACTS_REFRESH_INTERVAL_SECONDS`),
+  cron expressions are minute-grained by construction, so
+  `run_due_scheduled_tasks` runs on a plain fixed `cron(second=0)` — the
+  same shape as `ping_all_machines` — rather than needing a new setting.
+  Each `ScheduledTask` keeps a denormalized `next_run_at` (computed via
+  [`croniter`](https://github.com/kiorky/croniter) on create/edit/enable and
+  advanced immediately when the tick fires it), so the tick itself is one
+  indexed `WHERE next_run_at <= now` query, not N cron-expression
+  evaluations every minute. Advancing `next_run_at` *before* the actual
+  action job runs (not after) means a slow-running action can't cause the
+  same task to be re-enqueued on the next tick before it has even started.
+- **No per-run history — same reasoning as power actions.** A schedule
+  firing only records a short `last_run_summary` ("Triggered for 3
+  machine(s), 1 skipped.") plus `last_run_at`, not a persisted log of every
+  firing. Whatever the action actually does already has its own record
+  where that belongs (`MachineUpdateRun` for updates; the reachability
+  check for power actions) — a second log of "the schedule fired" would
+  just be a shadow of that.
+- **Always UTC, no per-schedule timezone.** One less setting, and it matches
+  every other timestamp already in the app.
+- **Reboot/shutdown are schedulable, and deliberately not re-confirmed at
+  fire time.** The double-confirmation UX (see below) is what stops a
+  *human* from misclicking; a schedule someone deliberately created and can
+  see, edit, and disable at `/scheduling` doesn't need — and can't
+  sensibly have — a second confirmation step at 3am. Both are flagged
+  `destructive=True` in the registry, which the "New scheduled task" form
+  surfaces with a ⚠ next to their label so this is obvious before saving.
+- **Target encoding: one `<select>`, not a type radio plus two
+  conditionally-relevant pickers.** `app.scheduling.targets.encode_target`/
+  `decode_target` fold target type + id into one string (`"all"`,
+  `"machine:<uuid>"`, `"group:<uuid>"`) so the form has a single dropdown
+  listing "All machines", every group, and every machine — no client-side
+  JS needed to hide whichever selector doesn't apply.
+
 ### CSRF protection without sessions
 
 Since there's no login yet, there's no session to hang CSRF protection
@@ -230,6 +290,11 @@ published to the host at all by default.
 
 - Authentication/authorization for app users (the **Users** tab is a
   placeholder for this).
-- An audit log of actions taken against managed machines.
+- An audit log of actions taken against managed machines (including who —
+  there's no login yet — created or ran a schedule).
 - Rate limiting at the application layer (a reverse proxy or upstream
   service is expected to handle this today).
+- Per-schedule timezones (everything is UTC) and a scheduled "power on" to
+  pair with scheduled shutdown (there's no way for the app to power on a
+  machine that's off — see [Managed Machine
+  Requirements](Managed-Machine-Requirements.md)).

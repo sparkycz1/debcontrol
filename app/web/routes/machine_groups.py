@@ -17,6 +17,11 @@ from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
+from app.services.machine_actions import (
+    send_power_to_machines,
+    trigger_check_updates,
+    trigger_updates,
+)
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
@@ -38,52 +43,6 @@ async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGro
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found.")
     return group
-
-
-async def _trigger_updates(
-    request: Request, db: AsyncSession, machines: list[Machine], strategy: UpgradeStrategy
-) -> tuple[uuid.UUID, int]:
-    """Create one `MachineUpdateRun` per eligible machine (must have a pinned
-    host key) under a shared batch id, commit, then enqueue a job for each.
-    Returns (batch_id, skipped_count)."""
-    eligible = [m for m in machines if m.host_key_fingerprint]
-    batch_id = uuid.uuid4()
-    runs = [
-        MachineUpdateRun(machine_id=m.id, strategy=strategy, batch_id=batch_id) for m in eligible
-    ]
-    db.add_all(runs)
-    await db.commit()
-
-    # Enqueue only after commit — the worker (a separate process) must be
-    # able to find the row the moment it picks the job up.
-    for run in runs:
-        await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
-
-    return batch_id, len(machines) - len(eligible)
-
-
-async def _trigger_check_updates(request: Request, machines: list[Machine]) -> int:
-    """Enqueue a `check_machine_updates` job for every eligible (pinned)
-    machine. No batch tracking — unlike an actual update run, there's
-    nothing meaningful to show on a results page; counts land on each
-    machine's own record as each check finishes. Returns skipped count."""
-    eligible = [m for m in machines if m.host_key_fingerprint]
-    for machine in eligible:
-        await request.app.state.arq_redis.enqueue_job("check_machine_updates", str(machine.id))
-    return len(machines) - len(eligible)
-
-
-async def _send_power_to_machines(
-    request: Request, machines: list[Machine], action: PowerAction
-) -> int:
-    """Enqueue a `send_machine_power_command` job for every eligible
-    (pinned) machine. Returns skipped count."""
-    eligible = [m for m in machines if m.host_key_fingerprint]
-    for machine in eligible:
-        await request.app.state.arq_redis.enqueue_job(
-            "send_machine_power_command", str(machine.id), action.value
-        )
-    return len(machines) - len(eligible)
 
 
 @router.get("")
@@ -208,7 +167,7 @@ async def trigger_all_machines_update(
     result = await db.execute(select(Machine))
     machines = list(result.scalars().all())
 
-    batch_id, skipped = await _trigger_updates(request, db, machines, strategy)
+    batch_id, skipped = await trigger_updates(db, request.app.state.arq_redis, machines, strategy)
 
     redirect_url = f"/machine-groups/batches/{batch_id}"
     if skipped:
@@ -221,7 +180,7 @@ async def trigger_all_check_updates(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> Response:
     result = await db.execute(select(Machine))
-    await _trigger_check_updates(request, list(result.scalars().all()))
+    await trigger_check_updates(request.app.state.arq_redis, list(result.scalars().all()))
     return RedirectResponse(url="/machine-groups/all", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -277,7 +236,8 @@ async def all_power_action(
         return response
 
     result = await db.execute(select(Machine))
-    skipped = await _send_power_to_machines(request, list(result.scalars().all()), action)
+    machines = list(result.scalars().all())
+    skipped = await send_power_to_machines(request.app.state.arq_redis, machines, action)
     redirect_url = "/machine-groups/all"
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
@@ -363,7 +323,8 @@ async def trigger_group_update(
     strategy: UpgradeStrategy = Form(...),
 ) -> Response:
     group = await _get_group_or_404(group_id, db)
-    batch_id, skipped = await _trigger_updates(request, db, group.machines, strategy)
+    redis = request.app.state.arq_redis
+    batch_id, skipped = await trigger_updates(db, redis, group.machines, strategy)
 
     redirect_url = f"/machine-groups/batches/{batch_id}"
     if skipped:
@@ -376,7 +337,7 @@ async def trigger_group_check_updates(
     request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     group = await _get_group_or_404(group_id, db)
-    await _trigger_check_updates(request, group.machines)
+    await trigger_check_updates(request.app.state.arq_redis, group.machines)
     return RedirectResponse(
         url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -436,7 +397,7 @@ async def group_power_action(
             set_csrf_cookie(response, new_cookie)
         return response
 
-    skipped = await _send_power_to_machines(request, group.machines, action)
+    skipped = await send_power_to_machines(request.app.state.arq_redis, group.machines, action)
     redirect_url = f"/machine-groups/{group_id}"
     if skipped:
         redirect_url += f"?power_skipped={skipped}"

@@ -24,6 +24,9 @@ dependencies = [
     "python-multipart>=0.0.32",
     "cryptography>=50.0.1",
     "itsdangerous>=2.2.0",
+    # Standard 5-field cron expression parsing/next-run computation for
+    # Scheduling (app/scheduling/). Well-established, tiny, no transitive deps.
+    "croniter>=6.0.0",
 ]
 
 [dependency-groups]
@@ -35,6 +38,7 @@ dev = [
     "ruff>=0.16.4",
     "mypy>=2.3.1",
     "python-dotenv>=1.2.3",
+    "types-croniter>=6.0.0",
 ]
 
 [tool.uv]

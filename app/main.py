@@ -14,11 +14,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.web.routes import inform, machine_groups, machines, users
+from app.scheduling.builtin_actions import register_builtin_actions
+from app.web.routes import inform, machine_groups, machines, scheduling, users
 from app.web.routes import settings as settings_routes
 
 settings = get_settings()
 configure_logging(settings.log_level)
+# Populates app.scheduling.actions' registry — the "New scheduled task" form
+# reads from it. Idempotent, and also called from app.tasks.worker so the
+# worker process has it too without needing to import this module.
+register_builtin_actions()
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "web" / "static"
@@ -74,6 +79,7 @@ def create_app() -> FastAPI:
 
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
+    app.include_router(scheduling.router)
     app.include_router(inform.router)
     app.include_router(users.router)
     app.include_router(settings_routes.router)

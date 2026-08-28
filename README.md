@@ -20,6 +20,7 @@ published as the GitHub wiki once this repo is pushed there (see
 | Migrations | Alembic | async engine |
 | Cache / task queue | Redis 8.8 | queue via [`arq`](https://github.com/python-arq/arq) |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
+| Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
@@ -210,6 +211,18 @@ wiki/         documentation, meant to become the GitHub wiki
   always literally every machine — see the "All machines" details on the
   Machine groups page) — machines without a pinned host key are silently
   skipped and the count surfaced.
+- **Scheduling** — run any existing action (system update, update check,
+  reboot, shut down) against a machine, a group, or **All machines** on a
+  cron expression (standard 5-field, always UTC). Adding a schedule reuses
+  the exact same trigger logic as the manual buttons — same
+  skip-unpinned-machines behavior, same double-confirmation-worthy actions
+  flagged with a ⚠ in the form. Each schedule can be enabled/disabled, run
+  immediately ("Run now", without waiting for its cron expression), and
+  shows when it last fired and a one-line summary — not a full history,
+  since the action's own record (an update run, the reachability check)
+  already has that. New features that add a schedulable action only need
+  to register one `ScheduledActionSpec` — see
+  [app/scheduling/builtin_actions.py](app/scheduling/builtin_actions.py).
 - **Users** — placeholder; no authentication yet.
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
   distribution to machines) and the current background-check intervals.
@@ -230,7 +243,10 @@ managed this way.
 - Audit log (who ran what update, or sent a reboot/shutdown, and when —
   right now an update run records what happened but not who triggered it,
   and power actions record nothing at all beyond the reachability check
-  reflecting the outcome, since there's no login yet).
+  reflecting the outcome, since there's no login yet — the same applies to
+  who created/edited a scheduled task).
+- Per-schedule timezones (Scheduling is always UTC) and a scheduled
+  "power on" to pair with scheduled shutdown.
 - Automated SSH key distribution (currently a manual step — see Settings)
   and turning a pending self-registered machine directly into a managed
   one without re-entering its IP/name.
