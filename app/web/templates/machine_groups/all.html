@@ -13,10 +13,16 @@
     add, remove, or delete.
   </p>
 
+  {% include "partials/machine_search_form.html" %}
+
   {% if not machines %}
     <div class="empty-state">
-      <p>No managed machines yet.</p>
-      <a class="button" href="/machines/new">Add your first machine</a>
+      {% if q %}
+        <p>No machines match "{{ q }}".</p>
+      {% else %}
+        <p>No managed machines yet.</p>
+        <a class="button" href="/machines/new">Add your first machine</a>
+      {% endif %}
     </div>
   {% else %}
     <table class="data-table">
@@ -54,4 +60,18 @@
       </tbody>
     </table>
   {% endif %}
+
+  <section class="panel">
+    <h2>Update all machines</h2>
+    <p class="hint">
+      Runs update → upgrade → autoremove/autoclean on every machine that has
+      a confirmed host key fingerprint — others are skipped. Ignores the
+      search box above; this always targets literally every machine.
+    </p>
+    <form method="post" action="/machine-groups/all/updates" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% include "partials/upgrade_strategy_fields.html" %}
+      <button type="submit" class="button">Run update on all machines</button>
+    </form>
+  </section>
 {% endblock %}

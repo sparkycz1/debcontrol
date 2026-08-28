@@ -15,6 +15,7 @@ from app.db.base import Base
 from app.db.models import (  # noqa: F401 - registers models with metadata
     Machine,
     MachineGroup,
+    MachineUpdateRun,
     PendingMachine,
     SSHIdentity,
 )

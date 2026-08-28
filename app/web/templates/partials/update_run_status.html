@@ -1,0 +1,39 @@
+<div
+  id="update-run-status"
+  {% if run.status.value in ('pending', 'running') %}
+  hx-get="/machines/{{ run.machine_id }}/updates/{{ run.id }}/status"
+  hx-trigger="every 3s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <p>
+    Status:
+    {% if run.status.value == 'pending' %}
+      <span class="badge badge-warn">pending</span>
+    {% elif run.status.value == 'running' %}
+      <span class="badge badge-warn">running</span>
+    {% elif run.status.value == 'succeeded' %}
+      <span class="badge badge-ok">succeeded</span>
+    {% else %}
+      <span class="badge badge-error">failed</span>
+    {% endif %}
+    — strategy: <code>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
+  </p>
+
+  {% if run.started_at %}
+    <p class="hint">Started: {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
+  {% endif %}
+  {% if run.finished_at %}
+    <p class="hint">Finished: {{ run.finished_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
+  {% endif %}
+
+  {% if run.error %}
+    <div class="alert alert-error"><p>{{ run.error }}</p></div>
+  {% endif %}
+
+  {% if run.output %}
+    <pre>{{ run.output }}</pre>
+  {% elif run.status.value in ('pending', 'running') %}
+    <p class="hint">Waiting for output — this refreshes automatically.</p>
+  {% endif %}
+</div>

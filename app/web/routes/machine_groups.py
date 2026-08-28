@@ -14,8 +14,10 @@ from sqlalchemy.orm import selectinload
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
+from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
 
 router = APIRouter(prefix="/machine-groups")
@@ -31,6 +33,28 @@ async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGro
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found.")
     return group
+
+
+async def _trigger_updates(
+    request: Request, db: AsyncSession, machines: list[Machine], strategy: UpgradeStrategy
+) -> tuple[uuid.UUID, int]:
+    """Create one `MachineUpdateRun` per eligible machine (must have a pinned
+    host key) under a shared batch id, commit, then enqueue a job for each.
+    Returns (batch_id, skipped_count)."""
+    eligible = [m for m in machines if m.host_key_fingerprint]
+    batch_id = uuid.uuid4()
+    runs = [
+        MachineUpdateRun(machine_id=m.id, strategy=strategy, batch_id=batch_id) for m in eligible
+    ]
+    db.add_all(runs)
+    await db.commit()
+
+    # Enqueue only after commit — the worker (a separate process) must be
+    # able to find the row the moment it picks the job up.
+    for run in runs:
+        await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
+
+    return batch_id, len(machines) - len(eligible)
 
 
 @router.get("")
@@ -111,7 +135,9 @@ async def create_group(
 
 
 @router.get("/all")
-async def all_machines_group(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+async def all_machines_group(
+    request: Request, db: AsyncSession = Depends(get_db), q: str = ""
+) -> Response:
     """The "All machines" virtual group — every machine, always, automatically.
 
     Unlike real groups, this isn't backed by any membership data (a machine
@@ -122,20 +148,51 @@ async def all_machines_group(request: Request, db: AsyncSession = Depends(get_db
     Registered before `/{group_id}` — `uuid.UUID` there won't match the
     literal "all" anyway, but route order is what actually decides it.
     """
-    result = await db.execute(
-        select(Machine).options(selectinload(Machine.group)).order_by(Machine.name)
-    )
+    query = select(Machine).options(selectinload(Machine.group))
+    if q.strip():
+        query = query.where(machine_search_clause(q))
+    result = await db.execute(query.order_by(Machine.name))
     machines = result.scalars().all()
-    return templates.TemplateResponse(
-        request, "machine_groups/all.html", {"machines": machines}
+
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request, "machine_groups/all.html", {"machines": machines, "q": q, "csrf_token": csrf_token}
     )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/all/updates", dependencies=[Depends(verify_csrf)])
+async def trigger_all_machines_update(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    strategy: UpgradeStrategy = Form(...),
+) -> Response:
+    result = await db.execute(select(Machine))
+    machines = list(result.scalars().all())
+
+    batch_id, skipped = await _trigger_updates(request, db, machines, strategy)
+
+    redirect_url = f"/machine-groups/batches/{batch_id}"
+    if skipped:
+        redirect_url += f"?skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/{group_id}")
 async def group_detail(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db), q: str = ""
 ) -> Response:
     group = await _get_group_or_404(group_id, db)
+
+    members_query = (
+        select(Machine).options(selectinload(Machine.group)).where(Machine.group_id == group_id)
+    )
+    if q.strip():
+        members_query = members_query.where(machine_search_clause(q))
+    result = await db.execute(members_query.order_by(Machine.name))
+    machines = result.scalars().all()
 
     result = await db.execute(
         select(Machine)
@@ -149,7 +206,13 @@ async def group_detail(
     response = templates.TemplateResponse(
         request,
         "machine_groups/detail.html",
-        {"group": group, "available_machines": available_machines, "csrf_token": csrf_token},
+        {
+            "group": group,
+            "machines": machines,
+            "available_machines": available_machines,
+            "q": q,
+            "csrf_token": csrf_token,
+        },
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
@@ -184,6 +247,63 @@ async def remove_machine_from_group(
         await db.commit()
     return RedirectResponse(
         url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/{group_id}/updates", dependencies=[Depends(verify_csrf)])
+async def trigger_group_update(
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    strategy: UpgradeStrategy = Form(...),
+) -> Response:
+    group = await _get_group_or_404(group_id, db)
+    batch_id, skipped = await _trigger_updates(request, db, group.machines, strategy)
+
+    redirect_url = f"/machine-groups/batches/{batch_id}"
+    if skipped:
+        redirect_url += f"?skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/batches/{batch_id}")
+async def update_batch_detail(
+    request: Request, batch_id: uuid.UUID, db: AsyncSession = Depends(get_db), skipped: int = 0
+) -> Response:
+    result = await db.execute(
+        select(MachineUpdateRun)
+        .options(selectinload(MachineUpdateRun.machine))
+        .where(MachineUpdateRun.batch_id == batch_id)
+        .order_by(MachineUpdateRun.created_at)
+    )
+    runs = list(result.scalars().all())
+    if not runs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
+
+    has_pending = any(r.status in (UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING) for r in runs)
+    return templates.TemplateResponse(
+        request,
+        "machine_groups/batch.html",
+        {"runs": runs, "batch_id": batch_id, "skipped": skipped, "has_pending": has_pending},
+    )
+
+
+@router.get("/batches/{batch_id}/status")
+async def update_batch_status(
+    request: Request, batch_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    result = await db.execute(
+        select(MachineUpdateRun)
+        .options(selectinload(MachineUpdateRun.machine))
+        .where(MachineUpdateRun.batch_id == batch_id)
+        .order_by(MachineUpdateRun.created_at)
+    )
+    runs = list(result.scalars().all())
+    has_pending = any(r.status in (UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING) for r in runs)
+    return templates.TemplateResponse(
+        request,
+        "partials/update_batch_status.html",
+        {"runs": runs, "batch_id": batch_id, "has_pending": has_pending},
     )
 
 

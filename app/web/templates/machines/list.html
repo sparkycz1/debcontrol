@@ -51,10 +51,16 @@
     </section>
   {% endif %}
 
+  {% include "partials/machine_search_form.html" %}
+
   {% if not machines %}
     <div class="empty-state">
-      <p>No managed machines yet.</p>
-      <a class="button" href="/machines/new">Add your first machine</a>
+      {% if q %}
+        <p>No machines match "{{ q }}".</p>
+      {% else %}
+        <p>No managed machines yet.</p>
+        <a class="button" href="/machines/new">Add your first machine</a>
+      {% endif %}
     </div>
   {% else %}
     <table class="data-table">

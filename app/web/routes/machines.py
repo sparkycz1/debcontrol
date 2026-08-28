@@ -16,11 +16,13 @@ from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
+from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
 
 router = APIRouter(prefix="/machines")
@@ -52,11 +54,33 @@ async def _get_pending_machines(db: AsyncSession) -> list[PendingMachine]:
     return list(result.scalars().all())
 
 
-@router.get("")
-async def list_machines(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+async def _get_recent_update_runs(
+    machine_id: uuid.UUID, db: AsyncSession, limit: int = 5
+) -> list[MachineUpdateRun]:
     result = await db.execute(
-        select(Machine).options(selectinload(Machine.group)).order_by(Machine.name)
+        select(MachineUpdateRun)
+        .where(MachineUpdateRun.machine_id == machine_id)
+        .order_by(MachineUpdateRun.created_at.desc())
+        .limit(limit)
     )
+    return list(result.scalars().all())
+
+
+async def _get_update_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> MachineUpdateRun:
+    run = await db.get(MachineUpdateRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
+    return run
+
+
+@router.get("")
+async def list_machines(
+    request: Request, db: AsyncSession = Depends(get_db), q: str = ""
+) -> Response:
+    query = select(Machine).options(selectinload(Machine.group))
+    if q.strip():
+        query = query.where(machine_search_clause(q))
+    result = await db.execute(query.order_by(Machine.name))
     machines = result.scalars().all()
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
@@ -65,6 +89,7 @@ async def list_machines(request: Request, db: AsyncSession = Depends(get_db)) ->
         {
             "machines": machines,
             "pending_machines": await _get_pending_machines(db),
+            "q": q,
             "csrf_token": csrf_token,
         },
     )
@@ -168,7 +193,13 @@ async def machine_detail(
     machine = await _get_machine_or_404(machine_id, db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
-        request, "machines/detail.html", {"machine": machine, "csrf_token": csrf_token}
+        request,
+        "machines/detail.html",
+        {
+            "machine": machine,
+            "csrf_token": csrf_token,
+            "update_runs": await _get_recent_update_runs(machine_id, db),
+        },
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
@@ -393,6 +424,69 @@ async def refresh_facts_endpoint(
         request,
         "partials/machine_facts.html",
         {"machine": machine, "error": error, "csrf_token": csrf_token},
+    )
+
+
+@router.post("/{machine_id}/updates", dependencies=[Depends(verify_csrf)])
+async def trigger_machine_update(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    strategy: UpgradeStrategy = Form(...),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before running updates.",
+        )
+
+    # apt update/upgrade can run for a long time — this only creates the
+    # record and enqueues the job, it never waits for the result.
+    run = MachineUpdateRun(machine_id=machine.id, strategy=strategy)
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+
+    await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
+
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/updates/{run.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/{machine_id}/updates/{run_id}")
+async def machine_update_run_detail(
+    request: Request,
+    machine_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+    run = await _get_update_run_or_404(run_id, db)
+    if run.machine_id != machine.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
+    return templates.TemplateResponse(
+        request, "machines/update_run.html", {"machine": machine, "run": run}
+    )
+
+
+@router.get("/{machine_id}/updates/{run_id}/status")
+async def machine_update_run_status(
+    request: Request,
+    machine_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Pollable fragment (htmx `hx-trigger="every ...s"`) showing one run's
+    status/output. Once the run reaches a terminal state, the fragment stops
+    including the polling attributes, so htmx naturally stops re-fetching it.
+    """
+    run = await _get_update_run_or_404(run_id, db)
+    if run.machine_id != machine_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
+    return templates.TemplateResponse(
+        request, "partials/update_run_status.html", {"run": run}
     )
 
 

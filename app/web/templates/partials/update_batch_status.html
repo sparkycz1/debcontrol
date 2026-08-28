@@ -1,0 +1,37 @@
+<div
+  id="batch-status"
+  {% if has_pending %}
+  hx-get="/machine-groups/batches/{{ batch_id }}/status"
+  hx-trigger="every 3s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Machine</th>
+        <th>Strategy</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+        <tr>
+          <td><a href="/machines/{{ run.machine_id }}">{{ run.machine.name }}</a></td>
+          <td>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</td>
+          <td>
+            {% if run.status.value in ('pending', 'running') %}
+              <span class="badge badge-warn">{{ run.status.value }}</span>
+            {% elif run.status.value == 'succeeded' %}
+              <span class="badge badge-ok">succeeded</span>
+            {% else %}
+              <span class="badge badge-error">failed</span>
+            {% endif %}
+          </td>
+          <td><a href="/machines/{{ run.machine_id }}/updates/{{ run.id }}">Details</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

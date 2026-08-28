@@ -1,0 +1,6 @@
+<form method="get" class="search-form">
+  <input type="search" name="q" value="{{ q }}"
+         placeholder="Search by name, IP, hostname, OS version, username, notes...">
+  <button type="submit" class="button">Search</button>
+  {% if q %}<a class="button button-secondary" href="{{ request.url.path }}">Clear</a>{% endif %}
+</form>

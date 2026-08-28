@@ -35,7 +35,7 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 
 | Tab | Status |
 |---|---|
-| Machines | Add/view/remove managed machines, pin host keys, test connectivity, auto-discovered facts, online/offline status, self-registration review |
-| Machine groups | Organize machines into named groups |
+| Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts, online/offline status, self-registration review, free-text search, system updates |
+| Machine groups | Organize machines into named groups; built-in "All machines" group; search and system updates scoped to a group |
 | Users | Placeholder — no login/authentication yet |
 | Settings | Shows the app's SSH public key and background-check intervals |

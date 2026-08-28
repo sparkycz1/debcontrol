@@ -33,10 +33,10 @@ a stock Debian install already satisfies almost all of this.
 ## Account
 
 - A user for debcontrol to connect as. Using a dedicated non-root user
-  (rather than `root` directly) is recommended, even though nothing in
-  the current feature set requires root — none of the commands
-  debcontrol runs today (see "Fact gathering" below) need elevated
-  privileges.
+  with passwordless sudo scoped to `apt-get` (see "System updates" below)
+  is recommended over connecting as `root` directly — least privilege,
+  and it keeps what debcontrol can do on a machine visible in one sudoers
+  line instead of "everything."
 - **SSH key auth (recommended):** append the public key shown on
   debcontrol's **Settings** page to that user's
   `~/.ssh/authorized_keys`:
@@ -71,6 +71,35 @@ deliberately only uses tools present on a stock Debian install — see
 None of these need root. If a command is missing (e.g. a container-like
 minimal rootfs without `util-linux`), that one fact is simply left empty
 rather than failing the whole refresh.
+
+## System updates — requires root
+
+Unlike fact gathering, running updates (**Machines → a machine → System
+updates**) always needs root: it runs `apt-get update`, then `dist-upgrade`
+or `full-upgrade` (your choice), then `autoremove` and `autoclean`
+unconditionally — see `app/ssh/updates.py` for the exact commands. Two
+ways to satisfy that:
+
+- Connect as `root` directly (simplest, least isolated — many hardened
+  Debian images disable direct root SSH login by policy, so this may not
+  even be available).
+- **(Recommended)** Connect as a non-root user with passwordless sudo
+  scoped to just `apt-get`:
+  ```
+  # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get
+  ```
+  (replace `debcontrol` with whatever username you configured). debcontrol
+  always calls sudo as `sudo -n ...` (non-interactive) — if passwordless
+  sudo isn't set up correctly, the update fails immediately with a clear
+  error instead of hanging forever waiting for a password that can never
+  arrive over a non-interactive SSH command.
+
+Config-file conflicts during an upgrade are resolved automatically in
+favor of keeping your existing config (`--force-confdef --force-confold`)
+rather than prompting — the standard safe default for unattended Debian
+upgrades. A run's full output (stdout+stderr combined) is stored and
+shown in the UI so you can review exactly what happened.
 
 ## Self-registration (optional, for future automation)
 
@@ -126,4 +155,6 @@ shell history.
 - [ ] A user account for debcontrol to connect as
 - [ ] debcontrol's public key added to that user's `authorized_keys`
       (or password auth explicitly enabled, if you're using that instead)
+- [ ] *(for System updates)* passwordless sudo for `apt-get` configured
+      for that user (or it's `root`)
 - [ ] *(optional)* `curl` installed, if using self-registration

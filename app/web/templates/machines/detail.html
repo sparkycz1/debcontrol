@@ -91,4 +91,58 @@
     {% endif %}
     <div id="test-result"></div>
   </section>
+
+  <section class="panel">
+    <h2>System updates</h2>
+    <p class="hint">
+      Always runs <code>apt-get update</code>, then the selected upgrade
+      strategy, then <code>autoremove</code> and <code>autoclean</code>
+      (the cleanup steps run regardless of whether the upgrade step
+      succeeded). Requires root — either the configured user is root, or
+      has passwordless sudo for <code>apt-get</code>. See the wiki page
+      "Managed Machine Requirements" for a sudoers example.
+    </p>
+    <form method="post" action="/machines/{{ machine.id }}/updates" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% include "partials/upgrade_strategy_fields.html" %}
+      <button type="submit" class="button" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
+        Run update
+      </button>
+    </form>
+    {% if not machine.host_key_fingerprint %}
+      <p class="hint">Confirm the server's key fingerprint above first.</p>
+    {% endif %}
+
+    {% if update_runs %}
+      <h3>Recent runs</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Started</th>
+            <th>Strategy</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in update_runs %}
+            <tr>
+              <td>{{ run.created_at.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+              <td>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</td>
+              <td>
+                {% if run.status.value in ('pending', 'running') %}
+                  <span class="badge badge-warn">{{ run.status.value }}</span>
+                {% elif run.status.value == 'succeeded' %}
+                  <span class="badge badge-ok">succeeded</span>
+                {% else %}
+                  <span class="badge badge-error">failed</span>
+                {% endif %}
+              </td>
+              <td><a href="/machines/{{ machine.id }}/updates/{{ run.id }}">Details</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
 {% endblock %}

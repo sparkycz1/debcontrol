@@ -188,9 +188,19 @@ wiki/         documentation, meant to become the GitHub wiki
   badge from a lightweight per-minute reachability check
   ([app/ssh/reachability.py](app/ssh/reachability.py)). Machines can also
   self-register via `POST /api/inform` (bearer-token authenticated) and
-  show up as "pending" for review before being added.
+  show up as "pending" for review before being added. Free-text search
+  (name, IP, hostname, OS/kernel version, username, notes) across the
+  machine list. Each machine has a **System updates** panel: always
+  `apt-get update`, then `dist-upgrade` or `full-upgrade` (your choice),
+  then `autoremove`/`autoclean` unconditionally — runs in the background
+  (can take a while) with a live-updating status page; requires root or
+  passwordless sudo for `apt-get` on the machine (see the wiki: Managed
+  Machine Requirements). See [app/ssh/updates.py](app/ssh/updates.py).
 - **Machine groups** — organize machines into named groups (e.g. by
-  environment or role); assign/remove machines from a group.
+  environment or role); assign/remove machines from a group. The search
+  and system-update features above work here too, scoped to the group
+  (or to **All machines**, a built-in group that's always literally every
+  machine — see the "All machines" details on the Machine groups page).
 - **Users** — placeholder; no authentication yet.
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
   distribution to machines) and the current background-check intervals.
@@ -204,9 +214,12 @@ managed this way.
 ## What's deliberately empty / for later
 
 - Login and authorization for app users.
-- Running arbitrary commands / bulk operations across many machines (the
-  groundwork already exists in `app/tasks/jobs.py` and `app/ssh/client.py`).
-- Audit log.
+- Running arbitrary commands across machines — system updates are the
+  first bulk/group-scoped SSH operation (see `app/ssh/updates.py`,
+  `app/db/models/machine_update_run.py`); the same `batch_id` grouping
+  pattern is meant to extend to other commands later.
+- Audit log (who ran what update and when — right now a run just records
+  what happened, not who triggered it, since there's no login yet).
 - Automated SSH key distribution (currently a manual step — see Settings)
   and turning a pending self-registered machine directly into a managed
   one without re-entering its IP/name.

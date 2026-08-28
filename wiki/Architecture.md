@@ -107,6 +107,47 @@ manageable `Machine` still goes through the ordinary add-machine form and
 the mandatory host-key discovery/confirmation flow — self-registration
 just pre-fills the IP/name so there's less retyping.
 
+### System updates: the first bulk SSH operation
+
+Running `apt-get update` / `dist-upgrade` or `full-upgrade` / `autoremove` /
+`autoclean` (**Machines → a machine → System updates**, or the same action
+scoped to a group / "All machines") is the first feature that (a) needs
+root on the target and (b) can legitimately run for a long time. Both
+shaped the design:
+
+- **A dedicated long timeout.** `open_connection`'s timeout only bounds
+  the SSH handshake; the apt sequence itself gets its own budget
+  (`UPDATE_TIMEOUT_SECONDS`, default 30 minutes) via arq's `func(...,
+  timeout=...)`, distinct from the default job timeout every other
+  background job uses. See `app/tasks/worker.py`.
+- **Cleanup always runs, chained by `;` not `&&`.** If the upgrade step
+  fails, `autoremove`/`autoclean` still run — they're independently
+  useful and shouldn't be skipped because of an unrelated upgrade
+  problem. The upgrade step's own exit status is still what determines
+  whether the run is recorded as succeeded or failed. See
+  `app/ssh/updates.py`.
+- **`sudo -n` throughout**, never a bare `apt-get` assuming the
+  connecting user is root. Non-interactive so a machine without
+  passwordless sudo configured fails immediately with a clear error
+  instead of hanging on a password prompt that can never be answered
+  over a non-interactive SSH exec. See
+  [Managed Machine Requirements](Managed-Machine-Requirements.md) for the
+  sudoers line this expects.
+- **Every run is a row, not just a Redis job.** `MachineUpdateRun`
+  persists status/output/error/timestamps in Postgres — arq's own result
+  storage is Redis-backed with a TTL and isn't a domain record, so it's
+  not what the UI's run-detail and batch pages are built on. A `batch_id`
+  (just a shared UUID, not a foreign key to anything) is the only thing
+  connecting the runs from one group/"All machines" trigger — there's no
+  separate "batch" table, since a `WHERE batch_id = ...` query is all a
+  batch results page ever needs.
+- **The scheduler-vs-worker split from facts refresh applies here too.**
+  A group/"all" trigger creates every `MachineUpdateRun` row and enqueues
+  every job in one request/commit, then returns — it never awaits the
+  actual updates inline, for the same reason `refresh_all_machine_facts`
+  doesn't: one slow or unreachable machine can't be allowed to hold up
+  the others or the triggering request.
+
 ### CSRF protection without sessions
 
 Since there's no login yet, there's no session to hang CSRF protection

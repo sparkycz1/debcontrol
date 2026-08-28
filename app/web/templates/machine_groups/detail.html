@@ -18,8 +18,13 @@
 
   <section class="panel">
     <h2>Machines in this group</h2>
-    {% if not group.machines %}
-      <p class="hint">No machines in this group yet.</p>
+    {% include "partials/machine_search_form.html" %}
+    {% if not machines %}
+      {% if q %}
+        <p class="hint">No machines in this group match "{{ q }}".</p>
+      {% else %}
+        <p class="hint">No machines in this group yet.</p>
+      {% endif %}
     {% else %}
       <table class="data-table">
         <thead>
@@ -30,7 +35,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for machine in group.machines %}
+          {% for machine in machines %}
             <tr>
               <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
               <td>{{ machine.username }}</td>
@@ -66,5 +71,18 @@
         <button type="submit" class="button">Add to group</button>
       </form>
     {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Update all machines in this group</h2>
+    <p class="hint">
+      Runs update → upgrade → autoremove/autoclean on every machine in this
+      group that has a confirmed host key fingerprint — others are skipped.
+    </p>
+    <form method="post" action="/machine-groups/{{ group.id }}/updates" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% include "partials/upgrade_strategy_fields.html" %}
+      <button type="submit" class="button">Run update on this group</button>
+    </form>
   </section>
 {% endblock %}

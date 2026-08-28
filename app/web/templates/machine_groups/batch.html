@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Update batch — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Update batch</h1>
+  </div>
+
+  {% if skipped %}
+    <div class="alert alert-warn">
+      <p>
+        {{ skipped }} machine(s) were skipped — no confirmed host key
+        fingerprint yet, so nothing could be safely connected to.
+      </p>
+    </div>
+  {% endif %}
+
+  <section class="panel">
+    {% include "partials/update_batch_status.html" %}
+  </section>
+{% endblock %}

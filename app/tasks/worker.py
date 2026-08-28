@@ -10,7 +10,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from arq import cron
+from arq import cron, func
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
@@ -19,6 +19,7 @@ from app.tasks.jobs import (
     ping_all_machines,
     refresh_all_machine_facts,
     refresh_machine_facts,
+    run_machine_update,
     test_machine_connection,
 )
 
@@ -44,7 +45,14 @@ def _redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [test_machine_connection, refresh_machine_facts, refresh_all_machine_facts]
+    functions = [
+        test_machine_connection,
+        refresh_machine_facts,
+        refresh_all_machine_facts,
+        # apt update/upgrade can legitimately run far longer than the
+        # default job_timeout below — give it its own budget.
+        func(run_machine_update, timeout=get_settings().update_timeout_seconds),
+    ]
     cron_jobs = [cron(ping_all_machines, second=0, unique=True)]
     on_startup = startup
     on_shutdown = shutdown

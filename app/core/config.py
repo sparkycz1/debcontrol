@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # Bearer token machines must present when self-registering via POST /api/inform.
     inform_token: SecretStr = Field(alias="INFORM_TOKEN")
 
+    # apt update/upgrade/autoremove/autoclean can legitimately take a long
+    # time (large downloads, many packages) — this is the max wall-clock
+    # time given to that whole sequence, distinct from `ssh_connect_timeout`
+    # (which only bounds establishing the connection itself).
+    update_timeout_seconds: int = Field(default=1800, alias="UPDATE_TIMEOUT_SECONDS")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @field_validator("secret_key", "encryption_key", "inform_token")

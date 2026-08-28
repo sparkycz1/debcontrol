@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from app.db.models.machine import Machine
+from app.main import app
 
 
 async def test_healthz(client):
@@ -292,3 +296,139 @@ async def test_settings_shows_ssh_identity(client):
     assert response.status_code == 200
     assert "ssh-ed25519" in response.text
     assert "SHA256:" in response.text
+
+
+async def _create_machine(
+    client: httpx.AsyncClient, csrf_token: str, **overrides: str
+) -> uuid.UUID:
+    data = {
+        "name": "m",
+        "ip_address": "10.0.1.1",
+        "port": "22",
+        "username": "admin",
+        "auth_method": "password",
+        "secret": "",
+        "csrf_token": csrf_token,
+    }
+    data.update(overrides)
+    response = await client.post("/machines", data=data)
+    assert response.status_code == 303
+    return uuid.UUID(response.headers["location"].rsplit("/", 1)[-1])
+
+
+async def _pin_host_key(
+    db_session_factory: async_sessionmaker[AsyncSession], machine_id: uuid.UUID
+) -> None:
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.host_key_fingerprint = "SHA256:fakefingerprint"
+        await session.commit()
+
+
+async def test_machine_search_filters_by_multiple_fields(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    await _create_machine(client, csrf_token, name="web-alpha", ip_address="10.1.1.1")
+    await _create_machine(client, csrf_token, name="db-beta", ip_address="10.2.2.2")
+
+    by_name = await client.get("/machines?q=alpha")
+    assert "web-alpha" in by_name.text
+    assert "db-beta" not in by_name.text
+
+    by_ip = await client.get("/machines?q=10.2.2.2")
+    assert "db-beta" in by_ip.text
+    assert "web-alpha" not in by_ip.text
+
+    no_match = await client.get("/machines?q=nonexistent")
+    assert 'No machines match "nonexistent"' in no_match.text
+
+
+async def test_group_and_all_pages_support_search(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    create_group = await client.post(
+        "/machine-groups", data={"name": "searchgroup", "description": "", "csrf_token": csrf_token}
+    )
+    group_url = create_group.headers["location"]
+
+    machine_id = await _create_machine(client, csrf_token, name="findme", ip_address="10.3.3.3")
+    await client.post(
+        f"{group_url}/machines", data={"machine_id": str(machine_id), "csrf_token": csrf_token}
+    )
+    await _create_machine(client, csrf_token, name="ignoreme", ip_address="10.4.4.4")
+
+    group_search = await client.get(f"{group_url}?q=findme")
+    assert "findme" in group_search.text
+
+    all_search = await client.get("/machine-groups/all?q=findme")
+    assert "findme" in all_search.text
+    assert "ignoreme" not in all_search.text
+
+
+async def test_trigger_machine_update_requires_pinned_host_key(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token)
+
+    response = await client.post(
+        f"/machines/{machine_id}/updates",
+        data={"strategy": "dist_upgrade", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 400
+
+
+async def test_trigger_machine_update_creates_run_and_redirects(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token)
+    await _pin_host_key(db_session_factory, machine_id)
+
+    response = await client.post(
+        f"/machines/{machine_id}/updates",
+        data={"strategy": "full_upgrade", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 303
+    run_url = response.headers["location"]
+    assert run_url.startswith(f"/machines/{machine_id}/updates/")
+
+    run_page = await client.get(run_url)
+    assert run_page.status_code == 200
+    assert "full-upgrade" in run_page.text
+
+    assert "run_machine_update" in [call[0] for call in app.state.arq_redis.enqueued]
+
+
+async def test_trigger_group_update_batches_and_skips_unpinned(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    create_group = await client.post(
+        "/machine-groups", data={"name": "batchgroup", "description": "", "csrf_token": csrf_token}
+    )
+    group_url = create_group.headers["location"]
+
+    pinned_id = await _create_machine(client, csrf_token, name="pinned", ip_address="10.5.5.1")
+    await _pin_host_key(db_session_factory, pinned_id)
+    unpinned_id = await _create_machine(client, csrf_token, name="unpinned", ip_address="10.5.5.2")
+
+    for machine_id in (pinned_id, unpinned_id):
+        await client.post(
+            f"{group_url}/machines",
+            data={"machine_id": str(machine_id), "csrf_token": csrf_token},
+        )
+
+    response = await client.post(
+        f"{group_url}/updates", data={"strategy": "dist_upgrade", "csrf_token": csrf_token}
+    )
+    assert response.status_code == 303
+    batch_url = response.headers["location"]
+    assert "skipped=1" in batch_url
+
+    batch_page = await client.get(batch_url)
+    assert batch_page.status_code == 200
+    assert f"/machines/{pinned_id}" in batch_page.text
+    assert f"/machines/{unpinned_id}" not in batch_page.text
+    assert "1 machine(s) were skipped" in batch_page.text

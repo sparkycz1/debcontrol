@@ -12,18 +12,24 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.models.machine import Machine
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.session import AsyncSessionLocal
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.facts import gather_facts
 from app.ssh.reachability import check_reachable
+from app.ssh.updates import run_system_update
 
 logger = logging.getLogger(__name__)
 
 # Cap how many machines are checked/refreshed at once so one slow/firewalled
 # host can't make a sweep over the whole fleet take forever.
 _REACHABILITY_CONCURRENCY = 20
+
+# Keep stored update output from growing unreasonably large for a very
+# chatty apt run — keep the tail, since that's where errors/summaries land.
+_MAX_STORED_OUTPUT_CHARS = 200_000
 
 
 async def test_machine_connection(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
@@ -132,3 +138,62 @@ async def refresh_all_machine_facts(ctx: dict[str, Any]) -> None:
         "refresh_all_machine_facts",
         _defer_by=timedelta(seconds=settings.facts_refresh_interval_seconds),
     )
+
+
+def _truncate_output(output: str) -> str:
+    if len(output) <= _MAX_STORED_OUTPUT_CHARS:
+        return output
+    return "[... output truncated ...]\n" + output[-_MAX_STORED_OUTPUT_CHARS:]
+
+
+async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
+    """Execute one `MachineUpdateRun`: apt update, the chosen upgrade
+    strategy, then autoremove/autoclean — see `app.ssh.updates`.
+
+    Given a long, dedicated timeout in `app.tasks.worker.WorkerSettings`
+    (`UPDATE_TIMEOUT_SECONDS`), separate from the default job timeout used
+    by every other job here.
+    """
+    settings = get_settings()
+
+    async with AsyncSessionLocal() as session:
+        run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
+        if run is None:
+            return
+
+        machine = await session.get(Machine, run.machine_id)
+        if machine is None:
+            run.status = UpdateRunStatus.FAILED
+            run.error = "Machine not found."
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        run.status = UpdateRunStatus.RUNNING
+        run.started_at = datetime.now(UTC)
+        await session.commit()
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            result = await run_system_update(
+                machine,
+                secret,
+                run.strategy,
+                settings.ssh_connect_timeout,
+                settings.update_timeout_seconds,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("run_machine_update failed for %s: %s", machine.name, exc)
+            run.status = UpdateRunStatus.FAILED
+            run.error = str(exc)
+        else:
+            run.output = _truncate_output(result.output)
+            if result.exit_status == 0:
+                run.status = UpdateRunStatus.SUCCEEDED
+            else:
+                run.status = UpdateRunStatus.FAILED
+                run.error = f"apt exited with status {result.exit_status}."
+
+        run.finished_at = datetime.now(UTC)
+        await session.commit()
