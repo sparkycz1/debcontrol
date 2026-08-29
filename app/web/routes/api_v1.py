@@ -38,12 +38,14 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
+from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
     trigger_updates,
 )
+from app.services.machine_config import export_machine_config, import_machine_config
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 
@@ -198,6 +200,32 @@ async def package_search_api(
         "results": [_package_to_dict(p, include_machine=True) for p in results],
         "truncated": truncated,
     }
+
+
+@router.get("/machines/config/export", dependencies=[_view_machines])
+async def export_machine_config_api(db: AsyncSession = Depends(get_db)) -> MachineConfigExport:
+    """The API equivalent of `GET /machines/config/export?format=json` — see
+    `app.services.machine_config`'s module docstring for exactly what's
+    included/excluded and why. No CSV variant here (the web UI's is a plain
+    download link for a browser; a script consuming this API wants JSON)."""
+    return await export_machine_config(db)
+
+
+@router.post("/machines/config/import", dependencies=[_manage_machines])
+async def import_machine_config_api(
+    request: Request, payload: MachineConfigExport, db: AsyncSession = Depends(get_db)
+) -> dict[str, object]:
+    """The API equivalent of `POST /machines/config/import` — same
+    conflict-handling/security policy, see `app.services.machine_config`."""
+    result = await import_machine_config(db, payload)
+    await log_event(
+        db,
+        request=request,
+        action="machine.config_import",
+        summary=result.summary(),
+        details=result.to_dict(),
+    )
+    return result.to_dict()
 
 
 @router.get("/machines/{machine_id}", dependencies=[_view_machines])

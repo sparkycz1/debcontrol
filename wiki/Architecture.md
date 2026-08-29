@@ -274,6 +274,44 @@ recovery codes" — which deliberately requires a fresh *TOTP* code, not a
 recovery code itself, so a single leaked recovery code (with a hijacked
 session) can't be used to invalidate and relearn the whole batch.
 
+### Role-enforced TOTP: real-time, not just a login-time redirect
+
+`Role.require_totp` lets an admin mandate TOTP for everyone holding a given
+role. The naive version of this — checking it once at login and redirecting
+to enrollment — has an obvious hole: an already-logged-in user (or a user
+whose role gets this flag turned on mid-session) keeps full access until
+their session naturally ends. Contrast with `User.must_change_password`,
+which really does work that way: it only steers `_finish_login`'s
+post-login redirect (`app/web/routes/auth.py`), so a user who's already
+logged in when an admin resets their password keeps going about their
+business, unaffected, until they log out and back in. That's an accepted
+gap for a forced-password-reset (worst case, they change it next time), but
+"this role's users must have 2FA" is a stronger security promise, and this
+feature deliberately holds it to a stronger standard: `app.auth.middleware`
+checks the *current* session's user's *current* role and *current*
+`totp_enabled` state on every single request, not once at login. Toggling
+the flag on takes effect for every affected user's very next request,
+session or no session change involved. A blocked user is allowed exactly
+two things: `GET`/`POST /account/totp/enroll` (to fix the problem) and
+`/logout` (already public, no session needed at all) — everything else
+redirects there (or, for an `HX-Request`, sends `HX-Redirect` so htmx
+navigates the whole page rather than swapping the redirect target's HTML
+into a fragment).
+
+API tokens go through a separate check
+(`app.auth.dependencies.get_api_token_user`) with the same live-check
+philosophy, but a different outcome: an API token has no interactive way to
+scan a QR code, so instead of trying to redirect it anywhere, a blocked
+token gets a flat 403 explaining the account needs TOTP enrolled via the
+web UI first. (`must_change_password` isn't API-gated at all today, an
+inconsistency worth revisiting — see "Deliberately out of scope" if it's
+ever promoted to the same "must be dealt with immediately" tier as this.)
+
+OIDC accounts are unconditionally exempt from `require_totp`, for the same
+reason TOTP isn't offered to them at all (previous section) — enforcing an
+unsatisfiable requirement would just be a permanent lockout with no way
+out, not a security improvement.
+
 ### OIDC's "session" is unrelated to the app's own
 
 Authlib's Starlette integration needs somewhere to stash `state`/`nonce`
@@ -447,6 +485,41 @@ connection is ever made to a machine whose host key fingerprint hasn't
 been explicitly confirmed by a human, and any later mismatch hard-fails
 the connection instead of silently reconnecting.
 
+### Machine/group configuration export & import: structural, not a credentials backup
+
+`app.services.machine_config` (used by both `app/web/routes/machines.py`
+and `app/web/routes/api_v1.py` — one service function, two doors, same
+convention as `app.services.machine_actions`) lets an operator export every
+machine's and group's *structural* configuration and re-import it
+elsewhere, e.g. to stand up a new instance from an existing fleet's layout.
+It deliberately never touches `Machine.secret_encrypted` or
+`Machine.host_key_fingerprint` — consistent with the "no blind trust on
+first use" model above, an import is not a way to skip the manual host-key
+confirmation step, and it's not a way to move password credentials between
+databases either. Concretely:
+
+- A `ssh_key`-auth machine imports cleanly — the app's one shared identity
+  key needs nothing machine-specific.
+- A `password`-auth machine can't be re-created with that method (there's
+  no secret to import); it comes back as `ssh_key` instead, and its name is
+  surfaced in the result so an operator knows to revisit its credentials by
+  hand.
+- Every imported machine starts with no pinned host key, exactly like a
+  freshly hand-added one — the normal "Discover key fingerprint" +
+  outside-the-app confirmation flow applies before anything connects to it.
+
+Conflict handling is asymmetric on purpose: a machine name that already
+exists is **skipped**, not overwritten (silently replacing an existing
+machine's connection details, and forcing it to lose its pinned host key,
+is a worse default than asking a human to resolve the conflict), while a
+group name that already exists is simply **reused** for membership (there's
+no credential or trust state on a group to lose, so match-or-create is
+harmless). This is why import is a real create path directly into
+`Machine`/`MachineGroup` — unlike CSV bulk-import (`POST /machines/import`)
+and self-registration, which land in the `PendingMachine` review queue
+because *those* inputs describe genuinely unknown hosts, not already-known
+configuration being restored or migrated.
+
 ### Secrets at rest
 
 Machine passwords and the app's own SSH private key are encrypted in
@@ -542,6 +615,14 @@ shaped the design:
   actual updates inline, for the same reason `refresh_all_machine_facts`
   doesn't: one slow or unreachable machine can't be allowed to hold up
   the others or the triggering request.
+- **Every run ever, not just the last few.** The machine detail page's
+  "Recent runs" table only ever shows the last 5 (it's a summary, not the
+  full record) — `GET /machines/{id}/updates` is the full paginated,
+  status-filterable history, using the same offset/limit-plus-one-extra-row
+  pagination convention as `/audit` (`app/web/routes/audit.py`) rather than
+  inventing a second one. No new model or migration needed: `MachineUpdateRun`
+  already records every run permanently, this is purely a read-side view
+  over data that already existed.
 
 ### Checking for updates without installing them
 
@@ -961,6 +1042,43 @@ it can never invalidate `verify_chain` for whatever remains — a verifier
 just starts from whatever the current oldest surviving entry is. The purge
 itself is logged (`audit_log.purge`, actor `"retention policy
 (automatic)"`) with how many entries were removed.
+
+### Dashboard trends: a daily snapshot, retained the same way as the audit log
+
+`FleetSnapshot` (`app/db/models/fleet_snapshot.py`) is one row per calendar
+day of the exact fleet-wide counts the Dashboard already shows live — total/
+online/offline machines, machines needing (security) updates, machines
+needing a reboot. Both the live Dashboard and the daily snapshot job
+(`app.tasks.jobs.record_fleet_snapshot`, a fixed 02:00 UTC cron tick) go
+through the same `app.services.fleet_stats.compute_fleet_stats`, so the
+trend line and "what the Dashboard says right now" can never define these
+counts differently. The job is idempotent per calendar day (checked before
+inserting, and enforced again by a unique constraint on `snapshot_date`) so
+a worker restart re-firing the same day's cron tick is a no-op, not a
+duplicate row.
+
+`AppSettings.dashboard_trends_retention_days` and the paired
+`purge_old_fleet_snapshots` job (03:05 UTC) are a deliberate copy of the
+audit log retention pattern above — same Settings-page UI shape, same
+"only remove rows older than the cutoff" purge. The one difference is the
+default: audit retention defaults to "keep forever" because silently
+discarding audit history is a much worse surprise than an unbounded table,
+but a fleet-count trend is a lightweight, purely-derived convenience for a
+chart, not a compliance record — so it defaults to a bounded 90 days
+instead, with `None` still available for "keep forever" if an operator
+wants that.
+
+The Dashboard only renders the trend chart(s) once at least two snapshots
+exist (a single point isn't a trend, and a fresh install has none). The
+chart itself (`app/web/templates/macros/charts.html`) is generated
+entirely server-side as inline SVG using only presentation attributes
+(`fill=`, `stroke=`) — never a `style=` attribute or a `<style>` block —
+so it needs no exception carved into the CSP's `style-src 'self'`, and no
+external charting library either (this app vendors htmx locally and allows
+no other external script/asset host at all). `GET /api/v1/dashboard/trends`
+exposes the same raw series read-only, gated by `machine.view` (the same
+permission that already governs seeing these numbers anywhere else) rather
+than inventing a dedicated "dashboard" permission for one read-only report.
 
 ### Audit log export and syslog forwarding: the DB row is always the truth
 

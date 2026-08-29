@@ -81,9 +81,11 @@ published as the GitHub wiki once this repo is pushed there (see
   comparing a configurable ID-token claim against their username. See
   [app/auth/login.py](app/auth/login.py), [app/auth/ldap.py](app/auth/ldap.py),
   [app/auth/oidc.py](app/auth/oidc.py).
-- **Optional TOTP two-factor** for local/LDAP accounts (not OIDC — the
-  provider handles its own MFA), with one-time recovery codes. See
-  [app/auth/totp.py](app/auth/totp.py).
+- **Optional (or role-required) TOTP two-factor** for local/LDAP accounts
+  (not OIDC — the provider handles its own MFA), with one-time recovery
+  codes. A role can require it (**Roles**, below); enforcement is real-time
+  and app-wide (`app/auth/middleware.py`, `app/auth/dependencies.py`), not
+  just a post-login redirect. See [app/auth/totp.py](app/auth/totp.py).
 - **Guardrails against locking everyone out**: you can't deactivate,
   delete, or demote your own account, and the last active account holding
   `user.manage` can't be deactivated, deleted, or demoted away from it
@@ -261,7 +263,17 @@ wiki/           documentation, meant to become the GitHub wiki
   offline, pending updates, security updates, reboot-required), upcoming
   scheduled tasks, and recent audit activity — each section only shown if
   the current role can see that area, same permission checks as the nav
-  itself. See [app/web/routes/dashboard.py](app/web/routes/dashboard.py).
+  itself. A daily background job snapshots those same fleet-wide counts
+  (see [app.services.fleet_stats](app/services/fleet_stats.py), used by
+  both the live numbers and the snapshot so they can't drift apart); once
+  at least two days of history exist, the Dashboard renders online-machine
+  and pending-updates trend lines as dependency-free inline SVG (no
+  external charting library — see
+  [app/web/templates/macros/charts.html](app/web/templates/macros/charts.html)).
+  How long snapshots are kept is configurable on **Settings** (default 90
+  days, same pattern as audit log retention); the raw series is also
+  available read-only via `GET /api/v1/dashboard/trends`. See
+  [app/web/routes/dashboard.py](app/web/routes/dashboard.py).
 - **Machines** — add, view, edit, and remove managed Debian machines; pin
   SSH host key fingerprints; test connectivity. Editing the IP address or
   port resets the pinned fingerprint and gathered facts, since those
@@ -300,6 +312,10 @@ wiki/           documentation, meant to become the GitHub wiki
   "Which ...?" disclosure — without installing anything. That package list
   reflects whichever check ran most recently: the button, the periodic
   sweep, or a scheduled "check_updates" task (see **Scheduling** below).
+  The machine detail page shows the last 5 update runs inline, with a
+  link to a dedicated, paginated **Update history** page
+  (`GET /machines/{id}/updates`) showing every run ever, newest first,
+  filterable by status.
   A reboot-required
   badge appears automatically when a newer kernel is installed but not
   yet running. apt requires root or passwordless sudo for `apt-get`;
@@ -322,7 +338,17 @@ wiki/           documentation, meant to become the GitHub wiki
   work here too, scoped to the group (or to **All machines**, a built-in
   group that's always literally every machine — see the "All machines"
   details on the Machine groups page) — machines without a pinned host
-  key are silently skipped and the count surfaced.
+  key are silently skipped and the count surfaced. Machine and group
+  *configuration* (name, address, port, username, auth method, group
+  membership, description — deliberately never credentials or the pinned
+  host-key fingerprint) can be **exported** as JSON (machines + groups) or
+  CSV (machines only) from the Machines page, and **imported** back to
+  recreate real machines/groups directly, for restoring or migrating known
+  configuration — see
+  [app/services/machine_config.py](app/services/machine_config.py) for the
+  full security/conflict-handling policy (a `password`-auth machine imports
+  as `ssh_key` with a warning; an existing machine name is skipped, never
+  overwritten; every imported machine starts with no pinned host key).
 - **Scheduling** — run any existing action (system update, update check,
   reboot, shut down) against a machine, a group, or **All machines** on a
   cron expression (standard 5-field, always UTC). Adding a schedule reuses
@@ -353,8 +379,15 @@ wiki/           documentation, meant to become the GitHub wiki
   [app/web/routes/users.py](app/web/routes/users.py).
 - **Roles** — define named roles with an exact permission checkbox matrix;
   a role in use can't be deleted, and a role can't be edited to strip
-  `user.manage` if that would leave nobody able to manage users — see
-  [app/web/routes/roles.py](app/web/routes/roles.py).
+  `user.manage` if that would leave nobody able to manage users. A role can
+  also be flagged **"Require two-factor authentication"** — enforced live,
+  on every request (not just steered at login): a user holding that role
+  without TOTP enrolled yet is blocked from everything except enrolling it
+  (and logging out) until they do, and toggling the flag on takes effect
+  for already-logged-in users on their very next request. Exempt for OIDC
+  accounts (no TOTP enrollment is offered for them — see "My account"
+  below). See [app/web/routes/roles.py](app/web/routes/roles.py) and
+  [app/auth/middleware.py](app/auth/middleware.py).
 - **My account** — change your own password (with re-entering the current
   one), enroll/disable TOTP two-factor and view/regenerate recovery codes,
   "log out everywhere else", and — if an administrator has granted this
@@ -381,7 +414,9 @@ wiki/           documentation, meant to become the GitHub wiki
   daily purge, see
   [app/db/models/app_settings.py](app/db/models/app_settings.py)) plus an
   on-demand hash-chain integrity check, **CSV/JSON export** of the audit
-  log, **syslog forwarding** of every audit entry to an external server —
+  log, the **Dashboard trends** retention policy (same pattern, for the
+  daily fleet snapshots behind the Dashboard's trend chart), **syslog
+  forwarding** of every audit entry to an external server —
   e.g. a SIEM — over plain UDP/TCP or TLS (see
   [app/audit_syslog.py](app/audit_syslog.py); best-effort, the DB row is
   always the real record), and the LDAP/OIDC login configuration (server,
