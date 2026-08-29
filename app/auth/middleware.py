@@ -56,9 +56,12 @@ _PUBLIC_PREFIXES = ("/static/", "/api/")
 
 
 # Reachable with a valid session even while a role's `require_totp` block is
-# in effect — enrolling TOTP (GET renders the form, POST confirms it) and
-# the account page it's linked from. Nothing else. See `_totp_gate` below.
-_TOTP_ENROLL_ALLOWLIST = frozenset({"/account", "/account/totp/enroll"})
+# in effect — enrolling TOTP (GET renders the form, POST confirms it), the
+# account page it's linked from, and logging out (a blocked user who won't
+# or can't enroll right now must still be able to end their own session,
+# not just be trapped on the enrollment page). Nothing else.
+# See `_totp_enrollment_required` below.
+_TOTP_ENROLL_ALLOWLIST = frozenset({"/account", "/account/totp/enroll", "/logout"})
 
 
 def _is_public(path: str) -> bool:

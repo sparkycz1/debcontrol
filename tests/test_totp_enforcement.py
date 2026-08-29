@@ -86,6 +86,30 @@ async def test_role_require_totp_blocks_non_enrolled_user(db_session_factory):
     app.dependency_overrides.clear()
 
 
+async def test_logout_stays_reachable_while_totp_enrollment_is_blocked(db_session_factory):
+    """A user blocked pending TOTP enrollment must still be able to end their
+    own session — not be trapped on the enrollment page with no way out."""
+    _configure_app_for_tests(db_session_factory)
+    user, raw_token = await _make_user_with_role(
+        db_session_factory, username="wants-to-leave", require_totp=True, totp_enabled=False
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        ac.cookies.set(SESSION_COOKIE_NAME, raw_token)
+
+        csrf_token = ac.cookies.get("csrftoken")
+        if not csrf_token:
+            await ac.get("/account")
+            csrf_token = ac.cookies.get("csrftoken")
+
+        logout = await ac.post("/logout", data={"csrf_token": csrf_token})
+        assert logout.status_code == 303
+        assert logout.headers["location"] == "/login"
+
+    app.dependency_overrides.clear()
+
+
 async def test_enrolling_totp_lifts_the_block_without_re_login(db_session_factory):
     _configure_app_for_tests(db_session_factory)
     user, raw_token = await _make_user_with_role(
