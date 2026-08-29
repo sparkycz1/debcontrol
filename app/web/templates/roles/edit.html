@@ -43,6 +43,17 @@
       {% endfor %}
     </div>
 
+    <label>
+      <input type="checkbox" name="require_totp" value="1" {{ 'checked' if require_totp else '' }}>
+      Require two-factor authentication (TOTP) for users with this role
+    </label>
+    <p class="hint">
+      A user holding this role who hasn't enrolled TOTP is blocked from
+      everything except enrolling it (and logging out) — checked live on
+      every request, not just at login. Doesn't apply to OIDC accounts
+      (their provider is expected to own MFA — TOTP isn't offered for them).
+    </p>
+
     <button type="submit" class="button">Save</button>
     <a class="button button-secondary" href="/roles">Cancel</a>
   </form>

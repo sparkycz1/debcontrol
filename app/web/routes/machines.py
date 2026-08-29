@@ -22,7 +22,7 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.session import get_db
@@ -132,6 +132,9 @@ async def _get_packages(
         query = query.where(MachinePackage.held.is_(True))
     result = await db.execute(query.order_by(MachinePackage.source, MachinePackage.name))
     return list(result.scalars().all())
+
+
+_UPDATE_HISTORY_PAGE_SIZE = 50
 
 
 async def _get_update_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> MachineUpdateRun:
@@ -1024,6 +1027,49 @@ async def trigger_machine_update(
 
     return RedirectResponse(
         url=f"/machines/{machine.id}/updates/{run.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/{machine_id}/updates")
+async def machine_update_history(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    status_filter: str = "",
+    page: int = 1,
+) -> Response:
+    """Every update run for this machine, newest first, paginated the same
+    way `/audit` is (offset/limit, one extra row fetched to know whether an
+    "Older" page exists) — the machine detail page's "Recent runs" table
+    only ever shows the last 5; this is the full history behind it."""
+    machine = await _get_machine_or_404(machine_id, db)
+    page = max(page, 1)
+
+    query = select(MachineUpdateRun).where(MachineUpdateRun.machine_id == machine_id)
+    if status_filter in {s.value for s in UpdateRunStatus}:
+        query = query.where(MachineUpdateRun.status == UpdateRunStatus(status_filter))
+
+    offset = (page - 1) * _UPDATE_HISTORY_PAGE_SIZE
+    result = await db.execute(
+        query.order_by(MachineUpdateRun.created_at.desc())
+        .offset(offset)
+        .limit(_UPDATE_HISTORY_PAGE_SIZE + 1)
+    )
+    runs = list(result.scalars().all())
+    has_older = len(runs) > _UPDATE_HISTORY_PAGE_SIZE
+    runs = runs[:_UPDATE_HISTORY_PAGE_SIZE]
+
+    return templates.TemplateResponse(
+        request,
+        "machines/update_history.html",
+        {
+            "machine": machine,
+            "runs": runs,
+            "statuses": list(UpdateRunStatus),
+            "status_filter": status_filter,
+            "page": page,
+            "has_older": has_older,
+        },
     )
 
 

@@ -579,6 +579,10 @@ async def totp_enroll_form(request: Request, user: User = Depends(get_current_us
             "secret": secret,
             "qr_svg": totp_module.qr_code_svg(uri),
             "error": None,
+            # See app.auth.middleware's `_totp_enrollment_required` — this
+            # page is where that block sends someone, and worth explaining
+            # why they landed here rather than wherever they meant to go.
+            "required_by_role": user.role.require_totp,
         },
     )
 
@@ -609,6 +613,7 @@ async def totp_enroll_confirm(
                 "error": (
                     "That code didn't match — check your authenticator app's clock and try again."
                 ),
+                "required_by_role": user.role.require_totp,
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )

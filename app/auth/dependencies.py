@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_tokens import get_user_for_api_token
 from app.db.models.role import Permission
-from app.db.models.user import User
+from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 
 
@@ -51,6 +51,25 @@ async def get_api_token_user(request: Request, db: AsyncSession = Depends(get_db
     if user is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Invalid, expired, or revoked API token."
+        )
+    # Same real-time `require_totp` gate `app.auth.middleware` applies to
+    # session requests (see its `_totp_enrollment_required`), but an API
+    # token has no interactive way to enroll TOTP — there's no browser flow
+    # to redirect it into. A flat 403 telling the caller what to do (finish
+    # enrollment via the web UI, using this same account/session) is the
+    # only sensible option; OIDC accounts are exempt for the same reason
+    # the session-side gate exempts them (no TOTP enrollment offered at all).
+    if (
+        user.role.require_totp
+        and user.auth_provider != AuthProvider.OIDC
+        and not user.totp_enabled
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This account's role requires two-factor authentication. Log in to the web "
+                "UI and enroll TOTP (Account -> Two-factor authentication) before using the API."
+            ),
         )
     # `app.auth.middleware` never sets `request.state.user` for `/api/`
     # requests (they're on its public-prefix allowlist, authenticated here

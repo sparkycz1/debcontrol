@@ -11,6 +11,8 @@ class RoleSave(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     permissions: list[Permission] = Field(default_factory=list)
+    # See app/db/models/role.py's `Role.require_totp` docstring.
+    require_totp: bool = False
 
     @field_validator("name")
     @classmethod

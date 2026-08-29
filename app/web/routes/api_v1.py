@@ -34,7 +34,7 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
@@ -57,6 +57,7 @@ _action_updates = Depends(require_api_permission(Permission.ACTION_UPDATES))
 _action_power = Depends(require_api_permission(Permission.ACTION_POWER))
 
 _PACKAGE_SEARCH_LIMIT = 500
+_UPDATE_RUNS_PAGE_SIZE = 50
 
 # Fixed confirmation values an API client must echo back for a destructive
 # action — the API equivalent of the web UI's typed-name confirmation page.
@@ -237,6 +238,38 @@ async def list_machine_held_packages_api(
         .order_by(MachinePackage.name)
     )
     return [_package_to_dict(p) for p in result.scalars().all()]
+
+
+@router.get("/machines/{machine_id}/update-runs", dependencies=[_view_machines])
+async def list_machine_update_runs_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    status_filter: str = "",
+    page: int = 1,
+) -> dict[str, object]:
+    """The API equivalent of `GET /machines/{id}/updates` — every update run
+    for this machine, newest first, paginated/filterable the same way."""
+    await _get_machine_or_404(machine_id, db)
+    page = max(page, 1)
+
+    query = select(MachineUpdateRun).where(MachineUpdateRun.machine_id == machine_id)
+    if status_filter in {s.value for s in UpdateRunStatus}:
+        query = query.where(MachineUpdateRun.status == UpdateRunStatus(status_filter))
+
+    offset = (page - 1) * _UPDATE_RUNS_PAGE_SIZE
+    result = await db.execute(
+        query.order_by(MachineUpdateRun.created_at.desc())
+        .offset(offset)
+        .limit(_UPDATE_RUNS_PAGE_SIZE + 1)
+    )
+    runs = list(result.scalars().all())
+    has_older = len(runs) > _UPDATE_RUNS_PAGE_SIZE
+    runs = runs[:_UPDATE_RUNS_PAGE_SIZE]
+    return {
+        "runs": [_update_run_to_dict(r) for r in runs],
+        "page": page,
+        "has_older": has_older,
+    }
 
 
 # --- Machines: writes --------------------------------------------------------
