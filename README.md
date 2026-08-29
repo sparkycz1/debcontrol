@@ -244,6 +244,8 @@ alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
 scripts/        helper scripts (secret generation, first-admin bootstrap,
                 console-only account recovery, one-command upgrade)
+ansible/        onboarding playbook — sets up a machine and self-registers
+                it, see wiki/Ansible-Onboarding.md
 wiki/           documentation, meant to become the GitHub wiki
 ```
 
@@ -259,7 +261,8 @@ wiki/           documentation, meant to become the GitHub wiki
   port resets the pinned fingerprint and gathered facts, since those
   belonged to whatever was previously reachable there. Once a fingerprint is
   confirmed, the app automatically discovers and periodically refreshes
-  OS version, kernel version, hostname, CPU cores, RAM, and disks (see
+  OS version, kernel version, hostname, CPU architecture/cores, RAM,
+  disks, uptime, and process count (see
   [app/ssh/facts.py](app/ssh/facts.py); interval configurable via
   `FACTS_REFRESH_INTERVAL_SECONDS`), and shows an online/offline status
   badge from a lightweight per-minute reachability check
@@ -283,7 +286,11 @@ wiki/           documentation, meant to become the GitHub wiki
   combined output — runs in the background (can take a while) with a
   live-updating status page; a "Check for updates now" dry run shows how
   many apt packages (and how many security ones), flatpak apps, and snaps
-  are available to update, without installing anything. A reboot-required
+  are available to update — and *which* ones, by name and version, under a
+  "Which ...?" disclosure — without installing anything. That package list
+  reflects whichever check ran most recently: the button, the periodic
+  sweep, or a scheduled "check_updates" task (see **Scheduling** below).
+  A reboot-required
   badge appears automatically when a newer kernel is installed but not
   yet running. apt requires root or passwordless sudo for `apt-get`;
   flatpak/snap checking is read-only, and updating them is recommended to
@@ -359,7 +366,9 @@ wiki/           documentation, meant to become the GitHub wiki
 See the wiki's
 [Managed Machine Requirements](wiki/Managed-Machine-Requirements.md) for
 what a Debian machine needs (and, spoiler: mostly already has) to be
-managed this way.
+managed this way — or run the [Ansible playbook](ansible/) in
+[wiki/Ansible-Onboarding.md](wiki/Ansible-Onboarding.md) to have it done
+automatically and self-register the machine as pending.
 
 ## What's deliberately empty / for later
 

@@ -86,8 +86,9 @@ async def ping_all_machines(ctx: dict[str, Any]) -> None:
 
 
 async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
-    """Connect to one machine and refresh its OS/kernel/hostname/CPU/RAM/disk
-    facts. Requires a pinned host key — machines without one are skipped."""
+    """Connect to one machine and refresh its OS/kernel/arch/CPU/RAM/disk/
+    uptime/process-count facts. Requires a pinned host key — machines
+    without one are skipped."""
     settings = get_settings()
 
     async with AsyncSessionLocal() as session:
@@ -108,10 +109,13 @@ async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[st
         machine.discovered_hostname = facts["hostname"]
         machine.os_version = facts["os_version"]
         machine.kernel_version = facts["kernel_version"]
+        machine.cpu_architecture = facts["cpu_architecture"]
         machine.cpu_cores = facts["cpu_cores"]
         machine.ram_bytes = facts["ram_bytes"]
         machine.disks = facts["disks"]
         machine.reboot_required = facts["reboot_required"]
+        machine.uptime_seconds = facts["uptime_seconds"]
+        machine.process_count = facts["process_count"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
 
@@ -310,22 +314,27 @@ async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[st
 
         machine.updates_checked_at = datetime.now(UTC)
         # flatpak/snap listing runs independently of the apt step in the
-        # remote script, so their counts are meaningful even when apt's
-        # own refresh below failed — record them either way.
+        # remote script, so their counts/lists are meaningful even when
+        # apt's own refresh below failed — record them either way.
         machine.flatpak_upgradable_count = result.flatpak_upgradable_count
         machine.snap_upgradable_count = result.snap_upgradable_count
+        machine.flatpak_upgradable_packages = [dict(p) for p in result.flatpak_upgradable_packages]
+        machine.snap_upgradable_packages = [dict(p) for p in result.snap_upgradable_packages]
 
         if result.exit_status == 0:
             machine.upgradable_count = result.upgradable_count
             machine.security_upgradable_count = result.security_upgradable_count
+            machine.apt_upgradable_packages = [dict(p) for p in result.apt_upgradable_packages]
             await session.commit()
             return {"ok": True}
 
         # `apt-get update` itself failed (commonly: no passwordless sudo
         # configured for this machine yet) — record that we tried and when,
-        # but leave the apt counts as "unknown" rather than implying 0 updates.
+        # but leave the apt counts/list as "unknown" rather than implying 0
+        # updates.
         machine.upgradable_count = None
         machine.security_upgradable_count = None
+        machine.apt_upgradable_packages = None
         await session.commit()
         error = f"apt-get update exited with status {result.exit_status}."
         logger.warning("check_machine_updates failed for %s: %s", machine.name, error)

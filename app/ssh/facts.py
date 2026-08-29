@@ -14,7 +14,18 @@ from typing import Any, TypedDict
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
 
-_SECTION_MARKERS = ("HOSTNAME", "OS", "KERNEL", "KERNEL_LATEST", "CPU", "RAM_KB", "DISKS")
+_SECTION_MARKERS = (
+    "HOSTNAME",
+    "OS",
+    "KERNEL",
+    "KERNEL_LATEST",
+    "ARCH",
+    "CPU",
+    "RAM_KB",
+    "DISKS",
+    "UPTIME",
+    "PROCESSES",
+)
 
 # One round trip: each section is delimited by a "===NAME===" marker so the
 # output can be split reliably even if a command prints nothing or errors.
@@ -26,10 +37,13 @@ FACTS_COMMAND = (
     "echo ===KERNEL_LATEST===; "
     "dpkg --list 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' "
     "| sed -E 's/^linux-image-//' | grep -E '^[0-9]' | sort -V | tail -1; "
+    "echo ===ARCH===; uname -m 2>/dev/null; "
     "echo ===CPU===; nproc 2>/dev/null; "
     "echo ===RAM_KB===; awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null; "
     "echo ===DISKS===; "
-    "lsblk -b -d -n -o NAME,SIZE,TYPE 2>/dev/null | awk '$3==\"disk\"{print $1, $2}'"
+    "lsblk -b -d -n -o NAME,SIZE,TYPE 2>/dev/null | awk '$3==\"disk\"{print $1, $2}'; "
+    "echo ===UPTIME===; awk '{print int($1)}' /proc/uptime 2>/dev/null; "
+    "echo ===PROCESSES===; ls -d /proc/[0-9]* 2>/dev/null | wc -l"
 )
 
 
@@ -37,11 +51,14 @@ class MachineFacts(TypedDict):
     hostname: str | None
     os_version: str | None
     kernel_version: str | None
+    cpu_architecture: str | None
     cpu_cores: int | None
     ram_bytes: int | None
     disks: list[dict[str, Any]]
     # None means "couldn't tell" (e.g. dpkg unavailable), not "no reboot needed".
     reboot_required: bool | None
+    uptime_seconds: int | None
+    process_count: int | None
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -85,14 +102,25 @@ def parse_facts_output(raw: str) -> MachineFacts:
     if kernel_version and kernel_latest:
         reboot_required = kernel_latest != kernel_version
 
+    uptime_seconds: int | None = None
+    if sections.get("UPTIME", "").isdigit():
+        uptime_seconds = int(sections["UPTIME"])
+
+    process_count: int | None = None
+    if sections.get("PROCESSES", "").isdigit():
+        process_count = int(sections["PROCESSES"])
+
     return MachineFacts(
         hostname=sections.get("HOSTNAME") or None,
         os_version=sections.get("OS") or None,
         kernel_version=kernel_version,
+        cpu_architecture=sections.get("ARCH") or None,
         cpu_cores=cpu_cores,
         ram_bytes=ram_bytes,
         disks=disks,
         reboot_required=reboot_required,
+        uptime_seconds=uptime_seconds,
+        process_count=process_count,
     )
 
 

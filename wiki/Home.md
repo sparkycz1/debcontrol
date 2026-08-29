@@ -19,6 +19,9 @@ admin account.
   debcontrol pins SSH host keys and why it never "trusts on first use".
 - **[Managed Machine Requirements](Managed-Machine-Requirements.md)** —
   what a Debian machine needs (network, account, packages) to be added.
+- **[Ansible Onboarding](Ansible-Onboarding.md)** — a playbook that does
+  everything in Managed Machine Requirements for you, then self-registers
+  the machine as pending.
 - **[Development](Development.md)** — running the app locally without
   Docker, tests, linting, and database migrations.
 
@@ -41,7 +44,7 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 | Tab | Status |
 |---|---|
 | Dashboard | Post-login landing page: machine/update/reboot counts, upcoming scheduled tasks, recent audit activity — each section only shown if your role can see that area |
-| Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (incl. reboot-required), installed packages (apt/flatpak/snap, with versions, searchable), online/offline status, self-registration review, CSV bulk import (pending queue), free-text search, system updates (apt + flatpak + snap) with dry-run update checks, reboot/shutdown (double-confirmed) |
+| Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (OS, kernel, CPU architecture/cores, RAM, disks, uptime, process count, reboot-required), installed packages (apt/flatpak/snap, with versions, searchable), online/offline status, self-registration review (incl. via the [Ansible playbook](Ansible-Onboarding.md)), CSV bulk import (pending queue), free-text search, system updates (apt + flatpak + snap) with dry-run update checks that also list *which* packages are pending, reboot/shutdown (double-confirmed) |
 | Machine groups | Organize machines into named groups; built-in "All machines" group; search, system updates, update checks, and power actions all scoped to a group |
 | Scheduling | Run any existing action (system update, update check, reboot, shut down) against a machine, a group, or "All machines" on a cron expression (UTC); enable/disable, run on demand, see when it last fired |
 | Audit | Read-only log of every mutating action across the app — who (account + source IP), what happened, its outcome, and when; searchable and filterable by outcome; hash-chained so tampering is detectable; exportable as CSV/JSON; optional live syslog forwarding (e.g. to a SIEM) |

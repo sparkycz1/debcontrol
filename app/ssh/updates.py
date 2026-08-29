@@ -34,11 +34,21 @@ that part rather than failing.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TypedDict
 
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.ssh.client import open_connection
+
+
+class PendingPackage(TypedDict):
+    name: str
+    current_version: str | None
+    # Available/new version — always known, since that's what "there's an
+    # update" means. `None` only for a source where a listing command
+    # genuinely doesn't report it (kept for symmetry, unused today).
+    new_version: str | None
 
 _SUDO_APT = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -y -q"
 # Never prompt on a config-file conflict — keep the admin's existing config.
@@ -133,12 +143,12 @@ _CHECK_UPDATES_COMMAND = (
     f"echo {_FLATPAK_MARKER}; "
     "if command -v flatpak >/dev/null 2>&1; then "
     "for r in $(flatpak remotes --columns=name 2>/dev/null); do "
-    'flatpak remote-ls --updates --columns=application "$r" 2>/dev/null; '
+    'flatpak remote-ls --updates --columns=application,version "$r" 2>/dev/null; '
     "done; "
     "fi; "
     f"echo {_SNAP_MARKER}; "
     "if command -v snap >/dev/null 2>&1; then "
-    "snap refresh --list 2>/dev/null | tail -n +2 | awk '{print $1}'; "
+    "snap refresh --list 2>/dev/null | tail -n +2 | awk '{print $1\"\\t\"$2}'; "
     "fi; "
     'exit "$status"; '
     "} 2>&1"
@@ -152,14 +162,40 @@ def _split_check_sections(raw: str) -> dict[str, str]:
     return dict(zip(_CHECK_SECTION_MARKERS, (chunk.strip() for chunk in body), strict=False))
 
 
-def parse_upgradable_output(raw: str) -> tuple[int, int]:
-    """Count upgradable / security-upgradable apt packages from the
+_UPGRADABLE_FROM_RE = re.compile(r"\[upgradable from:\s*([^\]]+)\]")
+
+
+def parse_apt_upgradable_packages(raw: str) -> list[PendingPackage]:
+    """List upgradable apt packages, with current/new version, from the
     `APT_UPGRADABLE` section of `_CHECK_UPDATES_COMMAND`'s output — each
     line looks like `pkgname/suite version arch [upgradable from: ...]`.
 
     Pure function, no I/O — kept separate from `check_updates` so the
     parsing logic can be unit-tested against canned output.
     """
+    tail = _split_check_sections(raw).get("APT_UPGRADABLE", "")
+    packages: list[PendingPackage] = []
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        fields = line.split(" ")
+        first_token = fields[0]  # "pkgname/suite"
+        name = first_token.partition("/")[0]
+        new_version = fields[1] if len(fields) > 1 else None
+        match = _UPGRADABLE_FROM_RE.search(line)
+        current_version = match.group(1).strip() if match else None
+        packages.append(
+            PendingPackage(name=name, current_version=current_version, new_version=new_version)
+        )
+    return packages
+
+
+def parse_upgradable_output(raw: str) -> tuple[int, int]:
+    """Count upgradable / security-upgradable apt packages — a suite
+    containing "security" (e.g. `bookworm-security`) counts as a security
+    update. Built on `parse_apt_upgradable_packages` plus the raw suite
+    names, which that function doesn't keep."""
     tail = _split_check_sections(raw).get("APT_UPGRADABLE", "")
     lines = [line for line in tail.splitlines() if line.strip()]
 
@@ -173,21 +209,53 @@ def parse_upgradable_output(raw: str) -> tuple[int, int]:
     return len(lines), security_count
 
 
-def parse_flatpak_upgradable_output(raw: str) -> int:
-    """Count pending flatpak updates from the `FLATPAK_UPGRADABLE` section
-    — one application id per line. `flatpak remote-ls --updates` is run
-    once per configured remote, so the same app could in principle appear
-    twice (tracked from two remotes) — de-duplicated here."""
+def parse_flatpak_upgradable_packages(raw: str) -> list[PendingPackage]:
+    """List pending flatpak updates, with the available version, from the
+    `FLATPAK_UPGRADABLE` section — tab-separated `application\tversion`
+    per line. `flatpak remote-ls --updates` is run once per configured
+    remote, so the same app could in principle appear twice (tracked from
+    two remotes) — de-duplicated by application id here."""
     tail = _split_check_sections(raw).get("FLATPAK_UPGRADABLE", "")
-    apps = {line.strip() for line in tail.splitlines() if line.strip()}
-    return len(apps)
+    seen: dict[str, PendingPackage] = {}
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        fields = line.split("\t")
+        name = fields[0].strip()
+        if not name or name in seen:
+            continue
+        new_version = fields[1].strip() if len(fields) > 1 and fields[1].strip() else None
+        seen[name] = PendingPackage(name=name, current_version=None, new_version=new_version)
+    return list(seen.values())
+
+
+def parse_flatpak_upgradable_output(raw: str) -> int:
+    """Count pending flatpak updates — see `parse_flatpak_upgradable_packages`."""
+    return len(parse_flatpak_upgradable_packages(raw))
+
+
+def parse_snap_upgradable_packages(raw: str) -> list[PendingPackage]:
+    """List pending snap refreshes, with the available version, from the
+    `SNAP_UPGRADABLE` section — tab-separated `name\tversion` per line."""
+    tail = _split_check_sections(raw).get("SNAP_UPGRADABLE", "")
+    packages: list[PendingPackage] = []
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        fields = line.split("\t")
+        name = fields[0].strip()
+        if not name:
+            continue
+        new_version = fields[1].strip() if len(fields) > 1 and fields[1].strip() else None
+        packages.append(PendingPackage(name=name, current_version=None, new_version=new_version))
+    return packages
 
 
 def parse_snap_upgradable_output(raw: str) -> int:
-    """Count pending snap refreshes from the `SNAP_UPGRADABLE` section —
-    one snap name per line."""
-    tail = _split_check_sections(raw).get("SNAP_UPGRADABLE", "")
-    return len([line for line in tail.splitlines() if line.strip()])
+    """Count pending snap refreshes — see `parse_snap_upgradable_packages`."""
+    return len(parse_snap_upgradable_packages(raw))
 
 
 @dataclass
@@ -198,6 +266,9 @@ class UpdateCheckResult:
     flatpak_upgradable_count: int
     snap_upgradable_count: int
     output: str
+    apt_upgradable_packages: list[PendingPackage] = field(default_factory=list)
+    flatpak_upgradable_packages: list[PendingPackage] = field(default_factory=list)
+    snap_upgradable_packages: list[PendingPackage] = field(default_factory=list)
 
 
 async def check_updates(
@@ -218,11 +289,17 @@ async def check_updates(
     output = stdout if isinstance(stdout, str) else stdout.decode()
     exit_status = result.exit_status if result.exit_status is not None else -1
     upgradable_count, security_upgradable_count = parse_upgradable_output(output)
+    apt_packages = parse_apt_upgradable_packages(output)
+    flatpak_packages = parse_flatpak_upgradable_packages(output)
+    snap_packages = parse_snap_upgradable_packages(output)
     return UpdateCheckResult(
         exit_status=exit_status,
         upgradable_count=upgradable_count,
         security_upgradable_count=security_upgradable_count,
-        flatpak_upgradable_count=parse_flatpak_upgradable_output(output),
-        snap_upgradable_count=parse_snap_upgradable_output(output),
+        flatpak_upgradable_count=len(flatpak_packages),
+        snap_upgradable_count=len(snap_packages),
         output=output,
+        apt_upgradable_packages=apt_packages,
+        flatpak_upgradable_packages=flatpak_packages,
+        snap_upgradable_packages=snap_packages,
     )

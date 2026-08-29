@@ -16,6 +16,7 @@
     <dt>Hostname</dt><dd>{{ machine.discovered_hostname or '—' }}</dd>
     <dt>OS version</dt><dd>{{ machine.os_version or '—' }}</dd>
     <dt>Kernel</dt><dd>{{ machine.kernel_version or '—' }}</dd>
+    <dt>CPU architecture</dt><dd>{{ machine.cpu_architecture or '—' }}</dd>
     <dt>CPU cores</dt><dd>{{ machine.cpu_cores if machine.cpu_cores is not none else '—' }}</dd>
     <dt>RAM</dt>
     <dd>{{ '%.1f GB' % (machine.ram_bytes / 1073741824) if machine.ram_bytes else '—' }}</dd>
@@ -29,6 +30,9 @@
         —
       {% endif %}
     </dd>
+    <dt>Uptime</dt><dd>{{ machine.uptime_seconds | format_uptime }}</dd>
+    <dt>Processes</dt>
+    <dd>{{ machine.process_count if machine.process_count is not none else '—' }}</dd>
     <dt>Last refreshed</dt><dd>{{ machine.facts_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC</dd>
   </dl>
 {% endif %}

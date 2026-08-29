@@ -2,7 +2,9 @@
 
 What a machine needs — network-wise, account-wise, and package-wise — to
 be added to and managed by debcontrol. Short version: a stock Debian
-install already satisfies almost all of this.
+install already satisfies almost all of this. Doing all of it by hand is
+the point of this page; see [Ansible Onboarding](Ansible-Onboarding.md)
+for a playbook that does it for you.
 
 ## Network
 
@@ -71,9 +73,12 @@ deliberately only uses tools present on a stock Debian install — see
 | OS version | `/etc/os-release` | `base-files` |
 | Kernel version | `uname -r` | `coreutils` |
 | Latest installed kernel (for reboot-required) | `dpkg --list 'linux-image-*'` | `dpkg` |
+| CPU architecture | `uname -m` | `coreutils` |
 | CPU cores | `nproc` | `coreutils` |
 | RAM | `/proc/meminfo` via `awk` | kernel + `mawk` (Debian's default `awk`) |
 | Disks | `lsblk` | `util-linux` |
+| Uptime | `/proc/uptime` via `awk` | kernel + `mawk` |
+| Process count | `ls /proc/[0-9]*` | `coreutils` (no `procps`/`ps` needed) |
 
 None of these need root — including "reboot required," which is worked
 out by comparing the running kernel (`uname -r`) against the newest
@@ -151,6 +156,19 @@ rather than prompting — the standard safe default for unattended Debian
 upgrades. A run's full output (stdout+stderr combined) is stored and
 shown in the UI so you can review exactly what happened.
 
+### Which packages, not just how many
+
+The update-availability panel also shows *which* apt packages, flatpak
+apps, and snaps are pending (name and version, under a "Which ... ?"
+disclosure) — not just the counts. This comes from whichever "check for
+updates" run happened most recently for that machine: the automatic
+periodic sweep (same cadence as facts), the "Check for updates now"
+button, or a **scheduled task** using the "check_updates" action (see
+**Scheduling** in the nav). There's no separate history — if you want a
+fresh, specific answer to "what's pending on this machine right now,"
+either click the button or create a schedule for it; whatever ran last is
+what's shown.
+
 ## Self-registration (optional, for future automation)
 
 A machine can announce itself to debcontrol during first boot /
@@ -159,6 +177,12 @@ provisioning by POSTing to `/api/inform` with a shared bearer token
 *pending* entry for a human to review in the **Machines** tab — it grants
 no access on its own (see
 [Architecture](Architecture.md#self-registration-is-not-the-same-as-trust)).
+
+The shell script below is the manual, minimal version of this. If you'd
+rather not write it yourself — and want the account/sudo/SSH-key setup
+above done at the same time — see
+[Ansible Onboarding](Ansible-Onboarding.md) for a playbook that does all
+of it, including this POST, in one run.
 
 This needs `curl` (or an equivalent HTTP client), which — unlike the
 fact-gathering tools above — is **not** always present on a minimal
@@ -199,6 +223,9 @@ a golden image or secrets-injected cloud-init template rather than a
 shell history.
 
 ## Summary checklist
+
+Everything below is what [Ansible Onboarding](Ansible-Onboarding.md)'s
+playbook automates — do it by hand, or run that instead.
 
 - [ ] `openssh-server` installed and `sshd` running
 - [ ] Reachable on the SSH port from the debcontrol host

@@ -1,0 +1,23 @@
+# Copy to group_vars/all.yml (gitignored-by-convention — this file holds a
+# bearer token) and fill in the three values below. See the wiki page
+# "Ansible Onboarding" for exactly where each one comes from.
+
+# debcontrol's Settings page -> "SSH identity" panel -> the public key
+# shown there (starts with "ssh-ed25519" or similar). Paste it verbatim,
+# quoted, on one line.
+debcontrol_ssh_public_key: "ssh-ed25519 AAAA... debcontrol"
+
+# The base URL of your debcontrol instance (no trailing slash).
+debcontrol_url: "https://debcontrol.example.com"
+
+# Either the shared INFORM_TOKEN from debcontrol's .env, or a per-user API
+# token from "My account" belonging to a user whose role has "Manage
+# machines" — see the wiki page for the tradeoffs between the two.
+debcontrol_inform_token: "paste-the-token-value-here"
+
+# Better than committing the real value here even in a "private" repo:
+# pass it on the command line instead and leave this file out of
+# group_vars entirely —
+#   ansible-playbook -i inventory.ini debcontrol-onboard.yml \
+#     --extra-vars "debcontrol_inform_token=..."
+# or store it in an ansible-vault-encrypted file.

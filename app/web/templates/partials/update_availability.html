@@ -8,7 +8,12 @@
   {% set other_count = (machine.flatpak_upgradable_count or 0) + (machine.snap_upgradable_count or 0) %}
 
   {% if not machine.updates_checked_at %}
-    <p class="hint">Not checked yet.</p>
+    <p class="hint">
+      Not checked yet. This runs automatically on the same periodic sweep as
+      facts, whenever you click "Check for updates now" below, and whenever
+      a scheduled "Check for updates" task fires (see the Scheduling tab) —
+      whichever ran last is what's shown here, including the package names.
+    </p>
   {% elif machine.upgradable_count is none %}
     <p class="hint">
       Last check (checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)
@@ -26,17 +31,51 @@
       </span>
       <span class="hint">(checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span>
     </p>
+    {% if machine.apt_upgradable_packages %}
+      <details>
+        <summary>Which apt packages?</summary>
+        <ul>
+          {% for pkg in machine.apt_upgradable_packages %}
+            <li>
+              <code>{{ pkg.name }}</code>
+              {%- if pkg.current_version and pkg.new_version %}: {{ pkg.current_version }} → {{ pkg.new_version }}
+              {%- elif pkg.new_version %}: {{ pkg.new_version }}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
   {% endif %}
 
   {% if machine.flatpak_upgradable_count %}
     <p><span class="badge badge-warn">
       {{ machine.flatpak_upgradable_count }} flatpak update{{ 's' if machine.flatpak_upgradable_count != 1 else '' }}
     </span></p>
+    {% if machine.flatpak_upgradable_packages %}
+      <details>
+        <summary>Which flatpak apps?</summary>
+        <ul>
+          {% for pkg in machine.flatpak_upgradable_packages %}
+            <li><code>{{ pkg.name }}</code>{% if pkg.new_version %}: {{ pkg.new_version }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
   {% endif %}
   {% if machine.snap_upgradable_count %}
     <p><span class="badge badge-warn">
       {{ machine.snap_upgradable_count }} snap update{{ 's' if machine.snap_upgradable_count != 1 else '' }}
     </span></p>
+    {% if machine.snap_upgradable_packages %}
+      <details>
+        <summary>Which snaps?</summary>
+        <ul>
+          {% for pkg in machine.snap_upgradable_packages %}
+            <li><code>{{ pkg.name }}</code>{% if pkg.new_version %}: {{ pkg.new_version }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
   {% endif %}
 
   {% if machine.reboot_required %}

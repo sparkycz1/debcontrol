@@ -69,6 +69,7 @@ alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
 scripts/        helper scripts (secret generation, first-admin bootstrap,
                 console-only account recovery, one-command upgrade)
+ansible/        onboarding playbook — see Ansible-Onboarding.md
 wiki/           this documentation
 ```
 
@@ -175,6 +176,19 @@ same trust level as editing a machine's connection details, and power
 `user.manage` bundles user AND role management under one permission —
 splitting them further wasn't worth it, since a role editor who can't also
 assign roles to users isn't useful on its own.
+
+One consequence worth stating explicitly, since it's easy to assume
+otherwise: because permissions are resource-grained rather than
+per-object, **any two users whose roles both grant a given permission
+already see the exact same things for it** — two users with `machine.view`
+see every machine, not just "their" group's; two with `scheduling.view`
+see every scheduled task, including ones targeting machines or groups they
+had no hand in creating. There's no concept of a schedule, machine, or
+group being "private" to whoever made it, and no per-group scoping of any
+permission. If your team wants users limited to a subset of machines/
+groups (rather than all-or-nothing per feature), that's a real gap today,
+not a bug — it would need a new, separate access model layered on top of
+this one, not a change to how `Permission` currently works.
 
 ### Guardrails against locking everyone out
 
@@ -366,6 +380,15 @@ manageable `Machine` still goes through the ordinary add-machine form and
 the mandatory host-key discovery/confirmation flow — self-registration
 just pre-fills the IP/name so there's less retyping.
 
+`ansible/debcontrol-onboard.yml` automates everything a machine needs
+*before* that POST — the account, its SSH key, the scoped sudoers files —
+then makes the same call. It's a single flat playbook rather than a
+packaged role, deliberately: this is meant to be copied into or
+`import_playbook`'d from someone's existing provisioning pipeline, not
+installed as a dependency with its own versioning story. No secret has a
+default baked in (the public key, URL, and bearer token are all required
+vars) — see [Ansible Onboarding](Ansible-Onboarding.md).
+
 ### System updates: the first bulk SSH operation
 
 Running `apt-get update` / `dist-upgrade` or `full-upgrade` / `autoremove` /
@@ -428,6 +451,43 @@ Reboot-required detection is different: it needs no privileges at all
 package via `dpkg`), so it rides along in the regular, unprivileged facts
 command instead of the root-requiring update check — see
 `app/ssh/facts.py`.
+
+### Which packages, not just how many
+
+`check_updates` originally only counted upgradable packages
+(`upgradable_count`/`security_upgradable_count`); it now also returns the
+actual list — name, current version, new version — as
+`PendingPackage` (a `TypedDict`, `app/ssh/updates.py`), stored as a JSON
+column per source on `Machine`
+(`apt_upgradable_packages`/`flatpak_upgradable_packages`/
+`snap_upgradable_packages`), same pattern as `disks`. There's deliberately
+no separate history table: this is "what a check most recently found,"
+overwritten on every run, exactly like the counts it sits next to — a
+manual "Check for updates now" click, the periodic sweep, and a **user-
+created scheduled task** using the `check_updates` action all write to the
+same columns, so whichever ran last is what's shown. apt's entry gets a
+real version diff (`apt list --upgradable`'s `[upgradable from: X]`
+suffix, parsed with a regex); flatpak/snap only surface the available
+version — getting their *current* version would mean cross-referencing a
+second command's output per app, which wasn't worth the extra round trip
+for a "which packages" list whose main value is the names.
+
+### New facts: CPU architecture, uptime, process count
+
+Added to the same single `FACTS_COMMAND` round trip as everything else in
+`app/ssh/facts.py`, using the same `echo ===MARKER===`-per-section
+convention — no new SSH connection, no new privilege requirement. Chosen
+specifically for portability over a minimal image:
+
+- **CPU architecture**: `uname -m` — already a dependency (used for the
+  kernel version too).
+- **Uptime**: `/proc/uptime`'s first field via `awk`, floored to whole
+  seconds — proc is guaranteed on Linux, no `uptime`/`procps` binary
+  needed.
+- **Process count**: `ls -d /proc/[0-9]*/ | wc -l` rather than `ps -e |
+  wc -l` — `procps` (which provides `ps`) isn't part of Debian's minimal
+  base system the way `coreutils` is, so counting numeric `/proc` entries
+  gets the same answer without assuming it's installed.
 
 ### flatpak and snap: optional, guarded, never blocking apt
 

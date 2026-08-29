@@ -94,11 +94,16 @@ class Machine(Base):
     discovered_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     os_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
     kernel_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cpu_architecture: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cpu_cores: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ram_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # None = never determined either way (e.g. no dpkg/linux-image-* found).
     reboot_required: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Seconds since boot (`/proc/uptime`) and a snapshot process count
+    # (`ls /proc/[0-9]*`) — both refreshed alongside the rest of the facts.
+    uptime_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    process_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
@@ -112,6 +117,21 @@ class Machine(Base):
     flatpak_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snap_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updates_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Which packages, not just how many — each a {name, current_version,
+    # new_version} dict (see app.ssh.updates.PendingPackage). Populated by
+    # the same check_machine_updates job as the counts above, whether it
+    # ran from the periodic sweep, the "Check for updates now" button, or a
+    # scheduled task the user set up — there's no separate code path for
+    # "scheduled" checks, so this is only ever as fresh as the last check.
+    apt_upgradable_packages: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    flatpak_upgradable_packages: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    snap_upgradable_packages: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
 
     # --- Installed-package snapshot (see MachinePackage / app.ssh.packages) ---
     packages_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)

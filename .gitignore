@@ -37,3 +37,8 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# Ansible — real inventories/vars hold hostnames and a bearer token
+ansible/inventory.ini
+ansible/group_vars/all.yml
+!ansible/group_vars/all.yml.example

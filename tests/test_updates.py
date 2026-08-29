@@ -3,8 +3,11 @@ from __future__ import annotations
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.ssh.updates import (
     build_update_command,
+    parse_apt_upgradable_packages,
     parse_flatpak_upgradable_output,
+    parse_flatpak_upgradable_packages,
     parse_snap_upgradable_output,
+    parse_snap_upgradable_packages,
     parse_upgradable_output,
 )
 
@@ -122,3 +125,58 @@ def test_parse_snap_upgradable_output_not_installed():
     raw = "===APT_UPGRADABLE===\n===FLATPAK_UPGRADABLE===\n===SNAP_UPGRADABLE===\n"
 
     assert parse_snap_upgradable_output(raw) == 0
+
+
+def test_parse_apt_upgradable_packages_extracts_names_and_versions():
+    raw = (
+        "===APT_UPGRADABLE===\n"
+        "firefox-esr/bookworm-security 115.13.0esr-1~deb12u1 amd64 "
+        "[upgradable from: 114.0esr-1~deb12u1]\n"
+        "bash/stable 5.2.15-2 all [upgradable from: 5.2.15-1]\n"
+        "===FLATPAK_UPGRADABLE===\n"
+        "===SNAP_UPGRADABLE===\n"
+    )
+
+    packages = parse_apt_upgradable_packages(raw)
+
+    assert packages == [
+        {
+            "name": "firefox-esr",
+            "current_version": "114.0esr-1~deb12u1",
+            "new_version": "115.13.0esr-1~deb12u1",
+        },
+        {"name": "bash", "current_version": "5.2.15-1", "new_version": "5.2.15-2"},
+    ]
+
+
+def test_parse_flatpak_upgradable_packages_extracts_names_and_versions():
+    raw = (
+        "===APT_UPGRADABLE===\n"
+        "===FLATPAK_UPGRADABLE===\n"
+        "org.mozilla.firefox\t128.0\n"
+        "org.mozilla.firefox\t128.0\n"  # duplicate remote — de-duplicated
+        "===SNAP_UPGRADABLE===\n"
+    )
+
+    packages = parse_flatpak_upgradable_packages(raw)
+
+    assert packages == [
+        {"name": "org.mozilla.firefox", "current_version": None, "new_version": "128.0"}
+    ]
+
+
+def test_parse_snap_upgradable_packages_extracts_names_and_versions():
+    raw = (
+        "===APT_UPGRADABLE===\n"
+        "===FLATPAK_UPGRADABLE===\n"
+        "===SNAP_UPGRADABLE===\n"
+        "core22\t20240301\n"
+        "lxd\t5.21\n"
+    )
+
+    packages = parse_snap_upgradable_packages(raw)
+
+    assert packages == [
+        {"name": "core22", "current_version": None, "new_version": "20240301"},
+        {"name": "lxd", "current_version": None, "new_version": "5.21"},
+    ]

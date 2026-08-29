@@ -13,6 +13,8 @@ def test_parse_facts_output_full_no_reboot_needed():
         "6.1.0-13-amd64\n"
         "===KERNEL_LATEST===\n"
         "6.1.0-13-amd64\n"
+        "===ARCH===\n"
+        "x86_64\n"
         "===CPU===\n"
         "4\n"
         "===RAM_KB===\n"
@@ -20,6 +22,10 @@ def test_parse_facts_output_full_no_reboot_needed():
         "===DISKS===\n"
         "sda 500107862016\n"
         "vda 21474836480\n"
+        "===UPTIME===\n"
+        "123456\n"
+        "===PROCESSES===\n"
+        "187\n"
     )
 
     facts = parse_facts_output(raw)
@@ -27,6 +33,7 @@ def test_parse_facts_output_full_no_reboot_needed():
     assert facts["hostname"] == "web1"
     assert facts["os_version"] == "Debian GNU/Linux 12 (bookworm)"
     assert facts["kernel_version"] == "6.1.0-13-amd64"
+    assert facts["cpu_architecture"] == "x86_64"
     assert facts["cpu_cores"] == 4
     assert facts["ram_bytes"] == 8058000 * 1024
     assert facts["disks"] == [
@@ -35,6 +42,8 @@ def test_parse_facts_output_full_no_reboot_needed():
     ]
     # Running kernel matches the latest installed kernel package.
     assert facts["reboot_required"] is False
+    assert facts["uptime_seconds"] == 123456
+    assert facts["process_count"] == 187
 
 
 def test_parse_facts_output_reboot_required_when_kernel_differs():
@@ -43,9 +52,12 @@ def test_parse_facts_output_reboot_required_when_kernel_differs():
         "===OS===\nDebian GNU/Linux 12 (bookworm)\n"
         "===KERNEL===\n6.1.0-13-amd64\n"
         "===KERNEL_LATEST===\n6.1.0-18-amd64\n"
+        "===ARCH===\nx86_64\n"
         "===CPU===\n4\n"
         "===RAM_KB===\n8058000\n"
         "===DISKS===\n"
+        "===UPTIME===\n999\n"
+        "===PROCESSES===\n120\n"
     )
 
     facts = parse_facts_output(raw)
@@ -58,12 +70,19 @@ def test_parse_facts_output_reboot_unknown_without_kernel_latest():
     # E.g. no dpkg / no linux-image-* packages found (some minimal images).
     # Every `echo ===X===` marker always runs even when the command after it
     # produces nothing, so a real transcript never skips a section outright.
-    raw = "===HOSTNAME===\nweb1\n===OS===\n===KERNEL===\n6.1.0-13-amd64\n===KERNEL_LATEST===\n"
+    raw = (
+        "===HOSTNAME===\nweb1\n===OS===\n===KERNEL===\n6.1.0-13-amd64\n"
+        "===KERNEL_LATEST===\n===ARCH===\naarch64\n===CPU===\n===RAM_KB===\n"
+        "===DISKS===\n===UPTIME===\n===PROCESSES===\n"
+    )
 
     facts = parse_facts_output(raw)
 
     assert facts["kernel_version"] == "6.1.0-13-amd64"
     assert facts["reboot_required"] is None
+    assert facts["cpu_architecture"] == "aarch64"
+    assert facts["uptime_seconds"] is None
+    assert facts["process_count"] is None
 
 
 def test_parse_facts_output_handles_missing_sections():
@@ -75,10 +94,13 @@ def test_parse_facts_output_handles_missing_sections():
     assert facts["hostname"] == "web1"
     assert facts["os_version"] is None
     assert facts["kernel_version"] is None
+    assert facts["cpu_architecture"] is None
     assert facts["cpu_cores"] is None
     assert facts["ram_bytes"] is None
     assert facts["disks"] == []
     assert facts["reboot_required"] is None
+    assert facts["uptime_seconds"] is None
+    assert facts["process_count"] is None
 
 
 def test_parse_facts_output_empty_string():
@@ -87,3 +109,6 @@ def test_parse_facts_output_empty_string():
     assert facts["hostname"] is None
     assert facts["disks"] == []
     assert facts["reboot_required"] is None
+    assert facts["cpu_architecture"] is None
+    assert facts["uptime_seconds"] is None
+    assert facts["process_count"] is None

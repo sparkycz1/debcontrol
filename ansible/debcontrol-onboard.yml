@@ -1,0 +1,123 @@
+---
+# Onboards a Debian-based machine (Debian, Ubuntu, or another derivative)
+# for debcontrol in one pass:
+#   1. installs/enables sshd
+#   2. creates a dedicated non-root user with debcontrol's SSH public key
+#   3. grants that user passwordless sudo, scoped to exactly what
+#      debcontrol needs (apt-get, shutdown, and flatpak/snap if present)
+#   4. self-registers the machine via POST /api/inform, so it shows up as
+#      "pending" in the Machines tab for a human to review and approve
+#
+# It never creates the machine outright — self-registration only ever adds
+# a pending entry (see the wiki page "Architecture" -> "Self-registration
+# is not the same as trust"). Nothing here grants debcontrol access on its
+# own; approving the pending machine in the UI is still a separate,
+# deliberate step.
+#
+# Every variable below (debcontrol_ssh_public_key, debcontrol_url,
+# debcontrol_inform_token) must be supplied — see the wiki page
+# "Ansible Onboarding" for where to get each one and how to pass them
+# in (group_vars, --extra-vars, or a vault file; never commit them to
+# group_vars/all.yml in a shared/public repo).
+#
+# Usage:
+#   ansible-playbook -i inventory.ini debcontrol-onboard.yml
+#
+# Requires the `ansible.posix` collection for the `authorized_key` module
+# (bundled with the full `ansible` package; run
+# `ansible-galaxy collection install ansible.posix` if you only have
+# `ansible-core`).
+
+- name: Onboard a machine for debcontrol
+  hosts: all
+  become: true
+
+  vars:
+    debcontrol_user: debcontrol
+    # Set to false if you'd rather manage the flatpak/snap sudoers line by
+    # hand, or don't want debcontrol updating flatpak/snap on this machine.
+    debcontrol_enable_flatpak_snap_sudo: true
+
+  tasks:
+    - name: Ensure openssh-server is installed
+      ansible.builtin.apt:
+        name: openssh-server
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure sshd is enabled and running
+      ansible.builtin.systemd:
+        name: ssh
+        enabled: true
+        state: started
+
+    - name: Ensure curl is installed (needed for self-registration below)
+      ansible.builtin.apt:
+        name: curl
+        state: present
+
+    - name: Create the dedicated debcontrol user
+      ansible.builtin.user:
+        name: "{{ debcontrol_user }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Install debcontrol's SSH public key
+      ansible.posix.authorized_key:
+        user: "{{ debcontrol_user }}"
+        key: "{{ debcontrol_ssh_public_key }}"
+        state: present
+
+    - name: Grant passwordless sudo for apt-get and shutdown
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ debcontrol_user }}"
+        content: |
+          {{ debcontrol_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    - name: Check whether flatpak is installed
+      ansible.builtin.command: command -v flatpak
+      register: _debcontrol_flatpak_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check whether snap is installed
+      ansible.builtin.command: command -v snap
+      register: _debcontrol_snap_check
+      changed_when: false
+      failed_when: false
+
+    - name: Grant passwordless sudo for flatpak/snap, if either is installed
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ debcontrol_user }}-flatpak-snap"
+        content: |
+          {{ debcontrol_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak, /usr/bin/snap
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      when: >
+        debcontrol_enable_flatpak_snap_sudo and
+        (_debcontrol_flatpak_check.rc == 0 or _debcontrol_snap_check.rc == 0)
+
+    - name: Self-register this machine with debcontrol
+      ansible.builtin.uri:
+        url: "{{ debcontrol_url }}/api/inform"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ debcontrol_inform_token }}"
+        body_format: json
+        body:
+          hostname: "{{ ansible_hostname }}"
+          os_version: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          kernel_version: "{{ ansible_kernel }}"
+          cpu_cores: "{{ (ansible_processor_vcpus | default(ansible_processor_count)) | int }}"
+          ram_bytes: "{{ ((ansible_memtotal_mb | int) * 1024 * 1024) | int }}"
+        status_code: 201
+      # ansible_* facts here come from the play's default fact gathering
+      # (gather_facts: true, implied when not set) — no separate task needed.
