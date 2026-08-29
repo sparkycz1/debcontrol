@@ -237,6 +237,27 @@ def test_username_pattern_rejects_uppercase_and_spaces():
     assert not USERNAME_PATTERN.match("ab")  # too short
 
 
+async def test_csrf_rejection_is_audit_logged(anonymous_client, db_session_factory):
+    from sqlalchemy import select
+
+    from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+
+    await anonymous_client.get("/login")  # provisions the csrftoken cookie
+    response = await anonymous_client.post(
+        "/login",
+        data={"username": "nobody", "password": "wrong", "csrf_token": "not-the-cookie-value"},
+    )
+    assert response.status_code == 403
+
+    async with db_session_factory() as session:
+        result = await session.execute(
+            select(AuditLogEntry).where(AuditLogEntry.action == "auth.csrf_rejected")
+        )
+        entry = result.scalar_one()
+    assert entry.outcome == AuditOutcome.DENIED
+    assert "/login" in entry.summary
+
+
 async def test_login_is_rate_limited_per_ip_after_many_attempts(anonymous_client):
     from app.web.routes.auth import _LOGIN_RATE_LIMIT
 

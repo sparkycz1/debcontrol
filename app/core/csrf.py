@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import HTTPException, Request, Response, status
+from fastapi import Depends, HTTPException, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.db.session import get_db
 
 CSRF_COOKIE_NAME = "csrftoken"
 CSRF_FORM_FIELD = "csrf_token"
@@ -65,7 +67,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
     )
 
 
-async def verify_csrf(request: Request) -> None:
+async def verify_csrf(request: Request, db: AsyncSession = Depends(get_db)) -> None:
     """FastAPI dependency — add to every state-changing (POST/PUT/DELETE) endpoint."""
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
     form = await request.form()
@@ -75,6 +77,19 @@ async def verify_csrf(request: Request) -> None:
         or not form_token
         or not secrets.compare_digest(str(form_token), cookie_token)
     ):
+        # Imported lazily: app.audit -> app.db.session -> app.core.config
+        # would otherwise be a real import-time cycle with app.core.csrf
+        # (app.auth.middleware imports both this module and app.audit).
+        from app.audit import log_event
+        from app.db.models.audit_log import AuditOutcome
+
+        await log_event(
+            db,
+            request=request,
+            action="auth.csrf_rejected",
+            summary=f"Blocked {request.method} {request.url.path}: missing or invalid CSRF token",
+            outcome=AuditOutcome.DENIED,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid or missing CSRF token — reload the page and try again.",

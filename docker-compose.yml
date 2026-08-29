@@ -13,6 +13,13 @@ x-app-image: &app-image
   image: debcontrol:local
   env_file:
     - .env
+  environment:
+    # Container timezone — affects log timestamps and any local-time
+    # formatting; the app and DB both store timestamps as UTC internally
+    # regardless of this. Set TZ in .env (e.g. "Europe/Prague"); defaults
+    # to UTC if unset. Deliberately global, not per-schedule — see
+    # wiki/Architecture.md.
+    TZ: ${TZ:-UTC}
   restart: unless-stopped
 
 services:
@@ -26,6 +33,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ:-UTC}
     volumes:
       - pg_data:/var/lib/postgresql/data
     # Not published to the host on purpose — the DB is only reachable from
@@ -42,6 +50,8 @@ services:
     # Same reasoning as the Postgres image above — pinned to an exact patch.
     image: redis:8.10.1
     restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
