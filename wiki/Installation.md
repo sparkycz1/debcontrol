@@ -34,7 +34,7 @@ intentional.
 | Variable | Used by | Purpose |
 |---|---|---|
 | `APP_ENV` | app | `development` or `production`. Controls `/docs` exposure and HSTS. |
-| `SECRET_KEY` | app | Reserved for future session/signing use. |
+| `SECRET_KEY` | app | Signs the OIDC-flow session cookie and the pending-TOTP token between login steps. |
 | `ENCRYPTION_KEY` | app | Fernet key encrypting stored SSH passwords/private keys. |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | db | Postgres container credentials. |
 | `DATABASE_URL` | app | Full async SQLAlchemy URL to Postgres. |
@@ -46,6 +46,7 @@ intentional.
 | `UPDATE_TIMEOUT_SECONDS` | worker | Max time (seconds) for one machine's full update/upgrade/autoremove/autoclean run. Default 1800. |
 | `INFORM_TOKEN` | app | Bearer token required by `POST /api/inform` (self-registration). |
 | `LOG_LEVEL` | app | Python logging level. |
+| `TZ` | db, redis, app, worker, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container. Affects log timestamps and local-time display only — data is always stored as UTC, and Scheduling's cron expressions are always interpreted as UTC regardless of this. Defaults to UTC if unset. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 

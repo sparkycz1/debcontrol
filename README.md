@@ -110,7 +110,8 @@ published as the GitHub wiki once this repo is pushed there (see
   review — nothing it submits is trusted for actually connecting to the
   machine. See [app/web/routes/inform.py](app/web/routes/inform.py).
 - **CSRF protection** (double-submit cookie) on every form, including the
-  login form itself. See [app/core/csrf.py](app/core/csrf.py).
+  login form itself; a rejection is audit-logged (`auth.csrf_rejected`).
+  See [app/core/csrf.py](app/core/csrf.py).
 - **Strict Content-Security-Policy** and other security headers
   (`X-Frame-Options`, `X-Content-Type-Options`, ...) — no inline
   scripts/styles, no external CDN. See [app/main.py](app/main.py).
@@ -130,9 +131,10 @@ published as the GitHub wiki once this repo is pushed there (see
 
 There is an **Audit log** ([app/audit.py](app/audit.py)) recording who
 (the account, and the source IP), what, its outcome, and when — including
-logins, logouts, and every user/role/settings change — hash-chained so an
-altered or removed entry is detectable. **Not** yet included: IP-based
-login rate limiting (only per-account lockout).
+logins, logouts, every user/role/settings change, and CSRF rejections —
+hash-chained so an altered or removed entry is detectable. Login and TOTP
+attempts are both rate-limited per source IP in addition to the
+per-account lockout above.
 
 ## Quick start (Docker)
 
@@ -144,7 +146,9 @@ python scripts/generate_secrets.py
 Paste the printed values (`SECRET_KEY`, `ENCRYPTION_KEY`,
 `POSTGRES_PASSWORD`, `REDIS_PASSWORD`) into `.env`, and make sure
 `DATABASE_URL`/`REDIS_URL` use the same passwords as
-`POSTGRES_PASSWORD`/`REDIS_PASSWORD`.
+`POSTGRES_PASSWORD`/`REDIS_PASSWORD`. Optionally set `TZ` (e.g.
+`Europe/Prague`) — it's applied to every container and only affects log
+timestamps and local-time display; defaults to UTC.
 
 **Without a reverse proxy in front (or if you already run your own):**
 
@@ -391,21 +395,30 @@ managed this way — or run the [Ansible playbook](ansible/) in
 [wiki/Ansible-Onboarding.md](wiki/Ansible-Onboarding.md) to have it done
 automatically and self-register the machine as pending.
 
-## What's deliberately empty / for later
+## Deliberate scope boundaries
 
-- Running arbitrary commands across machines — system updates are the
-  first bulk/group-scoped SSH operation (see `app/ssh/updates.py`,
-  `app/db/models/machine_update_run.py`); the same `batch_id` grouping
-  pattern is meant to extend to other commands later.
-- CSRF rejections aren't audit-logged (login/TOTP rate-limit rejections are,
-  as `auth.rate_limited`).
-- Per-schedule timezones (Scheduling is always UTC) and a scheduled
-  "power on" to pair with scheduled shutdown.
-- Actually copying the app's public SSH key onto each machine's
-  `authorized_keys` is still a manual step (Settings supports generating
-  and activating a replacement key, but not pushing it out); turning a
-  pending self-registered/bulk-imported machine directly into a managed one
-  without re-entering its IP/name is also still manual.
-- Self-service password reset (forgotten password) — an admin resets it
+Things debcontrol intentionally doesn't do, and why:
+
+- **No arbitrary ad-hoc commands across machines** — the only bulk/
+  group-scoped SSH operations are system updates and power actions (see
+  `app/ssh/updates.py`, `app/ssh/power.py`,
+  `app/db/models/machine_update_run.py`); running an arbitrary command
+  fleet-wide isn't exposed, though the same `batch_id` grouping pattern
+  would extend to it if that scope ever changes.
+- **Scheduling is always UTC — no per-schedule timezone.** This is a
+  simplification, not a gap: one cron expression means the same instant
+  everywhere regardless of which machine, group, or admin is looking at
+  it. Setting `TZ` in `.env` only changes container log timestamps and
+  local-time display, never how a schedule's cron expression is
+  interpreted. There's also no scheduled "power on" to pair with
+  scheduled shutdown.
+- **No automated SSH key distribution.** Settings can generate and
+  activate a replacement app SSH key, but never pushes it onto a
+  machine's `authorized_keys` itself — that stays a manual, out-of-band
+  step, consistent with never trusting a machine automatically (see "No
+  blind trust on first use" above). Turning a pending self-registered/
+  bulk-imported machine directly into a managed one without re-entering
+  its IP/name is likewise manual.
+- **No self-service password reset.** An admin resets a local password
   from the Users page, or `scripts/reset_account.py` from the server
   console if nobody can log in at all (see wiki/Installation.md).

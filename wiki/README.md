@@ -39,6 +39,7 @@ enabled, and it lives in its own separate git repository
 - [Architecture](Architecture.md) — stack choices and security model
 - [SSH Host Key Verification](SSH-Host-Key-Verification.md) — the fingerprint-pinning flow, explained
 - [Managed Machine Requirements](Managed-Machine-Requirements.md) — what a Debian machine needs to be managed
+- [Ansible Onboarding](Ansible-Onboarding.md) — a playbook that does that automatically and self-registers the machine
 - [Reverse Proxy: Caddy](Reverse-Proxy-Caddy.md) — using the bundled Caddy service
 - [Reverse Proxy: nginx](Reverse-Proxy-Nginx.md) — bring your own nginx
 - [Reverse Proxy: Traefik](Reverse-Proxy-Traefik.md) — bring your own Traefik

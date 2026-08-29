@@ -143,9 +143,11 @@ none of those three cases are distinguishable.
 
 ### Sessions are server-side rows, not a signed cookie
 
-`SECRET_KEY` (already present, "reserved for future session/signing use"
-since the very first commit) would have made a stateless signed-cookie
-session easy — that's deliberately not what `app.auth.sessions` does.
+`SECRET_KEY` (present since the very first commit, and used elsewhere today
+for the OIDC-flow session and the pending-TOTP token — see "OIDC's
+'session' is unrelated to the app's own" and "TOTP" below) would have made
+a stateless signed-cookie session just as easy to build for logins
+themselves — that's deliberately not what `app.auth.sessions` does.
 Instead, `UserSession` (`app/db/models/user_session.py`) is a DB row per
 login; the cookie only carries an opaque random token, and only its
 SHA-256 is stored (`token_hash`) — a DB leak alone doesn't hand over a live
@@ -1019,6 +1021,12 @@ each doing their own `get_or_create_csrf_token`/`set_csrf_cookie` dance —
 existing routes that still do their own dance stay consistent with
 whichever token the middleware already decided on for that request.
 
+A rejection (missing or mismatched token) is itself recorded in the audit
+log — `verify_csrf` calls `log_event` with `action="auth.csrf_rejected"`,
+`outcome=AuditOutcome.DENIED`, before raising the 403 — the same as any
+other safeguard that blocks a request (see "Audit log: who, what, outcome,
+when" above).
+
 ### HTTP security headers
 
 Set unconditionally by the app itself (`app/main.py`), regardless of which
@@ -1043,14 +1051,18 @@ you. If that matters for your deployment, either firewall port `8080`
 from anything but your reverse proxy, or bind
 `docker-compose.yml`'s `web.ports` entry to `127.0.0.1:8080:8080`.
 
-### Deliberately deferred
+### Deliberately out of scope
 
-- Per-schedule timezones (everything is UTC) and a scheduled "power on" to
-  pair with scheduled shutdown (there's no way for the app to power on a
-  machine that's off — see [Managed Machine
-  Requirements](Managed-Machine-Requirements.md)).
-- CSRF rejections aren't audit-logged (rate-limit rejections are, as
-  `auth.rate_limited` — see "Per-IP login rate limiting" above).
+- **Per-schedule timezones.** Scheduling's cron expressions are always
+  interpreted as UTC — this is permanent, not a stopgap: one expression
+  means the same instant regardless of who's looking at it or which
+  machine/group it targets, with no per-schedule override to reconcile.
+  The `TZ` environment variable (see [Installation](Installation.md))
+  changes container log timestamps and local-time display, and nothing
+  else — it never touches how a schedule fires.
+- There's also no scheduled "power on" to pair with scheduled shutdown —
+  there's no way for the app to power on a machine that's off (see
+  [Managed Machine Requirements](Managed-Machine-Requirements.md)).
 - Rotating the app's SSH identity, and configuring LDAP/OIDC/syslog, stay
   web-UI-only over the REST API (see "The REST API: read and write,
   mirroring the web UI" above for why) — everything else the web UI can do
