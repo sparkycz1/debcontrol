@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Users — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Users</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/roles">Roles</a>
+      <a class="button" href="/users/new">Add user</a>
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Role</th>
+        <th>Login method</th>
+        <th>2FA</th>
+        <th>Status</th>
+        <th>Last login</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.display_name or u.username }}</td>
+          <td>{{ u.role.name }}</td>
+          <td>{{ u.auth_provider.value }}</td>
+          <td>{{ 'on' if u.totp_enabled else '—' }}</td>
+          <td>
+            {% if u.is_active %}
+              <span class="badge badge-ok">active</span>
+            {% else %}
+              <span class="badge badge-error">disabled</span>
+            {% endif %}
+          </td>
+          <td>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else 'never' }}</td>
+          <td><a href="/users/{{ u.id }}/edit">Edit</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

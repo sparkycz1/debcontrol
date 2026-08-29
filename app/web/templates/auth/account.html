@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}My account — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>My account</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if user.must_change_password %}
+    <div class="alert alert-warn">
+      <p>An administrator set this password — please change it below.</p>
+    </div>
+  {% endif %}
+
+  {% if recovery_codes %}
+    <div class="alert alert-ok">
+      <p>
+        {% if just_enrolled %}Two-factor authentication is enabled.{% else %}New recovery codes generated — the old ones no longer work.{% endif %}
+        Save these recovery codes somewhere safe now — <strong>they won't be shown again</strong>.
+        Each one can be used once, in place of a code from your app, if you lose access to it.
+      </p>
+      <div class="recovery-codes">
+        {% for code in recovery_codes %}<code>{{ code }}</code>{% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Profile</h2>
+    <dl class="detail-list">
+      <dt>Username</dt><dd>{{ user.username }}</dd>
+      <dt>Role</dt><dd>{{ user.role.name }}</dd>
+      <dt>Login method</dt><dd>{{ user.auth_provider.value }}</dd>
+    </dl>
+    <form method="post" action="/account/display-name" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="display_name">Display name</label>
+      <input type="text" id="display_name" name="display_name" maxlength="255"
+             value="{{ user.display_name or '' }}" placeholder="{{ user.username }}">
+      <button type="submit" class="button">Save</button>
+    </form>
+  </section>
+
+  {% if user.auth_provider.value == 'local' %}
+    <section class="panel">
+      <h2>Password</h2>
+      <form method="post" action="/account/password" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="current_password">Current password</label>
+        <input type="password" id="current_password" name="current_password" autocomplete="current-password" required>
+        <label for="new_password">New password</label>
+        <input type="password" id="new_password" name="new_password" autocomplete="new-password"
+               minlength="{{ min_password_length }}" required>
+        <label for="confirm_password">Confirm new password</label>
+        <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password"
+               minlength="{{ min_password_length }}" required>
+        <button type="submit" class="button">Change password</button>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if user.auth_provider.value != 'oidc' %}
+    <section class="panel">
+      <h2>Two-factor authentication</h2>
+      {% if user.totp_enabled %}
+        <p class="hint">
+          Enabled since {{ user.totp_confirmed_at.strftime('%Y-%m-%d') if user.totp_confirmed_at else 'unknown' }}.
+          {{ unused_recovery_codes }} unused recovery code(s) remaining.
+        </p>
+        <form method="post" action="/account/totp/recovery-codes/regenerate" class="form" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="regen_code">Current code, to regenerate recovery codes</label>
+          <input type="text" id="regen_code" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+          <button type="submit" class="button button-secondary">Regenerate recovery codes</button>
+        </form>
+        <form method="post" action="/account/totp/disable" class="form stack-gap" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="disable_code">Current code or a recovery code, to disable</label>
+          <input type="text" id="disable_code" name="code" autocomplete="one-time-code" required>
+          <button type="submit" class="button button-danger">Disable two-factor authentication</button>
+        </form>
+      {% else %}
+        <p class="hint">Not enabled.</p>
+        <a href="/account/totp/enroll" class="button">Enable two-factor authentication</a>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Sessions</h2>
+    <p class="hint">Signs out every other browser/device this account is logged into — not this one.</p>
+    <form method="post" action="/account/sessions/revoke-all" data-confirm="Log out of every other session?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Log out everywhere else</button>
+    </form>
+  </section>
+{% endblock %}

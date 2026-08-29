@@ -15,10 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
+from app.auth.dependencies import require_permission
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
 from app.db.session import get_db
 from app.scheduling.actions import all_actions, get_action
@@ -27,7 +29,10 @@ from app.scheduling.targets import decode_target, encode_target
 from app.schemas.scheduled_task import ScheduledTaskCreate
 from app.web.templating import templates
 
-router = APIRouter(prefix="/scheduling")
+router = APIRouter(
+    prefix="/scheduling", dependencies=[Depends(require_permission(Permission.SCHEDULING_VIEW))]
+)
+_manage = Depends(require_permission(Permission.SCHEDULING_MANAGE))
 
 
 async def _get_task_or_404(task_id: uuid.UUID, db: AsyncSession) -> ScheduledTask:
@@ -123,7 +128,7 @@ async def new_scheduled_task_form(request: Request, db: AsyncSession = Depends(g
     return response
 
 
-@router.post("", dependencies=[Depends(verify_csrf)])
+@router.post("", dependencies=[_manage, Depends(verify_csrf)])
 async def create_scheduled_task(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     raw_form = {key: str(value) for key, value in (await request.form()).items()}
 
@@ -217,7 +222,7 @@ async def edit_scheduled_task_form(
     return response
 
 
-@router.post("/{task_id}/edit", dependencies=[Depends(verify_csrf)])
+@router.post("/{task_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
 async def update_scheduled_task(
     request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -289,7 +294,7 @@ async def update_scheduled_task(
     return RedirectResponse(url="/scheduling", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{task_id}/toggle", dependencies=[Depends(verify_csrf)])
+@router.post("/{task_id}/toggle", dependencies=[_manage, Depends(verify_csrf)])
 async def toggle_scheduled_task(
     request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -309,7 +314,7 @@ async def toggle_scheduled_task(
     return RedirectResponse(url="/scheduling", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{task_id}/run-now", dependencies=[Depends(verify_csrf)])
+@router.post("/{task_id}/run-now", dependencies=[_manage, Depends(verify_csrf)])
 async def run_scheduled_task_now(
     request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -333,7 +338,7 @@ async def run_scheduled_task_now(
     )
 
 
-@router.post("/{task_id}/delete", dependencies=[Depends(verify_csrf)])
+@router.post("/{task_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
 async def delete_scheduled_task(
     request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:

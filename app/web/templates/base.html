@@ -10,13 +10,22 @@
   <header class="site-header">
     <a class="brand" href="/machines">debcontrol</a>
     <nav>
-      <a href="/machines">Machines</a>
-      <a href="/machine-groups">Machine groups</a>
-      <a href="/scheduling">Scheduling</a>
-      <a href="/audit">Audit</a>
-      <a href="/users">Users</a>
-      <a href="/settings">Settings</a>
+      {% set current_user = request.state.user %}
+      {% if current_user.has_permission('machine.view') %}<a href="/machines">Machines</a>{% endif %}
+      {% if current_user.has_permission('group.view') %}<a href="/machine-groups">Machine groups</a>{% endif %}
+      {% if current_user.has_permission('scheduling.view') %}<a href="/scheduling">Scheduling</a>{% endif %}
+      {% if current_user.has_permission('audit.view') %}<a href="/audit">Audit</a>{% endif %}
+      {% if current_user.has_permission('user.manage') %}<a href="/users">Users</a>
+      <a href="/roles">Roles</a>{% endif %}
+      {% if current_user.has_permission('settings.view') %}<a href="/settings">Settings</a>{% endif %}
     </nav>
+    <div class="site-header-user">
+      <a href="/account">{{ current_user.display_name or current_user.username }}</a>
+      <form method="post" action="/logout" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+        <button type="submit" class="link-button">Log out</button>
+      </form>
+    </div>
   </header>
 
   <main class="container">

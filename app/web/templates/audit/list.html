@@ -8,11 +8,12 @@
   </div>
 
   <p class="hint">
-    There's no login yet, so entries can't record who performed an action —
-    only its source IP, what happened, and when. See the wiki page
-    "Architecture" for how this is meant to extend once authentication lands.
-    Every entry is hash-chained for tamper-evidence; verify the chain and
-    set the retention policy on the <a href="/settings">Settings</a> page.
+    Who (account and source IP), what happened, its outcome, and when.
+    A blank "User" is a pre-login event (a failed login attempt, machine
+    self-registration) or a background job's own fixed label (e.g. "scheduler
+    (automatic)"). Every entry is hash-chained for tamper-evidence; verify
+    the chain and set the retention policy on the
+    <a href="/settings">Settings</a> page.
   </p>
 
   <form method="get" class="search-form">
@@ -37,6 +38,7 @@
       <thead>
         <tr>
           <th>Time (UTC)</th>
+          <th>User</th>
           <th>IP address</th>
           <th>Action</th>
           <th>Target</th>
@@ -48,6 +50,7 @@
         {% for entry in entries %}
           <tr>
             <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ entry.actor or '—' }}</td>
             <td>{{ entry.ip_address or '—' }}</td>
             <td><code>{{ entry.action }}</code></td>
             <td>

@@ -1,8 +1,7 @@
 """Settings — the app's SSH identity, background-check intervals (both
-read-only, sourced from the environment), and the audit log retention
-policy (the first setting actually editable through the UI — see
-`app/db/models/app_settings.py` for why that's a separate mechanism from
-`app.core.config.Settings`). No user accounts to configure yet (no auth).
+read-only, sourced from the environment), the audit log retention policy,
+and the LDAP/OIDC login configuration (see `app/db/models/app_settings.py`
+for why these are Settings-page config rather than environment variables).
 """
 
 from __future__ import annotations
@@ -12,15 +11,26 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event, verify_chain
+from app.auth.dependencies import require_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
+from app.core.security import encrypt_secret
+from app.db.models.app_settings import (
+    DEFAULT_LDAP_USER_SEARCH_FILTER,
+    DEFAULT_OIDC_SCOPES,
+    DEFAULT_OIDC_USERNAME_CLAIM,
+)
 from app.db.models.audit_log import AuditOutcome
+from app.db.models.role import Permission
 from app.db.session import get_db
 from app.ssh.identity import get_or_create_identity
 from app.web.templating import templates
 
-router = APIRouter(prefix="/settings")
+router = APIRouter(
+    prefix="/settings", dependencies=[Depends(require_permission(Permission.SETTINGS_VIEW))]
+)
+_manage = Depends(require_permission(Permission.SETTINGS_MANAGE))
 
 
 async def _render_settings(
@@ -48,7 +58,7 @@ async def show_settings(request: Request, db: AsyncSession = Depends(get_db)) ->
     return await _render_settings(request, db, [])
 
 
-@router.post("/audit-retention", dependencies=[Depends(verify_csrf)])
+@router.post("/audit-retention", dependencies=[_manage, Depends(verify_csrf)])
 async def update_audit_retention(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -86,7 +96,7 @@ async def update_audit_retention(
     return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/audit-verify", dependencies=[Depends(verify_csrf)])
+@router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])
 async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     """Recompute the audit log's hash chain on demand — see
     `app.audit.verify_chain`. Result isn't stored anywhere; it's only ever
@@ -101,3 +111,113 @@ async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db
         details={"checked": result.checked, "broken_at_sequence": result.broken_at_sequence},
     )
     return await _render_settings(request, db, [], verify_result=result)
+
+
+@router.post("/ldap", dependencies=[_manage, Depends(verify_csrf)])
+async def update_ldap_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ldap_enabled: str = Form(""),
+    ldap_server_uri: str = Form(""),
+    ldap_use_starttls: str = Form(""),
+    ldap_bind_dn: str = Form(""),
+    # Blank = keep the existing bind password unchanged — same convention as
+    # Machine.secret_encrypted (app/schemas/machine.py).
+    ldap_bind_password: str = Form(""),
+    ldap_user_search_base: str = Form(""),
+    ldap_user_search_filter: str = Form(""),
+    ldap_connect_timeout_seconds: str = Form("5"),
+) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+
+    server_uri = ldap_server_uri.strip()
+    if server_uri and not (server_uri.startswith("ldap://") or server_uri.startswith("ldaps://")):
+        errors.append('Server URI must start with "ldap://" or "ldaps://".')
+
+    try:
+        timeout = int(ldap_connect_timeout_seconds.strip() or "5")
+        if timeout <= 0:
+            raise ValueError
+    except ValueError:
+        errors.append("Connect timeout must be a positive whole number of seconds.")
+        timeout = app_settings.ldap_connect_timeout_seconds
+
+    search_filter = ldap_user_search_filter.strip() or DEFAULT_LDAP_USER_SEARCH_FILTER
+    if "{username}" not in search_filter:
+        errors.append('Search filter must contain "{username}".')
+
+    if bool(ldap_enabled) and not (
+        server_uri and ldap_bind_dn.strip() and ldap_user_search_base.strip()
+    ):
+        errors.append("Enabling LDAP needs at least a server URI, bind DN, and search base.")
+
+    if errors:
+        return await _render_settings(request, db, errors)
+
+    app_settings.ldap_enabled = bool(ldap_enabled)
+    app_settings.ldap_server_uri = server_uri or None
+    app_settings.ldap_use_starttls = bool(ldap_use_starttls)
+    app_settings.ldap_bind_dn = ldap_bind_dn.strip() or None
+    if ldap_bind_password:
+        app_settings.ldap_bind_password_encrypted = encrypt_secret(ldap_bind_password)
+    app_settings.ldap_user_search_base = ldap_user_search_base.strip() or None
+    app_settings.ldap_user_search_filter = search_filter
+    app_settings.ldap_connect_timeout_seconds = timeout
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.ldap.update",
+        summary=f"Updated LDAP settings ({'enabled' if app_settings.ldap_enabled else 'disabled'})",
+    )
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/oidc", dependencies=[_manage, Depends(verify_csrf)])
+async def update_oidc_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    oidc_enabled: str = Form(""),
+    oidc_issuer_url: str = Form(""),
+    oidc_client_id: str = Form(""),
+    # Blank = keep the existing client secret unchanged.
+    oidc_client_secret: str = Form(""),
+    oidc_username_claim: str = Form(""),
+    oidc_scopes: str = Form(""),
+) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+
+    issuer_url = oidc_issuer_url.strip()
+    if issuer_url and not (issuer_url.startswith("http://") or issuer_url.startswith("https://")):
+        errors.append('Issuer URL must start with "http://" or "https://".')
+
+    claim = oidc_username_claim.strip() or DEFAULT_OIDC_USERNAME_CLAIM
+    scopes = oidc_scopes.strip() or DEFAULT_OIDC_SCOPES
+    if "openid" not in scopes.split():
+        errors.append('Scopes must include "openid".')
+
+    if bool(oidc_enabled) and not (issuer_url and oidc_client_id.strip()):
+        errors.append("Enabling OIDC needs at least an issuer URL and client ID.")
+
+    if errors:
+        return await _render_settings(request, db, errors)
+
+    app_settings.oidc_enabled = bool(oidc_enabled)
+    app_settings.oidc_issuer_url = issuer_url or None
+    app_settings.oidc_client_id = oidc_client_id.strip() or None
+    if oidc_client_secret:
+        app_settings.oidc_client_secret_encrypted = encrypt_secret(oidc_client_secret)
+    app_settings.oidc_username_claim = claim
+    app_settings.oidc_scopes = scopes
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.oidc.update",
+        summary=f"Updated OIDC settings ({'enabled' if app_settings.oidc_enabled else 'disabled'})",
+    )
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)

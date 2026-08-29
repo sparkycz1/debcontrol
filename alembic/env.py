@@ -20,8 +20,13 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     MachineGroup,
     MachineUpdateRun,
     PendingMachine,
+    Role,
+    RolePermission,
     ScheduledTask,
     SSHIdentity,
+    TotpRecoveryCode,
+    User,
+    UserSession,
 )
 
 config = context.config

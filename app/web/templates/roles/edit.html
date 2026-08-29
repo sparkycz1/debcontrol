@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ role.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Edit role</h1>
+    <form method="post" action="/roles/{{ role.id }}/delete"
+          class="inline-form" data-confirm='Delete role "{{ role.name }}"?'>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger"
+              {{ 'disabled' if role.users else '' }}>Delete role</button>
+    </form>
+  </div>
+
+  {% if role.users %}
+    <p class="hint">Assigned to {{ role.users | length }} user(s) — reassign them before deleting this role.</p>
+  {% endif %}
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/roles/{{ role.id }}/edit" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" required maxlength="100" value="{{ role.name }}">
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" rows="2">{{ role.description or '' }}</textarea>
+
+    <label>Permissions</label>
+    <div class="permission-grid">
+      {% for permission in all_permissions %}
+        <label>
+          <input type="checkbox" name="permissions" value="{{ permission.value }}"
+                 {{ 'checked' if permission in current_permissions else '' }}>
+          {{ permission.value }}
+        </label>
+      {% endfor %}
+    </div>
+
+    <button type="submit" class="button">Save</button>
+    <a class="button button-secondary" href="/roles">Cancel</a>
+  </form>
+{% endblock %}

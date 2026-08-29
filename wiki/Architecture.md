@@ -12,6 +12,7 @@
 | Cache / task queue | Redis 8.10.1 | queue via [`arq`](https://github.com/python-arq/arq); image pinned to an exact patch |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
 | Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
+| Auth | `argon2-cffi`, `ldap3`, `Authlib`, `pyotp` + `qrcode` | local password hashing, LDAP bind, OIDC, TOTP — see "Authentication & RBAC" below |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
@@ -52,6 +53,8 @@ maintained and supports modern algorithms (Ed25519, etc.).
 ```
 app/
   audit.py      the single audit-log write path (hash chaining, verification)
+  auth/         login (local/LDAP/OIDC), sessions, RBAC permissions, TOTP —
+                see "Authentication & RBAC" below
   core/         config (pydantic-settings), logging, encryption, CSRF,
                 editable app settings (app/core/app_settings.py)
   db/           SQLAlchemy models + async session
@@ -63,9 +66,198 @@ app/
   web/          FastAPI routers, Jinja2 templates, static files
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
-scripts/        helper scripts (secret generation)
+scripts/        helper scripts (secret generation, first-admin bootstrap)
 wiki/           this documentation
 ```
+
+## Authentication & RBAC
+
+Every page requires a valid session except `/login`, `/login/totp`, the
+`/auth/oidc/...` endpoints, `/healthz`, and `/api/*` (self-registration,
+which has its own bearer-token auth) — enforced by one ASGI middleware,
+`app.auth.middleware.require_auth`, registered in `app/main.py` before the
+security-headers middleware (so CSP etc. still land on a redirect-to-login
+response, not just on responses that reached a route — see the ordering
+comment there for why registration order determines that).
+
+### No accounts are ever auto-created
+
+Every `User` row (`app/db/models/user.py`) is created inside debcontrol
+first, through the **Users** page — never by LDAP or OIDC. `auth_provider`
+(`local` / `ldap` / `oidc`) only decides *how* an already-existing account
+proves who it is:
+
+- **`local`**: a password stored here, argon2id-hashed (`app.auth.security`).
+- **`ldap`**: the account's `username` is used as the LDAP username — no
+  separate field for it. `app.auth.ldap.authenticate` does search-then-bind:
+  a service account (configured in Settings) searches for the user's DN by
+  username (with the username filter-escaped —
+  `ldap3.utils.conv.escape_filter_chars` — as defense in depth on top of
+  `username` already being restricted to a safe character set), then a
+  *second*, independent connection binds as that DN with the password just
+  entered. The user's own credentials are never used for anything else. An
+  empty password is rejected before ever reaching the bind step — many
+  directories treat that as a trivially-successful "unauthenticated bind,"
+  which would otherwise let anyone in as any known username.
+- **`oidc`**: redirected to the provider (Authlib, standard authorization-
+  code flow); on callback, the account is matched by comparing `username`
+  against a claim from the validated ID token — which claim is configurable
+  in Settings (`AppSettings.oidc_username_claim`, default `email`), since it
+  varies by provider. No account is created or updated from provider
+  claims beyond that comparison.
+
+The **login form itself** (`/login`) is shared by `local` and `ldap`
+accounts — it doesn't ask which kind of account it is; `app.auth.login.
+check_password` looks the username up first and branches internally. An
+`oidc` account attempting the password form is rejected with the same
+generic "Invalid username or password" message as a wrong password or an
+unknown username (see "Generic failure messages" below) — from the outside,
+none of those three cases are distinguishable.
+
+### Sessions are server-side rows, not a signed cookie
+
+`SECRET_KEY` (already present, "reserved for future session/signing use"
+since the very first commit) would have made a stateless signed-cookie
+session easy — that's deliberately not what `app.auth.sessions` does.
+Instead, `UserSession` (`app/db/models/user_session.py`) is a DB row per
+login; the cookie only carries an opaque random token, and only its
+SHA-256 is stored (`token_hash`) — a DB leak alone doesn't hand over a live
+session. The reason this matters: a stateless token is only as revocable as
+its own expiry. A row is revocable immediately — disabling a user, an admin
+resetting someone's password, or "log out everywhere" (own account or, for
+an admin, someone else's) all just mark rows revoked, with no need to wait
+out a token's lifetime. Sessions slide (`SESSION_IDLE_TIMEOUT`, 12h,
+extended on each authenticated request) up to an absolute cap from creation
+(`SESSION_ABSOLUTE_MAX`, 30 days).
+
+The middleware needs a DB session to validate the cookie but runs outside
+FastAPI's dependency injection, so it opens one via
+`request.app.state.db_session_factory` — the same pattern
+`app/tasks/jobs.py` already used for background jobs (`AsyncSessionLocal`
+directly, no `Depends(get_db)`). The factory lives on `app.state` (set in
+`app.main`'s `lifespan`) specifically so tests can point it at their own
+SQLite engine instead of the real Postgres one — see `tests/conftest.py`'s
+`_configure_app_for_tests`.
+
+A short-lived, *signed but stateless* value is used for exactly one thing
+where a DB row would be overkill: the few minutes between "password/LDAP
+check passed" and "TOTP code confirmed" (`app.auth.sessions.
+create_pending_totp_ticket`, an `itsdangerous.URLSafeTimedSerializer` keyed
+by `SECRET_KEY`, 5-minute expiry). It carries no privilege by itself — it
+doesn't grant a session — so statelessness there isn't a revocability
+concern the way the login session itself is.
+
+### RBAC: custom roles, a fixed permission set
+
+An admin defines named `Role`s (`app/db/models/role.py`) and picks exactly
+which of 12 fixed `Permission`s each one grants — `machine.view`/`.manage`,
+`group.view`/`.manage`, `action.updates`, `action.power`, `scheduling.
+view`/`.manage`, `audit.view`, `settings.view`/`.manage`, `user.manage` —
+then assigns **one role per user** (not multiple; simpler mental model, and
+nothing here needed a union-of-roles model). Permissions are
+resource-grained, not per-object: there's no "can manage machine X but not
+machine Y."
+
+A `MANAGE` permission always also grants the matching `VIEW` permission
+(`User.has_permission` / `role_has_permission`, `_MANAGE_IMPLIES_VIEW`) —
+otherwise a role granted e.g. `machine.manage` but not `machine.view` (an
+easy admin mistake, since granting manage obviously implies "can at least
+look") would find every machines page returning 403, since routes are
+gated with `require_permission` at the *view* level for GETs and additional
+per-route permissions for state-changing ones. `action.updates`/
+`action.power` are deliberately their own permissions, independent of
+`machine.manage` — running updates and sending power commands aren't the
+same trust level as editing a machine's connection details, and power
+(destructive, no undo) is kept separate from updates.
+
+`user.manage` bundles user AND role management under one permission —
+splitting them further wasn't worth it, since a role editor who can't also
+assign roles to users isn't useful on its own.
+
+### Guardrails against locking everyone out
+
+Two checks run before any change that could remove access, not just
+document the risk:
+
+- **Self-protection**: a user can't deactivate, delete, or change the role
+  of their own account (`app/web/routes/users.py`) — that has to go through
+  another admin.
+- **Last-admin protection**: `app.auth.login.
+  count_active_users_with_permission` (with `excluding_user_id` or
+  `excluding_role_id`) checks, before committing, whether the change would
+  leave *nobody* holding `user.manage`. The user-level check is defensive —
+  in practice the acting admin always still counts, since reaching the
+  route required `user.manage` in the first place — but the **role**-level
+  check (`app/web/routes/roles.py`, editing a role to drop `user.manage`)
+  is the one that actually bites: if the acting admin's own account uses
+  that role, stripping the permission from it would remove their own access
+  in the same stroke.
+
+### Brute-force lockout, shared by password and TOTP
+
+`User.failed_login_attempts`/`locked_until` are incremented by both the
+password/LDAP-bind step and the TOTP-code step (`app.auth.login.
+_register_failed_attempt`) — 5 failures locks the account for 15 minutes,
+reset on any successful step. A locked-out user sees a distinct
+"too many failed attempts" message rather than the generic invalid-
+credentials one — see "Generic failure messages" below for why that
+asymmetry is intentional.
+
+### Generic failure messages, except for lockout
+
+A nonexistent username, a wrong password, an inactive account, and an
+`oidc` account trying the password form all render the identical "Invalid
+username or password" — none of those is distinguishable from outside
+(username enumeration). A **locked-out** account gets a different, specific
+message instead: hiding "you're locked out" from a legitimate locked-out
+user is worse than the marginal information it gives an attacker who
+already knows they triggered it.
+
+### TOTP: opt-in, self-service, with recovery codes
+
+Available to `local`/`ldap` accounts, not `oidc` (the provider's own MFA,
+if any, covers those instead). Enrollment is necessarily self-service — an
+admin creates the account, but only the account's own owner can scan the
+QR code with their own device (`GET /account/totp/enroll`, confirmed by
+entering a real code before anything is persisted). The QR code is rendered
+as inline SVG (`app.auth.totp.qr_code_svg`, `qrcode`'s `SvgPathImage`
+factory) directly in the page rather than as an `<img src="data:...">` —
+no `data:` URI needed, and nothing to carve an exception into the CSP's
+`img-src` for.
+
+Eight one-time recovery codes are generated at enrollment (shown once,
+hashed with the same argon2 hasher as passwords) and regenerated wholesale
+whenever TOTP is disabled and re-enabled, or explicitly via "Regenerate
+recovery codes" — which deliberately requires a fresh *TOTP* code, not a
+recovery code itself, so a single leaked recovery code (with a hijacked
+session) can't be used to invalidate and relearn the whole batch.
+
+### OIDC's "session" is unrelated to the app's own
+
+Authlib's Starlette integration needs somewhere to stash `state`/`nonce`
+across the redirect to and from the provider — that's Starlette's own
+`SessionMiddleware` (`app/main.py`, cookie `oidc_flow`, `SameSite=Lax` since
+`Strict` would drop it on the provider's redirect back, 10-minute expiry).
+It's registered purely for that one exchange and has nothing to do with
+`app.auth.sessions` — the app's actual login session, which is what a
+completed OIDC login goes on to create via the same `create_session` path
+local/LDAP logins use.
+
+A fresh OIDC client is registered from current `AppSettings` on every login
+attempt rather than once at startup, since the config (issuer, client
+ID/secret) is editable at runtime from Settings — the cost is one extra
+discovery-document fetch per login, an acceptable trade for picking up a
+config change or a newly-enabled provider without restarting the app.
+
+### Bootstrapping the first account
+
+Since accounts are never auto-created and every page requires a login,
+`scripts/create_admin.py` is the one way into a fresh deployment — a CLI
+script (`docker compose exec web python scripts/create_admin.py --username
+admin`) that creates (or reuses) an "Administrator" role with every
+permission and a `local` account with a prompted password. Deliberately a
+CLI script, not an unauthenticated "first-run setup" page — a page like
+that is exactly the kind of thing that's easy to forget to disable/remove.
 
 ## Security model
 
@@ -267,21 +459,21 @@ decisions shaped it:
   listing "All machines", every group, and every machine — no client-side
   JS needed to hide whichever selector doesn't apply.
 
-### Audit log: IP instead of identity, for now
+### Audit log: who, what, outcome, when
 
 **Audit** (`app.audit`, `app/db/models/audit_log.py`) records what happened,
 its outcome, the source IP, and when — for essentially every mutating
 action and every safeguard that blocked one (a typed confirmation that
 didn't match, an unpinned host key, a bad self-registration token, a
-rejected form). A few decisions:
+rejected form, a failed or locked-out login). A few decisions:
 
-- **`actor` exists and is `None`, on purpose, until there's a login.**
-  There's no user identity anywhere in the app yet (see "Deliberately
-  deferred" below), so there's nothing truthful to put there — the column
-  is present now so that once authentication lands, entries can start
-  carrying a real actor without another migration, rather than recording a
-  guess (a cookie value, a hostname) that would look like an identity but
-  isn't one. `ip_address` is what stands in for "who" today.
+- **`actor`** carries a human account's username for anything a logged-in
+  user did, or a fixed label (`"scheduler (automatic)"`, `"retention policy
+  (automatic)"`) for something a background job did on its own — it's
+  `None` only for the handful of pre-login events (a failed login attempt
+  itself, self-registration) where there's no account to attribute it to
+  yet. `ip_address` is recorded alongside it, not instead of it, for every
+  HTTP-triggered event.
 - **One write path, called after the fact, never before.** `app.audit.
   log_event()` is the only thing that creates `AuditLogEntry` rows. It
   commits independently of whatever the caller's own transaction is doing,
@@ -387,13 +579,24 @@ just starts from whatever the current oldest surviving entry is. The purge
 itself is logged (`audit_log.purge`, actor `"retention policy
 (automatic)"`) with how many entries were removed.
 
-### CSRF protection without sessions
+### CSRF protection: a double-submit cookie, provisioned centrally
 
-Since there's no login yet, there's no session to hang CSRF protection
-off of. Instead, a double-submit cookie pattern is used: a random
-`csrftoken` cookie (`SameSite=Strict`, `HttpOnly`) is set on GET requests
-that render a form, and the same value must be echoed back as a hidden
-field on POST. See `app/core/csrf.py`.
+A double-submit cookie pattern: a random `csrftoken` cookie (`SameSite=
+Strict`, `HttpOnly`) is set on GET requests that render a form, and the
+same value must be echoed back as a hidden field on POST — predates login
+(from the very first commit) and still doesn't depend on it, deliberately:
+it protects the login form itself too (a "login CSRF" — tricking a victim's
+browser into authenticating as the *attacker's* account — is a real
+enough class of attack to guard against even pre-session).
+
+Since `app.auth.middleware` now runs on every request anyway, it ensures a
+token exists and stashes it on `request.state.csrf_token` centrally, so new
+pages (the nav's logout button, "My account") can just read that instead of
+each doing their own `get_or_create_csrf_token`/`set_csrf_cookie` dance —
+`get_or_create_csrf_token` (`app/core/csrf.py`) checks
+`request.state.csrf_token` before minting a *second*, different token, so
+existing routes that still do their own dance stay consistent with
+whichever token the middleware already decided on for that request.
 
 ### HTTP security headers
 
@@ -417,12 +620,9 @@ published to the host at all by default.
 
 ### Deliberately deferred
 
-- Authentication/authorization for app users (the **Users** tab is a
-  placeholder for this) — and, as a direct consequence, *who* performed an
-  audited action: the **Audit** log records the source IP and what
-  happened today, not an identity (see "Audit log" above).
-- Rate limiting at the application layer (a reverse proxy or upstream
-  service is expected to handle this today).
+- IP-based login rate limiting — only per-account lockout exists today (see
+  "Authentication & RBAC" above); a reverse proxy or upstream service is
+  expected to handle broader rate limiting.
 - Per-schedule timezones (everything is UTC) and a scheduled "power on" to
   pair with scheduled shutdown (there's no way for the app to power on a
   machine that's off — see [Managed Machine

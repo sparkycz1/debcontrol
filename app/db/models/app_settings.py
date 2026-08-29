@@ -7,21 +7,36 @@ Deliberately a separate table/mechanism from `app.core.config.Settings`
 rather than, say, letting the Settings page rewrite `.env`: the two have
 different lifecycles (env config is infrastructure, decided at deploy
 time; this is app behavior, decided by whoever's operating it day to day)
-and different trust models (no auth yet — see the Architecture wiki page —
-so this is the first *value* editable through the UI, not just secrets
-provisioned outside it).
+and different trust models — this was the first *value* editable through
+the UI, not just secrets provisioned outside it.
+
+Also holds the LDAP and OIDC configuration used for user login (see
+`app.auth.ldap` / `app.auth.oidc`) — deliberately settings-page config, not
+environment variables, same reasoning as retention: these are things
+whoever's operating the app day to day turns on/off and tunes, not
+deploy-time infrastructure. Secrets in here (`ldap_bind_password_encrypted`,
+`oidc_client_secret_encrypted`) are encrypted at rest with
+`app.core.security` (the same Fernet key as SSH passwords), exactly like
+`Machine.secret_encrypted`.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Integer, func
+from sqlalchemy import Boolean, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
 SINGLETON_ID = 1
+
+# Sensible default for a typical OpenLDAP directory — Active Directory
+# deployments commonly need "(sAMAccountName={username})" instead. `{username}`
+# is filter-escaped before substitution (see app.auth.ldap).
+DEFAULT_LDAP_USER_SEARCH_FILTER = "(uid={username})"
+DEFAULT_OIDC_USERNAME_CLAIM = "email"
+DEFAULT_OIDC_SCOPES = "openid email profile"
 
 
 class AppSettings(Base):
@@ -34,6 +49,40 @@ class AppSettings(Base):
     # "keep forever" — the default, since silently discarding audit history
     # is a much worse surprise than an unbounded table.
     audit_log_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # --- LDAP login (app.auth.ldap) ---
+    ldap_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ldap_server_uri: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ldap_use_starttls: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Service/bind account used to search for the user's DN — the user's own
+    # credentials are only ever used for the final bind-as-them check (see
+    # app.auth.ldap.authenticate).
+    ldap_bind_dn: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ldap_bind_password_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    ldap_user_search_base: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ldap_user_search_filter: Mapped[str] = mapped_column(
+        String(255), default=DEFAULT_LDAP_USER_SEARCH_FILTER, nullable=False
+    )
+    ldap_connect_timeout_seconds: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+    # --- OIDC login (app.auth.oidc) ---
+    oidc_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    oidc_issuer_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    oidc_client_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    oidc_client_secret_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    # Which ID-token claim is compared against a user's `username` to decide
+    # which debcontrol account just logged in — see the module docstring and
+    # User.username. Configurable since it varies by provider.
+    oidc_username_claim: Mapped[str] = mapped_column(
+        String(100), default=DEFAULT_OIDC_USERNAME_CLAIM, nullable=False
+    )
+    oidc_scopes: Mapped[str] = mapped_column(
+        String(255), default=DEFAULT_OIDC_SCOPES, nullable=False
+    )
 
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False

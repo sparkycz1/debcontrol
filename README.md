@@ -1,8 +1,12 @@
 # debcontrol
 
-A web application for managing Debian machines over SSH. There's no login
-yet — run it on a trusted network / behind a reverse proxy you control
-until authentication is added.
+A web application for managing Debian machines over SSH. Every page
+requires a login; access is controlled by custom roles (RBAC) an admin
+defines, and accounts can authenticate locally, against LDAP, or via OIDC
+SSO, with optional TOTP two-factor for local/LDAP accounts. See
+[wiki/Architecture.md](wiki/Architecture.md#authentication--rbac) for the
+design and [wiki/Installation.md](wiki/Installation.md) for bootstrapping
+the first admin account.
 
 Full documentation (installation, reverse proxy guides, architecture,
 security model) lives in the [wiki](wiki/Home.md) — it's written to be
@@ -21,6 +25,10 @@ published as the GitHub wiki once this repo is pushed there (see
 | Cache / task queue | Redis 8.10.1 | queue via [`arq`](https://github.com/python-arq/arq) |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
 | Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
+| Auth: passwords | [`argon2-cffi`](https://github.com/hynek/argon2-cffi) | argon2id hashing for local accounts |
+| Auth: LDAP | [`ldap3`](https://github.com/cannatag/ldap3) | pure Python, no system libldap headers needed |
+| Auth: OIDC | [`Authlib`](https://authlib.org/) | discovery, authorization-code flow, ID token validation |
+| Auth: TOTP | [`pyotp`](https://github.com/pyauth/pyotp) + [`qrcode`](https://github.com/lincolnloop/python-qrcode) | RFC 6238 two-factor codes; QR rendered as inline SVG |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
@@ -47,11 +55,38 @@ published as the GitHub wiki once this repo is pushed there (see
   `docker compose up` is exactly the kind of surprise this project avoids
   elsewhere too. Bump the pin deliberately (and test against it) instead.
 
-## Security decisions (v1)
+## Security decisions
 
-The app has no login yet, but a few things are handled from the start
-because they're painful to retrofit later:
-
+- **Every page requires a session** (`app/auth/middleware.py`) except
+  `/login`, the OIDC endpoints, `/healthz`, and `/api/inform` (which has its
+  own bearer-token auth). Sessions are server-side rows
+  ([app/db/models/user_session.py](app/db/models/user_session.py)), not a
+  stateless signed cookie — an admin disabling an account, a password
+  change, or "log out everywhere" all just revoke rows, no waiting for a
+  token to expire on its own.
+- **Custom RBAC** — an admin defines named roles with an exact permission
+  matrix (12 permissions across machines/groups/actions/scheduling/audit/
+  settings/users; a MANAGE permission always implies the matching VIEW one)
+  and assigns one role per user. See
+  [app/db/models/role.py](app/db/models/role.py).
+- **Local passwords are argon2id-hashed**; a brute-force lockout (5 failed
+  attempts, 15 minutes) applies to both the password step and the TOTP
+  step. **LDAP** login is search-then-bind against a directory configured
+  in Settings, with the user's own credentials only ever used for the
+  final bind. **OIDC** login never auto-creates an account — a user is
+  always created in debcontrol first, then matched to the provider by
+  comparing a configurable ID-token claim against their username. See
+  [app/auth/login.py](app/auth/login.py), [app/auth/ldap.py](app/auth/ldap.py),
+  [app/auth/oidc.py](app/auth/oidc.py).
+- **Optional TOTP two-factor** for local/LDAP accounts (not OIDC — the
+  provider handles its own MFA), with one-time recovery codes. See
+  [app/auth/totp.py](app/auth/totp.py).
+- **Guardrails against locking everyone out**: you can't deactivate,
+  delete, or demote your own account, and the last active account holding
+  `user.manage` can't be deactivated, deleted, or demoted away from it
+  either — checked before every such change, not just documented. See
+  [app/web/routes/users.py](app/web/routes/users.py),
+  [app/web/routes/roles.py](app/web/routes/roles.py).
 - **No blind "trust on first use" for SSH host keys.** A machine's key
   fingerprint must be explicitly discovered ("Discover key fingerprint")
   and manually confirmed (outside the app, e.g. via the hosting provider's
@@ -71,8 +106,8 @@ because they're painful to retrofit later:
   (`INFORM_TOKEN`) and only ever creates a *pending* entry for a human to
   review — nothing it submits is trusted for actually connecting to the
   machine. See [app/web/routes/inform.py](app/web/routes/inform.py).
-- **CSRF protection** (double-submit cookie) on every form, even without
-  sessions/login. See [app/core/csrf.py](app/core/csrf.py).
+- **CSRF protection** (double-submit cookie) on every form, including the
+  login form itself. See [app/core/csrf.py](app/core/csrf.py).
 - **Strict Content-Security-Policy** and other security headers
   (`X-Frame-Options`, `X-Content-Type-Options`, ...) — no inline
   scripts/styles, no external CDN. See [app/main.py](app/main.py).
@@ -88,12 +123,11 @@ because they're painful to retrofit later:
   `Settings` in [app/core/config.py](app/core/config.py)).
 - `/docs` and `/openapi.json` are disabled in production (`APP_ENV=production`).
 
-What's **deliberately missing** and left for a later phase (login):
-authentication/authorization of app users, rate limiting. There is an
-**Audit log** ([app/audit.py](app/audit.py)) recording what happened, its
-outcome, the source IP, and when — but not *who*, since there's no login
-yet to attribute it to. Don't expose the app to an untrusted network/the
-internet until then.
+There is an **Audit log** ([app/audit.py](app/audit.py)) recording who
+(the account, and the source IP), what, its outcome, and when — including
+logins, logouts, and every user/role/settings change — hash-chained so an
+altered or removed entry is detectable. **Not** yet included: IP-based
+login rate limiting (only per-account lockout).
 
 ## Quick start (Docker)
 
@@ -136,12 +170,26 @@ This brings up: the image build, Postgres 18.6, Redis 8.10.1, a one-off
 `migrate` service (Alembic `upgrade head`), and — once that finishes
 successfully — `web`, `worker` (arq), and optionally `caddy`.
 
+**Then create the first administrator account** — every debcontrol account
+is created inside the app itself, so there's no other way in on a fresh
+deployment:
+
+```bash
+docker compose exec web python scripts/create_admin.py --username admin
+```
+
+It prompts for a password (at least 12 characters) and creates an
+"Administrator" role with every permission if one doesn't exist yet. You'll
+be asked to change that password on first login. See
+[wiki/Installation.md](wiki/Installation.md) for LDAP/OIDC setup.
+
 ## Local development without Docker (DB/Redis still via Docker)
 
 ```bash
 uv sync
 docker compose up -d db redis
 uv run alembic upgrade head
+uv run python scripts/create_admin.py --username admin
 uv run uvicorn app.main:app --reload
 # in a second terminal:
 uv run arq app.tasks.worker.WorkerSettings
@@ -168,6 +216,7 @@ the UI ("Test connection").
 ```
 app/
   audit.py      the single audit-log write path (hash chaining, verification)
+  auth/         login (local/LDAP/OIDC), sessions, RBAC permissions, TOTP
   core/         config, logging, encryption, CSRF, editable app settings
   db/           SQLAlchemy models + async session
   schemas/      Pydantic schemas for forms
@@ -180,7 +229,7 @@ app/
   web/          FastAPI routers, Jinja2 templates, static files
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
-scripts/        helper scripts (secret generation)
+scripts/        helper scripts (secret generation, first-admin bootstrap)
 wiki/           documentation, meant to become the GitHub wiki
 ```
 
@@ -233,19 +282,32 @@ wiki/           documentation, meant to become the GitHub wiki
   [app/scheduling/builtin_actions.py](app/scheduling/builtin_actions.py).
 - **Audit** — a read-only, searchable/filterable log of essentially every
   mutating action (and every safeguard that blocked one — a confirmation
-  mismatch, an unpinned host key, a bad self-registration token): what
-  happened, its outcome, the source IP, and when. There's no login yet, so
-  entries record the source IP rather than an identity. Every entry is
-  hash-chained (each links to the previous one's SHA-256, verifiable on the
-  Settings page) so an altered or removed entry is detectable — see
-  [app/audit.py](app/audit.py).
-- **Users** — placeholder; no authentication yet.
+  mismatch, an unpinned host key, a bad self-registration token, a failed
+  or locked-out login): who (account + source IP), what happened, its
+  outcome, and when. Every entry is hash-chained (each links to the
+  previous one's SHA-256, verifiable on the Settings page) so an altered or
+  removed entry is detectable — see [app/audit.py](app/audit.py).
+- **Users** — create/edit/deactivate/delete accounts, assign a role, reset
+  a local password (forces a change + signs them out everywhere), and force
+  a sign-out. Login method (local/LDAP/OIDC) is per-account; local accounts
+  set a password here, LDAP/OIDC accounts are matched by username instead
+  — see [app/web/routes/users.py](app/web/routes/users.py).
+- **Roles** — define named roles with an exact permission checkbox matrix;
+  a role in use can't be deleted, and a role can't be edited to strip
+  `user.manage` if that would leave nobody able to manage users — see
+  [app/web/routes/roles.py](app/web/routes/roles.py).
+- **My account** — change your own password (with re-entering the current
+  one), enroll/disable TOTP two-factor and view/regenerate recovery codes,
+  and "log out everywhere else" — see
+  [app/web/routes/auth.py](app/web/routes/auth.py).
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
-  distribution to machines), the current background-check intervals, and
-  the audit log retention policy (how many days of entries to keep before
-  a daily purge — the first setting actually editable through the UI, see
+  distribution to machines), the current background-check intervals, the
+  audit log retention policy (how many days of entries to keep before a
+  daily purge, see
   [app/db/models/app_settings.py](app/db/models/app_settings.py)) plus an
-  on-demand hash-chain integrity check.
+  on-demand hash-chain integrity check, and the LDAP/OIDC login
+  configuration (server, bind account, search filter / issuer, client
+  credentials — secrets stored encrypted, same as SSH passwords).
 
 See the wiki's
 [Managed Machine Requirements](wiki/Managed-Machine-Requirements.md) for
@@ -254,15 +316,12 @@ managed this way.
 
 ## What's deliberately empty / for later
 
-- Login and authorization for app users.
 - Running arbitrary commands across machines — system updates are the
   first bulk/group-scoped SSH operation (see `app/ssh/updates.py`,
   `app/db/models/machine_update_run.py`); the same `batch_id` grouping
   pattern is meant to extend to other commands later.
-- *Who* performed an audited action — the **Audit** log (see above) records
-  the source IP and what happened, not an identity, until there's a login
-  to attribute it to; CSRF rejections also aren't logged (see
-  wiki/Architecture.md).
+- IP-based login rate limiting — only per-account lockout exists today (see
+  wiki/Architecture.md). CSRF rejections also aren't audit-logged.
 - Per-schedule timezones (Scheduling is always UTC) and a scheduled
   "power on" to pair with scheduled shutdown.
 - Automated SSH key distribution (currently a manual step — see Settings)

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Roles — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Roles</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/users">Users</a>
+      <a class="button" href="/roles/new">Add role</a>
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Description</th>
+        <th>Permissions</th>
+        <th>Users</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for role in roles %}
+        <tr>
+          <td>{{ role.name }}</td>
+          <td>{{ role.description or '—' }}</td>
+          <td>{{ role.permission_grants | length }}</td>
+          <td>{{ role.users | length }}</td>
+          <td><a href="/roles/{{ role.id }}/edit">Edit</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

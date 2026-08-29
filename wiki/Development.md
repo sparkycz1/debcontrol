@@ -34,6 +34,24 @@ config values before `app.main` is imported, and overrides the `get_db`
 dependency with an isolated in-memory SQLite session per test. This makes
 the suite fast and independent of `docker compose` being up at all.
 
+Since every route now requires a session, `tests/conftest.py` offers three
+fixtures instead of just one `client`:
+
+- **`client`** — already logged in as a user with *every* permission. What
+  most tests want, since they're exercising a feature, not RBAC itself.
+- **`anonymous_client`** — no session cookie at all; for login/logout/
+  TOTP/access-denied tests (see `tests/test_auth.py`).
+- **`login_as(some_client, permissions={Permission.X, ...})`** — creates a
+  role+user with exactly those permissions and points `some_client`'s
+  session cookie at them; for RBAC boundary tests (see
+  `tests/test_rbac.py`) — e.g. confirming a role with only `machine.view`
+  gets a 403 on a POST that needs `machine.manage`.
+
+`tests/conftest.py` also exposes `create_local_user(db_session_factory,
+username=..., password=...)` for tests that need to exercise the actual
+`/login` form with a real, known password, rather than skip straight to an
+injected session.
+
 ## Linting and type checking
 
 ```bash
@@ -76,18 +94,51 @@ and `app/db/models/__init__.py`.
 ## Adding a new page / router
 
 1. Add a route module under `app/web/routes/`.
-2. Register its router in `app/main.py` (`app.include_router(...)`).
-3. Add templates under `app/web/templates/`, extending `base.html`.
-4. If it needs a nav entry, add it to the `<nav>` block in
-   `app/web/templates/base.html`.
-5. Any state-changing (POST/PUT/DELETE) endpoint needs
-   `dependencies=[Depends(verify_csrf)]`, and any page rendering a form
-   needs to obtain a CSRF token via `get_or_create_csrf_token()` — see
-   `app/web/routes/machines.py` for the pattern.
-6. If it mutates something (or refuses to because a safeguard tripped),
+2. Decide which `Permission` it needs (see "Adding a new permission"
+   below) and gate it — usually at the router level:
+   `APIRouter(prefix=..., dependencies=[Depends(require_permission(Permission.X))])`,
+   with a stricter one added per-route for state-changing endpoints where
+   that differs from the view-level gate (see `app/web/routes/machines.py`
+   for the `_manage`/`_updates`/`_power` pattern). Every route not on
+   `app.auth.middleware`'s public allowlist already requires *some* valid
+   session — this is about which *permission*, on top of that.
+3. Register its router in `app/main.py` (`app.include_router(...)`).
+4. Add templates under `app/web/templates/`, extending `base.html`.
+5. If it needs a nav entry, add it to the `<nav>` block in
+   `app/web/templates/base.html`, gated the same way the existing ones are:
+   `{% if current_user.has_permission('x.y') %}`.
+6. Any state-changing (POST/PUT/DELETE) endpoint needs
+   `dependencies=[Depends(verify_csrf)]`. A page rendering a form can just
+   use `request.state.csrf_token` (set for every request by
+   `app.auth.middleware`) rather than calling `get_or_create_csrf_token()`
+   itself — that function still exists and is still used by
+   routes written before the middleware did this centrally (see
+   `app/web/routes/machines.py`), and stays consistent with it if you use
+   it in a new route, but a new route doesn't need to.
+7. If it mutates something (or refuses to because a safeguard tripped),
    call `app.audit.log_event(...)` right after — see "Recording a new
    action in the audit log" below. Every existing mutating route already
    does this; a new one that doesn't is the exception, not the rule.
+
+## Adding a new permission
+
+1. Add a member to the `Permission` enum in `app/db/models/role.py`,
+   `lowercase.dot.separated` (mirroring the resource it gates, same
+   convention as audit action codes).
+2. If it's a `MANAGE` permission with a matching `VIEW` one, add the pair to
+   `_MANAGE_IMPLIES_VIEW` in `app/db/models/user.py` — see that module's
+   docstring for why (a role granted MANAGE but not the matching VIEW
+   would otherwise 403 on the page listing the very thing it can manage).
+3. Add a migration: the `permission` Postgres enum type needs the new value
+   (`ALTER TYPE permission ADD VALUE ...` — Postgres requires this can't run
+   inside the same transaction as other DDL, so give it its own
+   `op.execute(...)` in the migration; see any migration touching
+   `role_permissions` for the existing enum's shape). Existing roles don't
+   get the new permission automatically — an admin grants it explicitly on
+   the **Roles** page, same as any other permission.
+4. Gate the route(s) it protects with
+   `Depends(require_permission(Permission.YOUR_NEW_ONE))` — see "Adding a
+   new page / router" above.
 
 ## Adding a new action against machines/groups
 

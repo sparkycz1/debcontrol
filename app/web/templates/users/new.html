@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Add user — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Add user</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/users" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" required maxlength="64"
+           pattern="[a-z0-9][a-z0-9_.\-]{2,63}" value="{{ form.username or '' }}">
+    <p class="hint">Lowercase letters, digits, '.', '_', '-'. This is also the LDAP username and the OIDC identity, if used.</p>
+
+    <label for="display_name">Display name</label>
+    <input type="text" id="display_name" name="display_name" maxlength="255" value="{{ form.display_name or '' }}">
+
+    <label for="role_id">Role</label>
+    <select id="role_id" name="role_id" required>
+      <option value="" disabled {{ 'selected' if not form.role_id else '' }}>Choose a role…</option>
+      {% for role in roles %}
+        <option value="{{ role.id }}" {{ 'selected' if form.role_id == role.id | string else '' }}>{{ role.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="auth_provider">Login method</label>
+    <select id="auth_provider" name="auth_provider" required>
+      {% for provider in auth_providers %}
+        <option value="{{ provider.value }}" {{ 'selected' if form.auth_provider == provider else '' }}>{{ provider.value }}</option>
+      {% endfor %}
+    </select>
+    <p class="hint">
+      "local": a password set below. "ldap"/"oidc": leave the password
+      field empty — the username is matched against the directory/provider
+      instead (see Settings).
+    </p>
+
+    <label for="password">Password (local accounts only)</label>
+    <input type="password" id="password" name="password" autocomplete="new-password" minlength="12">
+    <p class="hint">At least 12 characters. Required for "local" accounts, left blank otherwise. The user must change it on first login.</p>
+
+    <button type="submit" class="button">Create user</button>
+    <a class="button button-secondary" href="/users">Cancel</a>
+  </form>
+{% endblock %}

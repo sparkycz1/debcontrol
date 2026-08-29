@@ -13,16 +13,25 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("INFORM_TOKEN", "test-only-inform-token-not-for-real-use-000000")
 
+from collections.abc import Awaitable, Callable
+from collections.abc import Set as AbstractSet
 from typing import Any
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.auth.security import hash_password
+from app.auth.sessions import SESSION_COOKIE_NAME, create_session
 from app.db.base import Base
+from app.db.models.role import Permission, Role, RolePermission
+from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
+
+ADMIN_USERNAME = "test-admin"
 
 
 class FakeArqJob:
@@ -74,17 +83,137 @@ async def db_session_factory():
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
-async def client(db_session_factory):
+async def _create_user_with_permissions(
+    db_session_factory: Any,
+    *,
+    username: str,
+    permissions: set[Permission],
+    auth_provider: AuthProvider = AuthProvider.LOCAL,
+    **user_kwargs: Any,
+) -> tuple[User, str]:
+    """Creates a fresh role (granting exactly `permissions`) and a user with
+    it, plus a real login session — returns (user, raw session token) so a
+    test can put the token on whichever `AsyncClient` needs to act as them.
+    """
+    async with db_session_factory() as db:
+        role = Role(name=f"role-for-{username}")
+        role.permission_grants = [RolePermission(permission=p) for p in permissions]
+        db.add(role)
+        await db.flush()
+
+        user = User(
+            username=username,
+            auth_provider=auth_provider,
+            is_active=True,
+            role=role,
+            **user_kwargs,
+        )
+        db.add(user)
+        await db.flush()
+
+        _session, raw_token = await create_session(
+            db, user, ip_address="testclient", user_agent="pytest"
+        )
+        await db.commit()
+        await db.refresh(user)
+    return user, raw_token
+
+
+async def create_local_user(
+    db_session_factory: Any,
+    *,
+    username: str,
+    password: str,
+    permissions: AbstractSet[Permission] = frozenset(),
+    **user_kwargs: Any,
+) -> User:
+    """For tests that exercise the actual `/login` form (as opposed to
+    `client`/`login_as`, which skip it and inject a session directly) — a
+    real local account with a real, known password."""
+    async with db_session_factory() as db:
+        role = Role(name=f"role-for-{username}")
+        role.permission_grants = [RolePermission(permission=p) for p in permissions]
+        db.add(role)
+        await db.flush()
+
+        user = User(
+            username=username,
+            auth_provider=AuthProvider.LOCAL,
+            password_hash=hash_password(password),
+            is_active=True,
+            role=role,
+            **user_kwargs,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    return user
+
+
+def _configure_app_for_tests(db_session_factory: Any) -> None:
     async def _override_get_db():
         async with db_session_factory() as session:
             yield session
 
     app.dependency_overrides[get_db] = _override_get_db
     app.state.arq_redis = FakeArqRedis()
+    # The auth middleware (app.auth.middleware) opens its own DB session
+    # from `request.app.state.db_session_factory` rather than through
+    # FastAPI's dependency injection — point it at the same SQLite engine
+    # `get_db` was just overridden to use, or every request would otherwise
+    # try (and fail) to reach the real Postgres `AsyncSessionLocal` is bound
+    # to. See app.main's `lifespan` for the production equivalent.
+    app.state.db_session_factory = db_session_factory
+
+
+@pytest_asyncio.fixture
+async def client(db_session_factory):
+    """An `AsyncClient` already logged in as a user with *every* permission
+    — this is what most tests want, since they're exercising a feature, not
+    RBAC itself. Use `anonymous_client` for login/logout/access-denied
+    tests, or `login_as` to act as a more restricted user."""
+    _configure_app_for_tests(db_session_factory)
+    _, raw_token = await _create_user_with_permissions(
+        db_session_factory, username=ADMIN_USERNAME, permissions=set(Permission)
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        ac.cookies.set(SESSION_COOKIE_NAME, raw_token)
+        yield ac
+
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def anonymous_client(db_session_factory):
+    """An `AsyncClient` with no session cookie at all."""
+    _configure_app_for_tests(db_session_factory)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def login_as(db_session_factory: Any) -> Callable[..., Awaitable[User]]:
+    """`await login_as(some_client, permissions={Permission.MACHINE_VIEW})`
+    — creates a role+user with exactly those permissions and points
+    `some_client`'s session cookie at them, replacing whatever it had."""
+
+    async def _login_as(
+        ac: AsyncClient,
+        *,
+        permissions: AbstractSet[Permission] = frozenset(),
+        username: str = "restricted-user",
+        **user_kwargs: Any,
+    ) -> User:
+        user, raw_token = await _create_user_with_permissions(
+            db_session_factory, username=username, permissions=set(permissions), **user_kwargs
+        )
+        ac.cookies.set(SESSION_COOKIE_NAME, raw_token)
+        return user
+
+    return _login_as

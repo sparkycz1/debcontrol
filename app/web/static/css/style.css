@@ -43,6 +43,86 @@ body {
 
 .site-header nav a:hover { color: var(--color-text); }
 
+.site-header-user {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
+  color: var(--color-muted);
+}
+
+.site-header-user a { color: var(--color-muted); text-decoration: none; }
+.site-header-user a:hover { color: var(--color-text); }
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--color-muted);
+  text-decoration: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.link-button:hover { color: var(--color-text); }
+
+/* Standalone pages (login, TOTP challenge) that don't extend base.html —
+   no header/nav to go with, just a centered card. */
+.auth-body { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+.auth-page { width: 100%; max-width: 420px; padding: 1.5rem; }
+
+.auth-page .brand {
+  display: block;
+  text-align: center;
+  color: var(--color-text);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.auth-page .form { max-width: none; }
+
+.recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.totp-qr {
+  background: #fff;
+  padding: 1rem;
+  border-radius: var(--radius);
+  width: fit-content;
+  margin: 1rem 0;
+}
+
+.totp-qr svg { display: block; width: 200px; height: 200px; }
+
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.permission-grid label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0;
+  color: var(--color-text);
+  font-size: 0.95rem;
+}
+
 .container {
   max-width: 960px;
   margin: 0 auto;

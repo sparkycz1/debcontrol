@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ target_user.username }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Edit user</h1>
+    <form method="post" action="/users/{{ target_user.id }}/delete"
+          class="inline-form" data-confirm='Delete user "{{ target_user.username }}"? This cannot be undone.'>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger">Delete user</button>
+    </form>
+  </div>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <section class="panel">
+    <form method="post" action="/users/{{ target_user.id }}/edit" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" required maxlength="64"
+             pattern="[a-z0-9][a-z0-9_.\-]{2,63}" value="{{ target_user.username }}">
+
+      <label for="display_name">Display name</label>
+      <input type="text" id="display_name" name="display_name" maxlength="255"
+             value="{{ target_user.display_name or '' }}">
+
+      <label for="role_id">Role</label>
+      <select id="role_id" name="role_id" required>
+        {% for role in roles %}
+          <option value="{{ role.id }}" {{ 'selected' if role.id == target_user.role_id else '' }}>{{ role.name }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="auth_provider">Login method</label>
+      <select id="auth_provider" name="auth_provider" required>
+        {% for provider in auth_providers %}
+          <option value="{{ provider.value }}" {{ 'selected' if provider == target_user.auth_provider else '' }}>{{ provider.value }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="password">Password (only when switching to "local")</label>
+      <input type="password" id="password" name="password" autocomplete="new-password" minlength="12">
+      <p class="hint">Leave blank to keep the existing password unchanged.</p>
+
+      <label>
+        <input type="checkbox" name="is_active" {{ 'checked' if target_user.is_active else '' }}>
+        Active — unchecking immediately signs this user out everywhere
+      </label>
+
+      <button type="submit" class="button">Save</button>
+      <a class="button button-secondary" href="/users">Cancel</a>
+    </form>
+  </section>
+
+  {% if target_user.auth_provider.value == 'local' %}
+    <section class="panel">
+      <h2>Reset password</h2>
+      <p class="hint">Sets a new password and signs this user out everywhere — they must change it on next login.</p>
+      <form method="post" action="/users/{{ target_user.id }}/reset-password" class="form" autocomplete="off"
+            data-confirm="Reset this user's password and sign them out everywhere?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="new_password">New password</label>
+        <input type="password" id="new_password" name="new_password" autocomplete="new-password" minlength="12" required>
+        <button type="submit" class="button button-secondary">Reset password</button>
+      </form>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Sessions</h2>
+    <form method="post" action="/users/{{ target_user.id }}/sessions/revoke-all"
+          data-confirm="Sign this user out of every session?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Log out everywhere</button>
+    </form>
+  </section>
+{% endblock %}

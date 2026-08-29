@@ -3,11 +3,11 @@ verification.
 
 Every route or background job that mutates something, or that refuses to
 because a safeguard tripped (a typed confirmation that didn't match, a
-missing pinned host key, a bad self-registration token), calls `log_event`
-right after. There's no login yet (see the Architecture wiki page), so
-there's no real "who" to record — `ip_address` is what stands in for that
-today; `actor` exists and is always `None` from an HTTP request (background
-jobs like the scheduler pass a fixed label instead).
+missing pinned host key, a bad self-registration token, a failed login),
+calls `log_event` right after. `actor` is filled in automatically from the
+logged-in user on the request (see `log_event`'s docstring) — routes don't
+need to pass it themselves; a background job (the scheduler, the retention
+purge) passes a fixed label instead, since it has no request/user at all.
 
 Every entry is hash-chained: `entry_hash` covers this entry's own fields
 plus the previous entry's `entry_hash`, so altering or deleting an entry
@@ -152,8 +152,21 @@ async def log_event(
     directly for background jobs (a scheduled task firing on its own) that
     have no request to read one from — those are recorded with `actor` set
     to a fixed label like "scheduler (automatic)" instead.
+
+    `actor` is likewise taken from `request.state.user` (set by
+    `app.auth.middleware` for every authenticated request) when `request`
+    is given and `actor` wasn't passed explicitly — which is every existing
+    call site with a `request`, so no route had to be touched individually
+    to start recording *who* did something once logins existed. Pass
+    `actor=` explicitly only for the pre-login exception (a failed login
+    attempt itself has no session to read a user from) or a background
+    job's fixed label.
     """
     resolved_ip = client_ip(request) if request is not None else ip_address
+    if actor is None and request is not None:
+        request_user = getattr(request.state, "user", None)
+        if request_user is not None:
+            actor = request_user.username
     target_id_str = str(target_id) if target_id is not None else None
     entry_id = uuid.uuid4()
     created_at = datetime.now(UTC)

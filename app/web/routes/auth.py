@@ -1,0 +1,669 @@
+"""Login, logout, the TOTP second factor, OIDC login, and each user's own
+"My account" page (password change, TOTP enrollment, recovery codes,
+"log out everywhere").
+
+Deliberately has no `APIRouter(prefix=...)` — its paths span the root
+(`/login`, `/logout`), `/auth/oidc/...`, and `/account/...`, none of which
+share a prefix worth factoring out.
+
+See `app.auth.middleware` for why `/login`, `/login/totp`, `/logout`, and the
+two `/auth/oidc/...` paths are reachable without a session at all, and
+`app.auth.login` for the local/LDAP password check and TOTP verification
+this calls into.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit import client_ip, log_event
+from app.auth import totp as totp_module
+from app.auth.dependencies import get_current_user
+from app.auth.login import (
+    check_password,
+    consume_recovery_code,
+    find_user_for_login,
+    verify_totp_step,
+)
+from app.auth.oidc import OidcNotConfiguredError, handle_callback, redirect_to_provider
+from app.auth.security import hash_password, verify_password
+from app.auth.sessions import (
+    PENDING_TOTP_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    clear_pending_totp_cookie,
+    clear_session_cookie,
+    create_pending_totp_ticket,
+    create_session,
+    get_valid_session,
+    read_pending_totp_ticket,
+    revoke_all_sessions_for_user,
+    revoke_session,
+    set_pending_totp_cookie,
+    set_session_cookie,
+)
+from app.core.app_settings import get_or_create_app_settings
+from app.core.csrf import verify_csrf
+from app.core.security import decrypt_secret, encrypt_secret
+from app.db.models.app_settings import AppSettings
+from app.db.models.audit_log import AuditOutcome
+from app.db.models.totp_recovery_code import TotpRecoveryCode
+from app.db.models.user import AuthProvider, User
+from app.db.session import get_db
+from app.schemas.user import MIN_PASSWORD_LENGTH
+from app.web.templating import templates
+
+router = APIRouter()
+
+_OIDC_ERROR_MESSAGES = {
+    "not_configured": "OIDC isn't fully configured — ask an administrator to finish setting it up.",
+    "failed": (
+        "The OIDC provider didn't complete the login (it may have been cancelled or timed out)."
+    ),
+    "no_account": (
+        "No enabled debcontrol account matches your OIDC identity. "
+        "Ask an administrator to check the account is set up for OIDC login."
+    ),
+}
+
+
+def _safe_next(value: str | None) -> str:
+    """Only ever follow a same-site, absolute path — never an attacker-
+    supplied external URL (`?next=https://evil.example`, an open redirect)."""
+    if value and value.startswith("/") and not value.startswith("//"):
+        return value
+    return "/"
+
+
+def _render_login(
+    request: Request,
+    app_settings: AppSettings,
+    *,
+    next_url: str,
+    error: str | None,
+    oidc_error: str | None = None,
+    username: str = "",
+    status_code: int = status.HTTP_200_OK,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "auth/login.html",
+        {
+            "csrf_token": request.state.csrf_token,
+            "next": next_url,
+            "error": error,
+            "oidc_error": oidc_error,
+            "app_settings": app_settings,
+            "form": {"username": username},
+        },
+        status_code=status_code,
+    )
+
+
+async def _finish_login(
+    request: Request, db: AsyncSession, user: User, next_url: str, *, provider: str
+) -> Response:
+    user.last_login_at = datetime.now(UTC)
+    await db.commit()
+    _session, raw_token = await create_session(
+        db, user, ip_address=client_ip(request), user_agent=request.headers.get("user-agent")
+    )
+    # An admin-set password (new account, or a reset) must be changed before
+    # doing anything else — send them straight to where that happens instead
+    # of wherever they were originally headed.
+    if user.must_change_password:
+        next_url = "/account"
+    await log_event(
+        db,
+        request=request,
+        action="user.login",
+        summary=f'"{user.username}" logged in',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+        details={"provider": provider},
+    )
+    response = RedirectResponse(url=next_url, status_code=status.HTTP_303_SEE_OTHER)
+    set_session_cookie(response, raw_token)
+    clear_pending_totp_cookie(response)
+    return response
+
+
+@router.get("/login")
+async def login_form(
+    request: Request, db: AsyncSession = Depends(get_db), next: str = "", oidc_error: str = ""
+) -> Response:
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if raw_token and await get_valid_session(db, raw_token) is not None:
+        return RedirectResponse(url=_safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
+    app_settings = await get_or_create_app_settings(db)
+    return _render_login(
+        request,
+        app_settings,
+        next_url=_safe_next(next),
+        error=None,
+        oidc_error=_OIDC_ERROR_MESSAGES.get(oidc_error),
+    )
+
+
+@router.post("/login", dependencies=[Depends(verify_csrf)])
+async def login_submit(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    next_url = _safe_next(next)
+    app_settings = await get_or_create_app_settings(db)
+    result = await check_password(db, app_settings, username, password)
+
+    if result.reason == "provider_unavailable":
+        await log_event(
+            db,
+            request=request,
+            action="user.login",
+            summary=f'Login attempt for "{username}" failed: the LDAP directory is unavailable',
+            outcome=AuditOutcome.FAILURE,
+        )
+        return _render_login(
+            request,
+            app_settings,
+            next_url=next_url,
+            error="The directory server is currently unavailable — try again shortly.",
+            username=username,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    if result.reason == "locked_out":
+        assert result.user is not None
+        await log_event(
+            db,
+            request=request,
+            action="user.login",
+            summary=f'Blocked login for "{result.user.username}": account temporarily locked',
+            outcome=AuditOutcome.DENIED,
+            target_type="user",
+            target_id=result.user.id,
+            target_label=result.user.username,
+        )
+        message = (
+            f"Too many failed attempts — try again after {result.locked_until:%H:%M UTC}."
+            if result.locked_until is not None
+            else "Too many failed attempts — try again shortly."
+        )
+        return _render_login(
+            request,
+            app_settings,
+            next_url=next_url,
+            error=message,
+            username=username,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    if not result.ok:
+        target = result.user
+        await log_event(
+            db,
+            request=request,
+            action="user.login",
+            summary=f'Failed login attempt for "{username}"',
+            outcome=AuditOutcome.DENIED,
+            target_type="user" if target else None,
+            target_id=target.id if target else None,
+            target_label=target.username if target else None,
+        )
+        return _render_login(
+            request,
+            app_settings,
+            next_url=next_url,
+            error="Invalid username or password.",
+            username=username,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    user = result.user
+    assert user is not None
+    if user.totp_enabled:
+        ticket = create_pending_totp_ticket(user.id)
+        response = RedirectResponse(
+            url=f"/login/totp?next={quote(next_url, safe='')}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+        set_pending_totp_cookie(response, ticket)
+        return response
+
+    return await _finish_login(request, db, user, next_url, provider=user.auth_provider.value)
+
+
+@router.get("/login/totp")
+async def totp_challenge_form(request: Request, next: str = "/") -> Response:
+    ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
+    if ticket is None or read_pending_totp_ticket(ticket) is None:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(
+        request,
+        "auth/totp_challenge.html",
+        {"csrf_token": request.state.csrf_token, "next": _safe_next(next), "error": None},
+    )
+
+
+@router.post("/login/totp", dependencies=[Depends(verify_csrf)])
+async def totp_challenge_submit(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    code: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    next_url = _safe_next(next)
+    ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
+    user_id = read_pending_totp_ticket(ticket) if ticket else None
+    if user_id is None:
+        response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        clear_pending_totp_cookie(response)
+        return response
+
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active or not user.totp_enabled:
+        response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        clear_pending_totp_cookie(response)
+        return response
+
+    if user.is_locked_out:
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_challenge.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "next": next_url,
+                "error": "Too many failed attempts — try again shortly.",
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    if not await verify_totp_step(db, user, code):
+        await log_event(
+            db,
+            request=request,
+            action="user.login.totp",
+            summary=f'Wrong TOTP/recovery code for "{user.username}"',
+            outcome=AuditOutcome.DENIED,
+            target_type="user",
+            target_id=user.id,
+            target_label=user.username,
+        )
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_challenge.html",
+            {"csrf_token": request.state.csrf_token, "next": next_url, "error": "Invalid code."},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    return await _finish_login(
+        request, db, user, next_url, provider=f"{user.auth_provider.value}+totp"
+    )
+
+
+@router.post("/logout", dependencies=[Depends(verify_csrf)])
+async def logout(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    session = await get_valid_session(db, raw_token) if raw_token else None
+    if session is not None:
+        await revoke_session(db, session)
+        await log_event(
+            db,
+            request=request,
+            action="user.logout",
+            summary=f'"{session.user.username}" logged out',
+            target_type="user",
+            target_id=session.user_id,
+            target_label=session.user.username,
+        )
+    response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    clear_session_cookie(response)
+    return response
+
+
+@router.get("/auth/oidc/login")
+async def oidc_login(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    if not app_settings.oidc_enabled:
+        return RedirectResponse(
+            url="/login?oidc_error=not_configured", status_code=status.HTTP_303_SEE_OTHER
+        )
+    redirect_uri = str(request.url_for("oidc_callback"))
+    try:
+        return await redirect_to_provider(request, app_settings, redirect_uri)  # type: ignore[no-any-return]
+    except OidcNotConfiguredError:
+        return RedirectResponse(
+            url="/login?oidc_error=not_configured", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+
+@router.get("/auth/oidc/callback", name="oidc_callback")
+async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    if not app_settings.oidc_enabled:
+        return RedirectResponse(
+            url="/login?oidc_error=not_configured", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    try:
+        claims = await handle_callback(request, app_settings)
+    except OidcNotConfiguredError:
+        return RedirectResponse(
+            url="/login?oidc_error=not_configured", status_code=status.HTTP_303_SEE_OTHER
+        )
+    except Exception:
+        # Authlib/the provider/the network can fail in many different ways
+        # (cancelled consent, expired state, provider outage, ...) — all of
+        # them mean the same thing to the user: the login didn't complete.
+        await log_event(
+            db,
+            request=request,
+            action="user.login",
+            summary="OIDC login failed to complete",
+            outcome=AuditOutcome.DENIED,
+        )
+        return RedirectResponse(
+            url="/login?oidc_error=failed", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    claim_name = app_settings.oidc_username_claim
+    claim_value = str(claims.get(claim_name) or "").strip()
+    user = await find_user_for_login(db, claim_value) if claim_value else None
+    if user is None or not user.is_active or user.auth_provider != AuthProvider.OIDC:
+        await log_event(
+            db,
+            request=request,
+            action="user.login",
+            summary=(
+                f'Blocked OIDC login: no matching enabled account for {claim_name}="{claim_value}"'
+            ),
+            outcome=AuditOutcome.DENIED,
+        )
+        return RedirectResponse(
+            url="/login?oidc_error=no_account", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    return await _finish_login(request, db, user, "/", provider="oidc")
+
+
+async def _render_account(
+    request: Request,
+    db: AsyncSession,
+    user: User,
+    *,
+    errors: list[str] | None = None,
+    **extra: object,
+) -> Response:
+    count_result = await db.execute(
+        select(TotpRecoveryCode).where(
+            TotpRecoveryCode.user_id == user.id, TotpRecoveryCode.used_at.is_(None)
+        )
+    )
+    unused_recovery_codes = len(count_result.scalars().all())
+    context: dict[str, object] = {
+        "user": user,
+        "csrf_token": request.state.csrf_token,
+        "errors": errors or [],
+        "unused_recovery_codes": unused_recovery_codes,
+        "min_password_length": MIN_PASSWORD_LENGTH,
+        **extra,
+    }
+    return templates.TemplateResponse(request, "auth/account.html", context)
+
+
+@router.get("/account")
+async def account_page(
+    request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+) -> Response:
+    return await _render_account(request, db, user)
+
+
+@router.post("/account/display-name", dependencies=[Depends(verify_csrf)])
+async def update_display_name(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    display_name: str = Form(""),
+) -> Response:
+    # `current_user` (from the auth middleware's own, already-closed DB
+    # session) can't be mutated and saved through `db` — a different
+    # session's `commit()` only persists objects that session itself
+    # loaded/added. Re-fetch through `db` before writing to it. Every
+    # mutating route below does the same for the same reason.
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    user.display_name = display_name.strip() or None
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="user.account.update",
+        summary=f'"{user.username}" updated their display name',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/account/password", dependencies=[Depends(verify_csrf)])
+async def change_own_password(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+) -> Response:
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    errors: list[str] = []
+    if user.auth_provider != AuthProvider.LOCAL:
+        errors.append("Only local accounts have a debcontrol password to change.")
+    elif user.password_hash is None or not verify_password(user.password_hash, current_password):
+        errors.append("Current password is incorrect.")
+    elif new_password != confirm_password:
+        errors.append("New password and confirmation don't match.")
+    elif len(new_password) < MIN_PASSWORD_LENGTH:
+        errors.append(f"New password must be at least {MIN_PASSWORD_LENGTH} characters.")
+
+    if errors:
+        return await _render_account(request, db, user, errors=errors)
+
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="user.password.change",
+        summary=f'"{user.username}" changed their own password',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/account/totp/enroll")
+async def totp_enroll_form(request: Request, user: User = Depends(get_current_user)) -> Response:
+    if user.auth_provider == AuthProvider.OIDC:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OIDC accounts don't enroll TOTP here — the provider handles its own MFA.",
+        )
+    if user.totp_enabled:
+        return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+    secret = totp_module.generate_secret()
+    uri = totp_module.provisioning_uri(secret, user.username)
+    return templates.TemplateResponse(
+        request,
+        "auth/totp_enroll.html",
+        {
+            "user": user,
+            "csrf_token": request.state.csrf_token,
+            "secret": secret,
+            "qr_svg": totp_module.qr_code_svg(uri),
+            "error": None,
+        },
+    )
+
+
+@router.post("/account/totp/enroll", dependencies=[Depends(verify_csrf)])
+async def totp_enroll_confirm(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    secret: str = Form(...),
+    code: str = Form(...),
+) -> Response:
+    if current_user.auth_provider == AuthProvider.OIDC or current_user.totp_enabled:
+        return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+    user = await db.get(User, current_user.id)
+    assert user is not None
+
+    if not totp_module.verify_code(secret, code):
+        uri = totp_module.provisioning_uri(secret, user.username)
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_enroll.html",
+            {
+                "user": user,
+                "csrf_token": request.state.csrf_token,
+                "secret": secret,
+                "qr_svg": totp_module.qr_code_svg(uri),
+                "error": (
+                    "That code didn't match — check your authenticator app's clock and try again."
+                ),
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    user.totp_secret_encrypted = encrypt_secret(secret)
+    user.totp_enabled = True
+    user.totp_confirmed_at = datetime.now(UTC)
+    # Clear out anything left from an earlier enrollment (shouldn't normally
+    # exist — disabling TOTP deletes them too, see totp_disable below — but
+    # never show a mix of old and new codes).
+    await db.execute(delete(TotpRecoveryCode).where(TotpRecoveryCode.user_id == user.id))
+    plain_codes = totp_module.generate_recovery_codes()
+    for plain_code in plain_codes:
+        db.add(TotpRecoveryCode(user_id=user.id, code_hash=hash_password(plain_code)))
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="user.totp.enable",
+        summary=f'"{user.username}" enabled two-factor authentication',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return await _render_account(request, db, user, recovery_codes=plain_codes, just_enrolled=True)
+
+
+@router.post("/account/totp/disable", dependencies=[Depends(verify_csrf)])
+async def totp_disable(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    code: str = Form(...),
+) -> Response:
+    if not current_user.totp_enabled:
+        return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+    user = await db.get(User, current_user.id)
+    assert user is not None
+
+    secret = decrypt_secret(user.totp_secret_encrypted) if user.totp_secret_encrypted else None
+    ok = bool(secret and totp_module.verify_code(secret, code))
+    if not ok:
+        ok = await consume_recovery_code(db, user, code)
+    if not ok:
+        return await _render_account(
+            request, db, user, errors=["Invalid code — two-factor authentication was not disabled."]
+        )
+
+    user.totp_enabled = False
+    user.totp_secret_encrypted = None
+    user.totp_confirmed_at = None
+    await db.execute(delete(TotpRecoveryCode).where(TotpRecoveryCode.user_id == user.id))
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="user.totp.disable",
+        summary=f'"{user.username}" disabled two-factor authentication',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/account/totp/recovery-codes/regenerate", dependencies=[Depends(verify_csrf)])
+async def regenerate_recovery_codes(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    code: str = Form(...),
+) -> Response:
+    if not user.totp_enabled:
+        return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+    # Deliberately requires a fresh *TOTP* code, not a recovery code — a
+    # recovery code should get you back in, not let itself be used to mint
+    # a whole new batch (an attacker who obtained a single leaked recovery
+    # code, with a hijacked session, could otherwise invalidate and relearn
+    # all of them).
+    secret = decrypt_secret(user.totp_secret_encrypted) if user.totp_secret_encrypted else None
+    if not (secret and totp_module.verify_code(secret, code)):
+        return await _render_account(
+            request, db, user, errors=["Invalid code — recovery codes were not regenerated."]
+        )
+
+    await db.execute(delete(TotpRecoveryCode).where(TotpRecoveryCode.user_id == user.id))
+    plain_codes = totp_module.generate_recovery_codes()
+    for plain_code in plain_codes:
+        db.add(TotpRecoveryCode(user_id=user.id, code_hash=hash_password(plain_code)))
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="user.totp.recovery_codes.regenerate",
+        summary=f'"{user.username}" regenerated their TOTP recovery codes',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return await _render_account(request, db, user, recovery_codes=plain_codes)
+
+
+@router.post("/account/sessions/revoke-all", dependencies=[Depends(verify_csrf)])
+async def revoke_other_sessions(
+    request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+) -> Response:
+    current_session = getattr(request.state, "session", None)
+    await revoke_all_sessions_for_user(
+        db, user.id, except_session_id=current_session.id if current_session else None
+    )
+    await log_event(
+        db,
+        request=request,
+        action="user.sessions.revoke_all",
+        summary=f'"{user.username}" logged out all other sessions',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)

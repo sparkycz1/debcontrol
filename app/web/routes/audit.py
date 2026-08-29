@@ -7,12 +7,16 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import require_permission
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+from app.db.models.role import Permission
 from app.db.session import get_db
 from app.web.audit_search import audit_search_clause
 from app.web.templating import templates
 
-router = APIRouter(prefix="/audit")
+router = APIRouter(
+    prefix="/audit", dependencies=[Depends(require_permission(Permission.AUDIT_VIEW))]
+)
 
 _PAGE_SIZE = 50
 

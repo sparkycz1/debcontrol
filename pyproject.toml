@@ -27,6 +27,23 @@ dependencies = [
     # Standard 5-field cron expression parsing/next-run computation for
     # Scheduling (app/scheduling/). Well-established, tiny, no transitive deps.
     "croniter>=6.0.0",
+    # --- Authentication (app/auth/) ---
+    # Argon2id password hashing for local accounts — current OWASP-recommended
+    # default, memory-hard (better GPU/ASIC resistance than bcrypt).
+    "argon2-cffi>=25.1.0",
+    # Pure-Python LDAP client — no system libldap2-dev headers needed in the
+    # Docker image, unlike python-ldap.
+    "ldap3>=2.9.1",
+    # OIDC/OAuth2 client: discovery, authorization-code flow, ID token
+    # validation. Used together with Starlette's own SessionMiddleware (no
+    # new dependency needed for that) to carry state/nonce across the
+    # redirect to/from the provider.
+    "authlib>=1.7.2",
+    # TOTP (RFC 6238) generation/verification for two-factor authentication.
+    "pyotp>=2.10.0",
+    # Renders the TOTP enrollment QR code as inline SVG — deliberately used
+    # without its optional Pillow/PNG extra, which isn't needed for that.
+    "qrcode>=8.2",
 ]
 
 [dependency-groups]
@@ -38,7 +55,10 @@ dev = [
     "ruff>=0.16.4",
     "mypy>=2.3.1",
     "python-dotenv>=1.2.3",
+    "types-authlib>=1.7.2.20260827",
     "types-croniter>=6.0.0",
+    "types-ldap3>=2.9.13.20260827",
+    "types-qrcode>=8.2.0.20260518",
 ]
 
 [tool.uv]

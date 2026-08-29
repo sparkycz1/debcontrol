@@ -38,11 +38,18 @@ def get_or_create_csrf_token(request: Request) -> tuple[str, str | None]:
 
     The second element is `None` when the client already has a valid
     cookie — in that case it shouldn't be re-set (that would needlessly
-    extend its lifetime).
+    extend its lifetime). It's also `None` when `app.auth.middleware`
+    already decided on a token for this same request (`request.state.csrf_token`,
+    set before any route runs) — reusing that instead of minting a second,
+    different one is what keeps a route's own token-in-the-form consistent
+    with the one cookie the middleware will actually set on the response.
     """
     existing = request.cookies.get(CSRF_COOKIE_NAME)
     if existing:
         return existing, None
+    already_provisioned = getattr(request.state, "csrf_token", None)
+    if already_provisioned:
+        return already_provisioned, None
     new_token = secrets.token_urlsafe(32)
     return new_token, new_token
 

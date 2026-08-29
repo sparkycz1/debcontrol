@@ -50,9 +50,12 @@ intentional.
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
 Not every setting lives here: the audit log's retention policy (how many
-days of entries to keep before a daily purge) is configured from the
-**Settings** page in the app itself, not an environment variable — see
-[Architecture](Architecture.md#audit-log-retention-the-first-setting-editable-through-the-ui).
+days of entries to keep before a daily purge), and LDAP/OIDC login
+configuration (server, bind account, search filter / issuer, client
+credentials), are set from the **Settings** page in the app itself, not
+environment variables — see
+[Architecture](Architecture.md#audit-log-retention-the-first-setting-editable-through-the-ui)
+and [Architecture](Architecture.md#authentication--rbac).
 
 ## 2. Run
 
@@ -87,7 +90,24 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 See [Reverse Proxy: Caddy](Reverse-Proxy-Caddy.md) for details,
 TLS/HTTP-3 verification, and troubleshooting.
 
-## 3. Verify
+## 3. Create the first administrator
+
+Every debcontrol account is created inside the app itself — there's no
+auto-provisioning from LDAP or OIDC, and every page requires a login — so
+this is the one way into a brand new deployment:
+
+```bash
+docker compose exec web python scripts/create_admin.py --username admin
+```
+
+It prompts for a password (at least 12 characters; typed twice to confirm)
+and creates an "Administrator" role with every permission if one doesn't
+exist yet. You'll be asked to change that password on first login. See
+[Architecture](Architecture.md#authentication--rbac) for how login, roles,
+and permissions work, and [Development](Development.md) for adding a new
+permission.
+
+## 4. Verify
 
 ```bash
 docker compose ps
@@ -95,7 +115,8 @@ docker compose logs -f web
 ```
 
 Open the app (via whichever reverse proxy / port you configured) and check
-`/healthz` returns `{"status": "ok"}`.
+`/healthz` returns `{"status": "ok"}`. `/login` should be the only page
+reachable without a session.
 
 ## Updating
 

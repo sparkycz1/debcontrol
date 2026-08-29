@@ -37,6 +37,10 @@ async def test_creating_machine_writes_audit_entry(client):
     assert "127.0.0.1" in log.text
     assert "badge-ok" in log.text  # success outcome
 
+    from tests.conftest import ADMIN_USERNAME
+
+    assert ADMIN_USERNAME in log.text  # the logged-in actor
+
 
 async def test_audit_log_search_filters_entries(client):
     await client.get("/machines/new")
@@ -204,3 +208,103 @@ async def test_self_registration_with_valid_token_is_logged_as_success(client):
     log = await client.get("/audit")
     assert "machine.self_register" in log.text
     assert "10.9.9.9" in log.text
+
+
+async def test_successful_login_is_logged(anonymous_client, db_session_factory):
+    from app.db.models.role import Permission
+    from tests.conftest import create_local_user
+
+    await create_local_user(
+        db_session_factory,
+        username="audited-user",
+        password="a-very-good-password-123",
+        permissions={Permission.AUDIT_VIEW},
+    )
+    await anonymous_client.get("/login")
+    csrf_token = anonymous_client.cookies.get("csrftoken")
+    await anonymous_client.post(
+        "/login",
+        data={
+            "username": "audited-user",
+            "password": "a-very-good-password-123",
+            "csrf_token": csrf_token,
+        },
+    )
+
+    log = await anonymous_client.get("/audit")
+    assert log.status_code == 200
+    assert "user.login" in log.text
+    assert "audited-user" in log.text
+    assert "127.0.0.1" in log.text
+
+
+async def test_failed_login_is_logged_as_denied(anonymous_client, db_session_factory):
+    from app.db.models.role import Permission
+    from tests.conftest import create_local_user
+
+    # An account that can view the audit log, so it's the one checking it —
+    # the *failed* login attempt below is for a different, nonexistent user.
+    await create_local_user(
+        db_session_factory,
+        username="auditor",
+        password="a-very-good-password-123",
+        permissions={Permission.AUDIT_VIEW},
+    )
+    await anonymous_client.get("/login")
+    csrf_token = anonymous_client.cookies.get("csrftoken")
+    await anonymous_client.post(
+        "/login", data={"username": "nobody-at-all", "password": "wrong", "csrf_token": csrf_token}
+    )
+
+    csrf_token = anonymous_client.cookies.get("csrftoken")
+    await anonymous_client.post(
+        "/login",
+        data={
+            "username": "auditor",
+            "password": "a-very-good-password-123",
+            "csrf_token": csrf_token,
+        },
+    )
+
+    log = await anonymous_client.get("/audit?outcome=denied")
+    assert "user.login" in log.text
+    assert "nobody-at-all" in log.text
+
+
+async def test_creating_a_user_writes_an_audit_entry(client):
+    import re
+
+    await client.get("/roles")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/roles",
+        data={
+            "name": "Auditable Role",
+            "description": "",
+            "permissions": [],
+            "csrf_token": csrf_token,
+        },
+    )
+    roles_page = await client.get("/roles")
+    match = re.search(r"/roles/([0-9a-f-]{36})/edit", roles_page.text)
+    assert match is not None
+    role_id = match.group(1)
+
+    await client.get("/users/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/users",
+        data={
+            "username": "audited-new-user",
+            "display_name": "",
+            "auth_provider": "ldap",
+            "password": "",
+            "role_id": role_id,
+            "csrf_token": csrf_token,
+        },
+    )
+
+    log = await client.get("/audit")
+    assert "user.create" in log.text
+    assert "audited-new-user" in log.text
+    assert "role.create" in log.text

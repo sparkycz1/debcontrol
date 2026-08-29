@@ -1,8 +1,11 @@
 # debcontrol wiki
 
 debcontrol is a web application for managing Debian machines over SSH.
-There is no login yet — see [Architecture](Architecture.md) for the
-security model and what's intentionally deferred.
+Every page requires a login; access is controlled by custom RBAC roles,
+and accounts can be local, LDAP, or OIDC (SSO), with optional TOTP
+two-factor — see [Architecture](Architecture.md#authentication--rbac) for
+the design and [Installation](Installation.md) for bootstrapping the first
+admin account.
 
 ## Pages
 
@@ -38,6 +41,8 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 | Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (incl. reboot-required), online/offline status, self-registration review, free-text search, system updates + dry-run update checks, reboot/shutdown (double-confirmed) |
 | Machine groups | Organize machines into named groups; built-in "All machines" group; search, system updates, update checks, and power actions all scoped to a group |
 | Scheduling | Run any existing action (system update, update check, reboot, shut down) against a machine, a group, or "All machines" on a cron expression (UTC); enable/disable, run on demand, see when it last fired |
-| Audit | Read-only log of every mutating action across the app — what happened, its outcome, the source IP, and when; searchable and filterable by outcome; hash-chained so tampering is detectable |
-| Users | Placeholder — no login/authentication yet |
-| Settings | Shows the app's SSH public key and background-check intervals; sets the audit log retention policy and verifies its hash-chain integrity |
+| Audit | Read-only log of every mutating action across the app — who (account + source IP), what happened, its outcome, and when; searchable and filterable by outcome; hash-chained so tampering is detectable |
+| Users | Create/edit/deactivate/delete accounts; assign a role; login method (local/LDAP/OIDC) is per-account; reset a local password; force sign-out |
+| Roles | Define named roles with an exact permission checkbox matrix; guardrails prevent locking everyone out of user management |
+| My account | Change your own password, enroll/disable TOTP two-factor with recovery codes, log out everywhere else |
+| Settings | Shows the app's SSH public key and background-check intervals; sets the audit log retention policy, verifies hash-chain integrity, and configures LDAP/OIDC login |

@@ -286,10 +286,12 @@ async def test_group_name_all_is_reserved(client):
     assert response.status_code == 422
 
 
-async def test_users_is_a_placeholder(client):
+async def test_users_page_lists_the_logged_in_admin(client):
+    from tests.conftest import ADMIN_USERNAME
+
     users = await client.get("/users")
     assert users.status_code == 200
-    assert "Coming soon" in users.text
+    assert ADMIN_USERNAME in users.text
 
 
 async def test_settings_shows_ssh_identity(client):
@@ -539,7 +541,7 @@ async def test_check_updates_requires_pinned_host_key(client):
     assert "Check for updates now" in response.text
     # The button itself is disabled (rendered with the `disabled` attribute)
     # rather than the endpoint refusing outright — confirm that's the case.
-    assert 'disabled' in response.text
+    assert "disabled" in response.text
 
 
 async def test_check_updates_endpoint_updates_machine_record(client, db_session_factory):
@@ -571,9 +573,7 @@ async def test_power_action_requires_matching_confirmation(client, db_session_fa
     )
     assert wrong.status_code == 422
     assert "exactly to confirm" in wrong.text
-    assert "send_machine_power_command" not in [
-        call[0] for call in app.state.arq_redis.enqueued
-    ]
+    assert "send_machine_power_command" not in [call[0] for call in app.state.arq_redis.enqueued]
 
     right = await client.post(
         f"/machines/{machine_id}/power",
@@ -829,9 +829,7 @@ async def test_toggle_and_run_now_and_delete_scheduled_task(client):
     task_id = _extract_scheduled_task_id(listing.text)
 
     # Disable — next_run_at is cleared, badge flips to "disabled".
-    toggled = await client.post(
-        f"/scheduling/{task_id}/toggle", data={"csrf_token": csrf_token}
-    )
+    toggled = await client.post(f"/scheduling/{task_id}/toggle", data={"csrf_token": csrf_token})
     assert toggled.status_code == 303
     disabled_listing = await client.get("/scheduling")
     assert "badge-warn" in disabled_listing.text
@@ -840,9 +838,7 @@ async def test_toggle_and_run_now_and_delete_scheduled_task(client):
     await client.post(f"/scheduling/{task_id}/toggle", data={"csrf_token": csrf_token})
 
     # Run now — enqueues the same job the per-minute tick would.
-    run_now = await client.post(
-        f"/scheduling/{task_id}/run-now", data={"csrf_token": csrf_token}
-    )
+    run_now = await client.post(f"/scheduling/{task_id}/run-now", data={"csrf_token": csrf_token})
     assert run_now.status_code == 303
     assert "run_scheduled_task" in [call[0] for call in app.state.arq_redis.enqueued]
     assert (task_id,) == [call[1] for call in app.state.arq_redis.enqueued][-1]
@@ -851,9 +847,7 @@ async def test_toggle_and_run_now_and_delete_scheduled_task(client):
     assert "Run enqueued" in ran_listing.text
 
     # Delete.
-    deleted = await client.post(
-        f"/scheduling/{task_id}/delete", data={"csrf_token": csrf_token}
-    )
+    deleted = await client.post(f"/scheduling/{task_id}/delete", data={"csrf_token": csrf_token})
     assert deleted.status_code == 303
     final_listing = await client.get("/scheduling")
     assert "toggle-me" not in final_listing.text

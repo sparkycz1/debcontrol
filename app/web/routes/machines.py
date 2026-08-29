@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
+from app.auth.dependencies import require_permission
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
@@ -20,6 +21,7 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
+from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.ssh.client import discover_host_key_fingerprint
@@ -28,7 +30,12 @@ from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
 
-router = APIRouter(prefix="/machines")
+router = APIRouter(
+    prefix="/machines", dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))]
+)
+_manage = Depends(require_permission(Permission.MACHINE_MANAGE))
+_updates = Depends(require_permission(Permission.ACTION_UPDATES))
+_power = Depends(require_permission(Permission.ACTION_POWER))
 
 # Fingerprint shaped like "SHA256:<base64...>", as returned by AsyncSSH/OpenSSH.
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
@@ -123,7 +130,7 @@ async def new_machine_form(request: Request, db: AsyncSession = Depends(get_db))
     return response
 
 
-@router.post("", dependencies=[Depends(verify_csrf)])
+@router.post("", dependencies=[_manage, Depends(verify_csrf)])
 async def create_machine(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -251,7 +258,7 @@ async def edit_machine_form(
     return response
 
 
-@router.post("/{machine_id}/edit", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
 async def update_machine(
     request: Request,
     machine_id: uuid.UUID,
@@ -361,7 +368,7 @@ async def update_machine(
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/discover-host-key", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/discover-host-key", dependencies=[_manage, Depends(verify_csrf)])
 async def discover_host_key(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -395,7 +402,7 @@ async def discover_host_key(
     return response
 
 
-@router.post("/{machine_id}/trust-host-key", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/trust-host-key", dependencies=[_manage, Depends(verify_csrf)])
 async def trust_host_key(
     request: Request,
     machine_id: uuid.UUID,
@@ -436,7 +443,7 @@ async def trust_host_key(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/test-connection", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/test-connection", dependencies=[_manage, Depends(verify_csrf)])
 async def test_connection_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -474,7 +481,7 @@ async def test_connection_endpoint(
     )
 
 
-@router.post("/{machine_id}/refresh-facts", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/refresh-facts", dependencies=[_manage, Depends(verify_csrf)])
 async def refresh_facts_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -519,7 +526,7 @@ async def refresh_facts_endpoint(
     )
 
 
-@router.post("/{machine_id}/check-updates", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def check_updates_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -561,7 +568,7 @@ async def check_updates_endpoint(
     )
 
 
-@router.post("/{machine_id}/updates", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_machine_update(
     request: Request,
     machine_id: uuid.UUID,
@@ -665,7 +672,7 @@ async def power_confirm_form(
     return response
 
 
-@router.post("/{machine_id}/power", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/power", dependencies=[_power, Depends(verify_csrf)])
 async def power_action(
     request: Request,
     machine_id: uuid.UUID,
@@ -741,7 +748,7 @@ async def power_action(
     )
 
 
-@router.post("/pending/{pending_id}/dismiss", dependencies=[Depends(verify_csrf)])
+@router.post("/pending/{pending_id}/dismiss", dependencies=[_manage, Depends(verify_csrf)])
 async def dismiss_pending_machine(
     request: Request, pending_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -761,7 +768,7 @@ async def dismiss_pending_machine(
     return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/delete", dependencies=[Depends(verify_csrf)])
+@router.post("/{machine_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
 async def delete_machine(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:

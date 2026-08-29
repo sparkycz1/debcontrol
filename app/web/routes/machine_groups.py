@@ -12,11 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
+from app.auth.dependencies import require_permission
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
 from app.services.machine_actions import (
@@ -28,7 +30,12 @@ from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
 
-router = APIRouter(prefix="/machine-groups")
+router = APIRouter(
+    prefix="/machine-groups", dependencies=[Depends(require_permission(Permission.GROUP_VIEW))]
+)
+_manage = Depends(require_permission(Permission.GROUP_MANAGE))
+_updates = Depends(require_permission(Permission.ACTION_UPDATES))
+_power = Depends(require_permission(Permission.ACTION_POWER))
 
 # Typed phrase to confirm a power action against literally every machine —
 # "All machines" doesn't have a single name of its own to ask someone to type.
@@ -50,7 +57,9 @@ async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGro
 @router.get("")
 async def list_groups(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     result = await db.execute(
-        select(MachineGroup).options(selectinload(MachineGroup.machines)).order_by(MachineGroup.name)
+        select(MachineGroup)
+        .options(selectinload(MachineGroup.machines))
+        .order_by(MachineGroup.name)
     )
     groups = result.scalars().all()
     all_machines_count = await db.scalar(select(func.count()).select_from(Machine))
@@ -72,7 +81,7 @@ async def new_group_form(request: Request) -> Response:
     return response
 
 
-@router.post("", dependencies=[Depends(verify_csrf)])
+@router.post("", dependencies=[_manage, Depends(verify_csrf)])
 async def create_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -183,7 +192,7 @@ async def all_machines_group(
     return response
 
 
-@router.post("/all/updates", dependencies=[Depends(verify_csrf)])
+@router.post("/all/updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_all_machines_update(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -209,7 +218,7 @@ async def trigger_all_machines_update(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/all/check-updates", dependencies=[Depends(verify_csrf)])
+@router.post("/all/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_all_check_updates(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -247,7 +256,7 @@ async def all_power_confirm(request: Request, action: PowerAction) -> Response:
     return response
 
 
-@router.post("/all/power", dependencies=[Depends(verify_csrf)])
+@router.post("/all/power", dependencies=[_power, Depends(verify_csrf)])
 async def all_power_action(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -342,7 +351,7 @@ async def group_detail(
     return response
 
 
-@router.post("/{group_id}/machines", dependencies=[Depends(verify_csrf)])
+@router.post("/{group_id}/machines", dependencies=[_manage, Depends(verify_csrf)])
 async def add_machine_to_group(
     request: Request,
     group_id: uuid.UUID,
@@ -371,7 +380,9 @@ async def add_machine_to_group(
     )
 
 
-@router.post("/{group_id}/machines/{machine_id}/remove", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/{group_id}/machines/{machine_id}/remove", dependencies=[_manage, Depends(verify_csrf)]
+)
 async def remove_machine_from_group(
     request: Request, group_id: uuid.UUID, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -393,7 +404,7 @@ async def remove_machine_from_group(
     )
 
 
-@router.post("/{group_id}/updates", dependencies=[Depends(verify_csrf)])
+@router.post("/{group_id}/updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_group_update(
     request: Request,
     group_id: uuid.UUID,
@@ -421,7 +432,7 @@ async def trigger_group_update(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{group_id}/check-updates", dependencies=[Depends(verify_csrf)])
+@router.post("/{group_id}/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_group_check_updates(
     request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
@@ -466,7 +477,7 @@ async def group_power_confirm(
     return response
 
 
-@router.post("/{group_id}/power", dependencies=[Depends(verify_csrf)])
+@router.post("/{group_id}/power", dependencies=[_power, Depends(verify_csrf)])
 async def group_power_action(
     request: Request,
     group_id: uuid.UUID,
@@ -564,7 +575,7 @@ async def update_batch_status(
     )
 
 
-@router.post("/{group_id}/delete", dependencies=[Depends(verify_csrf)])
+@router.post("/{group_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
 async def delete_group(
     request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
