@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 # "All machines" is a built-in, automatic virtual group (see
 # app/web/routes/machine_groups.py) — reserved so a real, manually-managed
@@ -26,13 +23,3 @@ class MachineGroupCreate(BaseModel):
                 "— pick a different name."
             )
         return value
-
-
-class MachineGroupRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    name: str
-    description: str | None
-    created_at: datetime
-    updated_at: datetime

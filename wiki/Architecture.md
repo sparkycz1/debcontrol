@@ -9,8 +9,9 @@
 | Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
 | Database | PostgreSQL 18.6 | via `asyncpg` + SQLAlchemy 2.0 (async); image pinned to an exact patch |
 | Migrations | Alembic | async engine |
-| Cache / task queue | Redis 8.8.2 | queue via [`arq`](https://github.com/python-arq/arq); image pinned to an exact patch |
+| Cache / task queue | Redis 8.10.1 | queue via [`arq`](https://github.com/python-arq/arq); image pinned to an exact patch |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
+| Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
@@ -32,9 +33,13 @@ naturally into an already-async FastAPI app without pulling in Celery's
 much larger dependency and configuration surface. The trade-off: `arq` is
 currently in "maintenance only" mode upstream, and it pins `redis-py <6`
 (see [Installation](Installation.md) / the root `README.md` for the
-version-pinning implications). If heavier queue features are needed later
-(scheduling UI, retries with complex backoff, multiple queues/priorities),
-Celery or `ReArq` are the natural next steps.
+version-pinning implications). The **Scheduling** feature (cron-triggered
+actions) is built entirely on top of `arq`'s existing `cron()` jobs plus
+[`croniter`](https://github.com/kiorky/croniter) for expression parsing —
+see "Scheduling: reusing actions, not reimplementing them" below — rather
+than needing a heavier queue with built-in scheduling. If heavier queue
+features are needed later (retries with complex backoff, multiple
+queues/priorities), Celery or `ReArq` are the natural next steps.
 
 ### Why AsyncSSH over Paramiko
 
@@ -46,16 +51,20 @@ maintained and supports modern algorithms (Ed25519, etc.).
 
 ```
 app/
-  core/       config (pydantic-settings), logging, encryption, CSRF
-  db/         SQLAlchemy models + async session
-  schemas/    Pydantic schemas for forms
-  ssh/        AsyncSSH client (host key pinning)
-  tasks/      arq worker + background jobs
-  web/        FastAPI routers, Jinja2 templates, static files
-alembic/      DB migrations
-tests/        pytest (async, isolated from real infrastructure)
-scripts/      helper scripts (secret generation)
-wiki/         this documentation
+  audit.py      the single audit-log write path (hash chaining, verification)
+  core/         config (pydantic-settings), logging, encryption, CSRF,
+                editable app settings (app/core/app_settings.py)
+  db/           SQLAlchemy models + async session
+  schemas/      Pydantic schemas for forms
+  scheduling/   cron-scheduled actions: registry, cron parsing, scheduler jobs
+  services/     logic shared between manual routes and the scheduler
+  ssh/          AsyncSSH client (host key pinning), facts, updates, power
+  tasks/        arq worker + background jobs
+  web/          FastAPI routers, Jinja2 templates, static files
+alembic/        DB migrations
+tests/          pytest (async, isolated from real infrastructure)
+scripts/        helper scripts (secret generation)
+wiki/           this documentation
 ```
 
 ## Security model

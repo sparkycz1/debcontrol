@@ -17,7 +17,10 @@
 
 services:
   caddy:
-    image: caddy:2
+    # Pinned to an exact patch version, same reasoning as Postgres/Redis in
+    # the base compose file — a floating `caddy:2` tag would silently pick
+    # up a new minor/patch release on every rebuild. Bump deliberately.
+    image: caddy:2.11.4
     restart: unless-stopped
     env_file:
       - .env

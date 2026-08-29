@@ -4,7 +4,10 @@
 FROM python:3.14.7-slim AS builder
 
 # Official static uv binary — no need to pip-install it into the image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# Pinned to an exact version (same reasoning as Postgres/Redis/Caddy) —
+# `:latest` would silently pick up a new uv release, and thus a possibly
+# different dependency resolver/behavior, on every rebuild.
+COPY --from=ghcr.io/astral-sh/uv:0.12.7 /uv /uvx /usr/local/bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

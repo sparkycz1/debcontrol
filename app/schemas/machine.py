@@ -1,17 +1,16 @@
-"""Pydantic schemas for machine forms/API.
+"""Pydantic schemas for machine forms.
 
-`secret` is never returned in responses — the read schema doesn't include
-it at all, so a secret can't accidentally leak into JSON/HTML output.
+`secret` is only ever an input here — nothing in this module represents an
+outbound/read shape, so there's no risk of it accidentally round-tripping
+into a response.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import uuid
-from datetime import datetime
-from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.db.models.machine import AuthMethod
 
@@ -60,29 +59,3 @@ class MachineUpdate(BaseModel):
     @classmethod
     def _validate_ip_address(cls, value: str) -> str:
         return _check_ip_address(value)
-
-
-class MachineRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    name: str
-    ip_address: str
-    port: int
-    username: str
-    auth_method: AuthMethod
-    host_key_fingerprint: str | None
-    group_id: uuid.UUID | None
-    description: str | None
-    is_active: bool
-    discovered_hostname: str | None
-    os_version: str | None
-    kernel_version: str | None
-    cpu_cores: int | None
-    ram_bytes: int | None
-    disks: list[dict[str, Any]] | None
-    facts_updated_at: datetime | None
-    is_reachable: bool | None
-    last_ping_at: datetime | None
-    created_at: datetime
-    updated_at: datetime

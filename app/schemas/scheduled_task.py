@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.db.models.scheduled_task import ScheduleTargetType
 from app.scheduling.actions import get_action
@@ -51,22 +50,3 @@ class ScheduledTaskCreate(BaseModel):
             self.target_machine_id = None
             self.target_group_id = None
         return self
-
-
-class ScheduledTaskRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    name: str
-    action: str
-    action_params: dict[str, str] | None
-    target_type: ScheduleTargetType
-    target_machine_id: uuid.UUID | None
-    target_group_id: uuid.UUID | None
-    cron_expression: str
-    is_enabled: bool
-    next_run_at: datetime | None
-    last_run_at: datetime | None
-    last_run_summary: str | None
-    created_at: datetime
-    updated_at: datetime

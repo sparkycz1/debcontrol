@@ -15,7 +15,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "alembic>=1.19.1",
     # Note: the `redis-py` client library is independent from the Redis SERVER
-    # version (8.8) — it's pinned to the <6 line because `arq` (task queue)
+    # version (8.10) — it's pinned to the <6 line because `arq` (task queue)
     # currently only supports redis-py <6. See README.md, "Dependency version notes".
     "redis[hiredis]>=5.3.1,<6",
     "arq>=0.28.0",

@@ -18,7 +18,7 @@ published as the GitHub wiki once this repo is pushed there (see
 | Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
 | Database | PostgreSQL 18.6 | via `asyncpg` + SQLAlchemy 2.0 (async); image pinned to an exact patch version |
 | Migrations | Alembic | async engine |
-| Cache / task queue | Redis 8.8 | queue via [`arq`](https://github.com/python-arq/arq) |
+| Cache / task queue | Redis 8.10.1 | queue via [`arq`](https://github.com/python-arq/arq) |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
 | Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
@@ -28,7 +28,7 @@ published as the GitHub wiki once this repo is pushed there (see
 ### Dependency version notes
 
 - **`redis-py` (the client library) is intentionally pinned to the `<6` line**,
-  even though the Redis *server* in `docker-compose.yml` runs `redis:8.8`.
+  even though the Redis *server* in `docker-compose.yml` runs `redis:8.10`.
   The client library version and the server version are independent —
   `arq` (the task queue) only supports `redis-py <6` as of August 2026 (see
   its `pyproject.toml`), but redis-py 5.x talks to a Redis 8.x server just
@@ -41,8 +41,8 @@ published as the GitHub wiki once this repo is pushed there (see
 - Versions in `pyproject.toml` are lower bounds (`>=`); exact,
   reproducible versions for installation come from `uv.lock`.
 - **Docker images for stateful services are pinned to an exact patch
-  version** — `postgres:18.6`, `redis:8.8.2` — rather than the floating
-  `postgres:18` / `redis:8.8`. A floating tag gets silently rebuilt onto
+  version** — `postgres:18.6`, `redis:8.10.1` — rather than the floating
+  `postgres:18` / `redis:8.10`. A floating tag gets silently rebuilt onto
   newer minor/patch releases, and an unplanned Postgres/Redis upgrade on
   `docker compose up` is exactly the kind of surprise this project avoids
   elsewhere too. Bump the pin deliberately (and test against it) instead.
@@ -132,7 +132,7 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 See [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md) for details
 and troubleshooting.
 
-This brings up: the image build, Postgres 18.6, Redis 8.8, a one-off
+This brings up: the image build, Postgres 18.6, Redis 8.10.1, a one-off
 `migrate` service (Alembic `upgrade head`), and — once that finishes
 successfully — `web`, `worker` (arq), and optionally `caddy`.
 
@@ -152,7 +152,7 @@ uv run arq app.tasks.worker.WorkerSettings
 ```bash
 uv run pytest
 uv run ruff check .
-uv run mypy app
+uv run mypy app alembic tests
 ```
 
 Tests don't run against real infrastructure — `get_db` is swapped for an
@@ -167,16 +167,21 @@ the UI ("Test connection").
 
 ```
 app/
-  core/       config, logging, encryption, CSRF
-  db/         SQLAlchemy models + async session
-  schemas/    Pydantic schemas for forms
-  ssh/        AsyncSSH client (host key pinning)
-  tasks/      arq worker + background jobs
-  web/        FastAPI routers, Jinja2 templates, static files
-alembic/      DB migrations
-tests/        pytest (async, isolated from real infrastructure)
-scripts/      helper scripts (secret generation)
-wiki/         documentation, meant to become the GitHub wiki
+  audit.py      the single audit-log write path (hash chaining, verification)
+  core/         config, logging, encryption, CSRF, editable app settings
+  db/           SQLAlchemy models + async session
+  schemas/      Pydantic schemas for forms
+  scheduling/   cron-scheduled actions: registry, cron parsing, scheduler jobs
+  services/     logic shared between manual routes and the scheduler
+                (e.g. "trigger an update for these machines")
+  ssh/          AsyncSSH client (host key pinning), facts, updates, power
+  tasks/        arq worker + background jobs (facts/reachability/update
+                sweeps, the daily audit-log purge)
+  web/          FastAPI routers, Jinja2 templates, static files
+alembic/        DB migrations
+tests/          pytest (async, isolated from real infrastructure)
+scripts/        helper scripts (secret generation)
+wiki/           documentation, meant to become the GitHub wiki
 ```
 
 ## Navigation / features
