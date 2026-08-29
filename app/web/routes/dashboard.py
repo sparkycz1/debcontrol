@@ -13,16 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
-from app.db.models.machine import Machine
+from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine_group import MachineGroup
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
 from app.db.models.user import User
 from app.db.session import get_db
+from app.services.fleet_stats import compute_fleet_stats
 from app.web.templating import templates
 
 router = APIRouter()
+
+# Only render the trend chart(s) once there's enough history to draw a line
+# through — a single snapshot (or none, on a fresh install) is a point, not
+# a trend.
+_MIN_SNAPSHOTS_FOR_TREND = 2
 
 
 @router.get("/dashboard")
@@ -32,52 +38,23 @@ async def show_dashboard(
     context: dict[str, object] = {}
 
     if user.has_permission(Permission.MACHINE_VIEW):
-        total = (await db.execute(select(func.count()).select_from(Machine))).scalar_one()
-        online = (
-            await db.execute(
-                select(func.count()).select_from(Machine).where(Machine.is_reachable.is_(True))
-            )
-        ).scalar_one()
-        offline = (
-            await db.execute(
-                select(func.count()).select_from(Machine).where(Machine.is_reachable.is_(False))
-            )
-        ).scalar_one()
-        needs_updates = (
-            await db.execute(
-                select(func.count())
-                .select_from(Machine)
-                .where(
-                    (Machine.upgradable_count > 0)
-                    | (Machine.flatpak_upgradable_count > 0)
-                    | (Machine.snap_upgradable_count > 0)
-                )
-            )
-        ).scalar_one()
-        needs_security_updates = (
-            await db.execute(
-                select(func.count())
-                .select_from(Machine)
-                .where(Machine.security_upgradable_count > 0)
-            )
-        ).scalar_one()
-        needs_reboot = (
-            await db.execute(
-                select(func.count()).select_from(Machine).where(Machine.reboot_required.is_(True))
-            )
-        ).scalar_one()
+        stats = await compute_fleet_stats(db)
         pending_count = (
             await db.execute(select(func.count()).select_from(PendingMachine))
         ).scalar_one()
-        context["machine_stats"] = {
-            "total": total,
-            "online": online,
-            "offline": offline,
-            "needs_updates": needs_updates,
-            "needs_security_updates": needs_security_updates,
-            "needs_reboot": needs_reboot,
-            "pending_count": pending_count,
-        }
+        context["machine_stats"] = {**stats, "pending_count": pending_count}
+
+        # Fleet trends (Task 4) — every retained daily snapshot, oldest
+        # first, so the chart partials can draw a left-to-right timeline.
+        # Retention itself is enforced by the daily purge job
+        # (app.tasks.jobs.purge_old_fleet_snapshots), not filtered here —
+        # whatever's left in the table is exactly what's meant to be shown.
+        snapshot_result = await db.execute(
+            select(FleetSnapshot).order_by(FleetSnapshot.snapshot_date.asc())
+        )
+        snapshots = list(snapshot_result.scalars().all())
+        if len(snapshots) >= _MIN_SNAPSHOTS_FOR_TREND:
+            context["fleet_snapshots"] = snapshots
 
     if user.has_permission(Permission.GROUP_VIEW):
         context["group_count"] = (

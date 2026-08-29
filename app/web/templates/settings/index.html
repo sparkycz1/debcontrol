@@ -124,6 +124,26 @@
   </section>
 
   <section class="panel">
+    <h2>Dashboard trends</h2>
+    <p class="hint">
+      A background job records one daily snapshot of fleet-wide counts
+      (online/offline machines, pending updates, ...) for the trend chart(s)
+      on the <a href="/dashboard">Dashboard</a>. This only controls how long
+      those snapshots are kept — it doesn't affect the live counts
+      themselves.
+    </p>
+    <form method="post" action="/settings/dashboard-trends-retention" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="dashboard_trends_retention_days">Keep daily snapshots for (days)</label>
+      <input type="number" id="dashboard_trends_retention_days" name="retention_days" min="0" step="1"
+             placeholder="forever"
+             value="{{ app_settings.dashboard_trends_retention_days if app_settings.dashboard_trends_retention_days is not none else '' }}">
+      <p class="hint">Leave empty to keep every snapshot forever. Defaults to 90 days.</p>
+      <button type="submit" class="button">Save</button>
+    </form>
+  </section>
+
+  <section class="panel">
     <h2>Syslog forwarding</h2>
     <p class="hint">
       Live-mirrors every audit log entry to an external syslog server (e.g.

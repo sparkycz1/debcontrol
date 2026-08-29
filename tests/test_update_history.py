@@ -6,6 +6,8 @@ by status. See `app/web/routes/machines.py` and `app/web/routes/api_v1.py`.
 from __future__ import annotations
 
 import re
+import uuid
+from typing import Any
 
 from httpx import AsyncClient
 
@@ -24,7 +26,9 @@ async def _api_token(client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {match.group(1)}"}
 
 
-async def _create_runs(db_session_factory, machine_id, count: int, status: UpdateRunStatus) -> None:
+async def _create_runs(
+    db_session_factory: Any, machine_id: uuid.UUID, count: int, status: UpdateRunStatus
+) -> None:
     async with db_session_factory() as db:
         for _ in range(count):
             db.add(

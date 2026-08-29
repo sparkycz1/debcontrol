@@ -14,10 +14,12 @@ from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.db.models.audit_log import AuditLogEntry
+from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import Machine
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.session import AsyncSessionLocal
+from app.services.fleet_stats import compute_fleet_stats
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
@@ -443,6 +445,88 @@ async def purge_old_audit_log_entries(ctx: dict[str, Any]) -> None:
                 f"Purged {deleted_count} audit log entr"
                 f"{'y' if deleted_count == 1 else 'ies'} older than "
                 f"{retention_days} day(s)"
+            ),
+            details={"deleted_count": deleted_count, "retention_days": retention_days},
+        )
+
+
+async def record_fleet_snapshot(ctx: dict[str, Any]) -> None:
+    """Write today's fleet-wide snapshot row (Task 4's Dashboard trend
+    chart), using the exact same queries the live Dashboard shows
+    (`app.services.fleet_stats.compute_fleet_stats`) so the trend line and
+    the current numbers can never disagree on what they mean.
+
+    A fixed once-a-day cron tick (see `app.tasks.worker.WorkerSettings`),
+    same idea as `purge_old_audit_log_entries` — only *how long to keep*
+    snapshots is configurable (Settings), not this cadence. Idempotent
+    per calendar day: if today's row already exists (e.g. the worker
+    restarted and its cron re-fired), this is a no-op rather than a second
+    row for the same day — `FleetSnapshot.snapshot_date` is also uniquely
+    constrained at the DB level as a second line of defense.
+
+    Not audit-logged — same reasoning as the other routine, unattended
+    sweeps in this module (see wiki/Development.md's "Recording a new
+    action in the audit log").
+    """
+    async with AsyncSessionLocal() as session:
+        today = datetime.now(UTC).date()
+        existing = await session.scalar(
+            select(FleetSnapshot).where(FleetSnapshot.snapshot_date == today)
+        )
+        if existing is not None:
+            return
+
+        stats = await compute_fleet_stats(session)
+        session.add(
+            FleetSnapshot(
+                snapshot_date=today,
+                total_machines=stats["total"],
+                online_machines=stats["online"],
+                offline_machines=stats["offline"],
+                needs_updates=stats["needs_updates"],
+                needs_security_updates=stats["needs_security_updates"],
+                needs_reboot=stats["needs_reboot"],
+            )
+        )
+        await session.commit()
+
+
+_FLEET_SNAPSHOT_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def purge_old_fleet_snapshots(ctx: dict[str, Any]) -> None:
+    """Delete `FleetSnapshot` rows older than `AppSettings.
+    dashboard_trends_retention_days` — same shape as
+    `purge_old_audit_log_entries` above, including being skipped entirely
+    when retention is unset (`None` = keep forever)."""
+    async with AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        retention_days = app_settings.dashboard_trends_retention_days
+        if not retention_days:
+            return
+
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).date()
+        count_result = await session.execute(
+            select(func.count())
+            .select_from(FleetSnapshot)
+            .where(FleetSnapshot.snapshot_date < cutoff)
+        )
+        deleted_count = count_result.scalar_one()
+        if not deleted_count:
+            return
+
+        await session.execute(
+            delete(FleetSnapshot).where(FleetSnapshot.snapshot_date < cutoff)
+        )
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_FLEET_SNAPSHOT_PURGE_ACTOR,
+            action="dashboard_trends.purge",
+            summary=(
+                f"Purged {deleted_count} fleet snapshot"
+                f"{'s' if deleted_count != 1 else ''} older than {retention_days} day(s)"
             ),
             details={"deleted_count": deleted_count, "retention_days": retention_days},
         )

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from typing import Any
 
 import pyotp
 from httpx import ASGITransport, AsyncClient
@@ -23,7 +24,7 @@ from tests.conftest import _configure_app_for_tests
 
 
 async def _make_user_with_role(
-    db_session_factory,
+    db_session_factory: Any,
     *,
     username: str,
     require_totp: bool,

@@ -22,6 +22,8 @@ from app.tasks.jobs import (
     check_machine_updates,
     ping_all_machines,
     purge_old_audit_log_entries,
+    purge_old_fleet_snapshots,
+    record_fleet_snapshot,
     refresh_all_machine_facts,
     refresh_all_machine_packages,
     refresh_machine_facts,
@@ -70,6 +72,8 @@ class WorkerSettings:
         run_due_scheduled_tasks,
         run_scheduled_task,
         purge_old_audit_log_entries,
+        record_fleet_snapshot,
+        purge_old_fleet_snapshots,
         # apt update/upgrade(-check) can legitimately run far longer than
         # the default job_timeout below — give both their own budget.
         func(run_machine_update, timeout=get_settings().update_timeout_seconds),
@@ -84,6 +88,11 @@ class WorkerSettings:
         # Once a day is plenty for a retention sweep — only *how many days
         # to keep* is configurable (Settings), not this cadence.
         cron(purge_old_audit_log_entries, hour=3, minute=0, second=0, unique=True),
+        # Snapshot before purge, both once daily — order between them
+        # doesn't matter (a purge only ever removes rows older than the
+        # retention window, never today's brand-new one).
+        cron(record_fleet_snapshot, hour=2, minute=0, second=0, unique=True),
+        cron(purge_old_fleet_snapshots, hour=3, minute=5, second=0, unique=True),
     ]
     on_startup = startup
     on_shutdown = shutdown
