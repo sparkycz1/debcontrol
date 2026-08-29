@@ -45,7 +45,13 @@ async def show_dashboard(
         ).scalar_one()
         needs_updates = (
             await db.execute(
-                select(func.count()).select_from(Machine).where(Machine.upgradable_count > 0)
+                select(func.count())
+                .select_from(Machine)
+                .where(
+                    (Machine.upgradable_count > 0)
+                    | (Machine.flatpak_upgradable_count > 0)
+                    | (Machine.snap_upgradable_count > 0)
+                )
             )
         ).scalar_one()
         needs_security_updates = (

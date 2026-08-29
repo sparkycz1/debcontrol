@@ -9,7 +9,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +21,7 @@ from app.core.security import encrypt_secret
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
@@ -28,6 +29,7 @@ from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
+from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
@@ -75,6 +77,33 @@ async def _get_recent_update_runs(
         .order_by(MachineUpdateRun.created_at.desc())
         .limit(limit)
     )
+    return list(result.scalars().all())
+
+
+async def _get_package_counts(machine_id: uuid.UUID, db: AsyncSession) -> dict[str, int]:
+    result = await db.execute(
+        select(MachinePackage.source, func.count())
+        .where(MachinePackage.machine_id == machine_id)
+        .group_by(MachinePackage.source)
+    )
+    counts = {source.value: 0 for source in PackageSource}
+    total = 0
+    for source, count in result.all():
+        counts[source.value] = count
+        total += count
+    counts["total"] = total
+    return counts
+
+
+async def _get_packages(
+    machine_id: uuid.UUID, db: AsyncSession, *, pkg_q: str, pkg_source: str
+) -> list[MachinePackage]:
+    query = select(MachinePackage).where(MachinePackage.machine_id == machine_id)
+    if pkg_q.strip():
+        query = query.where(MachinePackage.name.ilike(f"%{pkg_q.strip()}%"))
+    if pkg_source in {source.value for source in PackageSource}:
+        query = query.where(MachinePackage.source == PackageSource(pkg_source))
+    result = await db.execute(query.order_by(MachinePackage.source, MachinePackage.name))
     return list(result.scalars().all())
 
 
@@ -299,7 +328,11 @@ async def import_machines_submit(
 
 @router.get("/{machine_id}")
 async def machine_detail(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    pkg_q: str = "",
+    pkg_source: str = "",
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
@@ -310,6 +343,10 @@ async def machine_detail(
             "machine": machine,
             "csrf_token": csrf_token,
             "update_runs": await _get_recent_update_runs(machine_id, db),
+            "packages": await _get_packages(machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source),
+            "package_counts": await _get_package_counts(machine_id, db),
+            "pkg_q": pkg_q,
+            "pkg_source": pkg_source,
             # One-time notice after a power action redirect — not persisted
             # anywhere, just echoed back from the query string.
             "power_sent": request.query_params.get("power_sent"),
@@ -607,6 +644,62 @@ async def refresh_facts_endpoint(
         request,
         "partials/machine_facts.html",
         {"machine": machine, "error": error, "csrf_token": csrf_token},
+    )
+
+
+@router.post("/{machine_id}/refresh-packages", dependencies=[_manage, Depends(verify_csrf)])
+async def refresh_packages_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    pkg_q: str = Form(""),
+    pkg_source: str = Form(""),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db)
+    settings = get_settings()
+
+    job = await request.app.state.arq_redis.enqueue_job(
+        "refresh_machine_packages", str(machine.id)
+    )
+    error: str | None = None
+    try:
+        result = await job.result(timeout=settings.ssh_connect_timeout + 15)
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except TimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    if error is None:
+        # Packages were updated in the DB by the job — reload to pick them up.
+        machine = await _get_machine_or_404(machine_id, db)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.packages.refresh",
+        summary=f'Refreshed installed packages for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
+    csrf_token, _ = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/machine_packages.html",
+        {
+            "machine": machine,
+            "error": error,
+            "csrf_token": csrf_token,
+            "packages": await _get_packages(machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source),
+            "package_counts": await _get_package_counts(machine_id, db),
+            "pkg_q": pkg_q,
+            "pkg_source": pkg_source,
+        },
     )
 
 

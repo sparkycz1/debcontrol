@@ -429,6 +429,93 @@ package via `dpkg`), so it rides along in the regular, unprivileged facts
 command instead of the root-requiring update check — see
 `app/ssh/facts.py`.
 
+### flatpak and snap: optional, guarded, never blocking apt
+
+System updates and the update-availability check both cover three package
+sources — apt, flatpak, snap — not apt alone, but neither flatpak nor
+snap is assumed to be installed (most Debian/Ubuntu server images have
+neither). Every flatpak/snap step in `app/ssh/updates.py` is wrapped in
+`command -v flatpak`/`command -v snap`, so a machine without one simply
+skips that part; it's never treated as a failure.
+
+The check-side commands were chosen specifically because they're genuine,
+side-effect-free dry runs, not because they were the obvious first guess:
+
+- **flatpak** has no `--dry-run` flag for `update`. `flatpak remote-ls
+  --updates <remote>` is the real read-only equivalent — it lists what a
+  remote currently has that differs from what's deployed, without pulling
+  or installing anything — run once per configured remote (usually just
+  `flathub`) and de-duplicated by application id in
+  `parse_flatpak_upgradable_output`, since the same app tracked from two
+  remotes would otherwise be double-counted.
+- **snap** has an official one: `snap refresh --list`, snapd's own
+  documented dry-run listing of pending refreshes — and unlike actually
+  refreshing, it doesn't need root.
+
+Applying updates is a different story: `flatpak update -y --noninteractive`
+and `snap refresh` are both run via `sudo -n`, same as apt, on the
+assumption that a non-interactive system-wide flatpak/snap operation
+commonly needs it too (interactively, both would otherwise go through
+polkit, which has no non-interactive story). This is opt-in — the
+sudoers example in
+[Managed Machine Requirements](Managed-Machine-Requirements.md) shows the
+two extra `NOPASSWD` lines as optional — and if they're not configured,
+only the flatpak/snap steps fail (visible in the run's stored output);
+the apt part of the same run is unaffected, since the three steps are
+`;`-chained, not `&&`-chained, matching the existing autoremove/autoclean
+pattern.
+
+Update counts from all three sources are surfaced everywhere apt's count
+already was — the machine list, the detail page, the dashboard's "needs
+updates" tally, and the read-only API — as separate fields
+(`flatpak_upgradable_count`, `snap_upgradable_count`) rather than merged
+into `upgradable_count`, since apt's count also carries a
+`security_upgradable_count` breakdown that doesn't have a flatpak/snap
+equivalent — merging would have made "how many are security updates"
+ambiguous.
+
+### Installed packages: a snapshot table, not a JSON blob
+
+**Machines → a machine → Installed packages** needed somewhere to put a
+per-machine list that can run into the thousands of rows (a typical
+Debian install has several hundred to a thousand-plus apt packages
+alone). A `MachinePackage` row per package (rather than a JSON column on
+`Machine`, the pattern `disks` already uses for a handful of small
+entries) makes that list filterable and countable with an ordinary SQL
+query instead of deserializing and scanning a blob in Python on every
+page load.
+
+Gathering is a single SSH round trip (`app/ssh/packages.py`, the same
+`echo ===MARKER===`-delimited-sections trick as `app/ssh/facts.py`) for
+`dpkg-query`, then flatpak and snap if either is present — none of it
+needs root, unlike the update check/run above. A refresh replaces a
+machine's entire package set in one transaction (delete-then-bulk-insert)
+rather than diffing row by row: this is a snapshot of "what's installed
+right now," not a package-change history, so there's nothing to diff
+against.
+
+Refresh timing follows the same periodic cadence as facts
+(`FACTS_REFRESH_INTERVAL_SECONDS`, via `refresh_all_machine_packages` —
+the same fan-out-then-reschedule shape as `refresh_all_machine_facts`),
+plus one extra trigger: `run_machine_update` enqueues both a package
+refresh and a fresh update-availability check for its machine right after
+finishing, success or failure, so running an update doesn't leave the
+page showing stale counts and an outdated package list until the next
+sweep.
+
+### Officially supporting deb-based distributions generically
+
+debcontrol's official support statement is "Debian and its derivatives
+(e.g. Ubuntu), for as long as each is supported by its own upstream" —
+deliberately a policy, not a hardcoded version list, so it never needs
+updating as new releases ship or old ones reach end-of-life. This tracks
+what was already true of the implementation before it was said out loud:
+every command debcontrol runs — `dpkg`, `apt`, `systemd`'s `shutdown`,
+`/etc/os-release`, and now `flatpak`/`snap` — is either present on a
+stock Debian install or standard optional tooling any Debian-based
+distribution ships or can install; nothing here inspects
+`/etc/os-release` to branch on which distro it's talking to.
+
 ### Power actions: fire-and-forget, double-confirmed, untracked
 
 Reboot and shutdown (`app/ssh/power.py`) are deliberately the simplest

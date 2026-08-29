@@ -15,12 +15,14 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.machine import Machine
+from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.session import AsyncSessionLocal
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.facts import gather_facts
+from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
 from app.ssh.updates import check_updates, run_system_update
@@ -145,6 +147,73 @@ async def refresh_all_machine_facts(ctx: dict[str, Any]) -> None:
     )
 
 
+async def refresh_machine_packages(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
+    """Connect to one machine and refresh its installed-package snapshot
+    (apt/flatpak/snap, with versions). Requires a pinned host key — machines
+    without one are skipped. Replaces the machine's whole `MachinePackage`
+    set in one transaction (delete-then-bulk-insert) rather than diffing,
+    since this is a snapshot of "what's installed right now," not a
+    history."""
+    settings = get_settings()
+
+    async with AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            packages = await gather_packages(machine, secret, settings.ssh_connect_timeout)
+        except SSHConnectionError as exc:
+            logger.warning("refresh_machine_packages failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        await session.execute(
+            delete(MachinePackage).where(MachinePackage.machine_id == machine.id)
+        )
+        session.add_all(
+            MachinePackage(
+                machine_id=machine.id,
+                source=entry["source"],
+                name=entry["name"],
+                version=entry["version"],
+            )
+            for entry in packages
+        )
+        machine.packages_updated_at = datetime.now(UTC)
+        await session.commit()
+
+        return {"ok": True, "package_count": len(packages)}
+
+
+async def refresh_all_machine_packages(ctx: dict[str, Any]) -> None:
+    """Periodic sweep scheduling a package refresh for every machine with a
+    pinned host key — same fan-out pattern (and the same
+    `FACTS_REFRESH_INTERVAL_SECONDS` cadence) as `refresh_all_machine_facts`,
+    for the same reason: this only enqueues, it never awaits the refreshes
+    inline, so one slow/unreachable machine can't hold up the rest.
+    """
+    settings = get_settings()
+    redis = ctx["redis"]
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
+        )
+        machine_ids = [row[0] for row in result.all()]
+
+    for machine_id in machine_ids:
+        await redis.enqueue_job("refresh_machine_packages", str(machine_id))
+
+    await redis.enqueue_job(
+        "refresh_all_machine_packages",
+        _defer_by=timedelta(seconds=settings.facts_refresh_interval_seconds),
+    )
+
+
 def _truncate_output(output: str) -> str:
     if len(output) <= _MAX_STORED_OUTPUT_CHARS:
         return output
@@ -153,13 +222,21 @@ def _truncate_output(output: str) -> str:
 
 async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
     """Execute one `MachineUpdateRun`: apt update, the chosen upgrade
-    strategy, then autoremove/autoclean — see `app.ssh.updates`.
+    strategy, autoremove/autoclean, then flatpak/snap if installed — see
+    `app.ssh.updates`.
 
     Given a long, dedicated timeout in `app.tasks.worker.WorkerSettings`
     (`UPDATE_TIMEOUT_SECONDS`), separate from the default job timeout used
     by every other job here.
+
+    Once the run finishes (success or failure — the machine's packages and
+    update counts may have changed either way, e.g. apt failed but flatpak/
+    snap still updated), this enqueues a package-list refresh and a fresh
+    update-availability check for the same machine, rather than waiting for
+    the next periodic sweep, so the machine page reflects reality right away.
     """
     settings = get_settings()
+    redis = ctx["redis"]
 
     async with AsyncSessionLocal() as session:
         run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
@@ -203,11 +280,15 @@ async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
         run.finished_at = datetime.now(UTC)
         await session.commit()
 
+    await redis.enqueue_job("refresh_machine_packages", str(run.machine_id))
+    await redis.enqueue_job("check_machine_updates", str(run.machine_id))
+
 
 async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
-    """Dry-run: refresh the apt cache and record how many packages are
-    upgradable, without installing anything. Requires root/sudo, same as
-    `run_machine_update` — see `app.ssh.updates`."""
+    """Dry-run: refresh the apt cache and record how many apt packages,
+    flatpak apps, and snaps are upgradable, without installing anything.
+    apt requires root/sudo, same as `run_machine_update`; flatpak/snap
+    listing never does — see `app.ssh.updates`."""
     settings = get_settings()
 
     async with AsyncSessionLocal() as session:
@@ -228,6 +309,12 @@ async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[st
             return {"ok": False, "error": str(exc)}
 
         machine.updates_checked_at = datetime.now(UTC)
+        # flatpak/snap listing runs independently of the apt step in the
+        # remote script, so their counts are meaningful even when apt's
+        # own refresh below failed — record them either way.
+        machine.flatpak_upgradable_count = result.flatpak_upgradable_count
+        machine.snap_upgradable_count = result.snap_upgradable_count
+
         if result.exit_status == 0:
             machine.upgradable_count = result.upgradable_count
             machine.security_upgradable_count = result.security_upgradable_count
@@ -236,7 +323,7 @@ async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[st
 
         # `apt-get update` itself failed (commonly: no passwordless sudo
         # configured for this machine yet) — record that we tried and when,
-        # but leave the counts as "unknown" rather than implying 0 updates.
+        # but leave the apt counts as "unknown" rather than implying 0 updates.
         machine.upgradable_count = None
         machine.security_upgradable_count = None
         await session.commit()

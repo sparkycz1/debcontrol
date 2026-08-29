@@ -1,25 +1,39 @@
-"""Run (or just check for) apt updates on a machine.
+"""Run (or just check for) system updates on a machine: apt, plus flatpak
+and snap when either is present.
 
 `run_system_update`: always the same shape — `apt-get update`, then the
-chosen upgrade strategy, then `autoremove` and `autoclean` — the cleanup
-steps run unconditionally, even if the upgrade step failed, since they're
-independently useful and shouldn't be skipped just because the upgrade
-itself hit a problem.
+chosen upgrade strategy, then `autoremove` and `autoclean`, then (if
+installed) `flatpak update` and `snap refresh` — the cleanup and flatpak/
+snap steps run unconditionally, even if the apt upgrade step failed, since
+they're independently useful and shouldn't be skipped just because apt hit
+a problem. Overall success/failure is still judged by the apt step alone
+(unchanged from before flatpak/snap support), since that's the one debcontrol
+can meaningfully retry or diagnose — flatpak/snap failures still show up in
+the stored output for the admin to read.
 
-`check_updates`: a read-only dry run — refreshes the package cache and
-reports how many packages are upgradable (and how many of those are from
-a `*-security` suite) without installing anything.
+`check_updates`: a read-only dry run — refreshes the apt cache and reports
+how many packages are upgradable (and how many of those are from a
+`*-security` suite), plus how many flatpak and snap packages have pending
+updates, without installing or upgrading anything.
 
-Both require root — either the machine's configured username *is* root, or
+apt requires root — either the machine's configured username *is* root, or
 (recommended) it has passwordless sudo for `apt-get` specifically. See the
 wiki page "Managed Machine Requirements" for a sudoers example. `sudo -n`
 (non-interactive) is used throughout: if sudo would need a password, the
 command fails immediately with a clear error instead of hanging forever
 waiting for input that can never arrive over a non-interactive SSH exec.
+flatpak/snap are also run via `sudo -n` for consistency (system-wide
+flatpak/snap operations commonly need it too) — see the sudoers example in
+the wiki page, which covers all three.
+
+Neither flatpak nor snap is required to be installed: every step here is
+guarded with `command -v`, so a machine without one (or both) simply skips
+that part rather than failing.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.db.models.machine import Machine
@@ -57,6 +71,10 @@ def build_update_command(strategy: UpgradeStrategy) -> str:
         "fi; "
         f"{_SUDO_APT} autoremove; "
         f"{_SUDO_APT} autoclean; "
+        "if command -v flatpak >/dev/null 2>&1; then "
+        "sudo -n flatpak update -y --noninteractive; "
+        "fi; "
+        "if command -v snap >/dev/null 2>&1; then sudo -n snap refresh; fi; "
         'exit "$status"; '
         "} 2>&1"
     )
@@ -90,32 +108,60 @@ async def run_system_update(
     return UpdateResult(exit_status=exit_status, output=output)
 
 
-_CHECK_MARKER = "===UPGRADABLE==="
+_APT_MARKER = "===APT_UPGRADABLE==="
+_FLATPAK_MARKER = "===FLATPAK_UPGRADABLE==="
+_SNAP_MARKER = "===SNAP_UPGRADABLE==="
+_CHECK_SECTION_MARKERS = ("APT_UPGRADABLE", "FLATPAK_UPGRADABLE", "SNAP_UPGRADABLE")
 
-# Refreshes the package lists (needs root, same as an actual upgrade) and
-# then lists what's upgradable (doesn't need root) — only if the refresh
-# succeeded, so a stale/absent cache never gets reported as "0 updates".
+# Refreshes the apt package lists (needs root, same as an actual upgrade)
+# and then lists what's upgradable across all three sources — apt doesn't
+# need root once the cache is refreshed, and flatpak/snap listing never
+# does. The apt section only runs if the refresh succeeded, so a stale/
+# absent cache never gets reported as "0 updates". flatpak/snap are each
+# guarded with `command -v`, since neither is required to be installed:
+#   - flatpak: `flatpak remote-ls --updates` per configured remote is the
+#     genuine dry-run equivalent — it lists what a remote has that differs
+#     from what's deployed, without touching anything.
+#   - snap: `snap refresh --list` is snapd's own official dry-run listing
+#     of pending refreshes, and (unlike applying them) doesn't need root.
 _CHECK_UPDATES_COMMAND = (
     "{ "
     "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null; "
     'status=$?; '
-    f"echo {_CHECK_MARKER}; "
+    f"echo {_APT_MARKER}; "
     'if [ "$status" -eq 0 ]; then apt list --upgradable 2>/dev/null | tail -n +2; fi; '
+    f"echo {_FLATPAK_MARKER}; "
+    "if command -v flatpak >/dev/null 2>&1; then "
+    "for r in $(flatpak remotes --columns=name 2>/dev/null); do "
+    'flatpak remote-ls --updates --columns=application "$r" 2>/dev/null; '
+    "done; "
+    "fi; "
+    f"echo {_SNAP_MARKER}; "
+    "if command -v snap >/dev/null 2>&1; then "
+    "snap refresh --list 2>/dev/null | tail -n +2 | awk '{print $1}'; "
+    "fi; "
     'exit "$status"; '
     "} 2>&1"
 )
 
 
+def _split_check_sections(raw: str) -> dict[str, str]:
+    pattern = "|".join(f"==={name}===" for name in _CHECK_SECTION_MARKERS)
+    parts = re.split(f"(?:{pattern})", raw)
+    body = parts[1:]
+    return dict(zip(_CHECK_SECTION_MARKERS, (chunk.strip() for chunk in body), strict=False))
+
+
 def parse_upgradable_output(raw: str) -> tuple[int, int]:
-    """Count upgradable / security-upgradable packages from the part of
-    `_CHECK_UPDATES_COMMAND`'s output after the marker — each remaining
+    """Count upgradable / security-upgradable apt packages from the
+    `APT_UPGRADABLE` section of `_CHECK_UPDATES_COMMAND`'s output — each
     line looks like `pkgname/suite version arch [upgradable from: ...]`.
 
     Pure function, no I/O — kept separate from `check_updates` so the
     parsing logic can be unit-tested against canned output.
     """
-    _, _, tail = raw.partition(_CHECK_MARKER)
-    lines = [line for line in tail.strip().splitlines() if line.strip()]
+    tail = _split_check_sections(raw).get("APT_UPGRADABLE", "")
+    lines = [line for line in tail.splitlines() if line.strip()]
 
     security_count = 0
     for line in lines:
@@ -127,11 +173,30 @@ def parse_upgradable_output(raw: str) -> tuple[int, int]:
     return len(lines), security_count
 
 
+def parse_flatpak_upgradable_output(raw: str) -> int:
+    """Count pending flatpak updates from the `FLATPAK_UPGRADABLE` section
+    — one application id per line. `flatpak remote-ls --updates` is run
+    once per configured remote, so the same app could in principle appear
+    twice (tracked from two remotes) — de-duplicated here."""
+    tail = _split_check_sections(raw).get("FLATPAK_UPGRADABLE", "")
+    apps = {line.strip() for line in tail.splitlines() if line.strip()}
+    return len(apps)
+
+
+def parse_snap_upgradable_output(raw: str) -> int:
+    """Count pending snap refreshes from the `SNAP_UPGRADABLE` section —
+    one snap name per line."""
+    tail = _split_check_sections(raw).get("SNAP_UPGRADABLE", "")
+    return len([line for line in tail.splitlines() if line.strip()])
+
+
 @dataclass
 class UpdateCheckResult:
     exit_status: int
     upgradable_count: int
     security_upgradable_count: int
+    flatpak_upgradable_count: int
+    snap_upgradable_count: int
     output: str
 
 
@@ -141,9 +206,10 @@ async def check_updates(
     connect_timeout_seconds: int,
     run_timeout_seconds: int,
 ) -> UpdateCheckResult:
-    """Refresh the package cache and report how many packages are
-    upgradable, without installing anything. Same root/sudo requirement as
-    `run_system_update` — see the module docstring.
+    """Refresh the apt cache and report how many packages/apps/snaps are
+    upgradable across apt, flatpak, and snap, without installing or
+    upgrading anything. Same root/sudo requirement as `run_system_update`
+    — see the module docstring.
     """
     async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
         result = await conn.run(_CHECK_UPDATES_COMMAND, check=False, timeout=run_timeout_seconds)
@@ -156,5 +222,7 @@ async def check_updates(
         exit_status=exit_status,
         upgradable_count=upgradable_count,
         security_upgradable_count=security_upgradable_count,
+        flatpak_upgradable_count=parse_flatpak_upgradable_output(output),
+        snap_upgradable_count=parse_snap_upgradable_output(output),
         output=output,
     )

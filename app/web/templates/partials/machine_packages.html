@@ -1,0 +1,76 @@
+<div id="packages-panel">
+  <h2>Installed packages</h2>
+
+  {% if error %}
+    <div class="alert alert-error">
+      <p>Could not refresh packages: {{ error }}</p>
+    </div>
+  {% endif %}
+
+  {% if not machine.packages_updated_at %}
+    <p class="hint">
+      Not gathered yet — this happens automatically once the host key
+      fingerprint is confirmed above, and refreshes periodically after that
+      (and right after any update run on this machine).
+    </p>
+  {% else %}
+    <p class="hint">
+      {{ package_counts.total }} package{{ 's' if package_counts.total != 1 else '' }} installed
+      ({{ package_counts.apt }} apt, {{ package_counts.flatpak }} flatpak,
+      {{ package_counts.snap }} snap) — last refreshed
+      {{ machine.packages_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC.
+    </p>
+
+    <form method="get" action="/machines/{{ machine.id }}" class="search-form" id="package-filters">
+      <input type="search" name="pkg_q" value="{{ pkg_q }}" placeholder="Search packages by name...">
+      <select name="pkg_source">
+        <option value="" {% if not pkg_source %}selected{% endif %}>All sources</option>
+        <option value="apt" {% if pkg_source == 'apt' %}selected{% endif %}>apt</option>
+        <option value="flatpak" {% if pkg_source == 'flatpak' %}selected{% endif %}>flatpak</option>
+        <option value="snap" {% if pkg_source == 'snap' %}selected{% endif %}>snap</option>
+      </select>
+      <button type="submit" class="button">Filter</button>
+      {% if pkg_q or pkg_source %}
+        <a class="button button-secondary" href="/machines/{{ machine.id }}">Clear</a>
+      {% endif %}
+    </form>
+
+    {% if packages %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pkg in packages %}
+            <tr>
+              <td>{{ pkg.name }}</td>
+              <td>{{ pkg.version }}</td>
+              <td>{{ pkg.source.value }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No packages match this filter.</p>
+    {% endif %}
+  {% endif %}
+
+  <button
+    class="button"
+    hx-post="/machines/{{ machine.id }}/refresh-packages"
+    hx-include="#package-filters"
+    hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+    hx-target="#packages-panel"
+    hx-swap="outerHTML"
+    {% if not machine.host_key_fingerprint %}disabled{% endif %}
+  >
+    Refresh packages now
+  </button>
+  {% if not machine.host_key_fingerprint %}
+    <p class="hint">Confirm the server's key fingerprint above first.</p>
+  {% endif %}
+</div>

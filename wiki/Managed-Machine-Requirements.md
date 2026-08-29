@@ -1,8 +1,8 @@
 # Managed machine requirements
 
-What a Debian machine needs — network-wise, account-wise, and
-package-wise — to be added to and managed by debcontrol. Short version:
-a stock Debian install already satisfies almost all of this.
+What a machine needs — network-wise, account-wise, and package-wise — to
+be added to and managed by debcontrol. Short version: a stock Debian
+install already satisfies almost all of this.
 
 ## Network
 
@@ -17,9 +17,15 @@ a stock Debian install already satisfies almost all of this.
 
 ## OS
 
-- Debian (any reasonably current release). Nothing here is
-  Debian-version-specific, but debcontrol is not tested against other
-  distributions.
+- **Officially supported: Debian and its derivatives (e.g. Ubuntu), for as
+  long as each is supported by its own upstream/developer.** debcontrol
+  deliberately doesn't pin a fixed list of version numbers here — that
+  would just go stale — the policy is "any currently-supported deb-based
+  release." Nothing in debcontrol is Debian-version-specific: everything
+  it runs (`dpkg`, `apt`, `systemd`'s `shutdown`, and optionally `flatpak`/
+  `snap`) is standard tooling any Debian-based distribution ships or can
+  install, so a derivative needs nothing extra beyond what its own vendor
+  already supports.
 - `sshd` (the `openssh-server` package) installed and running. This is
   included by default on most Debian installation profiles (it's an
   explicit checkbox in the graphical installer, ticked by default when
@@ -76,16 +82,36 @@ reboot would pick up the newer one. If a command is missing (e.g. a
 container-like minimal rootfs without `util-linux`), that one fact is
 simply left empty/unknown rather than failing the whole refresh.
 
+## Installed packages — also no agent, no root
+
+**Machines → a machine → Installed packages** lists every apt package,
+plus every flatpak app and snap if either is installed, each with its
+version — refreshed on the same schedule as facts above, and again right
+after any update run on that machine. Also no root needed:
+
+| Source | Command | Notes |
+|---|---|---|
+| apt | `dpkg-query -W -f='${Package}\t${Version}\n'` | always present on Debian |
+| flatpak | `flatpak list --app --columns=application,version` | skipped if `flatpak` isn't installed |
+| snap | `snap list` | skipped if `snap` isn't installed |
+
+Neither flatpak nor snap is required — most Debian/Ubuntu server installs
+have neither by default — each is simply omitted from the list (and from
+"System updates" below) when absent. See `app/ssh/packages.py`.
+
 ## System updates and power actions — require root
 
-Three things always need root: running updates (**Machines → a machine →
-System updates**: `apt-get update`, then `dist-upgrade` or `full-upgrade`,
-then `autoremove`/`autoclean`), checking what's available without
-installing anything (the same panel's "Check for updates now" — still
-needs to `apt-get update` to get an accurate count), and reboot/shutdown
-(**Machines → a machine → Power**, `shutdown -r now` / `shutdown -h now`).
-See `app/ssh/updates.py` and `app/ssh/power.py` for the exact commands.
-Two ways to satisfy that:
+Running updates (**Machines → a machine → System updates**: `apt-get
+update`, then `dist-upgrade` or `full-upgrade`, then
+`autoremove`/`autoclean`, then `flatpak update` and `snap refresh` if
+installed) and reboot/shutdown (**Machines → a machine → Power**,
+`shutdown -r now` / `shutdown -h now`) always need root. Checking what's
+available without installing anything (the same panel's "Check for
+updates now") needs root only for the apt part (`apt-get update`) —
+flatpak's `flatpak remote-ls --updates` and snap's `snap refresh --list`
+are both read-only and don't. See `app/ssh/updates.py` and
+`app/ssh/power.py` for the exact commands. Two ways to satisfy the root
+requirement:
 
 - Connect as `root` directly (simplest, least isolated — many hardened
   Debian images disable direct root SSH login by policy, so this may not
@@ -95,6 +121,9 @@ Two ways to satisfy that:
   ```
   # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
   debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown
+  # Add these two only if flatpak/snap are installed and you want debcontrol
+  # to keep them updated too:
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/flatpak, /usr/bin/snap
   ```
   (replace `debcontrol` with whatever username you configured; on a
   pre-usrmerge system the paths are `/sbin/shutdown` instead — check with
@@ -102,7 +131,10 @@ Two ways to satisfy that:
   (non-interactive) — if passwordless sudo isn't set up correctly, the
   action fails immediately with a clear error instead of hanging forever
   waiting for a password that can never arrive over a non-interactive SSH
-  command.
+  command. Without the flatpak/snap sudoers lines, the apt part of an
+  update run still succeeds — the flatpak/snap steps just fail
+  individually (visible in the run's stored output) rather than blocking
+  the rest.
 
 Reboot and shutdown are double-confirmed in the UI (a dedicated warning
 page, then typing the machine's — or group's — name exactly) precisely
@@ -175,4 +207,6 @@ shell history.
       (or password auth explicitly enabled, if you're using that instead)
 - [ ] *(for System updates and Power)* passwordless sudo for `apt-get`
       and `shutdown` configured for that user (or it's `root`)
+- [ ] *(optional)* passwordless sudo for `flatpak`/`snap` too, if either is
+      installed and you want debcontrol to keep it updated
 - [ ] *(optional)* `curl` installed, if using self-registration

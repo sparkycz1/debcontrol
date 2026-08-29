@@ -51,7 +51,10 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "reboot_required": machine.reboot_required,
         "upgradable_count": machine.upgradable_count,
         "security_upgradable_count": machine.security_upgradable_count,
+        "flatpak_upgradable_count": machine.flatpak_upgradable_count,
+        "snap_upgradable_count": machine.snap_upgradable_count,
         "updates_checked_at": _isoformat(machine.updates_checked_at),
+        "packages_updated_at": _isoformat(machine.packages_updated_at),
     }
 
 

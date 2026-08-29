@@ -1,7 +1,9 @@
 # debcontrol wiki
 
-debcontrol is a web application for managing Debian machines over SSH.
-Every page requires a login; access is controlled by custom RBAC roles,
+debcontrol is a web application for managing Debian machines over SSH —
+officially, Debian and its derivatives (e.g. Ubuntu), for as long as each
+is supported by its own upstream. Every page requires a login; access is
+controlled by custom RBAC roles,
 and accounts can be local, LDAP, or OIDC (SSO), with optional TOTP
 two-factor — see [Architecture](Architecture.md#authentication--rbac) for
 the design and [Installation](Installation.md) for bootstrapping the first
@@ -39,7 +41,7 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 | Tab | Status |
 |---|---|
 | Dashboard | Post-login landing page: machine/update/reboot counts, upcoming scheduled tasks, recent audit activity — each section only shown if your role can see that area |
-| Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (incl. reboot-required), online/offline status, self-registration review, CSV bulk import (pending queue), free-text search, system updates + dry-run update checks, reboot/shutdown (double-confirmed) |
+| Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (incl. reboot-required), installed packages (apt/flatpak/snap, with versions, searchable), online/offline status, self-registration review, CSV bulk import (pending queue), free-text search, system updates (apt + flatpak + snap) with dry-run update checks, reboot/shutdown (double-confirmed) |
 | Machine groups | Organize machines into named groups; built-in "All machines" group; search, system updates, update checks, and power actions all scoped to a group |
 | Scheduling | Run any existing action (system update, update check, reboot, shut down) against a machine, a group, or "All machines" on a cron expression (UTC); enable/disable, run on demand, see when it last fired |
 | Audit | Read-only log of every mutating action across the app — who (account + source IP), what happened, its outcome, and when; searchable and filterable by outcome; hash-chained so tampering is detectable; exportable as CSV/JSON; optional live syslog forwarding (e.g. to a SIEM) |

@@ -84,6 +84,10 @@
   </section>
 
   <section class="panel">
+    {% include "partials/machine_packages.html" %}
+  </section>
+
+  <section class="panel">
     <h2>Test connection</h2>
     <button
       class="button"
@@ -107,9 +111,12 @@
       Always runs <code>apt-get update</code>, then the selected upgrade
       strategy, then <code>autoremove</code> and <code>autoclean</code>
       (the cleanup steps run regardless of whether the upgrade step
-      succeeded). Requires root — either the configured user is root, or
-      has passwordless sudo for <code>apt-get</code>. See the wiki page
-      "Managed Machine Requirements" for a sudoers example.
+      succeeded) — and, if installed, <code>flatpak update</code> and
+      <code>snap refresh</code> too. Requires root for apt — either the
+      configured user is root, or has passwordless sudo for
+      <code>apt-get</code> (and, recommended, <code>flatpak</code>/
+      <code>snap</code> too). See the wiki page "Managed Machine
+      Requirements" for a sudoers example.
     </p>
 
     {% include "partials/update_availability.html" %}

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from app.db.models.machine_update_run import UpgradeStrategy
-from app.ssh.updates import build_update_command, parse_upgradable_output
+from app.ssh.updates import (
+    build_update_command,
+    parse_flatpak_upgradable_output,
+    parse_snap_upgradable_output,
+    parse_upgradable_output,
+)
 
 
 def test_build_update_command_dist_upgrade():
@@ -39,13 +44,24 @@ def test_build_update_command_preserves_upgrade_exit_status():
     assert command.strip().endswith("2>&1")
 
 
+def test_build_update_command_includes_guarded_flatpak_and_snap():
+    command = build_update_command(UpgradeStrategy.DIST_UPGRADE)
+
+    assert "command -v flatpak" in command
+    assert "flatpak update -y --noninteractive" in command
+    assert "command -v snap" in command
+    assert "snap refresh" in command
+
+
 def test_parse_upgradable_output_counts_packages_and_security():
     raw = (
         "Listing...\n"
-        "===UPGRADABLE===\n"
+        "===APT_UPGRADABLE===\n"
         "firefox-esr/bookworm-security 115.13.0esr-1~deb12u1 amd64 "
         "[upgradable from: 114.0esr-1~deb12u1]\n"
         "bash/stable 5.2.15-2 all [upgradable from: 5.2.15-1]\n"
+        "===FLATPAK_UPGRADABLE===\n"
+        "===SNAP_UPGRADABLE===\n"
     )
 
     upgradable, security = parse_upgradable_output(raw)
@@ -55,7 +71,7 @@ def test_parse_upgradable_output_counts_packages_and_security():
 
 
 def test_parse_upgradable_output_no_updates():
-    raw = "===UPGRADABLE===\n"
+    raw = "===APT_UPGRADABLE===\n===FLATPAK_UPGRADABLE===\n===SNAP_UPGRADABLE===\n"
 
     upgradable, security = parse_upgradable_output(raw)
 
@@ -69,3 +85,40 @@ def test_parse_upgradable_output_missing_marker():
 
     assert upgradable == 0
     assert security == 0
+
+
+def test_parse_flatpak_upgradable_output_counts_and_dedupes():
+    raw = (
+        "===APT_UPGRADABLE===\n"
+        "===FLATPAK_UPGRADABLE===\n"
+        "org.mozilla.firefox\n"
+        "org.gimp.GIMP\n"
+        "org.mozilla.firefox\n"  # same app tracked from a second remote
+        "===SNAP_UPGRADABLE===\n"
+    )
+
+    assert parse_flatpak_upgradable_output(raw) == 2
+
+
+def test_parse_flatpak_upgradable_output_not_installed():
+    raw = "===APT_UPGRADABLE===\n===FLATPAK_UPGRADABLE===\n===SNAP_UPGRADABLE===\n"
+
+    assert parse_flatpak_upgradable_output(raw) == 0
+
+
+def test_parse_snap_upgradable_output_counts():
+    raw = (
+        "===APT_UPGRADABLE===\n"
+        "===FLATPAK_UPGRADABLE===\n"
+        "===SNAP_UPGRADABLE===\n"
+        "core22\n"
+        "lxd\n"
+    )
+
+    assert parse_snap_upgradable_output(raw) == 2
+
+
+def test_parse_snap_upgradable_output_not_installed():
+    raw = "===APT_UPGRADABLE===\n===FLATPAK_UPGRADABLE===\n===SNAP_UPGRADABLE===\n"
+
+    assert parse_snap_upgradable_output(raw) == 0

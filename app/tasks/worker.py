@@ -23,7 +23,9 @@ from app.tasks.jobs import (
     ping_all_machines,
     purge_old_audit_log_entries,
     refresh_all_machine_facts,
+    refresh_all_machine_packages,
     refresh_machine_facts,
+    refresh_machine_packages,
     run_machine_update,
     send_machine_power_command,
     test_machine_connection,
@@ -39,11 +41,12 @@ register_builtin_actions()
 async def startup(ctx: dict[str, Any]) -> None:
     configure_logging(get_settings().log_level)
     logger.info("arq worker started.")
-    # Kick off the first facts/update-availability sweeps shortly after
-    # startup rather than waiting a full FACTS_REFRESH_INTERVAL_SECONDS;
+    # Kick off the first facts/package/update-availability sweeps shortly
+    # after startup rather than waiting a full FACTS_REFRESH_INTERVAL_SECONDS;
     # each then keeps rescheduling itself.
     redis = ctx["redis"]
     await redis.enqueue_job("refresh_all_machine_facts", _defer_by=timedelta(seconds=10))
+    await redis.enqueue_job("refresh_all_machine_packages", _defer_by=timedelta(seconds=12))
     await redis.enqueue_job("check_all_machine_updates", _defer_by=timedelta(seconds=15))
 
 
@@ -60,6 +63,8 @@ class WorkerSettings:
         test_machine_connection,
         refresh_machine_facts,
         refresh_all_machine_facts,
+        refresh_machine_packages,
+        refresh_all_machine_packages,
         check_all_machine_updates,
         send_machine_power_command,
         run_due_scheduled_tasks,

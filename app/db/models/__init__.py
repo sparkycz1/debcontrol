@@ -3,6 +3,7 @@ from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission, Role, RolePermission
@@ -22,6 +23,7 @@ __all__ = [
     "AuthProvider",
     "Machine",
     "MachineGroup",
+    "MachinePackage",
     "MachineUpdateRun",
     "PendingMachine",
     "Permission",

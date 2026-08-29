@@ -1,9 +1,12 @@
 # debcontrol
 
-A web application for managing Debian machines over SSH. Every page
-requires a login; access is controlled by custom roles (RBAC) an admin
-defines, and accounts can authenticate locally, against LDAP, or via OIDC
-SSO, with optional TOTP two-factor for local/LDAP accounts. See
+A web application for managing Debian machines over SSH. Officially
+supported: Debian and its derivatives (e.g. Ubuntu), for as long as each
+is supported by its own upstream — see the wiki:
+[Managed Machine Requirements](wiki/Managed-Machine-Requirements.md#os).
+Every page requires a login; access is controlled by custom roles (RBAC)
+an admin defines, and accounts can authenticate locally, against LDAP, or
+via OIDC SSO, with optional TOTP two-factor for local/LDAP accounts. See
 [wiki/Architecture.md](wiki/Architecture.md#authentication--rbac) for the
 design and [wiki/Installation.md](wiki/Installation.md) for bootstrapping
 the first admin account.
@@ -260,7 +263,12 @@ wiki/           documentation, meant to become the GitHub wiki
   [app/ssh/facts.py](app/ssh/facts.py); interval configurable via
   `FACTS_REFRESH_INTERVAL_SECONDS`), and shows an online/offline status
   badge from a lightweight per-minute reachability check
-  ([app/ssh/reachability.py](app/ssh/reachability.py)). Machines can also
+  ([app/ssh/reachability.py](app/ssh/reachability.py)). An **Installed
+  packages** panel lists every apt package (and flatpak app / snap, if
+  either is present), each with its version, searchable/filterable by
+  source — refreshed on the same schedule as facts, and again right after
+  any update run on that machine (see
+  [app/ssh/packages.py](app/ssh/packages.py)). Machines can also
   self-register via `POST /api/inform` (bearer-token authenticated — either
   the shared `INFORM_TOKEN` or a per-user API token, see "My account" below)
   and show up as "pending" for review before being added; a CSV **Bulk
@@ -270,14 +278,17 @@ wiki/           documentation, meant to become the GitHub wiki
   (name, IP, hostname, OS/kernel version, username, notes) across the
   machine list. Each machine has a **System updates** panel: always
   `apt-get update`, then `dist-upgrade` or `full-upgrade` (your choice),
-  then `autoremove`/`autoclean` unconditionally — runs in the background
-  (can take a while) with a live-updating status page; a "Check for
-  updates now" dry run shows how many packages (and how many security
-  ones) are available without installing anything; a reboot-required
+  then `autoremove`/`autoclean` unconditionally, then `flatpak update` and
+  `snap refresh` too if either is installed — one combined run, one
+  combined output — runs in the background (can take a while) with a
+  live-updating status page; a "Check for updates now" dry run shows how
+  many apt packages (and how many security ones), flatpak apps, and snaps
+  are available to update, without installing anything. A reboot-required
   badge appears automatically when a newer kernel is installed but not
-  yet running. Both the update and the check require root or passwordless
-  sudo for `apt-get` (see the wiki: Managed Machine Requirements). See
-  [app/ssh/updates.py](app/ssh/updates.py). A **Power** panel sends
+  yet running. apt requires root or passwordless sudo for `apt-get`;
+  flatpak/snap checking is read-only, and updating them is recommended to
+  also go through passwordless sudo (see the wiki: Managed Machine
+  Requirements). See [app/ssh/updates.py](app/ssh/updates.py). A **Power** panel sends
   `shutdown -r/-h now` (reboot/shut down), gated behind a dedicated
   confirmation page that requires typing the machine's exact name — see
   [app/ssh/power.py](app/ssh/power.py).

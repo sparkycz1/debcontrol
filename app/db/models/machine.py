@@ -55,9 +55,14 @@ class Machine(Base):
     (`FACTS_REFRESH_INTERVAL_SECONDS`). None of that needs root.
     `is_reachable`/`last_ping_at` come from a much cheaper, unauthenticated
     TCP-reachability check run every minute. `upgradable_count` /
-    `security_upgradable_count` / `updates_checked_at` come from a
-    separate, root-requiring check (see `app.ssh.updates.check_updates`) on
-    the same refresh schedule.
+    `security_upgradable_count` (apt) and `flatpak_upgradable_count` /
+    `snap_upgradable_count` come from a separate, root-requiring check (see
+    `app.ssh.updates.check_updates`) on the same refresh schedule, also
+    stamped in `updates_checked_at`. The actual installed-package list
+    (apt/flatpak/snap, with versions) doesn't live on this model — it's a
+    separate `MachinePackage` row per package, refreshed on the same
+    schedule (`packages_updated_at`) and additionally right after a
+    machine's own update run finishes — see `app.tasks.jobs`.
     """
 
     __tablename__ = "machines"
@@ -100,10 +105,16 @@ class Machine(Base):
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    # --- apt update availability (requires root/sudo — see app.ssh.updates) ---
+    # --- Update availability: apt, flatpak, snap (requires root/sudo for
+    # apt-get update; flatpak/snap listing is read-only — see app.ssh.updates) ---
     upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     security_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    flatpak_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snap_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updates_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # --- Installed-package snapshot (see MachinePackage / app.ssh.packages) ---
+    packages_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
