@@ -135,18 +135,34 @@ reachable without a session.
 ## Updating
 
 ```bash
+./scripts/upgrade.sh
+```
+
+Does the whole thing: refuses to run with uncommitted local changes or
+outside a git checkout, `git fetch`/`git pull --ff-only` on the current
+branch (fails loudly rather than merging or silently diverging), detects
+whether the bundled Caddy is currently running and includes
+`docker-compose.caddy.yml` automatically if so, then `docker compose build`
++ `docker compose up -d` and prints `docker compose ps` at the end. Safe to
+run again if something looks off partway through — every step it takes is
+already idempotent.
+
+Equivalent by hand, if you'd rather see each step yourself:
+
+```bash
 git pull
 docker compose up -d --build
 # or, with Caddy:
 docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 ```
 
-The `migrate` service re-runs on every `up`, applying any new Alembic
-migrations before `web`/`worker` start.
+Either way, the `migrate` service re-runs on every `up`, applying any new
+Alembic migrations before `web`/`worker` start — there's no separate
+"run migrations" step.
 
-Postgres and Redis are pinned to exact patch versions in
-`docker-compose.yml` (`postgres:18.6`, `redis:8.10.1`) precisely so that
-`git pull && docker compose up -d --build` never silently upgrades either
-of them. Bumping those versions is a deliberate, separate step: edit the
-tag in `docker-compose.yml`, test against it, and commit that change on
-its own.
+Postgres, Redis, and Caddy are pinned to exact versions in
+`docker-compose.yml`/`docker-compose.caddy.yml` (`postgres:18.6`,
+`redis:8.10.1`, `caddy:2.11.4`) precisely so that an upgrade — scripted or
+by hand — never silently bumps any of them. Bumping one of those versions
+is a deliberate, separate step: edit the tag, test against it, and commit
+that change on its own.

@@ -187,6 +187,12 @@ in — forgotten password, lost TOTP device — `scripts/reset_account.py` does
 the same thing from the server console: `docker compose exec web python
 scripts/reset_account.py --username admin [--disable-totp]`.
 
+**Upgrading later** is one command: `./scripts/upgrade.sh` — pulls, rebuilds,
+and restarts (Caddy included automatically if it's running), refusing to
+run over uncommitted local changes. See
+[wiki/Installation.md](wiki/Installation.md#updating) for what it does step
+by step, or to do it by hand instead.
+
 ## Local development without Docker (DB/Redis still via Docker)
 
 ```bash
@@ -234,7 +240,7 @@ app/
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
 scripts/        helper scripts (secret generation, first-admin bootstrap,
-                console-only account recovery)
+                console-only account recovery, one-command upgrade)
 wiki/           documentation, meant to become the GitHub wiki
 ```
 

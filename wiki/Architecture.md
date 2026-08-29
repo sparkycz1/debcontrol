@@ -68,7 +68,7 @@ app/
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
 scripts/        helper scripts (secret generation, first-admin bootstrap,
-                console-only account recovery)
+                console-only account recovery, one-command upgrade)
 wiki/           this documentation
 ```
 
