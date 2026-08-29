@@ -109,6 +109,48 @@ async def update_audit_retention(
     return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/dashboard-trends-retention", dependencies=[_manage, Depends(verify_csrf)])
+async def update_dashboard_trends_retention(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    retention_days: str = Form(""),
+) -> Response:
+    """Same shape as `update_audit_retention` above, for the daily fleet
+    snapshots behind the Dashboard's trend chart(s) — see
+    `app.db.models.fleet_snapshot.FleetSnapshot` and
+    `app.tasks.jobs.purge_old_fleet_snapshots`."""
+    app_settings = await get_or_create_app_settings(db)
+    raw = retention_days.strip()
+
+    if raw == "":
+        new_value = None
+    else:
+        try:
+            new_value = int(raw)
+            if new_value < 0:
+                raise ValueError("must not be negative")
+        except ValueError:
+            return await _render_settings(
+                request, db, [f'"{raw}" isn\'t a whole number of days (0 or more).']
+            )
+
+    app_settings.dashboard_trends_retention_days = new_value
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.dashboard_trends_retention.update",
+        summary=(
+            f"Set dashboard trends retention to {new_value} day(s)"
+            if new_value is not None
+            else "Set dashboard trends retention to keep forever"
+        ),
+    )
+
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])
 async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     """Recompute the audit log's hash chain on demand — see

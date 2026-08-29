@@ -66,6 +66,18 @@ class AppSettings(Base):
     # is a much worse surprise than an unbounded table.
     audit_log_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Same idea, for the daily fleet_snapshots row written by
+    # app.tasks.jobs.record_fleet_snapshot and purged by
+    # app.tasks.jobs.purge_old_fleet_snapshots. Unlike the audit log, this
+    # defaults to a bounded window (90 days) rather than "keep forever" —
+    # it's a lightweight, purely-derived trend for the Dashboard chart, not
+    # a compliance/audit record, so there's no reason to accumulate it
+    # unboundedly by default. NULL still means "keep forever" if an operator
+    # wants that.
+    dashboard_trends_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=90
+    )
+
     # --- LDAP login (app.auth.ldap) ---
     ldap_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ldap_server_uri: Mapped[str | None] = mapped_column(String(255), nullable=True)

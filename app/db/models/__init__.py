@@ -1,6 +1,7 @@
 from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
+from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
@@ -21,6 +22,7 @@ __all__ = [
     "AuditOutcome",
     "AuthMethod",
     "AuthProvider",
+    "FleetSnapshot",
     "Machine",
     "MachineGroup",
     "MachinePackage",

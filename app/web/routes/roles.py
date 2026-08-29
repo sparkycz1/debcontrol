@@ -72,7 +72,7 @@ async def new_role_form(request: Request) -> Response:
         {
             "all_permissions": list(Permission),
             "errors": [],
-            "form": {"name": "", "description": "", "permissions": []},
+            "form": {"name": "", "description": "", "permissions": [], "require_totp": False},
             "csrf_token": request.state.csrf_token,
         },
     )
@@ -84,12 +84,14 @@ async def create_role(request: Request, db: AsyncSession = Depends(get_db)) -> R
     name = str(form.get("name", ""))
     description = str(form.get("description", ""))
     permission_values = [str(v) for v in form.getlist("permissions")]
+    require_totp = bool(form.get("require_totp", ""))
 
     try:
         payload = RoleSave(
             name=name,
             description=description or None,
             permissions=_permissions_from_values(permission_values),
+            require_totp=require_totp,
         )
     except ValueError as exc:
         await log_event(
@@ -109,13 +111,16 @@ async def create_role(request: Request, db: AsyncSession = Depends(get_db)) -> R
                     "name": name,
                     "description": description,
                     "permissions": permission_values,
+                    "require_totp": require_totp,
                 },
                 "csrf_token": request.state.csrf_token,
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
-    role = Role(name=payload.name, description=payload.description)
+    role = Role(
+        name=payload.name, description=payload.description, require_totp=payload.require_totp
+    )
     role.permission_grants = [RolePermission(permission=p) for p in payload.permissions]
     db.add(role)
     try:
@@ -132,6 +137,7 @@ async def create_role(request: Request, db: AsyncSession = Depends(get_db)) -> R
                     "name": name,
                     "description": description,
                     "permissions": permission_values,
+                    "require_totp": require_totp,
                 },
                 "csrf_token": request.state.csrf_token,
             },
@@ -163,6 +169,7 @@ async def edit_role_form(
             "role": role,
             "all_permissions": list(Permission),
             "current_permissions": role.permissions,
+            "require_totp": role.require_totp,
             "errors": [],
             "csrf_token": request.state.csrf_token,
         },
@@ -178,6 +185,7 @@ async def update_role(
     name = str(form.get("name", ""))
     description = str(form.get("description", ""))
     permission_values = [str(v) for v in form.getlist("permissions")]
+    require_totp = bool(form.get("require_totp", ""))
 
     def _rerender(errors: list[str], status_code: int) -> Response:
         return templates.TemplateResponse(
@@ -187,6 +195,7 @@ async def update_role(
                 "role": role,
                 "all_permissions": list(Permission),
                 "current_permissions": set(_permissions_from_values(permission_values)),
+                "require_totp": require_totp,
                 "errors": errors,
                 "csrf_token": request.state.csrf_token,
             },
@@ -198,6 +207,7 @@ async def update_role(
             name=name,
             description=description or None,
             permissions=_permissions_from_values(permission_values),
+            require_totp=require_totp,
         )
     except ValueError as exc:
         return _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
@@ -220,6 +230,7 @@ async def update_role(
 
     role.name = payload.name
     role.description = payload.description
+    role.require_totp = payload.require_totp
     role.permission_grants = [RolePermission(permission=p) for p in payload.permissions]
 
     try:

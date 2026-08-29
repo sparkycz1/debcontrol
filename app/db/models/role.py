@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, Enum, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -61,6 +61,15 @@ class Role(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # When true, every user holding this role must have `User.totp_enabled`
+    # to do anything except enroll TOTP or log out — enforced live, on every
+    # request, in `app.auth.middleware` (session requests) and
+    # `app.auth.dependencies.get_api_token_user` (API-token requests), not
+    # just steered at login time like `User.must_change_password` is. See
+    # those modules for the enforcement and wiki/Architecture.md for the
+    # OIDC-exemption reasoning (OIDC accounts can't enroll TOTP here at all —
+    # a role with this set would otherwise lock them out unconditionally).
+    require_totp: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

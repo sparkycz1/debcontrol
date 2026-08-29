@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/charts.html" import sparkline %}
 
 {% block title %}Dashboard — debcontrol{% endblock %}
 
@@ -44,6 +45,23 @@
       <a href="/machines">All machines</a>{% if group_count is not none %} · <a href="/machine-groups">{{ group_count }} group(s)</a>{% endif %}
       {% if machine_stats.pending_count %} · <a href="/machines">{{ machine_stats.pending_count }} pending self-registration(s)</a>{% endif %}
     </p>
+  </section>
+  {% endif %}
+
+  {% if fleet_snapshots is defined %}
+  <section class="panel">
+    <h2>Fleet trends</h2>
+    <p class="hint">
+      One snapshot per day, {{ fleet_snapshots[0].snapshot_date }} to
+      {{ fleet_snapshots[-1].snapshot_date }} — see the "Dashboard trends"
+      section on <a href="/settings">Settings</a> for how long these are
+      kept. Also available as raw data via
+      <code>GET /api/v1/dashboard/trends</code>.
+    </p>
+    <h3>Online machines</h3>
+    {{ sparkline(fleet_snapshots | map(attribute='online_machines') | list, '#46bf8a') }}
+    <h3>Pending updates (apt/flatpak/snap combined)</h3>
+    {{ sparkline(fleet_snapshots | map(attribute='needs_updates') | list, '#e0ab4a') }}
   </section>
   {% endif %}
 

@@ -16,6 +16,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     AppSettings,
     AuditChainState,
     AuditLogEntry,
+    FleetSnapshot,
     Machine,
     MachineGroup,
     MachineUpdateRun,

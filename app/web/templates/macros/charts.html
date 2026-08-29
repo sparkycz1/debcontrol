@@ -1,0 +1,37 @@
+{# Dependency-free inline SVG charts, generated entirely server-side —
+   this app's CSP forbids external chart libraries (no external CDN, and
+   generated markup here only ever uses SVG presentation attributes like
+   `fill=`/`stroke=`, never a `style=` attribute or a `<style>` block, so
+   nothing here needs `style-src` to allow anything beyond 'self').
+
+   `sparkline` draws one polyline for a series of numbers, scaled to fit its
+   own min/max — reusable anywhere a small trend line is useful, not just
+   the Dashboard (see app/web/routes/dashboard.py for the current caller). #}
+
+{% macro sparkline(values, color, width=560, height=120, pad=12) %}
+  {% set n = values | length %}
+  {% set vmin = values | min %}
+  {% set vmax = values | max %}
+  {% set vrange = (vmax - vmin) if vmax != vmin else 1 %}
+  {% set step = ((width - 2 * pad) / (n - 1)) if n > 1 else 0 %}
+  {% set coords = [] %}
+  {% for v in values %}
+    {% set x = pad + loop.index0 * step %}
+    {% set y = height - pad - ((v - vmin) / vrange) * (height - 2 * pad) %}
+    {% set _ = coords.append((x | round(1) | string) ~ "," ~ (y | round(1) | string)) %}
+  {% endfor %}
+  <svg viewBox="0 0 {{ width }} {{ height }}" width="100%" height="{{ height }}"
+       preserveAspectRatio="none" role="img" aria-label="Trend chart">
+    <polyline fill="none" stroke="{{ color }}" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"
+              points="{{ coords | join(' ') }}"></polyline>
+    {% for point in coords %}
+      {% set xy = point.split(',') %}
+      <circle cx="{{ xy[0] }}" cy="{{ xy[1] }}" r="2.5" fill="{{ color }}"></circle>
+    {% endfor %}
+  </svg>
+  <p class="hint">
+    {{ vmin }}&ndash;{{ vmax }} over {{ n }} day{{ 's' if n != 1 else '' }}
+    (latest: {{ values[-1] }})
+  </p>
+{% endmacro %}

@@ -6,9 +6,11 @@ import csv
 import io
 import re
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,21 +24,24 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
+from app.schemas.machine_config import MachineConfigExport
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
     trigger_updates,
 )
+from app.services.machine_config import export_machine_config, import_machine_config
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
+from app.web.routes.audit import _csv_safe
 from app.web.templating import templates
 
 # Typed phrase to confirm a power action against an arbitrary ad-hoc
@@ -132,6 +137,9 @@ async def _get_packages(
         query = query.where(MachinePackage.held.is_(True))
     result = await db.execute(query.order_by(MachinePackage.source, MachinePackage.name))
     return list(result.scalars().all())
+
+
+_UPDATE_HISTORY_PAGE_SIZE = 50
 
 
 async def _get_update_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> MachineUpdateRun:
@@ -352,6 +360,137 @@ async def import_machines_submit(
             "errors": [],
             "result": {"created": created, "skipped": skipped},
         },
+    )
+
+
+_CONFIG_EXPORT_CSV_FIELDS = (
+    "name",
+    "ip_address",
+    "port",
+    "username",
+    "auth_method",
+    "group",
+    "description",
+    "is_active",
+)
+
+
+@router.get("/config/export")
+async def export_machine_config_endpoint(
+    request: Request, db: AsyncSession = Depends(get_db), format: str = "json"  # noqa: A002
+) -> Response:
+    """Export every existing (non-pending) machine's and group's *structural*
+    configuration — deliberately never `secret_encrypted` or
+    `host_key_fingerprint`, see `app.services.machine_config`'s module
+    docstring. JSON includes both machines and groups; CSV (machines only —
+    groups don't flatten to CSV sensibly) is a plain download link, same
+    pattern as the audit log's export (see `app/web/routes/audit.py`)."""
+    export = await export_machine_config(db)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.config_export",
+        summary=(
+            f"Exported configuration for {len(export.machines)} machine(s) and "
+            f"{len(export.groups)} group(s) as {format}"
+        ),
+        details={
+            "machine_count": len(export.machines),
+            "group_count": len(export.groups),
+            "format": format,
+        },
+    )
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    if format == "csv":
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=_CONFIG_EXPORT_CSV_FIELDS)
+        writer.writeheader()
+        for machine in export.machines:
+            row = machine.model_dump()
+            row["auth_method"] = machine.auth_method.value
+            writer.writerow({k: _csv_safe(v) for k, v in row.items()})
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="machines-{timestamp}.csv"'
+            },
+        )
+
+    return Response(
+        content=export.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="machine-config-{timestamp}.json"'
+        },
+    )
+
+
+@router.get("/config/import")
+async def import_machine_config_form(request: Request) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/config_import.html",
+        {"csrf_token": csrf_token, "errors": [], "result": None},
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/config/import", dependencies=[_manage, Depends(verify_csrf)])
+async def import_machine_config_submit(
+    request: Request, db: AsyncSession = Depends(get_db), json_text: str = Form("")
+) -> Response:
+    """Create real `Machine`/`MachineGroup` rows from a pasted JSON export
+    (see `GET /machines/config/export`) — not the pending-review queue the
+    CSV bulk-import above uses, since this is for restoring/migrating
+    *known* configuration rather than discovering unknown hosts. See
+    `app.services.machine_config` for the full conflict-handling and
+    security policy this implements."""
+    text = json_text.strip()
+    if not text:
+        return templates.TemplateResponse(
+            request,
+            "machines/config_import.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "errors": ["Paste some exported JSON text first."],
+                "result": None,
+            },
+        )
+
+    try:
+        payload = MachineConfigExport.model_validate_json(text)
+    except ValidationError as exc:
+        return templates.TemplateResponse(
+            request,
+            "machines/config_import.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "errors": [f"Invalid configuration JSON: {exc}"],
+                "result": None,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    result = await import_machine_config(db, payload)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.config_import",
+        summary=result.summary(),
+        details=result.to_dict(),
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "machines/config_import.html",
+        {"csrf_token": request.state.csrf_token, "errors": [], "result": result},
     )
 
 
@@ -1024,6 +1163,49 @@ async def trigger_machine_update(
 
     return RedirectResponse(
         url=f"/machines/{machine.id}/updates/{run.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/{machine_id}/updates")
+async def machine_update_history(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    status_filter: str = "",
+    page: int = 1,
+) -> Response:
+    """Every update run for this machine, newest first, paginated the same
+    way `/audit` is (offset/limit, one extra row fetched to know whether an
+    "Older" page exists) — the machine detail page's "Recent runs" table
+    only ever shows the last 5; this is the full history behind it."""
+    machine = await _get_machine_or_404(machine_id, db)
+    page = max(page, 1)
+
+    query = select(MachineUpdateRun).where(MachineUpdateRun.machine_id == machine_id)
+    if status_filter in {s.value for s in UpdateRunStatus}:
+        query = query.where(MachineUpdateRun.status == UpdateRunStatus(status_filter))
+
+    offset = (page - 1) * _UPDATE_HISTORY_PAGE_SIZE
+    result = await db.execute(
+        query.order_by(MachineUpdateRun.created_at.desc())
+        .offset(offset)
+        .limit(_UPDATE_HISTORY_PAGE_SIZE + 1)
+    )
+    runs = list(result.scalars().all())
+    has_older = len(runs) > _UPDATE_HISTORY_PAGE_SIZE
+    runs = runs[:_UPDATE_HISTORY_PAGE_SIZE]
+
+    return templates.TemplateResponse(
+        request,
+        "machines/update_history.html",
+        {
+            "machine": machine,
+            "runs": runs,
+            "statuses": list(UpdateRunStatus),
+            "status_filter": status_filter,
+            "page": page,
+            "has_older": has_older,
+        },
     )
 
 
