@@ -33,6 +33,46 @@
     <dt>Uptime</dt><dd>{{ machine.uptime_seconds | format_uptime }}</dd>
     <dt>Processes</dt>
     <dd>{{ machine.process_count if machine.process_count is not none else '—' }}</dd>
+    <dt>Network</dt>
+    <dd>
+      {% if machine.network_interfaces %}
+        {% for iface in machine.network_interfaces %}
+          {{ iface.interface }}: <code>{{ iface.address }}</code>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      {% else %}
+        —
+      {% endif %}
+    </dd>
+    <dt>Filesystems</dt>
+    <dd>
+      {% if machine.filesystems %}
+        <table class="data-table">
+          <thead>
+            <tr><th>Mount</th><th>Used</th><th>Size</th><th>Use%</th></tr>
+          </thead>
+          <tbody>
+            {% for fs in machine.filesystems %}
+              <tr>
+                <td><code>{{ fs.mount }}</code></td>
+                <td>{{ '%.1f GB' % (fs.used_bytes / 1073741824) }}</td>
+                <td>{{ '%.1f GB' % (fs.size_bytes / 1073741824) }}</td>
+                <td>
+                  {% if fs.use_percent is not none %}
+                    <span class="badge {{ 'badge-error' if fs.use_percent >= 90 else ('badge-warn' if fs.use_percent >= 75 else 'badge-ok') }}">
+                      {{ fs.use_percent }}%
+                    </span>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        —
+      {% endif %}
+    </dd>
     <dt>Last refreshed</dt><dd>{{ machine.facts_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC</dd>
   </dl>
 {% endif %}

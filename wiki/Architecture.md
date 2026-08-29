@@ -489,6 +489,24 @@ specifically for portability over a minimal image:
   base system the way `coreutils` is, so counting numeric `/proc` entries
   gets the same answer without assuming it's installed.
 
+Two more, same round trip, same conventions:
+
+- **Filesystem usage**: `df -B1 --output=target,size,used,avail,pcent`,
+  excluding `tmpfs`/`devtmpfs`/`squashfs`/`overlay` — `-B1` forces byte
+  units so the parser never has to guess whether `df` rounded to
+  human-readable units. Parsed by taking the *last four* whitespace-
+  separated fields as size/used/avail/pcent and joining everything before
+  that as the mount point — a mount point containing a space would break
+  this, which is an accepted, documented edge case rather than something
+  worth a more fragile parsing scheme for.
+- **Network interfaces**: `ip -4 -o addr show scope global`, filtered to
+  global-scope (i.e. not loopback/link-local) IPv4 addresses — `iproute2`
+  is the one dependency here that isn't `coreutils`/`util-linux`, but it's
+  standard on any non-minimal Debian/Ubuntu install and is what modern
+  Debian ships instead of `net-tools`' `ifconfig`. Missing entirely (some
+  minimal containers) just yields an empty list, same graceful-degradation
+  pattern as every other fact here.
+
 ### flatpak and snap: optional, guarded, never blocking apt
 
 System updates and the update-availability check both cover three package
@@ -562,6 +580,53 @@ refresh and a fresh update-availability check for its machine right after
 finishing, success or failure, so running an update doesn't leave the
 page showing stale counts and an outdated package list until the next
 sweep.
+
+`held` (`apt-mark showhold`) is a per-row boolean on `MachinePackage`
+rather than a separate list, since it's a property *of* an already-listed
+apt package, not a fourth package source — a held row is still gathered
+and stored exactly like any other apt entry, just flagged. flatpak/snap
+rows are always `held=False`; neither package manager has the concept.
+
+### Fleet-wide package search: the other direction
+
+Every other package view in the app answers "what does *this* machine
+have installed"; **Machines → Package search** answers the opposite
+question — "which machines have *this* installed, and what version" —
+the one that actually matters right after a CVE announcement. It's a
+single query across `MachinePackage` with an optional source filter, no
+new storage: the per-machine snapshot table already built for the
+per-machine view is exactly the index this needs, just queried the other
+way round. Capped at 500 rows (`_PACKAGE_SEARCH_LIMIT`) with a "narrow
+your search" notice past that, the same kind of documented, deliberate
+limit as the audit log export's unpaginated query — a fleet-wide search
+is an infrequent, human-triggered lookup, not a hot path worth building
+real pagination for yet.
+
+`MachinePackage.machine` is the one relationship deliberately added back
+onto that model (`viewonly=True`, no `back_populates` — `Machine` still
+has no `packages` collection of its own, for the same eager-loading-cost
+reason as before) purely so the search results page can show which
+machine each hit belongs to without a second round-trip per row.
+
+### Bulk actions from the machine list: the same service functions, a different source of `Machine` rows
+
+**Machines** list checkboxes (system update, check-updates, reboot/
+shutdown) call the exact same `app/services/machine_actions.py` functions
+(`trigger_updates`, `trigger_check_updates`, `send_power_to_machines`)
+that the group and "All machines" buttons already used — the only
+difference is where the `list[Machine]` comes from: `WHERE id IN
+(...)` over an ad-hoc checkbox selection instead of a group's membership
+or every machine. This is why bulk update reuses the *group* batch-results
+page (`/machine-groups/batches/{batch_id}`) rather than a new one — a
+`MachineUpdateRun.batch_id` was never tied to groups specifically, just
+"triggered together," so there was nothing group-specific to duplicate.
+
+Power still requires typing a confirmation phrase, same as every other
+power action — but an ad-hoc selection has no name to ask for the way a
+group does, so it uses a fixed phrase (`SELECTED MACHINES`, mirroring
+"All machines"'s `ALL MACHINES`) and carries the selected IDs forward as
+hidden form fields on the confirmation page, since there's no group row
+to look the selection back up from by id.
 
 ### Officially supporting deb-based distributions generically
 

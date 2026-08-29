@@ -104,6 +104,11 @@ class Machine(Base):
     # (`ls /proc/[0-9]*`) — both refreshed alongside the rest of the facts.
     uptime_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     process_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Each a list of dicts (see app.ssh.facts.parse_facts_output) — mounted
+    # filesystems' used/free/percent (via `df`, pseudo-filesystems excluded),
+    # and IPv4 addresses per network interface (via `ip addr`).
+    filesystems: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    network_interfaces: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---

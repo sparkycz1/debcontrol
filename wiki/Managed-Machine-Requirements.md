@@ -79,13 +79,17 @@ deliberately only uses tools present on a stock Debian install — see
 | Disks | `lsblk` | `util-linux` |
 | Uptime | `/proc/uptime` via `awk` | kernel + `mawk` |
 | Process count | `ls /proc/[0-9]*` | `coreutils` (no `procps`/`ps` needed) |
+| Filesystem usage (used/free/%) | `df -B1 --output=...` | `coreutils` |
+| Network interfaces + IPv4 addresses | `ip -4 -o addr show` | `iproute2` |
 
 None of these need root — including "reboot required," which is worked
 out by comparing the running kernel (`uname -r`) against the newest
 `linux-image-*` package `dpkg` knows is installed; if they differ, a
 reboot would pick up the newer one. If a command is missing (e.g. a
-container-like minimal rootfs without `util-linux`), that one fact is
-simply left empty/unknown rather than failing the whole refresh.
+container-like minimal rootfs without `util-linux` or `iproute2`), that
+one fact is simply left empty/unknown rather than failing the whole
+refresh. Filesystem usage excludes pseudo-filesystems (`tmpfs`,
+`devtmpfs`, `squashfs`, `overlay`) — only real, sized mounts are shown.
 
 ## Installed packages — also no agent, no root
 
@@ -99,10 +103,23 @@ after any update run on that machine. Also no root needed:
 | apt | `dpkg-query -W -f='${Package}\t${Version}\n'` | always present on Debian |
 | flatpak | `flatpak list --app --columns=application,version` | skipped if `flatpak` isn't installed |
 | snap | `snap list` | skipped if `snap` isn't installed |
+| apt held/pinned | `apt-mark showhold` | marks matching apt entries above |
 
 Neither flatpak nor snap is required — most Debian/Ubuntu server installs
 have neither by default — each is simply omitted from the list (and from
 "System updates" below) when absent. See `app/ssh/packages.py`.
+
+A package apt has been told to hold (`apt-mark hold <package>`, e.g. to
+pin a kernel version or work around a known-bad release) shows a "held"
+badge in the list — held packages are still installed and listed
+normally, they're just excluded from `dist-upgrade`/`full-upgrade` until
+unheld, which is worth knowing when a machine's upgrade count doesn't
+match your expectations.
+
+**Fleet-wide search**: **Machines → Package search** looks across every
+machine's most recent package snapshot at once — useful after a CVE
+announcement to find every machine still running a vulnerable version of
+something, without opening each machine individually.
 
 ## System updates and power actions — require root
 
@@ -149,6 +166,15 @@ updates, reboot/shutdown — can also be put on a cron schedule (see
 get a second confirmation prompt each time it fires, but destructive
 actions are clearly flagged when setting one up. There's no scheduled
 "power on" — the app has no way to turn on a machine that's already off.
+
+All three can also be triggered against an ad-hoc selection right from
+the **Machines** list — tick the checkboxes you want (a "select all" box
+in the header ticks every visible row) and use the action bar below the
+table — without first having to put those machines in a group. Power
+still requires typing a fixed confirmation phrase (`SELECTED MACHINES`),
+same double-confirmation as everywhere else. This is on top of, not
+instead of, the existing group and "All machines" versions of the same
+actions.
 
 Config-file conflicts during an upgrade are resolved automatically in
 favor of keeping your existing config (`--force-confdef --force-confold`)

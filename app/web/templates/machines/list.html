@@ -6,6 +6,7 @@
   <div class="page-header">
     <h1>Machines</h1>
     <div class="page-header-actions">
+      <a class="button button-secondary" href="/machines/package-search">Package search</a>
       <a class="button button-secondary" href="/machines/import">Bulk import</a>
       <a class="button" href="/machines/new">Add machine</a>
     </div>
@@ -56,6 +57,15 @@
 
   {% include "partials/machine_search_form.html" %}
 
+  {% if bulk_error %}
+    <div class="alert alert-error"><p>{{ bulk_error }}</p></div>
+  {% endif %}
+  {% if power_skipped %}
+    <div class="alert alert-warn">
+      <p>{{ power_skipped }} selected machine(s) skipped — no confirmed host key yet.</p>
+    </div>
+  {% endif %}
+
   {% if not machines %}
     <div class="empty-state">
       {% if q %}
@@ -66,53 +76,76 @@
       {% endif %}
     </div>
   {% else %}
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>IP address</th>
-          <th>Hostname</th>
-          <th>Group</th>
-          <th>Status</th>
-          <th>Updates</th>
-          <th>Host key</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for machine in machines %}
+    <form method="post" class="form" id="bulk-actions-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <table class="data-table">
+        <thead>
           <tr>
-            <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
-            <td>{{ machine.ip_address }}</td>
-            <td>{{ machine.discovered_hostname or '—' }}</td>
-            <td>
-              {% if machine.group %}
-                <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
-              {% else %}
-                <span class="hint">—</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if machine.is_reachable is none %}
-                <span class="badge badge-warn">unknown</span>
-              {% elif machine.is_reachable %}
-                <span class="badge badge-ok">online</span>
-              {% else %}
-                <span class="badge badge-error">offline</span>
-              {% endif %}
-            </td>
-            <td>{% include "partials/machine_update_status_cell.html" %}</td>
-            <td>
-              {% if machine.host_key_fingerprint %}
-                <span class="badge badge-ok">pinned</span>
-              {% else %}
-                <span class="badge badge-warn">unconfirmed</span>
-              {% endif %}
-            </td>
-            <td><a href="/machines/{{ machine.id }}">Details</a></td>
+            <th><input type="checkbox" data-select-all aria-label="Select all machines"></th>
+            <th>Name</th>
+            <th>IP address</th>
+            <th>Hostname</th>
+            <th>Group</th>
+            <th>Status</th>
+            <th>Updates</th>
+            <th>Host key</th>
+            <th></th>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {% for machine in machines %}
+            <tr>
+              <td><input type="checkbox" name="machine_ids" value="{{ machine.id }}"></td>
+              <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
+              <td>{{ machine.ip_address }}</td>
+              <td>{{ machine.discovered_hostname or '—' }}</td>
+              <td>
+                {% if machine.group %}
+                  <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
+                {% else %}
+                  <span class="hint">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if machine.is_reachable is none %}
+                  <span class="badge badge-warn">unknown</span>
+                {% elif machine.is_reachable %}
+                  <span class="badge badge-ok">online</span>
+                {% else %}
+                  <span class="badge badge-error">offline</span>
+                {% endif %}
+              </td>
+              <td>{% include "partials/machine_update_status_cell.html" %}</td>
+              <td>
+                {% if machine.host_key_fingerprint %}
+                  <span class="badge badge-ok">pinned</span>
+                {% else %}
+                  <span class="badge badge-warn">unconfirmed</span>
+                {% endif %}
+              </td>
+              <td><a href="/machines/{{ machine.id }}">Details</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="page-header-actions" id="bulk-actions-bar">
+        <span class="hint">With selected:</span>
+        <button type="submit" formaction="/machines/bulk/check-updates" class="button button-secondary">
+          Check for updates
+        </button>
+        <select name="strategy" aria-label="Upgrade strategy for bulk update">
+          <option value="dist_upgrade">dist-upgrade</option>
+          <option value="full_upgrade">full-upgrade</option>
+        </select>
+        <button type="submit" formaction="/machines/bulk/updates" class="button">Run update</button>
+        <button type="submit" formaction="/machines/bulk/power-confirm/reboot" class="button button-secondary">
+          Reboot
+        </button>
+        <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
+          Shut down
+        </button>
+      </div>
+    </form>
   {% endif %}
 {% endblock %}

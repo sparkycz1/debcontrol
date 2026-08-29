@@ -27,12 +27,22 @@ from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
+from app.services.machine_actions import (
+    send_power_to_machines,
+    trigger_check_updates,
+    trigger_updates,
+)
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.templating import templates
+
+# Typed phrase to confirm a power action against an arbitrary ad-hoc
+# selection from the machine list — unlike a group or "All machines", a
+# selection doesn't have a name of its own to ask someone to type.
+_BULK_POWER_CONFIRM_PHRASE = "SELECTED MACHINES"
 
 router = APIRouter(
     prefix="/machines", dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))]
@@ -95,14 +105,31 @@ async def _get_package_counts(machine_id: uuid.UUID, db: AsyncSession) -> dict[s
     return counts
 
 
+async def _get_held_count(machine_id: uuid.UUID, db: AsyncSession) -> int:
+    return (
+        await db.scalar(
+            select(func.count())
+            .select_from(MachinePackage)
+            .where(MachinePackage.machine_id == machine_id, MachinePackage.held.is_(True))
+        )
+    ) or 0
+
+
 async def _get_packages(
-    machine_id: uuid.UUID, db: AsyncSession, *, pkg_q: str, pkg_source: str
+    machine_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    pkg_q: str,
+    pkg_source: str,
+    held_only: bool = False,
 ) -> list[MachinePackage]:
     query = select(MachinePackage).where(MachinePackage.machine_id == machine_id)
     if pkg_q.strip():
         query = query.where(MachinePackage.name.ilike(f"%{pkg_q.strip()}%"))
     if pkg_source in {source.value for source in PackageSource}:
         query = query.where(MachinePackage.source == PackageSource(pkg_source))
+    if held_only:
+        query = query.where(MachinePackage.held.is_(True))
     result = await db.execute(query.order_by(MachinePackage.source, MachinePackage.name))
     return list(result.scalars().all())
 
@@ -132,6 +159,8 @@ async def list_machines(
             "pending_machines": await _get_pending_machines(db),
             "q": q,
             "csrf_token": csrf_token,
+            "bulk_error": request.query_params.get("bulk_error"),
+            "power_skipped": request.query_params.get("power_skipped"),
         },
     )
     if new_cookie:
@@ -326,6 +355,200 @@ async def import_machines_submit(
     )
 
 
+_PACKAGE_SEARCH_LIMIT = 500
+
+
+@router.get("/package-search")
+async def package_search(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    q: str = "",
+    pkg_source: str = "",
+) -> Response:
+    """Fleet-wide "who has package X installed, and what version" — the
+    other direction from the per-machine Installed packages panel. Useful
+    after a CVE announcement: search the name, see every machine and
+    version at once instead of checking machines one by one."""
+    results: list[MachinePackage] = []
+    truncated = False
+    if q.strip():
+        query = (
+            select(MachinePackage)
+            .options(selectinload(MachinePackage.machine))
+            .where(MachinePackage.name.ilike(f"%{q.strip()}%"))
+        )
+        if pkg_source in {source.value for source in PackageSource}:
+            query = query.where(MachinePackage.source == PackageSource(pkg_source))
+        query = query.order_by(MachinePackage.name).limit(_PACKAGE_SEARCH_LIMIT + 1)
+        result = await db.execute(query)
+        results = list(result.scalars().all())
+        truncated = len(results) > _PACKAGE_SEARCH_LIMIT
+        results = results[:_PACKAGE_SEARCH_LIMIT]
+
+    return templates.TemplateResponse(
+        request,
+        "machines/package_search.html",
+        {"q": q, "pkg_source": pkg_source, "results": results, "truncated": truncated},
+    )
+
+
+async def _get_machines_by_ids(machine_ids: list[uuid.UUID], db: AsyncSession) -> list[Machine]:
+    if not machine_ids:
+        return []
+    result = await db.execute(select(Machine).where(Machine.id.in_(machine_ids)))
+    return list(result.scalars().all())
+
+
+@router.post("/bulk/check-updates", dependencies=[_updates, Depends(verify_csrf)])
+async def bulk_check_updates(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+) -> Response:
+    """Check-updates for an ad-hoc selection from the machine list — same
+    underlying job as the group/"All machines" versions, just against
+    whichever rows were ticked rather than a stored group."""
+    machines = await _get_machines_by_ids(machine_ids, db)
+    if not machines:
+        return RedirectResponse(
+            url="/machines?bulk_error=Select+at+least+one+machine.",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    skipped = await trigger_check_updates(request.app.state.arq_redis, machines)
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.updates.check",
+        summary=f"Checked for updates on {len(machines)} selected machine(s)",
+        details={"machine_count": len(machines), "skipped": skipped},
+    )
+    return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/updates", dependencies=[_updates, Depends(verify_csrf)])
+async def bulk_trigger_updates(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+    strategy: UpgradeStrategy = Form(...),
+) -> Response:
+    machines = await _get_machines_by_ids(machine_ids, db)
+    if not machines:
+        return RedirectResponse(
+            url="/machines?bulk_error=Select+at+least+one+machine.",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    batch_id, skipped = await trigger_updates(db, request.app.state.arq_redis, machines, strategy)
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.updates.run",
+        summary=(
+            f'Triggered {strategy.value.replace("_", "-")} on '
+            f"{len(machines)} selected machine(s)"
+        ),
+        details={"strategy": strategy.value, "batch_id": str(batch_id), "skipped": skipped},
+    )
+    redirect_url = f"/machine-groups/batches/{batch_id}"
+    if skipped:
+        redirect_url += f"?skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/power-confirm/{action}", dependencies=[_power, Depends(verify_csrf)])
+async def bulk_power_confirm(
+    request: Request,
+    action: PowerAction,
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+) -> Response:
+    """Render the typed-confirmation page for a bulk power action, carrying
+    the selection forward as hidden fields (there's no group/name to look
+    the selection back up by, unlike the group-scoped version of this)."""
+    if not machine_ids:
+        return RedirectResponse(
+            url="/machines?bulk_error=Select+at+least+one+machine.",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/bulk_power_confirm.html",
+        {
+            "action": action,
+            "machine_ids": machine_ids,
+            "target_label": f"{len(machine_ids)} selected machine(s)",
+            "confirm_phrase": _BULK_POWER_CONFIRM_PHRASE,
+            "action_url": f"/machines/bulk/power/{action.value}",
+            "cancel_url": "/machines",
+            "error": None,
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/bulk/power/{action}", dependencies=[_power, Depends(verify_csrf)])
+async def bulk_power_action(
+    request: Request,
+    action: PowerAction,
+    db: AsyncSession = Depends(get_db),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+    confirm_name: str = Form(...),
+) -> Response:
+    if confirm_name.strip() != _BULK_POWER_CONFIRM_PHRASE:
+        await log_event(
+            db,
+            request=request,
+            action=f"machines.bulk.power.{action.value}",
+            summary=(
+                f"Blocked {action.value} on {len(machine_ids)} selected "
+                "machine(s): confirmation mismatch"
+            ),
+            outcome=AuditOutcome.DENIED,
+        )
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "machines/bulk_power_confirm.html",
+            {
+                "action": action,
+                "machine_ids": machine_ids,
+                "target_label": f"{len(machine_ids)} selected machine(s)",
+                "confirm_phrase": _BULK_POWER_CONFIRM_PHRASE,
+                "action_url": f"/machines/bulk/power/{action.value}",
+                "cancel_url": "/machines",
+                "error": (
+                    f'That doesn\'t match — type "{_BULK_POWER_CONFIRM_PHRASE}" '
+                    "exactly to confirm."
+                ),
+                "csrf_token": csrf_token,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    machines = await _get_machines_by_ids(machine_ids, db)
+    skipped = await send_power_to_machines(request.app.state.arq_redis, machines, action)
+    await log_event(
+        db,
+        request=request,
+        action=f"machines.bulk.power.{action.value}",
+        summary=f"Sent {action.value} to {len(machines)} selected machine(s)",
+        details={"skipped": skipped},
+    )
+    redirect_url = "/machines"
+    if skipped:
+        redirect_url += f"?power_skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.get("/{machine_id}")
 async def machine_detail(
     request: Request,
@@ -333,6 +556,7 @@ async def machine_detail(
     db: AsyncSession = Depends(get_db),
     pkg_q: str = "",
     pkg_source: str = "",
+    held_only: bool = False,
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
@@ -343,10 +567,14 @@ async def machine_detail(
             "machine": machine,
             "csrf_token": csrf_token,
             "update_runs": await _get_recent_update_runs(machine_id, db),
-            "packages": await _get_packages(machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source),
+            "packages": await _get_packages(
+                machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source, held_only=held_only
+            ),
             "package_counts": await _get_package_counts(machine_id, db),
+            "held_count": await _get_held_count(machine_id, db),
             "pkg_q": pkg_q,
             "pkg_source": pkg_source,
+            "held_only": held_only,
             # One-time notice after a power action redirect — not persisted
             # anywhere, just echoed back from the query string.
             "power_sent": request.query_params.get("power_sent"),
@@ -654,6 +882,7 @@ async def refresh_packages_endpoint(
     db: AsyncSession = Depends(get_db),
     pkg_q: str = Form(""),
     pkg_source: str = Form(""),
+    held_only: bool = Form(False),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db)
     settings = get_settings()
@@ -695,10 +924,14 @@ async def refresh_packages_endpoint(
             "machine": machine,
             "error": error,
             "csrf_token": csrf_token,
-            "packages": await _get_packages(machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source),
+            "packages": await _get_packages(
+                machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source, held_only=held_only
+            ),
             "package_counts": await _get_package_counts(machine_id, db),
+            "held_count": await _get_held_count(machine_id, db),
             "pkg_q": pkg_q,
             "pkg_source": pkg_source,
+            "held_only": held_only,
         },
     )
 

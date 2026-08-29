@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Package search — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Package search</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machines">Back to machines</a>
+    </div>
+  </div>
+
+  <p class="hint">
+    Search installed packages across every machine at once — e.g. after a
+    CVE announcement, find every machine that still has a vulnerable
+    version installed. Reflects each machine's last package refresh (see
+    the "Installed packages" panel on a machine's own page); it doesn't
+    connect to anything live.
+  </p>
+
+  <form method="get" action="/machines/package-search" class="search-form">
+    <input type="search" name="q" value="{{ q }}" placeholder="Package name (or part of it)..." autofocus>
+    <select name="pkg_source">
+      <option value="" {% if not pkg_source %}selected{% endif %}>All sources</option>
+      <option value="apt" {% if pkg_source == 'apt' %}selected{% endif %}>apt</option>
+      <option value="flatpak" {% if pkg_source == 'flatpak' %}selected{% endif %}>flatpak</option>
+      <option value="snap" {% if pkg_source == 'snap' %}selected{% endif %}>snap</option>
+    </select>
+    <button type="submit" class="button">Search</button>
+  </form>
+
+  {% if q %}
+    {% if truncated %}
+      <div class="alert alert-warn">
+        <p>
+          Showing the first {{ results | length }} matches — narrow the
+          search (or pick a source) to see the rest.
+        </p>
+      </div>
+    {% endif %}
+
+    {% if results %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Machine</th>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Source</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pkg in results %}
+            <tr>
+              <td><a href="/machines/{{ pkg.machine_id }}">{{ pkg.machine.name }}</a></td>
+              <td>{{ pkg.name }}</td>
+              <td>{{ pkg.version }}</td>
+              <td>{{ pkg.source.value }}</td>
+              <td>{% if pkg.held %}<span class="badge badge-warn">held</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No machine has a package matching "{{ q }}".</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

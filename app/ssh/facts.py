@@ -1,9 +1,9 @@
 """Gather basic facts about a managed machine over SSH.
 
 Deliberately uses only tools present on a stock Debian install (coreutils,
-util-linux, dpkg, base-files) — no agent, no extra packages required on
-the target, and nothing here needs root. See the wiki page "Managed
-Machine Requirements".
+util-linux, dpkg, base-files, iproute2) — no agent, no extra packages
+required on the target, and nothing here needs root. See the wiki page
+"Managed Machine Requirements".
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ _SECTION_MARKERS = (
     "DISKS",
     "UPTIME",
     "PROCESSES",
+    "FILESYSTEMS",
+    "NETWORK",
 )
 
 # One round trip: each section is delimited by a "===NAME===" marker so the
@@ -43,7 +45,12 @@ FACTS_COMMAND = (
     "echo ===DISKS===; "
     "lsblk -b -d -n -o NAME,SIZE,TYPE 2>/dev/null | awk '$3==\"disk\"{print $1, $2}'; "
     "echo ===UPTIME===; awk '{print int($1)}' /proc/uptime 2>/dev/null; "
-    "echo ===PROCESSES===; ls -d /proc/[0-9]* 2>/dev/null | wc -l"
+    "echo ===PROCESSES===; ls -d /proc/[0-9]* 2>/dev/null | wc -l; "
+    "echo ===FILESYSTEMS===; "
+    "df -B1 --output=target,size,used,avail,pcent "
+    "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
+    "echo ===NETWORK===; "
+    "ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}'"
 )
 
 
@@ -59,6 +66,8 @@ class MachineFacts(TypedDict):
     reboot_required: bool | None
     uptime_seconds: int | None
     process_count: int | None
+    filesystems: list[dict[str, Any]]
+    network_interfaces: list[dict[str, Any]]
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -110,6 +119,36 @@ def parse_facts_output(raw: str) -> MachineFacts:
     if sections.get("PROCESSES", "").isdigit():
         process_count = int(sections["PROCESSES"])
 
+    filesystems: list[dict[str, Any]] = []
+    for line in sections.get("FILESYSTEMS", "").splitlines():
+        fields = line.split()
+        # target size used avail pcent — target can't be reliably split out
+        # if it contains spaces (rare for a mount point), so this takes the
+        # last four fields as the numbers/percentage and joins the rest.
+        if len(fields) < 5:
+            continue
+        size, used, avail, pcent = fields[-4], fields[-3], fields[-2], fields[-1]
+        target = " ".join(fields[:-4])
+        if not (size.isdigit() and used.isdigit() and avail.isdigit()):
+            continue
+        filesystems.append(
+            {
+                "mount": target,
+                "size_bytes": int(size),
+                "used_bytes": int(used),
+                "avail_bytes": int(avail),
+                "use_percent": int(pcent.rstrip("%")) if pcent.rstrip("%").isdigit() else None,
+            }
+        )
+
+    network_interfaces: list[dict[str, Any]] = []
+    for line in sections.get("NETWORK", "").splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        interface, address = fields
+        network_interfaces.append({"interface": interface.rstrip(":"), "address": address})
+
     return MachineFacts(
         hostname=sections.get("HOSTNAME") or None,
         os_version=sections.get("OS") or None,
@@ -121,6 +160,8 @@ def parse_facts_output(raw: str) -> MachineFacts:
         reboot_required=reboot_required,
         uptime_seconds=uptime_seconds,
         process_count=process_count,
+        filesystems=filesystems,
+        network_interfaces=network_interfaces,
     )
 
 

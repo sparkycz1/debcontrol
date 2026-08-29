@@ -17,8 +17,10 @@
     <p class="hint">
       {{ package_counts.total }} package{{ 's' if package_counts.total != 1 else '' }} installed
       ({{ package_counts.apt }} apt, {{ package_counts.flatpak }} flatpak,
-      {{ package_counts.snap }} snap) — last refreshed
-      {{ machine.packages_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC.
+      {{ package_counts.snap }} snap){% if held_count %}, {{ held_count }} held back{% endif %}
+      — last refreshed {{ machine.packages_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC.
+      {% if held_count %}"Held" (<code>apt-mark showhold</code>) means apt
+      won't upgrade that package even when a newer version is available.{% endif %}
     </p>
 
     <form method="get" action="/machines/{{ machine.id }}" class="search-form" id="package-filters">
@@ -29,8 +31,12 @@
         <option value="flatpak" {% if pkg_source == 'flatpak' %}selected{% endif %}>flatpak</option>
         <option value="snap" {% if pkg_source == 'snap' %}selected{% endif %}>snap</option>
       </select>
+      <label class="hint">
+        <input type="checkbox" name="held_only" value="1" {% if held_only %}checked{% endif %}>
+        Held only
+      </label>
       <button type="submit" class="button">Filter</button>
-      {% if pkg_q or pkg_source %}
+      {% if pkg_q or pkg_source or held_only %}
         <a class="button button-secondary" href="/machines/{{ machine.id }}">Clear</a>
       {% endif %}
     </form>
@@ -42,6 +48,7 @@
             <th>Package</th>
             <th>Version</th>
             <th>Source</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -50,6 +57,7 @@
               <td>{{ pkg.name }}</td>
               <td>{{ pkg.version }}</td>
               <td>{{ pkg.source.value }}</td>
+              <td>{% if pkg.held %}<span class="badge badge-warn">held</span>{% endif %}</td>
             </tr>
           {% endfor %}
         </tbody>

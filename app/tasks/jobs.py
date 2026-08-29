@@ -116,6 +116,8 @@ async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[st
         machine.reboot_required = facts["reboot_required"]
         machine.uptime_seconds = facts["uptime_seconds"]
         machine.process_count = facts["process_count"]
+        machine.filesystems = facts["filesystems"]
+        machine.network_interfaces = facts["network_interfaces"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
 
@@ -184,6 +186,7 @@ async def refresh_machine_packages(ctx: dict[str, Any], machine_id: str) -> dict
                 source=entry["source"],
                 name=entry["name"],
                 version=entry["version"],
+                held=entry["held"],
             )
             for entry in packages
         )

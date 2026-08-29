@@ -14,12 +14,13 @@ from typing import TypedDict
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
 
-_SECTION_MARKERS = ("APT", "FLATPAK", "SNAP")
+_SECTION_MARKERS = ("APT", "FLATPAK", "SNAP", "HELD")
 
 # One round trip, same "===NAME===" marker trick as app.ssh.facts. flatpak
 # and snap are optional — most Debian/Ubuntu installs don't have either by
 # default — so each is guarded with `command -v` and simply produces an
-# empty section (not an error) when absent.
+# empty section (not an error) when absent. `apt-mark showhold` never needs
+# root either — it just reads dpkg's selection state, same as `dpkg-query`.
 PACKAGES_COMMAND = (
     "echo ===APT===; "
     "dpkg-query -W -f='${Package}\\t${Version}\\n' 2>/dev/null; "
@@ -30,7 +31,9 @@ PACKAGES_COMMAND = (
     "echo ===SNAP===; "
     "if command -v snap >/dev/null 2>&1; then "
     "snap list 2>/dev/null | tail -n +2 | awk '{print $1\"\\t\"$2}'; "
-    "fi"
+    "fi; "
+    "echo ===HELD===; "
+    "apt-mark showhold 2>/dev/null"
 )
 
 
@@ -44,6 +47,9 @@ class PackageEntry(TypedDict):
     source: PackageSource
     name: str
     version: str
+    # Only ever True for an APT entry — `apt-mark showhold` has no flatpak/
+    # snap equivalent, and neither package manager has this concept.
+    held: bool
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -53,7 +59,9 @@ def _split_sections(raw: str) -> dict[str, str]:
     return dict(zip(_SECTION_MARKERS, (chunk.strip() for chunk in body), strict=False))
 
 
-def _parse_tab_separated(chunk: str, source: PackageSource) -> list[PackageEntry]:
+def _parse_tab_separated(
+    chunk: str, source: PackageSource, *, held_names: frozenset[str] = frozenset()
+) -> list[PackageEntry]:
     entries: list[PackageEntry] = []
     for line in chunk.splitlines():
         line = line.strip()
@@ -65,7 +73,9 @@ def _parse_tab_separated(chunk: str, source: PackageSource) -> list[PackageEntry
         name, version = fields[0].strip(), fields[1].strip()
         if not name:
             continue
-        entries.append(PackageEntry(source=source, name=name, version=version))
+        entries.append(
+            PackageEntry(source=source, name=name, version=version, held=name in held_names)
+        )
     return entries
 
 
@@ -76,9 +86,14 @@ def parse_packages_output(raw: str) -> list[PackageEntry]:
     parsing logic can be unit-tested against canned output.
     """
     sections = _split_sections(raw)
+    held_names = frozenset(
+        line.strip() for line in sections.get("HELD", "").splitlines() if line.strip()
+    )
 
     entries: list[PackageEntry] = []
-    entries += _parse_tab_separated(sections.get("APT", ""), PackageSource.APT)
+    entries += _parse_tab_separated(
+        sections.get("APT", ""), PackageSource.APT, held_names=held_names
+    )
     entries += _parse_tab_separated(sections.get("FLATPAK", ""), PackageSource.FLATPAK)
     entries += _parse_tab_separated(sections.get("SNAP", ""), PackageSource.SNAP)
     return entries

@@ -262,16 +262,20 @@ wiki/           documentation, meant to become the GitHub wiki
   belonged to whatever was previously reachable there. Once a fingerprint is
   confirmed, the app automatically discovers and periodically refreshes
   OS version, kernel version, hostname, CPU architecture/cores, RAM,
-  disks, uptime, and process count (see
+  disks, filesystem usage (used/free/%, `df`), network interfaces (IPv4,
+  `ip addr`), uptime, and process count (see
   [app/ssh/facts.py](app/ssh/facts.py); interval configurable via
   `FACTS_REFRESH_INTERVAL_SECONDS`), and shows an online/offline status
   badge from a lightweight per-minute reachability check
   ([app/ssh/reachability.py](app/ssh/reachability.py)). An **Installed
   packages** panel lists every apt package (and flatpak app / snap, if
-  either is present), each with its version, searchable/filterable by
-  source — refreshed on the same schedule as facts, and again right after
-  any update run on that machine (see
-  [app/ssh/packages.py](app/ssh/packages.py)). Machines can also
+  either is present), each with its version and held/pinned status
+  (`apt-mark showhold`), searchable/filterable by source — refreshed on
+  the same schedule as facts, and again right after any update run on
+  that machine (see [app/ssh/packages.py](app/ssh/packages.py)). A
+  separate **Package search** page searches that same data across every
+  machine at once ("who still has package X installed, and what
+  version") — handy right after a CVE announcement. Machines can also
   self-register via `POST /api/inform` (bearer-token authenticated — either
   the shared `INFORM_TOKEN` or a per-user API token, see "My account" below)
   and show up as "pending" for review before being added; a CSV **Bulk
@@ -298,7 +302,12 @@ wiki/           documentation, meant to become the GitHub wiki
   Requirements). See [app/ssh/updates.py](app/ssh/updates.py). A **Power** panel sends
   `shutdown -r/-h now` (reboot/shut down), gated behind a dedicated
   confirmation page that requires typing the machine's exact name — see
-  [app/ssh/power.py](app/ssh/power.py).
+  [app/ssh/power.py](app/ssh/power.py). All three of these (update, check,
+  power) are also available as **bulk actions** straight from the
+  machine list — tick a checkbox per machine (or "select all") and use
+  the action bar below the table — without first needing to put those
+  machines in a group; power still requires typing a fixed confirmation
+  phrase.
 - **Machine groups** — organize machines into named groups (e.g. by
   environment or role); assign/remove machines from a group. Search,
   system updates, update checks, and power actions all work here too,

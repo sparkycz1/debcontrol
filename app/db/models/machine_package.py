@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Index, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, Enum, ForeignKey, Index, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.ssh.packages import PackageSource
+
+if TYPE_CHECKING:
+    from app.db.models.machine import Machine
 
 
 class MachinePackage(Base):
@@ -30,12 +34,21 @@ class MachinePackage(Base):
     machine_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # One-directional — Machine deliberately has no `packages` relationship
+    # back (a machine's package list can run into the thousands, and every
+    # place that needs it already queries MachinePackage directly rather
+    # than eager-loading through Machine). Used by the fleet-wide package
+    # search, which needs each hit's machine name/id.
+    machine: Mapped[Machine] = relationship(viewonly=True)
 
     source: Mapped[PackageSource] = mapped_column(
         Enum(PackageSource, name="package_source", native_enum=True), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     version: Mapped[str] = mapped_column(String(255), nullable=False)
+    # apt-only ("apt-mark showhold") — always False for flatpak/snap, which
+    # have no equivalent concept.
+    held: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
