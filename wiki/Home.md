@@ -38,6 +38,6 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 | Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (incl. reboot-required), online/offline status, self-registration review, free-text search, system updates + dry-run update checks, reboot/shutdown (double-confirmed) |
 | Machine groups | Organize machines into named groups; built-in "All machines" group; search, system updates, update checks, and power actions all scoped to a group |
 | Scheduling | Run any existing action (system update, update check, reboot, shut down) against a machine, a group, or "All machines" on a cron expression (UTC); enable/disable, run on demand, see when it last fired |
-| Audit | Read-only log of every mutating action across the app — what happened, its outcome, the source IP, and when; searchable and filterable by outcome |
+| Audit | Read-only log of every mutating action across the app — what happened, its outcome, the source IP, and when; searchable and filterable by outcome; hash-chained so tampering is detectable |
 | Users | Placeholder — no login/authentication yet |
-| Settings | Shows the app's SSH public key and background-check intervals |
+| Settings | Shows the app's SSH public key and background-check intervals; sets the audit log retention policy and verifies its hash-chain integrity |

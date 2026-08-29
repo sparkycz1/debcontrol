@@ -8,9 +8,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 
+from app.audit import log_event
+from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
+from app.db.models.audit_log import AuditLogEntry
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.session import AsyncSessionLocal
@@ -295,3 +298,52 @@ async def send_machine_power_command(
             return {"ok": False, "error": str(exc)}
 
         return {"ok": True}
+
+
+_AUDIT_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def purge_old_audit_log_entries(ctx: dict[str, Any]) -> None:
+    """Delete audit log entries older than `AppSettings.
+    audit_log_retention_days` — a fixed daily sweep, same shape as
+    `ping_all_machines`, since "once a day" needs no configurable interval
+    of its own (only *how many days to keep* is configurable, on the
+    Settings page).
+
+    Only ever deletes from the oldest end (`created_at < cutoff`), never
+    from the middle — the hash chain's tip (`AuditChainState.last_hash`)
+    always reflects the newest entry regardless of what's pruned from the
+    beginning, so this can never invalidate `app.audit.verify_chain` for
+    the entries that remain (see the Architecture wiki page). Skipped
+    entirely when retention is unset (`None` = keep forever, the default).
+    """
+    async with AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        retention_days = app_settings.audit_log_retention_days
+        if not retention_days:
+            return
+
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        count_result = await session.execute(
+            select(func.count())
+            .select_from(AuditLogEntry)
+            .where(AuditLogEntry.created_at < cutoff)
+        )
+        deleted_count = count_result.scalar_one()
+        if not deleted_count:
+            return
+
+        await session.execute(delete(AuditLogEntry).where(AuditLogEntry.created_at < cutoff))
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_AUDIT_PURGE_ACTOR,
+            action="audit_log.purge",
+            summary=(
+                f"Purged {deleted_count} audit log entr"
+                f"{'y' if deleted_count == 1 else 'ies'} older than "
+                f"{retention_days} day(s)"
+            ),
+            details={"deleted_count": deleted_count, "retention_days": retention_days},
+        )

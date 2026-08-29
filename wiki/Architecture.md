@@ -305,10 +305,78 @@ rejected form). A few decisions:
   dependency before the route body (and its DB session) even exists — hooking
   an audit write into it is a lower-level change than the rest of this
   feature and was left out of this pass.
-- **No pagination cursor beyond offset — this is a first pass**, not a
-  compliance-grade tamper-evident log (no hash chaining, no write-once
-  storage, no retention policy). Good enough to answer "what happened
-  here and from where," not something to point a security audit at yet.
+- **No pagination cursor beyond offset.** Fine for an append-only table
+  that a human is paging through; see below for what does exist to make
+  this closer to a real tamper-evident log (hash chaining, retention).
+
+### Audit log integrity: hash chaining, and its actual guarantee
+
+Every `AuditLogEntry` is linked into a hash chain (`sequence`, `prev_hash`,
+`entry_hash`) so that altering or deleting an entry is detectable, not just
+"trust the database." Design:
+
+- **What `entry_hash` covers.** A SHA-256 over a canonical (sorted-keys)
+  JSON serialization of the entry's own fields, concatenated with the
+  *previous* entry's `entry_hash` (`app.audit._compute_entry_hash`). Change
+  anything about an entry — its summary, outcome, target, even its
+  timestamp — and its hash no longer matches what a verifier recomputes;
+  delete an entry and the next one's `prev_hash` no longer points at
+  anything real. `app.audit.verify_chain` walks every chained entry in
+  `sequence` order, recomputes each hash, and additionally compares the
+  newest entry's hash against `AuditChainState.last_hash` — that last check
+  is what catches deleting the *most recent* entries outright (which a
+  simple walk over whatever rows remain wouldn't notice on its own).
+  Reachable from the **Settings** page ("Verify chain integrity now"),
+  which also logs the verification itself as an `audit_log.verify` entry.
+- **`created_at` is assigned in Python, not by the database.** Every other
+  timestamp in this app uses a Postgres `server_default=now()`; this one
+  can't, because `log_event` needs the exact value *before* the insert —
+  it's part of what gets hashed, and a server-assigned default isn't known
+  until after the row exists.
+- **Serialized through one locked row, not a hash of "whatever the last
+  row happens to be."** `AuditChainState` is a dedicated one-row table;
+  `log_event` reads it with `SELECT ... FOR UPDATE` and holds that lock for
+  the rest of its transaction, so two audit writes racing from different
+  requests — or from different *processes*, since both the web app and the
+  arq worker write audit entries — can never both link a new entry to the
+  same previous hash. Postgres enforces the lock for real; on SQLite (used
+  in tests) `FOR UPDATE` is accepted but is a no-op, which is fine there
+  since aiosqlite has no real concurrent writers to race in the first
+  place.
+- **What this doesn't protect against.** Direct database access (a
+  superuser editing rows and recomputing the hash chain correctly to
+  match) is not defended against — there's no external anchor (no
+  write-once storage, no periodic hash publication elsewhere) to compare
+  against, only internal self-consistency. This catches accidental
+  corruption and a casual attempt to quietly edit or remove an entry
+  in-place; it is not a substitute for restricting who can reach the
+  database at all.
+- **Entries from before this feature existed have no chain.**
+  `sequence`/`prev_hash`/`entry_hash` are nullable for exactly that reason
+  — `verify_chain` skips unchained rows rather than reporting every one of
+  them as broken.
+
+### Audit log retention: the first setting editable through the UI
+
+`AppSettings.audit_log_retention_days` (`app/db/models/app_settings.py`),
+set from the **Settings** page, controls how many days of audit history
+`app.tasks.jobs.purge_old_audit_log_entries` keeps — a fixed daily sweep
+(same shape as `ping_all_machines`, since only *how many days* needs to be
+configurable, not how often the sweep itself runs). `None` (the default)
+means keep forever; deliberately not defaulting to some finite window,
+since silently discarding audit history is a much worse surprise than an
+unbounded table.
+
+This is the first value in the whole app that's editable at runtime
+through the UI, rather than fixed at deploy time via `.env` — see
+`app/db/models/app_settings.py` for why that's a separate table/mechanism
+from `app.core.config.Settings` rather than, say, a form that rewrites
+`.env`. Purging only ever removes the *oldest* rows (`created_at <
+cutoff`); it can never touch `AuditChainState` or the newest entries, so
+it can never invalidate `verify_chain` for whatever remains — a verifier
+just starts from whatever the current oldest surviving entry is. The purge
+itself is logged (`audit_log.purge`, actor `"retention policy
+(automatic)"`) with how many entries were removed.
 
 ### CSRF protection without sessions
 

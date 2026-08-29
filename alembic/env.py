@@ -13,6 +13,8 @@ from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models import (  # noqa: F401 - registers models with metadata
+    AppSettings,
+    AuditChainState,
     AuditLogEntry,
     Machine,
     MachineGroup,

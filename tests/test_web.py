@@ -299,6 +299,92 @@ async def test_settings_shows_ssh_identity(client):
     assert "SHA256:" in response.text
 
 
+async def test_settings_audit_retention_defaults_to_forever(client):
+    response = await client.get("/settings")
+    assert response.status_code == 200
+    assert "forever" in response.text
+
+
+async def test_update_audit_retention_persists_value(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/settings/audit-retention", data={"retention_days": "90", "csrf_token": csrf_token}
+    )
+    assert response.status_code == 303
+
+    page = await client.get("/settings")
+    assert 'value="90"' in page.text
+
+    log = await client.get("/audit")
+    assert "settings.audit_retention.update" in log.text
+    assert "90 day" in log.text
+
+
+async def test_update_audit_retention_empty_means_forever(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+
+    await client.post(
+        "/settings/audit-retention", data={"retention_days": "30", "csrf_token": csrf_token}
+    )
+    response = await client.post(
+        "/settings/audit-retention", data={"retention_days": "", "csrf_token": csrf_token}
+    )
+    assert response.status_code == 303
+
+    page = await client.get("/settings")
+    assert "keep forever" in page.text.lower() or "forever" in page.text
+
+
+async def test_update_audit_retention_rejects_non_integer(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/settings/audit-retention", data={"retention_days": "banana", "csrf_token": csrf_token}
+    )
+    assert response.status_code == 200
+    assert "isn&#39;t a whole number" in response.text or "whole number" in response.text
+
+
+async def test_update_audit_retention_rejects_negative(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/settings/audit-retention", data={"retention_days": "-5", "csrf_token": csrf_token}
+    )
+    assert response.status_code == 200
+    assert "whole number" in response.text
+
+
+async def test_verify_audit_chain_endpoint_reports_intact_chain(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    # Generate at least one chained entry first.
+    await client.post(
+        "/machines",
+        data={
+            "name": "chain-check",
+            "ip_address": "10.9.9.5",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "",
+            "csrf_token": csrf_token,
+        },
+    )
+
+    response = await client.post("/settings/audit-verify", data={"csrf_token": csrf_token})
+    assert response.status_code == 200
+    assert "verified intact" in response.text
+
+    log = await client.get("/audit")
+    assert "audit_log.verify" in log.text
+
+
 async def _create_machine(
     client: httpx.AsyncClient, csrf_token: str, **overrides: str
 ) -> uuid.UUID:

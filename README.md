@@ -230,12 +230,17 @@ wiki/         documentation, meant to become the GitHub wiki
   mutating action (and every safeguard that blocked one — a confirmation
   mismatch, an unpinned host key, a bad self-registration token): what
   happened, its outcome, the source IP, and when. There's no login yet, so
-  entries record the source IP rather than an identity — see
+  entries record the source IP rather than an identity. Every entry is
+  hash-chained (each links to the previous one's SHA-256, verifiable on the
+  Settings page) so an altered or removed entry is detectable — see
   [app/audit.py](app/audit.py).
 - **Users** — placeholder; no authentication yet.
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
-  distribution to machines) and the current background-check intervals.
-  No user-configurable preferences yet (no auth).
+  distribution to machines), the current background-check intervals, and
+  the audit log retention policy (how many days of entries to keep before
+  a daily purge — the first setting actually editable through the UI, see
+  [app/db/models/app_settings.py](app/db/models/app_settings.py)) plus an
+  on-demand hash-chain integrity check.
 
 See the wiki's
 [Managed Machine Requirements](wiki/Managed-Machine-Requirements.md) for

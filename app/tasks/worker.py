@@ -21,6 +21,7 @@ from app.tasks.jobs import (
     check_all_machine_updates,
     check_machine_updates,
     ping_all_machines,
+    purge_old_audit_log_entries,
     refresh_all_machine_facts,
     refresh_machine_facts,
     run_machine_update,
@@ -63,6 +64,7 @@ class WorkerSettings:
         send_machine_power_command,
         run_due_scheduled_tasks,
         run_scheduled_task,
+        purge_old_audit_log_entries,
         # apt update/upgrade(-check) can legitimately run far longer than
         # the default job_timeout below — give both their own budget.
         func(run_machine_update, timeout=get_settings().update_timeout_seconds),
@@ -74,6 +76,9 @@ class WorkerSettings:
         # tick (rather than a configurable self-rescheduling interval, like
         # facts/update-check sweeps use) is the natural fit here.
         cron(run_due_scheduled_tasks, second=0, unique=True),
+        # Once a day is plenty for a retention sweep — only *how many days
+        # to keep* is configurable (Settings), not this cadence.
+        cron(purge_old_audit_log_entries, hour=3, minute=0, second=0, unique=True),
     ]
     on_startup = startup
     on_shutdown = shutdown

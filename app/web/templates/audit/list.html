@@ -11,6 +11,8 @@
     There's no login yet, so entries can't record who performed an action —
     only its source IP, what happened, and when. See the wiki page
     "Architecture" for how this is meant to extend once authentication lands.
+    Every entry is hash-chained for tamper-evidence; verify the chain and
+    set the retention policy on the <a href="/settings">Settings</a> page.
   </p>
 
   <form method="get" class="search-form">

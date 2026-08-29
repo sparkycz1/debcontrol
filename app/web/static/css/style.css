@@ -96,6 +96,8 @@ body {
 
 .inline-form { display: inline; }
 
+.stack-gap { display: block; margin-top: 1rem; }
+
 .search-form {
   display: flex;
   gap: 0.5rem;
