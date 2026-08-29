@@ -52,6 +52,14 @@ async def get_api_token_user(request: Request, db: AsyncSession = Depends(get_db
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Invalid, expired, or revoked API token."
         )
+    # `app.auth.middleware` never sets `request.state.user` for `/api/`
+    # requests (they're on its public-prefix allowlist, authenticated here
+    # instead of by session cookie) — set it ourselves so `app.audit.
+    # log_event`'s automatic actor resolution (`request.state.user`) works
+    # the same way for an API-token request as it already does for a
+    # cookie-session one, with no call site needing to pass `actor=`
+    # explicitly just because the request came in over the API.
+    request.state.user = user
     return user
 
 

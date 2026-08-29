@@ -318,7 +318,7 @@ deliberate: this exists to blunt obviously abusive volume (credential
 stuffing, enumeration at scale), not to lock out a shared office/VPN egress
 IP or someone who mistypes a password a few times.
 
-### Per-user API tokens: read-only, and inheriting the role live
+### Per-user API tokens: gated by a separate account-level flag, inheriting the role live
 
 `app.db.models.api_token.ApiToken` gives each user their own bearer tokens
 (`dcpat_...`, only the SHA-256 hash stored — same scheme as session
@@ -326,9 +326,9 @@ tokens) for two things, both under `/api/` and therefore outside
 `app.auth.middleware`'s session requirement (see "Self-registration" below
 for why that prefix is public in the first place):
 
-- The read-only REST API (`app.web.routes.api_v1`) — `GET /api/v1/machines`,
-  `/machines/{id}`, `/machine-groups` — meant for external scripts/
-  monitoring, not the web UI.
+- The REST API (`app.web.routes.api_v1*` — split across several modules,
+  see "The REST API: read and write, mirroring the web UI" below) — meant
+  for external scripts/automation, not the web UI itself.
 - `POST /api/inform`, as a per-user alternative to the shared
   `INFORM_TOKEN` (which still works, for backward compatibility);
   attributable and individually revocable instead of one token every
@@ -341,6 +341,93 @@ the account takes effect on every token it ever issued immediately, the
 same as it would on that user's browser session. Self-service, like TOTP:
 created and revoked from "My account", and the raw value is shown exactly
 once at creation.
+
+Whether an account can have API tokens *at all* is a separate, admin-set
+boolean on the account itself — `User.api_access_enabled` — distinct from
+the role-based `Permission` matrix above. A role's permissions decide
+*what* a token can do once it exists; this flag decides *whether the
+account may have one in the first place*, and is unchecked by default for
+every new account. It's checked in two places, both mirroring the existing
+`is_active` check right next to them:
+
+- **At creation** — `create_own_api_token` (`app/web/routes/auth.py`)
+  rejects a new token (403) for an account without the flag, and the
+  Account page hides the "create token" form (showing a note to ask an
+  admin instead) rather than just letting the POST fail.
+- **On every use** — `app.auth.api_tokens.get_user_for_api_token` refuses
+  a token whose owning user currently has `api_access_enabled = False`,
+  in the same function and right alongside where it already refuses one
+  whose owner is `is_active = False`. An admin unchecking the box cuts off
+  every token that account has ever issued immediately — no separate
+  revocation step, the same way deactivating an account already works.
+
+Only a `user.manage` admin can set the checkbox, from the Users "add"/
+"edit" forms — the same gate as every other admin-set field there (e.g.
+`is_active`).
+
+### The REST API: read and write, mirroring the web UI
+
+`/api/v1/...` started as read-only (`GET /machines`, `/machines/{id}`,
+`/machine-groups`) and now covers essentially everything meaningfully
+doable from the web UI: machines (create/update/delete, trigger updates/
+checks/power, package listings, fleet-wide package search), machine groups
+(create/update/delete, membership, group- and "All machines"-scoped
+actions), the ad-hoc bulk actions from the machine list, scheduling
+(full CRUD plus enable/disable/run-now), users and roles (full CRUD, with
+the exact same self-protection and last-admin guardrails the web routes
+already enforce — reused, not reimplemented), the audit log (list/filter/
+export), and a read-only slice of Settings. Split across several router
+modules under `app/web/routes/` (`api_v1.py` for machines/groups/bulk,
+`api_v1_scheduling.py`, `api_v1_users.py`, `api_v1_roles.py`,
+`api_v1_audit.py`, `api_v1_settings.py`) once a single file would have
+gotten unwieldy, all mounted under the same `/api/v1` prefix in
+`app.main`.
+
+A few design rules keep this a second door into the same house, not a
+looser one:
+
+- **Same permission, every time.** Every route uses
+  `require_api_permission(...)` with the exact `Permission` its web
+  equivalent requires — never a new, looser, or stricter one.
+- **Same guardrails, reused.** The user/role guardrails
+  (`app.auth.login.count_active_users_with_permission`, self-protection
+  against deactivating/deleting/reassigning your own account) are called
+  from the same functions the web routes use, not re-derived.
+- **Same underlying service calls.** Machine/group actions call
+  `app.services.machine_actions` and the same `arq` job names the web
+  routes enqueue — a scheduled task, a web click, and an API call all end
+  up running the identical background job.
+- **Typed confirmation becomes an explicit field.** Where the web UI
+  requires typing a machine's/group's exact name (or a fixed phrase like
+  `ALL MACHINES`) before a destructive action (power, delete), the API
+  requires the equivalent value in the JSON body (`confirm_name`,
+  `confirm`, or — for deleting a user — `confirm_username`) instead of
+  silently skipping the safeguard just because there's no browser involved.
+- **No CSRF on `/api/v1/...`**, same as before — bearer-token auth only,
+  consistent with `/api/inform` and the rest of `/api/`.
+- **Audit logging works the same way.** `app.auth.dependencies.
+  get_api_token_user` now sets `request.state.user` for API-token
+  requests (previously only cookie-session requests via
+  `app.auth.middleware` had it set) — so `app.audit.log_event`'s automatic
+  actor resolution attributes an API-triggered action to the token's
+  owning user, exactly like a browser-driven one, with no route needing to
+  pass `actor=` explicitly just because the request came in over the API.
+
+What's deliberately still web-UI-only, and why: SSH key rotation
+(`/settings/ssh-key/...`) is a multi-step, human-paced process specifically
+designed so the app is never locked out of every machine mid-rotation —
+automating the "activate" step over an API makes it too easy to fire before
+the public key has actually been copied everywhere, with no way for the
+server to tell the difference. LDAP/OIDC configuration carries encrypted
+secrets and changes how *every* login on the instance is authenticated — a
+bug or a stolen token reconfiguring the login provider is a much bigger
+blast radius than anything else this API can do, so it's neither readable
+nor writable here. Syslog forwarding configuration is lower-risk but still
+a live security-monitoring integration point, left for the web UI for the
+same reasoning pending an explicit need. `GET /api/v1/settings` exposes
+only what's unambiguously safe to read over a bearer token: version/commit
+info, the SSH public key/fingerprint (meant to be copied elsewhere anyway),
+background-check intervals, and audit log retention.
 
 ## Security model
 
@@ -569,7 +656,7 @@ pattern.
 
 Update counts from all three sources are surfaced everywhere apt's count
 already was — the machine list, the detail page, the dashboard's "needs
-updates" tally, and the read-only API — as separate fields
+updates" tally, and the REST API — as separate fields
 (`flatpak_upgradable_count`, `snap_upgradable_count`) rather than merged
 into `upgradable_count`, since apt's count also carries a
 `security_upgradable_count` breakdown that doesn't have a flatpak/snap
@@ -964,5 +1051,7 @@ from anything but your reverse proxy, or bind
   Requirements](Managed-Machine-Requirements.md)).
 - CSRF rejections aren't audit-logged (rate-limit rejections are, as
   `auth.rate_limited` — see "Per-IP login rate limiting" above).
-- The read-only REST API (`/api/v1/...`) has no write counterpart yet —
-  creating/editing machines is web-UI-only.
+- Rotating the app's SSH identity, and configuring LDAP/OIDC/syslog, stay
+  web-UI-only over the REST API (see "The REST API: read and write,
+  mirroring the web UI" above for why) — everything else the web UI can do
+  now has an API equivalent.

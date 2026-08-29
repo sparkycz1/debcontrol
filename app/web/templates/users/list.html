@@ -18,6 +18,7 @@
         <th>Role</th>
         <th>Login method</th>
         <th>2FA</th>
+        <th>API access</th>
         <th>Status</th>
         <th>Last login</th>
         <th></th>
@@ -30,6 +31,7 @@
           <td>{{ u.role.name }}</td>
           <td>{{ u.auth_provider.value }}</td>
           <td>{{ 'on' if u.totp_enabled else '—' }}</td>
+          <td>{{ 'on' if u.api_access_enabled else '—' }}</td>
           <td>
             {% if u.is_active %}
               <span class="badge badge-ok">active</span>

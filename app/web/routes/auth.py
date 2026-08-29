@@ -744,6 +744,11 @@ async def create_own_api_token(
 ) -> Response:
     user = await db.get(User, current_user.id)
     assert user is not None
+    if not user.api_access_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="An administrator hasn't granted this account API access.",
+        )
     name = name.strip()
     if not name:
         return await _render_account(request, db, user, errors=["Token name can't be empty."])

@@ -185,7 +185,10 @@ async def client(db_session_factory):
     tests, or `login_as` to act as a more restricted user."""
     _configure_app_for_tests(db_session_factory)
     _, raw_token = await _create_user_with_permissions(
-        db_session_factory, username=ADMIN_USERNAME, permissions=set(Permission)
+        db_session_factory,
+        username=ADMIN_USERNAME,
+        permissions=set(Permission),
+        api_access_enabled=True,
     )
 
     transport = ASGITransport(app=app)

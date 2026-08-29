@@ -146,13 +146,20 @@
       <p class="hint">No active API tokens.</p>
     {% endif %}
 
-    <form method="post" action="/account/api-tokens" class="form stack-gap" autocomplete="off">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="token_name">Name</label>
-      <input type="text" id="token_name" name="name" maxlength="100" placeholder="monitoring script" required>
-      <label for="expires_in_days">Expires in (days, blank for never)</label>
-      <input type="number" id="expires_in_days" name="expires_in_days" min="1" step="1">
-      <button type="submit" class="button">Create API token</button>
-    </form>
+    {% if user.api_access_enabled %}
+      <form method="post" action="/account/api-tokens" class="form stack-gap" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="token_name">Name</label>
+        <input type="text" id="token_name" name="name" maxlength="100" placeholder="monitoring script" required>
+        <label for="expires_in_days">Expires in (days, blank for never)</label>
+        <input type="number" id="expires_in_days" name="expires_in_days" min="1" step="1">
+        <button type="submit" class="button">Create API token</button>
+      </form>
+    {% else %}
+      <p class="hint">
+        An administrator hasn't granted this account API access yet — ask one to
+        enable it on the Users page before creating a token.
+      </p>
+    {% endif %}
   </section>
 {% endblock %}

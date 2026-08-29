@@ -97,6 +97,18 @@ class User(Base):
     # without losing the record of who did what."
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Whether this user is allowed to create/use API tokens at all — a
+    # separate, admin-set flag on the account itself, distinct from the
+    # role-based Permission matrix (a role's permissions decide *what* a
+    # token can do; this decides *whether the account may have one in the
+    # first place*). Checked both at token-creation time
+    # (`app/web/routes/auth.py`'s `create_own_api_token`) and live on every
+    # API request (`app.auth.api_tokens.get_user_for_api_token`, right next
+    # to the `is_active` check) — so unchecking it cuts off that user's
+    # existing tokens immediately, the same way deactivating the account
+    # already does, with no separate revocation step needed.
+    api_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # --- TOTP (see app.auth.totp) — available for LOCAL and LDAP, not OIDC ---
     totp_secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

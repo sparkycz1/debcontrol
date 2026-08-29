@@ -53,6 +53,12 @@
         Active — unchecking immediately signs this user out everywhere
       </label>
 
+      <label>
+        <input type="checkbox" name="api_access_enabled" {{ 'checked' if target_user.api_access_enabled else '' }}>
+        API access — allows this user to create and use their own API tokens
+      </label>
+      <p class="hint">Unchecking this immediately stops any of this user's existing API tokens from working, no separate revocation needed.</p>
+
       <button type="submit" class="button">Save</button>
       <a class="button button-secondary" href="/users">Cancel</a>
     </form>
