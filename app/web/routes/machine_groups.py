@@ -11,7 +11,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.audit import log_event
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
+from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -80,6 +82,13 @@ async def create_group(
     try:
         payload = MachineGroupCreate(name=name, description=description or None)
     except ValueError as exc:
+        await log_event(
+            db,
+            request=request,
+            action="group.create",
+            summary=f'Rejected new group "{name}": {exc}',
+            outcome=AuditOutcome.FAILURE,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -101,6 +110,13 @@ async def create_group(
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        await log_event(
+            db,
+            request=request,
+            action="group.create",
+            summary=f'Rejected new group "{payload.name}": name already exists',
+            outcome=AuditOutcome.FAILURE,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -117,6 +133,15 @@ async def create_group(
         return response
 
     await db.refresh(group)
+    await log_event(
+        db,
+        request=request,
+        action="group.create",
+        summary=f'Created group "{group.name}"',
+        target_type="machine_group",
+        target_id=group.id,
+        target_label=group.name,
+    )
     return RedirectResponse(
         url=f"/machine-groups/{group.id}", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -169,6 +194,15 @@ async def trigger_all_machines_update(
 
     batch_id, skipped = await trigger_updates(db, request.app.state.arq_redis, machines, strategy)
 
+    await log_event(
+        db,
+        request=request,
+        action="all_machines.updates.run",
+        summary=f"Triggered {strategy.value.replace('_', '-')} on all machines",
+        target_type="all_machines",
+        details={"strategy": strategy.value, "batch_id": str(batch_id), "skipped": skipped},
+    )
+
     redirect_url = f"/machine-groups/batches/{batch_id}"
     if skipped:
         redirect_url += f"?skipped={skipped}"
@@ -180,7 +214,15 @@ async def trigger_all_check_updates(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> Response:
     result = await db.execute(select(Machine))
-    await trigger_check_updates(request.app.state.arq_redis, list(result.scalars().all()))
+    skipped = await trigger_check_updates(request.app.state.arq_redis, list(result.scalars().all()))
+    await log_event(
+        db,
+        request=request,
+        action="all_machines.updates.check",
+        summary="Checked for updates on all machines",
+        target_type="all_machines",
+        details={"skipped": skipped},
+    )
     return RedirectResponse(url="/machine-groups/all", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -213,6 +255,14 @@ async def all_power_action(
     confirm_name: str = Form(...),
 ) -> Response:
     if confirm_name.strip() != ALL_MACHINES_CONFIRM_PHRASE:
+        await log_event(
+            db,
+            request=request,
+            action=f"all_machines.power.{action.value}",
+            summary=f"Blocked {action.value} on all machines: confirmation mismatch",
+            outcome=AuditOutcome.DENIED,
+            target_type="all_machines",
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -238,6 +288,14 @@ async def all_power_action(
     result = await db.execute(select(Machine))
     machines = list(result.scalars().all())
     skipped = await send_power_to_machines(request.app.state.arq_redis, machines, action)
+    await log_event(
+        db,
+        request=request,
+        action=f"all_machines.power.{action.value}",
+        summary=f"Sent {action.value} to all machines",
+        target_type="all_machines",
+        details={"skipped": skipped},
+    )
     redirect_url = "/machine-groups/all"
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
@@ -286,6 +344,7 @@ async def group_detail(
 
 @router.post("/{group_id}/machines", dependencies=[Depends(verify_csrf)])
 async def add_machine_to_group(
+    request: Request,
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     machine_id: uuid.UUID = Form(...),
@@ -297,6 +356,16 @@ async def add_machine_to_group(
 
     machine.group_id = group.id
     await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="group.machine.add",
+        summary=f'Added "{machine.name}" to group "{group.name}"',
+        target_type="machine_group",
+        target_id=group.id,
+        target_label=group.name,
+        details={"machine_id": str(machine.id), "machine_name": machine.name},
+    )
     return RedirectResponse(
         url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -304,12 +373,21 @@ async def add_machine_to_group(
 
 @router.post("/{group_id}/machines/{machine_id}/remove", dependencies=[Depends(verify_csrf)])
 async def remove_machine_from_group(
-    group_id: uuid.UUID, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, group_id: uuid.UUID, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     machine = await db.get(Machine, machine_id)
     if machine is not None and machine.group_id == group_id:
         machine.group_id = None
         await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="group.machine.remove",
+            summary=f'Removed "{machine.name}" from group',
+            target_type="machine_group",
+            target_id=group_id,
+            details={"machine_id": str(machine.id), "machine_name": machine.name},
+        )
     return RedirectResponse(
         url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -326,6 +404,17 @@ async def trigger_group_update(
     redis = request.app.state.arq_redis
     batch_id, skipped = await trigger_updates(db, redis, group.machines, strategy)
 
+    await log_event(
+        db,
+        request=request,
+        action="group.updates.run",
+        summary=f'Triggered {strategy.value.replace("_", "-")} on group "{group.name}"',
+        target_type="machine_group",
+        target_id=group.id,
+        target_label=group.name,
+        details={"strategy": strategy.value, "batch_id": str(batch_id), "skipped": skipped},
+    )
+
     redirect_url = f"/machine-groups/batches/{batch_id}"
     if skipped:
         redirect_url += f"?skipped={skipped}"
@@ -337,7 +426,17 @@ async def trigger_group_check_updates(
     request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     group = await _get_group_or_404(group_id, db)
-    await trigger_check_updates(request.app.state.arq_redis, group.machines)
+    skipped = await trigger_check_updates(request.app.state.arq_redis, group.machines)
+    await log_event(
+        db,
+        request=request,
+        action="group.updates.check",
+        summary=f'Checked for updates on group "{group.name}"',
+        target_type="machine_group",
+        target_id=group.id,
+        target_label=group.name,
+        details={"skipped": skipped},
+    )
     return RedirectResponse(
         url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -378,6 +477,16 @@ async def group_power_action(
     group = await _get_group_or_404(group_id, db)
 
     if confirm_name.strip() != group.name:
+        await log_event(
+            db,
+            request=request,
+            action=f"group.power.{action.value}",
+            summary=f'Blocked {action.value} on group "{group.name}": confirmation mismatch',
+            outcome=AuditOutcome.DENIED,
+            target_type="machine_group",
+            target_id=group.id,
+            target_label=group.name,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -398,6 +507,16 @@ async def group_power_action(
         return response
 
     skipped = await send_power_to_machines(request.app.state.arq_redis, group.machines, action)
+    await log_event(
+        db,
+        request=request,
+        action=f"group.power.{action.value}",
+        summary=f'Sent {action.value} to group "{group.name}"',
+        target_type="machine_group",
+        target_id=group.id,
+        target_label=group.name,
+        details={"skipped": skipped},
+    )
     redirect_url = f"/machine-groups/{group_id}"
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
@@ -446,10 +565,22 @@ async def update_batch_status(
 
 
 @router.post("/{group_id}/delete", dependencies=[Depends(verify_csrf)])
-async def delete_group(group_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Response:
+async def delete_group(
+    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
     group = await _get_group_or_404(group_id, db)
+    group_name = group.name
     for machine in group.machines:
         machine.group_id = None
     await db.delete(group)
     await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="group.delete",
+        summary=f'Deleted group "{group_name}"',
+        target_type="machine_group",
+        target_id=group_id,
+        target_label=group_name,
+    )
     return RedirectResponse(url="/machine-groups", status_code=status.HTTP_303_SEE_OTHER)

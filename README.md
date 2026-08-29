@@ -89,8 +89,11 @@ because they're painful to retrofit later:
 - `/docs` and `/openapi.json` are disabled in production (`APP_ENV=production`).
 
 What's **deliberately missing** and left for a later phase (login):
-authentication/authorization of app users, an audit log, rate limiting.
-Don't expose the app to an untrusted network/the internet until then.
+authentication/authorization of app users, rate limiting. There is an
+**Audit log** ([app/audit.py](app/audit.py)) recording what happened, its
+outcome, the source IP, and when — but not *who*, since there's no login
+yet to attribute it to. Don't expose the app to an untrusted network/the
+internet until then.
 
 ## Quick start (Docker)
 
@@ -223,6 +226,12 @@ wiki/         documentation, meant to become the GitHub wiki
   already has that. New features that add a schedulable action only need
   to register one `ScheduledActionSpec` — see
   [app/scheduling/builtin_actions.py](app/scheduling/builtin_actions.py).
+- **Audit** — a read-only, searchable/filterable log of essentially every
+  mutating action (and every safeguard that blocked one — a confirmation
+  mismatch, an unpinned host key, a bad self-registration token): what
+  happened, its outcome, the source IP, and when. There's no login yet, so
+  entries record the source IP rather than an identity — see
+  [app/audit.py](app/audit.py).
 - **Users** — placeholder; no authentication yet.
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
   distribution to machines) and the current background-check intervals.
@@ -240,11 +249,10 @@ managed this way.
   first bulk/group-scoped SSH operation (see `app/ssh/updates.py`,
   `app/db/models/machine_update_run.py`); the same `batch_id` grouping
   pattern is meant to extend to other commands later.
-- Audit log (who ran what update, or sent a reboot/shutdown, and when —
-  right now an update run records what happened but not who triggered it,
-  and power actions record nothing at all beyond the reachability check
-  reflecting the outcome, since there's no login yet — the same applies to
-  who created/edited a scheduled task).
+- *Who* performed an audited action — the **Audit** log (see above) records
+  the source IP and what happened, not an identity, until there's a login
+  to attribute it to; CSRF rejections also aren't logged (see
+  wiki/Architecture.md).
 - Per-schedule timezones (Scheduling is always UTC) and a scheduled
   "power on" to pair with scheduled shutdown.
 - Automated SSH key distribution (currently a manual step — see Settings)

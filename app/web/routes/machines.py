@@ -11,9 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.audit import log_event
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
+from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
@@ -146,6 +148,13 @@ async def create_machine(
             description=description or None,
         )
     except ValueError as exc:
+        await log_event(
+            db,
+            request=request,
+            action="machine.create",
+            summary=f'Rejected new machine "{name}": {exc}',
+            outcome=AuditOutcome.FAILURE,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -183,6 +192,16 @@ async def create_machine(
     db.add(machine)
     await db.commit()
     await db.refresh(machine)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.create",
+        summary=f'Created machine "{machine.name}" ({machine.ip_address})',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+    )
 
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -263,6 +282,16 @@ async def update_machine(
             is_active=bool(is_active),
         )
     except ValueError as exc:
+        await log_event(
+            db,
+            request=request,
+            action="machine.update",
+            summary=f'Rejected update to "{machine.name}": {exc}',
+            outcome=AuditOutcome.FAILURE,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -317,6 +346,18 @@ async def update_machine(
         machine.facts_updated_at = None
 
     await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.update",
+        summary=f'Updated machine "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"connection_target_changed": connection_target_changed},
+    )
+
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -335,6 +376,18 @@ async def discover_host_key(
         )
     except SSHConnectionError as exc:
         context["error"] = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.host_key.discover",
+        summary=f'Discovered host key fingerprint for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if "error" not in context else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": context["error"]} if "error" in context else None,
+    )
 
     response = templates.TemplateResponse(request, "partials/host_key_discovery.html", context)
     if new_cookie:
@@ -357,6 +410,17 @@ async def trust_host_key(
         )
     machine.host_key_fingerprint = fingerprint
     await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.host_key.trust",
+        summary=f'Trusted host key fingerprint for "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"fingerprint": fingerprint},
+    )
 
     # Now that the machine can be safely connected to, kick off an initial
     # facts gathering pass in the background — don't block the redirect on it.
@@ -391,6 +455,18 @@ async def test_connection_endpoint(
         # we want to show that to the user as a test failure, not crash the request.
         error = str(exc)
 
+    await log_event(
+        db,
+        request=request,
+        action="machine.test_connection",
+        summary=f'Tested connection to "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
     return templates.TemplateResponse(
         request,
         "partials/test_connection_result.html",
@@ -419,6 +495,18 @@ async def refresh_facts_endpoint(
     if error is None:
         # Facts were updated in the DB by the job — reload to pick them up.
         machine = await _get_machine_or_404(machine_id, db)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.facts.refresh",
+        summary=f'Refreshed facts for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
 
     # The partial has its own "Refresh facts" button, which needs a CSRF
     # token too — reuse the one already set on this client rather than
@@ -452,6 +540,19 @@ async def check_updates_endpoint(
     # Counts were updated in the DB by the job (even on failure, they're
     # reset to "unknown" rather than left stale) — reload either way.
     machine = await _get_machine_or_404(machine_id, db)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.updates.check",
+        summary=f'Checked for updates on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
     csrf_token, _ = get_or_create_csrf_token(request)
     return templates.TemplateResponse(
         request,
@@ -469,6 +570,16 @@ async def trigger_machine_update(
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db)
     if not machine.host_key_fingerprint:
+        await log_event(
+            db,
+            request=request,
+            action="machine.updates.run",
+            summary=f'Blocked update on "{machine.name}": no pinned host key',
+            outcome=AuditOutcome.DENIED,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Confirm the host key fingerprint before running updates.",
@@ -482,6 +593,17 @@ async def trigger_machine_update(
     await db.refresh(run)
 
     await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.updates.run",
+        summary=f'Triggered {strategy.value.replace("_", "-")} on "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"strategy": strategy.value, "run_id": str(run.id)},
+    )
 
     return RedirectResponse(
         url=f"/machines/{machine.id}/updates/{run.id}", status_code=status.HTTP_303_SEE_OTHER
@@ -554,6 +676,16 @@ async def power_action(
     machine = await _get_machine_or_404(machine_id, db)
 
     if confirm_name.strip() != machine.name:
+        await log_event(
+            db,
+            request=request,
+            action=f"machine.power.{action.value}",
+            summary=f'Blocked {action.value} on "{machine.name}": confirmation mismatch',
+            outcome=AuditOutcome.DENIED,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -571,6 +703,16 @@ async def power_action(
         return response
 
     if not machine.host_key_fingerprint:
+        await log_event(
+            db,
+            request=request,
+            action=f"machine.power.{action.value}",
+            summary=f'Blocked {action.value} on "{machine.name}": no pinned host key',
+            outcome=AuditOutcome.DENIED,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Confirm the host key fingerprint before sending power commands.",
@@ -583,6 +725,16 @@ async def power_action(
         "send_machine_power_command", str(machine.id), action.value
     )
 
+    await log_event(
+        db,
+        request=request,
+        action=f"machine.power.{action.value}",
+        summary=f'Sent {action.value} to "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+    )
+
     return RedirectResponse(
         url=f"/machines/{machine.id}?power_sent={action.value}",
         status_code=status.HTTP_303_SEE_OTHER,
@@ -591,18 +743,39 @@ async def power_action(
 
 @router.post("/pending/{pending_id}/dismiss", dependencies=[Depends(verify_csrf)])
 async def dismiss_pending_machine(
-    pending_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, pending_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     pending = await db.get(PendingMachine, pending_id)
     if pending is not None:
         await db.delete(pending)
         await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="machine.pending.dismiss",
+            summary=f'Dismissed pending machine "{pending.ip_address}"',
+            target_type="pending_machine",
+            target_id=pending_id,
+            target_label=pending.ip_address,
+        )
     return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{machine_id}/delete", dependencies=[Depends(verify_csrf)])
-async def delete_machine(machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Response:
+async def delete_machine(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
     machine = await _get_machine_or_404(machine_id, db)
+    machine_name = machine.name
     await db.delete(machine)
     await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.delete",
+        summary=f'Deleted machine "{machine_name}"',
+        target_type="machine",
+        target_id=machine_id,
+        target_label=machine_name,
+    )
     return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)

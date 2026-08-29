@@ -14,7 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.audit import log_event
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
+from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.scheduled_task import ScheduledTask
@@ -143,6 +145,14 @@ async def create_scheduled_task(request: Request, db: AsyncSession = Depends(get
         errors.append(str(exc))
 
     if errors or payload is None:
+        task_name = raw_form.get("name", "")
+        await log_event(
+            db,
+            request=request,
+            action="scheduled_task.create",
+            summary=f'Rejected new scheduled task "{task_name}": {"; ".join(errors)}',
+            outcome=AuditOutcome.FAILURE,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         context = await _form_context(db, raw_form, errors)
         context["csrf_token"] = csrf_token
@@ -170,6 +180,16 @@ async def create_scheduled_task(request: Request, db: AsyncSession = Depends(get
     db.add(task)
     await db.commit()
     await db.refresh(task)
+
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.create",
+        summary=f'Created scheduled task "{task.name}" ({task.action}, {task.cron_expression})',
+        target_type="scheduled_task",
+        target_id=task.id,
+        target_label=task.name,
+    )
 
     return RedirectResponse(url="/scheduling", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -222,6 +242,16 @@ async def update_scheduled_task(
         errors.append(str(exc))
 
     if errors or payload is None:
+        await log_event(
+            db,
+            request=request,
+            action="scheduled_task.update",
+            summary=f'Rejected update to scheduled task "{task.name}": {"; ".join(errors)}',
+            outcome=AuditOutcome.FAILURE,
+            target_type="scheduled_task",
+            target_id=task.id,
+            target_label=task.name,
+        )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         context = await _form_context(db, raw_form, errors)
         context["csrf_token"] = csrf_token
@@ -247,17 +277,35 @@ async def update_scheduled_task(
     task.next_run_at = compute_next_run(payload.cron_expression) if payload.is_enabled else None
 
     await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.update",
+        summary=f'Updated scheduled task "{task.name}"',
+        target_type="scheduled_task",
+        target_id=task.id,
+        target_label=task.name,
+    )
     return RedirectResponse(url="/scheduling", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{task_id}/toggle", dependencies=[Depends(verify_csrf)])
 async def toggle_scheduled_task(
-    task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     task = await _get_task_or_404(task_id, db)
     task.is_enabled = not task.is_enabled
     task.next_run_at = compute_next_run(task.cron_expression) if task.is_enabled else None
     await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.enable" if task.is_enabled else "scheduled_task.disable",
+        summary=f'{"Enabled" if task.is_enabled else "Disabled"} scheduled task "{task.name}"',
+        target_type="scheduled_task",
+        target_id=task.id,
+        target_label=task.name,
+    )
     return RedirectResponse(url="/scheduling", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -271,14 +319,35 @@ async def run_scheduled_task_now(
     `next_run_at`."""
     task = await _get_task_or_404(task_id, db)
     await request.app.state.arq_redis.enqueue_job("run_scheduled_task", str(task.id))
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.run_now",
+        summary=f'Manually ran scheduled task "{task.name}" now',
+        target_type="scheduled_task",
+        target_id=task.id,
+        target_label=task.name,
+    )
     return RedirectResponse(
         url=f"/scheduling?ran={task.id}", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
 @router.post("/{task_id}/delete", dependencies=[Depends(verify_csrf)])
-async def delete_scheduled_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Response:
+async def delete_scheduled_task(
+    request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
     task = await _get_task_or_404(task_id, db)
+    task_name = task.name
     await db.delete(task)
     await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.delete",
+        summary=f'Deleted scheduled task "{task_name}"',
+        target_type="scheduled_task",
+        target_id=task_id,
+        target_label=task_name,
+    )
     return RedirectResponse(url="/scheduling", status_code=status.HTTP_303_SEE_OTHER)

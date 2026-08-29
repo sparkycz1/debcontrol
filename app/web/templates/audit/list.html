@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Audit log — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Audit log</h1>
+  </div>
+
+  <p class="hint">
+    There's no login yet, so entries can't record who performed an action —
+    only its source IP, what happened, and when. See the wiki page
+    "Architecture" for how this is meant to extend once authentication lands.
+  </p>
+
+  <form method="get" class="search-form">
+    <input type="search" name="q" value="{{ q }}"
+           placeholder="Search by action, summary, target, IP...">
+    <select name="outcome">
+      <option value="" {% if not outcome %}selected{% endif %}>Any outcome</option>
+      {% for o in outcomes %}
+        <option value="{{ o.value }}" {% if outcome == o.value %}selected{% endif %}>
+          {{ o.value }}
+        </option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="button">Search</button>
+    {% if q or outcome %}
+      <a class="button button-secondary" href="/audit">Clear</a>
+    {% endif %}
+  </form>
+
+  {% if entries %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Time (UTC)</th>
+          <th>IP address</th>
+          <th>Action</th>
+          <th>Target</th>
+          <th>Summary</th>
+          <th>Outcome</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+          <tr>
+            <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ entry.ip_address or '—' }}</td>
+            <td><code>{{ entry.action }}</code></td>
+            <td>
+              {% if entry.target_label %}
+                {{ entry.target_type }}: {{ entry.target_label }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {{ entry.summary }}
+              {% if entry.details %}
+                <br><span class="hint">{{ entry.details }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if entry.outcome.value == 'success' %}
+                <span class="badge badge-ok">success</span>
+              {% elif entry.outcome.value == 'denied' %}
+                <span class="badge badge-error">denied</span>
+              {% else %}
+                <span class="badge badge-warn">failure</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="page-header-actions">
+      {% if page > 1 %}
+        <a class="button button-secondary"
+           href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&page={{ page - 1 }}">
+          Newer
+        </a>
+      {% endif %}
+      {% if has_older %}
+        <a class="button button-secondary"
+           href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&page={{ page + 1 }}">
+          Older
+        </a>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <p>No audit log entries {% if q or outcome %}match this filter{% else %}yet{% endif %}.</p>
+    </div>
+  {% endif %}
+{% endblock %}

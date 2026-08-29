@@ -258,6 +258,58 @@ decisions shaped it:
   listing "All machines", every group, and every machine — no client-side
   JS needed to hide whichever selector doesn't apply.
 
+### Audit log: IP instead of identity, for now
+
+**Audit** (`app.audit`, `app/db/models/audit_log.py`) records what happened,
+its outcome, the source IP, and when — for essentially every mutating
+action and every safeguard that blocked one (a typed confirmation that
+didn't match, an unpinned host key, a bad self-registration token, a
+rejected form). A few decisions:
+
+- **`actor` exists and is `None`, on purpose, until there's a login.**
+  There's no user identity anywhere in the app yet (see "Deliberately
+  deferred" below), so there's nothing truthful to put there — the column
+  is present now so that once authentication lands, entries can start
+  carrying a real actor without another migration, rather than recording a
+  guess (a cookie value, a hostname) that would look like an identity but
+  isn't one. `ip_address` is what stands in for "who" today.
+- **One write path, called after the fact, never before.** `app.audit.
+  log_event()` is the only thing that creates `AuditLogEntry` rows. It
+  commits independently of whatever the caller's own transaction is doing,
+  and every call site invokes it *after* its own commit (or, for a
+  rejected/failed action, once there's nothing else left to commit) — never
+  before — so a logging failure can never roll back the action it
+  describes, and a validation failure that persisted nothing else still
+  gets its own record. A logging failure is caught and swallowed (logged at
+  `ERROR`, not raised) for the same reason: an audit-trail gap is far
+  better than a broken update button.
+- **Not a foreign key.** `target_type`/`target_id` are plain strings, and
+  `target_label` is a snapshot of the target's name *at the time of the
+  event* — a machine or group can be renamed or deleted later, and the
+  trail has to read sensibly regardless (`app/db/models/machine_update_run.
+  py`'s `batch_id` uses the same non-FK pattern for the same reason).
+- **Scheduled firings are logged too, with a fixed actor.** `app.scheduling.
+  jobs.run_scheduled_task` has no HTTP request (and so no IP) behind it —
+  entries it writes use `actor="scheduler (automatic)"` instead, which is
+  what distinguishes "this reboot happened because of a schedule" from a
+  person's IP address in the log.
+- **Routine background sweeps are not logged.** `ping_all_machines` (every
+  minute, every machine) and the periodic facts/update-check sweeps would
+  flood the log with heartbeats, not audit-worthy events — only a
+  human-or-schedule-triggered action (and the safeguard that blocked one)
+  gets an entry. The per-machine detail of what actually happened already
+  lives in its own record (`MachineUpdateRun`, the reachability check) —
+  the audit entry for a *trigger* doesn't duplicate that, it just answers
+  "who/what IP asked for this, and when."
+- **CSRF rejections aren't logged.** `verify_csrf` runs as a route
+  dependency before the route body (and its DB session) even exists — hooking
+  an audit write into it is a lower-level change than the rest of this
+  feature and was left out of this pass.
+- **No pagination cursor beyond offset — this is a first pass**, not a
+  compliance-grade tamper-evident log (no hash chaining, no write-once
+  storage, no retention policy). Good enough to answer "what happened
+  here and from where," not something to point a security audit at yet.
+
 ### CSRF protection without sessions
 
 Since there's no login yet, there's no session to hang CSRF protection
@@ -289,9 +341,9 @@ published to the host at all by default.
 ### Deliberately deferred
 
 - Authentication/authorization for app users (the **Users** tab is a
-  placeholder for this).
-- An audit log of actions taken against managed machines (including who —
-  there's no login yet — created or ran a schedule).
+  placeholder for this) — and, as a direct consequence, *who* performed an
+  audited action: the **Audit** log records the source IP and what
+  happened today, not an identity (see "Audit log" above).
 - Rate limiting at the application layer (a reverse proxy or upstream
   service is expected to handle this today).
 - Per-schedule timezones (everything is UTC) and a scheduled "power on" to

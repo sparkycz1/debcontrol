@@ -18,7 +18,9 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import log_event
 from app.core.config import get_settings
+from app.db.models.audit_log import AuditOutcome
 from app.db.models.pending_machine import PendingMachine
 from app.db.session import get_db
 from app.schemas.inform import InformPayload
@@ -26,10 +28,17 @@ from app.schemas.inform import InformPayload
 router = APIRouter(prefix="/api")
 
 
-async def _verify_inform_token(request: Request) -> None:
+async def _verify_inform_token(request: Request, db: AsyncSession = Depends(get_db)) -> None:
     expected = f"Bearer {get_settings().inform_token.get_secret_value()}"
     provided = request.headers.get("Authorization", "")
     if not secrets.compare_digest(provided, expected):
+        await log_event(
+            db,
+            request=request,
+            action="machine.self_register",
+            summary="Blocked self-registration: invalid or missing bearer token",
+            outcome=AuditOutcome.DENIED,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing bearer token."
         )
@@ -56,4 +65,16 @@ async def inform(
     )
     db.add(pending)
     await db.commit()
+    await db.refresh(pending)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.self_register",
+        summary=f'Machine self-registered as pending ({pending.ip_address})',
+        target_type="pending_machine",
+        target_id=pending.id,
+        target_label=pending.ip_address,
+    )
+
     return {"status": "received"}

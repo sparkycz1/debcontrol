@@ -17,12 +17,20 @@ from typing import Any
 
 from sqlalchemy import select
 
+from app.audit import log_event
+from app.db.models.audit_log import AuditOutcome
 from app.db.models.scheduled_task import ScheduledTask
 from app.db.session import AsyncSessionLocal
 from app.scheduling.actions import get_action
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.scheduling.cron import compute_next_run
 from app.scheduling.targets import resolve_target_machines
+
+# `actor` for every audit entry this module writes — there's no HTTP
+# request (and so no IP) behind a schedule firing on its own; this label is
+# what distinguishes "the scheduler did this" from a human's IP address in
+# the audit log.
+_SCHEDULER_ACTOR = "scheduler (automatic)"
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +93,16 @@ async def run_scheduled_task(ctx: dict[str, Any], task_id: str) -> dict[str, Any
             task.last_run_summary = f'Unknown action "{task.action}" — nothing was run.'
             await session.commit()
             logger.warning("run_scheduled_task(%s): %s", task.id, task.last_run_summary)
+            await log_event(
+                session,
+                actor=_SCHEDULER_ACTOR,
+                action="scheduled_task.fired",
+                summary=f'Scheduled task "{task.name}" fired: {task.last_run_summary}',
+                outcome=AuditOutcome.FAILURE,
+                target_type="scheduled_task",
+                target_id=task.id,
+                target_label=task.name,
+            )
             return {"ok": False, "error": task.last_run_summary}
 
         machines = await resolve_target_machines(session, task)
@@ -99,5 +117,16 @@ async def run_scheduled_task(ctx: dict[str, Any], task_id: str) -> dict[str, Any
         task.last_run_at = datetime.now(UTC)
         task.last_run_summary = summary
         await session.commit()
+
+        await log_event(
+            session,
+            actor=_SCHEDULER_ACTOR,
+            action="scheduled_task.fired",
+            summary=f'Scheduled task "{task.name}" fired ({task.action}): {summary}',
+            target_type="scheduled_task",
+            target_id=task.id,
+            target_label=task.name,
+            details={"attempted": result.attempted, "skipped": result.skipped},
+        )
 
         return {"ok": True, "attempted": result.attempted, "skipped": result.skipped}
