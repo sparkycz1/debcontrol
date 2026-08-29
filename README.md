@@ -306,7 +306,9 @@ wiki/           documentation, meant to become the GitHub wiki
   or locked-out login): who (account + source IP), what happened, its
   outcome, and when. Every entry is hash-chained (each links to the
   previous one's SHA-256, verifiable on the Settings page) so an altered or
-  removed entry is detectable — see [app/audit.py](app/audit.py).
+  removed entry is detectable — see [app/audit.py](app/audit.py). Exportable
+  as CSV/JSON (respecting the current search/outcome filter), and can be
+  live-forwarded to an external syslog server (Settings) as a SIEM mirror.
 - **Users** — create/edit/deactivate/delete accounts, assign a role, reset
   a local password (forces a change + signs them out everywhere), and force
   a sign-out. Login method (local/LDAP/OIDC) is per-account; local accounts
@@ -326,16 +328,22 @@ wiki/           documentation, meant to become the GitHub wiki
   role changes or your account is deactivated — see
   [app/web/routes/auth.py](app/web/routes/auth.py) and
   [app/web/routes/api_v1.py](app/web/routes/api_v1.py).
-- **Settings** — shows the app's SSH public key/fingerprint (for manual
-  distribution to machines) with a **rotate** flow (generate a replacement
-  key, deploy its public half to `authorized_keys` alongside the old one,
-  then activate it — the old key is never touched until you do), the
-  current background-check intervals, the audit log retention policy (how
-  many days of entries to keep before a daily purge, see
+- **Settings** — shows the running **version and git commit** (linked to
+  GitHub — see [app/core/version.py](app/core/version.py)), the app's SSH
+  public key/fingerprint (for manual distribution to machines) with a
+  **rotate** flow (generate a replacement key, deploy its public half to
+  `authorized_keys` alongside the old one, then activate it — the old key
+  is never touched until you do), the current background-check intervals,
+  the audit log retention policy (how many days of entries to keep before a
+  daily purge, see
   [app/db/models/app_settings.py](app/db/models/app_settings.py)) plus an
-  on-demand hash-chain integrity check, and the LDAP/OIDC login
-  configuration (server, bind account, search filter / issuer, client
-  credentials — secrets stored encrypted, same as SSH passwords).
+  on-demand hash-chain integrity check, **CSV/JSON export** of the audit
+  log, **syslog forwarding** of every audit entry to an external server —
+  e.g. a SIEM — over plain UDP/TCP or TLS (see
+  [app/audit_syslog.py](app/audit_syslog.py); best-effort, the DB row is
+  always the real record), and the LDAP/OIDC login configuration (server,
+  bind account, search filter / issuer, client credentials — secrets stored
+  encrypted, same as SSH passwords).
 
 See the wiki's
 [Managed Machine Requirements](wiki/Managed-Machine-Requirements.md) for

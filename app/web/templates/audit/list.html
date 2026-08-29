@@ -31,7 +31,12 @@
     {% if q or outcome %}
       <a class="button button-secondary" href="/audit">Clear</a>
     {% endif %}
+    <a class="button button-secondary"
+       href="/audit/export?format=csv&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">Export CSV</a>
+    <a class="button button-secondary"
+       href="/audit/export?format=json&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">Export JSON</a>
   </form>
+  <p class="hint">Export respects the search/outcome filters above (blank means everything).</p>
 
   {% if entries %}
     <table class="data-table">

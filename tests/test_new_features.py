@@ -168,3 +168,122 @@ async def test_ssh_key_activate_without_pending_key_shows_error(client):
     response = await client.post("/settings/ssh-key/activate", data={"csrf_token": csrf_token})
     assert response.status_code == 200
     assert "No pending SSH key to activate" in response.text
+
+
+async def test_settings_shows_app_version(client):
+    from app.core.version import APP_VERSION
+
+    response = await client.get("/settings")
+    assert response.status_code == 200
+    assert APP_VERSION in response.text
+
+
+async def test_update_syslog_settings_persists_and_validates(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+
+    missing_host = await client.post(
+        "/settings/syslog",
+        data={
+            "syslog_enabled": "1",
+            "syslog_host": "",
+            "syslog_port": "514",
+            "syslog_protocol": "udp",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert missing_host.status_code == 200
+    assert "needs a server host" in missing_host.text
+
+    ok = await client.post(
+        "/settings/syslog",
+        data={
+            "syslog_enabled": "1",
+            "syslog_host": "siem.example.com",
+            "syslog_port": "6514",
+            "syslog_protocol": "tls",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert ok.status_code == 303
+
+    page = await client.get("/settings")
+    assert 'value="siem.example.com"' in page.text
+    assert 'value="6514"' in page.text
+
+    log = await client.get("/audit")
+    assert "settings.syslog.update" in log.text
+
+
+async def test_audit_export_csv_and_json(client):
+    # Generate at least one audit entry to export.
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/machines",
+        data={
+            "name": "export-test-machine",
+            "ip_address": "10.0.3.10",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "s3cret",
+            "csrf_token": csrf_token,
+        },
+    )
+
+    csv_response = await client.get("/audit/export?format=csv")
+    assert csv_response.status_code == 200
+    assert csv_response.headers["content-type"].startswith("text/csv")
+    assert "export-test-machine" in csv_response.text
+    assert "sequence,created_at,actor" in csv_response.text
+
+    json_response = await client.get("/audit/export?format=json")
+    assert json_response.status_code == 200
+    assert json_response.headers["content-type"].startswith("application/json")
+    entries = json_response.json()
+    assert any("export-test-machine" in e["summary"] for e in entries)
+
+
+async def test_audit_export_respects_outcome_filter(client):
+    response = await client.get("/audit/export?format=json&outcome=denied")
+    assert response.status_code == 200
+    entries = response.json()
+    assert all(e["outcome"] == "denied" for e in entries)
+
+
+async def test_syslog_forwarding_is_skipped_when_disabled():
+    from unittest.mock import AsyncMock, patch
+
+    from app.audit_syslog import forward_to_syslog
+    from app.db.models.app_settings import AppSettings
+
+    settings = AppSettings(id=1, syslog_enabled=False, syslog_host="siem.example.com")
+    with patch("app.audit_syslog.asyncio.to_thread", new=AsyncMock()) as mock_to_thread:
+        await forward_to_syslog(settings, entry=None)  # type: ignore[arg-type]
+    mock_to_thread.assert_not_called()
+
+
+async def test_syslog_forwarding_sends_udp_datagram():
+    from unittest.mock import MagicMock, patch
+
+    from app.audit_syslog import _send_sync
+    from app.db.models.app_settings import AppSettings, SyslogProtocol
+
+    settings = AppSettings(
+        id=1,
+        syslog_enabled=True,
+        syslog_host="siem.example.com",
+        syslog_port=514,
+        syslog_protocol=SyslogProtocol.UDP,
+    )
+
+    mock_socket = MagicMock()
+    mock_socket.__enter__.return_value = mock_socket
+    with patch("app.audit_syslog.socket.socket", return_value=mock_socket):
+        _send_sync(settings, "test message")
+
+    mock_socket.sendto.assert_called_once()
+    sent_bytes, address = mock_socket.sendto.call_args[0]
+    assert sent_bytes == b"test message"
+    assert address == ("siem.example.com", 514)

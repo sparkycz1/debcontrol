@@ -11,7 +11,8 @@ and different trust models — this was the first *value* editable through
 the UI, not just secrets provisioned outside it.
 
 Also holds the LDAP and OIDC configuration used for user login (see
-`app.auth.ldap` / `app.auth.oidc`) — deliberately settings-page config, not
+`app.auth.ldap` / `app.auth.oidc`) and the syslog forwarding configuration
+(see `app.audit_syslog`) — deliberately settings-page config, not
 environment variables, same reasoning as retention: these are things
 whoever's operating the app day to day turns on/off and tunes, not
 deploy-time infrastructure. Secrets in here (`ldap_bind_password_encrypted`,
@@ -22,9 +23,10 @@ deploy-time infrastructure. Secrets in here (`ldap_bind_password_encrypted`,
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Integer, LargeBinary, String, func
+from sqlalchemy import Boolean, Enum, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -37,6 +39,20 @@ SINGLETON_ID = 1
 DEFAULT_LDAP_USER_SEARCH_FILTER = "(uid={username})"
 DEFAULT_OIDC_USERNAME_CLAIM = "email"
 DEFAULT_OIDC_SCOPES = "openid email profile"
+
+
+class SyslogProtocol(enum.StrEnum):
+    """Transport for `app.audit_syslog` — UDP and TCP are plaintext (RFC 6587
+    octet-counting framing for TCP; UDP needs none, one datagram per
+    message); TLS wraps the same TCP framing in a TLS session, for sending
+    to a SIEM over an untrusted network."""
+
+    UDP = "udp"
+    TCP = "tcp"
+    TLS = "tls"
+
+
+DEFAULT_SYSLOG_PORT = 514
 
 
 class AppSettings(Base):
@@ -82,6 +98,18 @@ class AppSettings(Base):
     )
     oidc_scopes: Mapped[str] = mapped_column(
         String(255), default=DEFAULT_OIDC_SCOPES, nullable=False
+    )
+
+    # --- Syslog forwarding of audit log entries (app.audit_syslog), e.g. to
+    # a SIEM. Best-effort/fire-and-forget: the DB row is always the source
+    # of truth, this is only ever a live mirror of it. ---
+    syslog_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    syslog_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    syslog_port: Mapped[int] = mapped_column(Integer, default=DEFAULT_SYSLOG_PORT, nullable=False)
+    syslog_protocol: Mapped[SyslogProtocol] = mapped_column(
+        Enum(SyslogProtocol, name="syslog_protocol", native_enum=True),
+        default=SyslogProtocol.UDP,
+        nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(

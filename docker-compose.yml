@@ -4,6 +4,12 @@ x-app-image: &app-image
   build:
     context: .
     dockerfile: Dockerfile
+    # Stamps the built image with the commit it came from (app.core.version,
+    # shown on the Settings page) — set GIT_COMMIT in the shell/`.env` before
+    # building, e.g. `GIT_COMMIT=$(git rev-parse HEAD) docker compose build`;
+    # scripts/upgrade.sh does this automatically. Defaults to "unknown".
+    args:
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
   image: debcontrol:local
   env_file:
     - .env

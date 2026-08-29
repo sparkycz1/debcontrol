@@ -637,6 +637,46 @@ just starts from whatever the current oldest surviving entry is. The purge
 itself is logged (`audit_log.purge`, actor `"retention policy
 (automatic)"`) with how many entries were removed.
 
+### Audit log export and syslog forwarding: the DB row is always the truth
+
+`GET /audit/export?format=csv|json` (`app/web/routes/audit.py`) respects the
+same `q`/`outcome` filters as the list view and streams every matching
+`AuditLogEntry` back as a download — a plain `<a href>` link, not a POST,
+since the only side effect is an `audit_log.export` entry for the export
+itself (auditing who pulled a copy of the audit log is exactly the kind of
+thing worth recording), not anything CSRF-worthy. Not paginated: it fetches
+every matching row in one request, acceptable for an infrequent,
+admin-triggered action on a self-hosted tool's own table.
+
+`app.audit_syslog.forward_to_syslog` is a live *mirror*, not an alternative
+record: `log_event` calls it once per entry, right after that entry's own
+commit succeeds, using whatever `AppSettings.syslog_*` is currently
+configured (UDP, plain TCP, or TCP-over-TLS — RFC 5424 message format,
+RFC 6587 octet-counting framing for the two TCP modes). It's deliberately
+best-effort and fire-and-forget: a SIEM being unreachable, slow, or
+misconfigured must never be allowed to block or fail the action being
+audited, so any delivery failure is caught, logged, and swallowed inside
+its own nested `try`/`except` — the outer one that handles a failure to
+*write* the entry never even sees it. All socket I/O is blocking
+(`socket`/`ssl`, simplest for a one-shot send with no connection to keep
+alive) so it always runs via `asyncio.to_thread`, the same pattern
+`app.auth.ldap`'s synchronous `ldap3` calls use to stay off the event loop.
+
+### Version metadata: baked in at build time, not read from `.git`
+
+The Settings page shows `APP_VERSION` (`app/core/version.py`, bumped by
+hand per release — currently `0.1.0`, no automated semantic versioning yet)
+and the exact git commit the running image was built from, linked to
+GitHub. The Docker image never contains a `.git` directory (see
+`.dockerignore`/the `Dockerfile`'s `COPY`s), so the commit has to be baked
+in at build time instead: a `GIT_COMMIT` build arg becomes an `ENV` in the
+image (`Dockerfile`), set from `docker-compose.yml`'s `args:` block, which
+in turn reads it from the `GIT_COMMIT` shell variable —
+`scripts/upgrade.sh` exports `GIT_COMMIT=$(git rev-parse HEAD)` right
+before building, so every upgrade stamps the image with the commit it just
+pulled. Running locally without Docker, `GIT_COMMIT` is never set, so
+`get_git_commit()` falls back to asking the local `.git` checkout directly.
+
 ### CSRF protection: a double-submit cookie, provisioned centrally
 
 A double-submit cookie pattern: a random `csrftoken` cookie (`SameSite=

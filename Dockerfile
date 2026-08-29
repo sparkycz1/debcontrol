@@ -45,6 +45,15 @@ COPY --chown=app:app alembic.ini ./alembic.ini
 
 RUN mkdir -p /app/data && chown app:app /app/data
 
+# Which commit this image was built from — the `.git` directory itself is
+# never copied in, so this is the only way `app.core.version` can know at
+# runtime. Passed via `docker compose build --build-arg` (docker-compose.yml
+# sets it from the GIT_COMMIT shell variable, which scripts/upgrade.sh
+# exports before building); defaults to "unknown" for a plain `docker build`
+# with nothing passed.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 USER app
 
 EXPOSE 8000

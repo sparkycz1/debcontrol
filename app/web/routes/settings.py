@@ -16,10 +16,13 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
+from app.core.version import APP_VERSION, commit_url, get_git_commit
 from app.db.models.app_settings import (
     DEFAULT_LDAP_USER_SEARCH_FILTER,
     DEFAULT_OIDC_SCOPES,
     DEFAULT_OIDC_USERNAME_CLAIM,
+    DEFAULT_SYSLOG_PORT,
+    SyslogProtocol,
 )
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.role import Permission
@@ -44,12 +47,17 @@ async def _render_settings(
     identity = await get_or_create_identity(db)
     app_settings = await get_or_create_app_settings(db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
+    git_commit = get_git_commit()
     context: dict[str, object] = {
         "identity": identity,
         "settings": get_settings(),
         "app_settings": app_settings,
         "csrf_token": csrf_token,
         "errors": errors,
+        "app_version": APP_VERSION,
+        "git_commit": git_commit,
+        "commit_url": commit_url(git_commit) if git_commit else None,
+        "syslog_protocols": list(SyslogProtocol),
         **extra,
     }
     response = templates.TemplateResponse(request, "settings/index.html", context)
@@ -263,5 +271,56 @@ async def update_oidc_settings(
         request=request,
         action="settings.oidc.update",
         summary=f"Updated OIDC settings ({'enabled' if app_settings.oidc_enabled else 'disabled'})",
+    )
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/syslog", dependencies=[_manage, Depends(verify_csrf)])
+async def update_syslog_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    syslog_enabled: str = Form(""),
+    syslog_host: str = Form(""),
+    syslog_port: str = Form(str(DEFAULT_SYSLOG_PORT)),
+    syslog_protocol: str = Form(SyslogProtocol.UDP.value),
+) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+
+    host = syslog_host.strip()
+    try:
+        protocol = SyslogProtocol(syslog_protocol)
+    except ValueError:
+        errors.append("Unknown syslog protocol.")
+        protocol = app_settings.syslog_protocol
+
+    try:
+        port = int(syslog_port.strip() or str(DEFAULT_SYSLOG_PORT))
+        if not (0 < port <= 65535):
+            raise ValueError
+    except ValueError:
+        errors.append("Port must be a whole number between 1 and 65535.")
+        port = app_settings.syslog_port
+
+    if bool(syslog_enabled) and not host:
+        errors.append("Enabling syslog forwarding needs a server host/IP.")
+
+    if errors:
+        return await _render_settings(request, db, errors)
+
+    app_settings.syslog_enabled = bool(syslog_enabled)
+    app_settings.syslog_host = host or None
+    app_settings.syslog_port = port
+    app_settings.syslog_protocol = protocol
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.syslog.update",
+        summary=(
+            f"Updated syslog forwarding settings "
+            f"({'enabled, ' + protocol.value if app_settings.syslog_enabled else 'disabled'})"
+        ),
     )
     return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)

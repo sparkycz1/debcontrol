@@ -210,6 +210,18 @@ async def log_event(
         state.entry_count = sequence
         db.add(entry)
         await db.commit()
+
+        # Best-effort live mirror to an external syslog server/SIEM, if
+        # configured — see app.audit_syslog's module docstring for why a
+        # delivery failure here is only ever logged, never raised.
+        from app.audit_syslog import forward_to_syslog  # local: avoid an import cycle
+        from app.core.app_settings import get_or_create_app_settings
+
+        try:
+            app_settings = await get_or_create_app_settings(db)
+            await forward_to_syslog(app_settings, entry)
+        except Exception:
+            logger.warning("Failed to forward audit entry to syslog", exc_info=True)
     except Exception:
         # An audit trail gap is far better than a broken feature — never let
         # a failure to log take down the action it's describing.

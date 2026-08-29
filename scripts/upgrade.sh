@@ -14,10 +14,12 @@
 #   3. Detects whether the bundled Caddy reverse proxy is currently running
 #      and rebuilds/restarts with the same compose file combination, so it
 #      doesn't get silently dropped.
-#   4. `docker compose build` then `docker compose up -d` — the `migrate`
-#      service runs automatically as part of the `web`/`worker` dependency
-#      chain (see docker-compose.yml) and must complete successfully before
-#      either of them starts. There's no separate "run migrations" step.
+#   4. `docker compose build` (stamped with GIT_COMMIT so the Settings page
+#      can show exactly which commit is running — see app/core/version.py)
+#      then `docker compose up -d` — the `migrate` service runs
+#      automatically as part of the `web`/`worker` dependency chain (see
+#      docker-compose.yml) and must complete successfully before either of
+#      them starts. There's no separate "run migrations" step.
 #   5. Prints `docker compose ps` so you can see everything came back up.
 #
 # Postgres/Redis/Caddy images are pinned to exact versions in
@@ -67,6 +69,7 @@ if docker ps \
 fi
 
 echo "==> Building images..."
+export GIT_COMMIT="$(git rev-parse HEAD)"
 docker compose "${compose_files[@]}" build
 
 echo "==> Applying migrations and restarting services..."

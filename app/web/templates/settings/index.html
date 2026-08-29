@@ -12,6 +12,21 @@
   {% endif %}
 
   <section class="panel">
+    <h2>Version</h2>
+    <dl class="detail-list">
+      <dt>Version</dt><dd>{{ app_version }}</dd>
+      <dt>Commit</dt>
+      <dd>
+        {% if git_commit %}
+          <a href="{{ commit_url }}" target="_blank" rel="noopener noreferrer"><code>{{ git_commit[:12] }}</code></a>
+        {% else %}
+          unknown (not a git checkout, and no GIT_COMMIT baked into this image)
+        {% endif %}
+      </dd>
+    </dl>
+  </section>
+
+  <section class="panel">
     <h2>App SSH identity</h2>
     <p class="hint">
       debcontrol connects to machines using this one shared key when
@@ -98,6 +113,50 @@
         <p class="hint">Checked {{ verify_result.checked }} chained entr{{ 'y' if verify_result.checked == 1 else 'ies' }}.</p>
       </div>
     {% endif %}
+
+    <p class="hint stack-gap">
+      Every entry can also be exported for archival/compliance outside the
+      app: <a href="/audit/export?format=csv">CSV</a> ·
+      <a href="/audit/export?format=json">JSON</a> (the <a href="/audit">Audit</a>
+      page's own export links respect whatever search/outcome filter is set
+      there).
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>Syslog forwarding</h2>
+    <p class="hint">
+      Live-mirrors every audit log entry to an external syslog server (e.g.
+      a SIEM) as it's written — RFC 5424 formatted, best-effort: a delivery
+      failure here is only ever logged, never blocks the action being
+      audited. The database entry (exportable above) is always the real
+      record; this is just a copy sent elsewhere.
+    </p>
+    <form method="post" action="/settings/syslog" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="syslog_enabled">
+        <input type="checkbox" id="syslog_enabled" name="syslog_enabled" value="1"
+               {% if app_settings.syslog_enabled %}checked{% endif %}>
+        Enabled
+      </label>
+      <label for="syslog_host">Server host/IP</label>
+      <input type="text" id="syslog_host" name="syslog_host" maxlength="255"
+             placeholder="siem.example.com" value="{{ app_settings.syslog_host or '' }}">
+      <label for="syslog_port">Port</label>
+      <input type="number" id="syslog_port" name="syslog_port" min="1" max="65535"
+             value="{{ app_settings.syslog_port }}">
+      <label for="syslog_protocol">Protocol</label>
+      <select id="syslog_protocol" name="syslog_protocol">
+        {% for protocol in syslog_protocols %}
+          <option value="{{ protocol.value }}" {% if app_settings.syslog_protocol == protocol %}selected{% endif %}>
+            {% if protocol.value == 'udp' %}UDP (plain)
+            {% elif protocol.value == 'tcp' %}TCP (plain)
+            {% else %}TCP over TLS (encrypted){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="button">Save</button>
+    </form>
   </section>
 
   <section class="panel">
