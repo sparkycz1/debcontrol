@@ -96,6 +96,7 @@ async def create_user(
     auth_provider: AuthProvider = Form(...),
     password: str = Form(""),
     role_id: str = Form(...),
+    api_access_enabled: str = Form(""),
 ) -> Response:
     async def _rerender(errors: list[str], status_code: int) -> Response:
         await log_event(
@@ -131,6 +132,7 @@ async def create_user(
             auth_provider=auth_provider,
             password=password or None,
             role_id=role_uuid,
+            api_access_enabled=bool(api_access_enabled),
         )
     except ValueError as exc:
         return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
@@ -151,6 +153,7 @@ async def create_user(
         # else picked and now knows.
         must_change_password=payload.auth_provider == AuthProvider.LOCAL,
         role_id=payload.role_id,
+        api_access_enabled=payload.api_access_enabled,
     )
     db.add(user)
     try:
@@ -204,6 +207,7 @@ async def update_user(
     password: str = Form(""),
     role_id: str = Form(...),
     is_active: str = Form(""),
+    api_access_enabled: str = Form(""),
 ) -> Response:
     user = await _get_user_or_404(user_id, db)
 
@@ -230,6 +234,7 @@ async def update_user(
             password=password or None,
             role_id=role_uuid,
             is_active=bool(is_active),
+            api_access_enabled=bool(api_access_enabled),
         )
     except ValueError as exc:
         return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
@@ -277,6 +282,7 @@ async def update_user(
     user.auth_provider = payload.auth_provider
     user.role_id = payload.role_id
     user.is_active = payload.is_active
+    user.api_access_enabled = payload.api_access_enabled
     if becoming_local:
         if payload.password:
             user.password_hash = hash_password(payload.password)

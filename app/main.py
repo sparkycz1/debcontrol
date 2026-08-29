@@ -20,6 +20,11 @@ from app.db.session import AsyncSessionLocal
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.web.routes import (
     api_v1,
+    api_v1_audit,
+    api_v1_roles,
+    api_v1_scheduling,
+    api_v1_settings,
+    api_v1_users,
     audit,
     auth,
     dashboard,
@@ -131,6 +136,11 @@ def create_app() -> FastAPI:
     app.include_router(audit.router)
     app.include_router(inform.router)
     app.include_router(api_v1.router)
+    app.include_router(api_v1_scheduling.router)
+    app.include_router(api_v1_users.router)
+    app.include_router(api_v1_roles.router)
+    app.include_router(api_v1_audit.router)
+    app.include_router(api_v1_settings.router)
     app.include_router(users.router)
     app.include_router(roles.router)
     app.include_router(settings_routes.router)

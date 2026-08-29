@@ -340,25 +340,33 @@ wiki/           documentation, meant to become the GitHub wiki
   removed entry is detectable — see [app/audit.py](app/audit.py). Exportable
   as CSV/JSON (respecting the current search/outcome filter), and can be
   live-forwarded to an external syslog server (Settings) as a SIEM mirror.
-- **Users** — create/edit/deactivate/delete accounts, assign a role, reset
-  a local password (forces a change + signs them out everywhere), and force
-  a sign-out. Login method (local/LDAP/OIDC) is per-account; local accounts
-  set a password here, LDAP/OIDC accounts are matched by username instead
-  — see [app/web/routes/users.py](app/web/routes/users.py).
+- **Users** — create/edit/deactivate/delete accounts, assign a role, grant
+  or revoke **API access** (a per-user checkbox, separate from role
+  permissions — see "My account" above), reset a local password (forces a
+  change + signs them out everywhere), and force a sign-out. Login method
+  (local/LDAP/OIDC) is per-account; local accounts set a password here,
+  LDAP/OIDC accounts are matched by username instead — see
+  [app/web/routes/users.py](app/web/routes/users.py).
 - **Roles** — define named roles with an exact permission checkbox matrix;
   a role in use can't be deleted, and a role can't be edited to strip
   `user.manage` if that would leave nobody able to manage users — see
   [app/web/routes/roles.py](app/web/routes/roles.py).
 - **My account** — change your own password (with re-entering the current
   one), enroll/disable TOTP two-factor and view/regenerate recovery codes,
-  "log out everywhere else", and create/revoke your own **API tokens** for
-  the read-only REST API (`GET /api/v1/machines`, `/machines/{id}`,
-  `/machine-groups`) or as a per-user alternative to the shared
-  `INFORM_TOKEN` — a token authorizes whatever your role currently permits,
-  checked fresh on every request, and stops working immediately if your
-  role changes or your account is deactivated — see
+  "log out everywhere else", and — if an administrator has granted this
+  account **API access** (a separate checkbox on the user, distinct from
+  role permissions; see **Users** below) — create/revoke your own **API
+  tokens** for the REST API (`/api/v1/...`, now covering essentially
+  everything meaningfully doable from the web UI: machines, groups, bulk
+  actions, scheduling, users, roles, audit, and a read-only slice of
+  settings) or as a per-user alternative to the shared `INFORM_TOKEN` — a
+  token authorizes whatever your role currently permits, checked fresh on
+  every request, and stops working immediately if your role changes, your
+  account is deactivated, or your API access is revoked — see
   [app/web/routes/auth.py](app/web/routes/auth.py) and
-  [app/web/routes/api_v1.py](app/web/routes/api_v1.py).
+  [app/web/routes/api_v1.py](app/web/routes/api_v1.py) (plus
+  `api_v1_scheduling.py`, `api_v1_users.py`, `api_v1_roles.py`,
+  `api_v1_audit.py`, `api_v1_settings.py`).
 - **Settings** — shows the running **version and git commit** (linked to
   GitHub — see [app/core/version.py](app/core/version.py)), the app's SSH
   public key/fingerprint (for manual distribution to machines) with a
@@ -401,5 +409,3 @@ automatically and self-register the machine as pending.
 - Self-service password reset (forgotten password) — an admin resets it
   from the Users page, or `scripts/reset_account.py` from the server
   console if nobody can log in at all (see wiki/Installation.md).
-- The read-only REST API (`/api/v1/...`) is exactly that — read-only; there's
-  no API for creating/editing machines yet, only the web UI.

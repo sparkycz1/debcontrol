@@ -21,6 +21,7 @@ class UserCreate(BaseModel):
     # password at all.
     password: str | None = Field(default=None, max_length=255)
     role_id: uuid.UUID
+    api_access_enabled: bool = False
 
     @field_validator("username")
     @classmethod
@@ -60,6 +61,7 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, max_length=255)
     role_id: uuid.UUID
     is_active: bool
+    api_access_enabled: bool = False
 
     @field_validator("username")
     @classmethod

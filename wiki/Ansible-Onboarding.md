@@ -67,7 +67,7 @@ for why that boundary exists.
      debcontrol's `.env`, or (recommended, since it's attributable and
      individually revocable) a per-user API token from **My account**,
      created by a user whose role has "Manage machines". See
-     [Architecture](Architecture.md#per-user-api-tokens-read-only-and-inheriting-the-role-live)
+     [Architecture](Architecture.md#per-user-api-tokens-gated-by-a-separate-account-level-flag-inheriting-the-role-live)
      for how these tokens work.
 
 4. Run it:

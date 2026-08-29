@@ -73,6 +73,8 @@ async def get_user_for_api_token(db: AsyncSession, raw_token: str) -> User | Non
             return None
     if not token.user.is_active:
         return None
+    if not token.user.api_access_enabled:
+        return None
 
     token.last_used_at = datetime.now(UTC)
     await db.commit()
