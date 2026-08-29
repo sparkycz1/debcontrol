@@ -46,6 +46,22 @@ _EXPORT_FIELDS = (
 )
 
 
+# Spreadsheet apps (Excel, LibreOffice, Google Sheets) treat a cell starting
+# with one of these characters as a formula, not text — a machine/group/role
+# name or a username (all attacker-influenceable, end up in `summary`/
+# `target_label`/`details`) crafted like `=cmd|'/c calc'!A0` would otherwise
+# execute when an admin opens the exported CSV. Prefixing with a single quote
+# forces spreadsheet apps to treat it as plain text while leaving the actual
+# audit data (and the JSON export, never opened by a spreadsheet app) intact.
+_FORMULA_TRIGGER_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(_FORMULA_TRIGGER_CHARS):
+        return f"'{value}"
+    return value
+
+
 def _entry_to_export_row(entry: AuditLogEntry) -> dict[str, Any]:
     return {
         "sequence": entry.sequence,
@@ -149,7 +165,7 @@ async def export_audit_log(
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=_EXPORT_FIELDS)
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",

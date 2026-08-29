@@ -245,6 +245,33 @@ async def test_audit_export_csv_and_json(client):
     assert any("export-test-machine" in e["summary"] for e in entries)
 
 
+async def test_audit_export_csv_neutralizes_formula_injection(client):
+    # A machine name starting with "=" would open Excel/LibreOffice/Sheets
+    # up to formula execution if written to the CSV export verbatim — see
+    # app.web.routes.audit._csv_safe. Machine names are attacker-influenced
+    # (anyone who can create a machine controls this string), so the export
+    # itself must neutralize it rather than relying on it never happening.
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/machines",
+        data={
+            "name": '=cmd|"/c calc"!A0',
+            "ip_address": "10.0.3.11",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "",
+            "csrf_token": csrf_token,
+        },
+    )
+
+    csv_response = await client.get("/audit/export?format=csv")
+    assert csv_response.status_code == 200
+    assert '"\'=cmd|' in csv_response.text
+    assert ',=cmd|' not in csv_response.text
+
+
 async def test_audit_export_respects_outcome_filter(client):
     response = await client.get("/audit/export?format=json&outcome=denied")
     assert response.status_code == 200
