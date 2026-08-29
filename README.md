@@ -181,7 +181,11 @@ docker compose exec web python scripts/create_admin.py --username admin
 It prompts for a password (at least 12 characters) and creates an
 "Administrator" role with every permission if one doesn't exist yet. You'll
 be asked to change that password on first login. See
-[wiki/Installation.md](wiki/Installation.md) for LDAP/OIDC setup.
+[wiki/Installation.md](wiki/Installation.md) for LDAP/OIDC setup. If an
+account (including that first admin) ever gets locked out with no other way
+in — forgotten password, lost TOTP device — `scripts/reset_account.py` does
+the same thing from the server console: `docker compose exec web python
+scripts/reset_account.py --username admin [--disable-totp]`.
 
 ## Local development without Docker (DB/Redis still via Docker)
 
@@ -229,12 +233,18 @@ app/
   web/          FastAPI routers, Jinja2 templates, static files
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
-scripts/        helper scripts (secret generation, first-admin bootstrap)
+scripts/        helper scripts (secret generation, first-admin bootstrap,
+                console-only account recovery)
 wiki/           documentation, meant to become the GitHub wiki
 ```
 
 ## Navigation / features
 
+- **Dashboard** — the post-login landing page: machine counts (online/
+  offline, pending updates, security updates, reboot-required), upcoming
+  scheduled tasks, and recent audit activity — each section only shown if
+  the current role can see that area, same permission checks as the nav
+  itself. See [app/web/routes/dashboard.py](app/web/routes/dashboard.py).
 - **Machines** — add, view, edit, and remove managed Debian machines; pin
   SSH host key fingerprints; test connectivity. Editing the IP address or
   port resets the pinned fingerprint and gathered facts, since those
@@ -245,8 +255,12 @@ wiki/           documentation, meant to become the GitHub wiki
   `FACTS_REFRESH_INTERVAL_SECONDS`), and shows an online/offline status
   badge from a lightweight per-minute reachability check
   ([app/ssh/reachability.py](app/ssh/reachability.py)). Machines can also
-  self-register via `POST /api/inform` (bearer-token authenticated) and
-  show up as "pending" for review before being added. Free-text search
+  self-register via `POST /api/inform` (bearer-token authenticated — either
+  the shared `INFORM_TOKEN` or a per-user API token, see "My account" below)
+  and show up as "pending" for review before being added; a CSV **Bulk
+  import** does the same for a whole list of IPs/hostnames at once (still no
+  credentials or host key — every one still goes through the normal
+  add-machine flow individually). Free-text search
   (name, IP, hostname, OS/kernel version, username, notes) across the
   machine list. Each machine has a **System updates** panel: always
   `apt-get update`, then `dist-upgrade` or `full-upgrade` (your choice),
@@ -298,12 +312,20 @@ wiki/           documentation, meant to become the GitHub wiki
   [app/web/routes/roles.py](app/web/routes/roles.py).
 - **My account** — change your own password (with re-entering the current
   one), enroll/disable TOTP two-factor and view/regenerate recovery codes,
-  and "log out everywhere else" — see
-  [app/web/routes/auth.py](app/web/routes/auth.py).
+  "log out everywhere else", and create/revoke your own **API tokens** for
+  the read-only REST API (`GET /api/v1/machines`, `/machines/{id}`,
+  `/machine-groups`) or as a per-user alternative to the shared
+  `INFORM_TOKEN` — a token authorizes whatever your role currently permits,
+  checked fresh on every request, and stops working immediately if your
+  role changes or your account is deactivated — see
+  [app/web/routes/auth.py](app/web/routes/auth.py) and
+  [app/web/routes/api_v1.py](app/web/routes/api_v1.py).
 - **Settings** — shows the app's SSH public key/fingerprint (for manual
-  distribution to machines), the current background-check intervals, the
-  audit log retention policy (how many days of entries to keep before a
-  daily purge, see
+  distribution to machines) with a **rotate** flow (generate a replacement
+  key, deploy its public half to `authorized_keys` alongside the old one,
+  then activate it — the old key is never touched until you do), the
+  current background-check intervals, the audit log retention policy (how
+  many days of entries to keep before a daily purge, see
   [app/db/models/app_settings.py](app/db/models/app_settings.py)) plus an
   on-demand hash-chain integrity check, and the LDAP/OIDC login
   configuration (server, bind account, search filter / issuer, client
@@ -320,10 +342,17 @@ managed this way.
   first bulk/group-scoped SSH operation (see `app/ssh/updates.py`,
   `app/db/models/machine_update_run.py`); the same `batch_id` grouping
   pattern is meant to extend to other commands later.
-- IP-based login rate limiting — only per-account lockout exists today (see
-  wiki/Architecture.md). CSRF rejections also aren't audit-logged.
+- CSRF rejections aren't audit-logged (login/TOTP rate-limit rejections are,
+  as `auth.rate_limited`).
 - Per-schedule timezones (Scheduling is always UTC) and a scheduled
   "power on" to pair with scheduled shutdown.
-- Automated SSH key distribution (currently a manual step — see Settings)
-  and turning a pending self-registered machine directly into a managed
-  one without re-entering its IP/name.
+- Actually copying the app's public SSH key onto each machine's
+  `authorized_keys` is still a manual step (Settings supports generating
+  and activating a replacement key, but not pushing it out); turning a
+  pending self-registered/bulk-imported machine directly into a managed one
+  without re-entering its IP/name is also still manual.
+- Self-service password reset (forgotten password) — an admin resets it
+  from the Users page, or `scripts/reset_account.py` from the server
+  console if nobody can log in at all (see wiki/Installation.md).
+- The read-only REST API (`/api/v1/...`) is exactly that — read-only; there's
+  no API for creating/editing machines yet, only the web UI.

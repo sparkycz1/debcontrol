@@ -235,3 +235,22 @@ def test_username_pattern_rejects_uppercase_and_spaces():
     assert USERNAME_PATTERN.match("valid.user-99")
     assert not USERNAME_PATTERN.match("Invalid User")
     assert not USERNAME_PATTERN.match("ab")  # too short
+
+
+async def test_login_is_rate_limited_per_ip_after_many_attempts(anonymous_client):
+    from app.web.routes.auth import _LOGIN_RATE_LIMIT
+
+    csrf_token = await _csrf(anonymous_client)
+    for _ in range(_LOGIN_RATE_LIMIT):
+        response = await anonymous_client.post(
+            "/login",
+            data={"username": "nobody", "password": "wrong", "csrf_token": csrf_token},
+        )
+        assert response.status_code == 401
+
+    response = await anonymous_client.post(
+        "/login",
+        data={"username": "nobody", "password": "wrong", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 429
+    assert "Too many attempts" in response.text

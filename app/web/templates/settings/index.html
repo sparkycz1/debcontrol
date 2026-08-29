@@ -23,6 +23,32 @@
     </p>
     <p>Fingerprint: <code>{{ identity.fingerprint }}</code></p>
     <textarea readonly rows="3">{{ identity.public_key }}</textarea>
+
+    {% if identity.pending_public_key %}
+    <p class="hint">
+      A replacement key was generated {{ identity.pending_generated_at }} and is
+      <strong>not active yet</strong>. Append it to every managed machine's
+      <code>authorized_keys</code> too (alongside the current one, don't
+      remove the old line yet) before activating — activating switches which
+      key debcontrol uses immediately, and any machine that hasn't got the
+      new line yet will become unreachable.
+    </p>
+    <p>Pending fingerprint: <code>{{ identity.pending_fingerprint }}</code></p>
+    <textarea readonly rows="3">{{ identity.pending_public_key }}</textarea>
+    <form method="post" action="/settings/ssh-key/activate" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button">Activate new key</button>
+    </form>
+    <form method="post" action="/settings/ssh-key/discard" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Discard pending key</button>
+    </form>
+    {% else %}
+    <form method="post" action="/settings/ssh-key/generate" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Generate replacement key</button>
+    </form>
+    {% endif %}
   </section>
 
   <section class="panel">

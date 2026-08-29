@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Dashboard</h1>
+
+  {% if machine_stats %}
+  <section class="panel">
+    <h2>Machines</h2>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.total }}</span>
+        <span class="stat-label">Total</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.online }}</span>
+        <span class="stat-label">Online</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.offline }}</span>
+        <span class="stat-label">Offline</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.needs_updates }}</span>
+        <span class="stat-label">Need updates</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.needs_security_updates }}</span>
+        <span class="stat-label">Security updates</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.needs_reboot }}</span>
+        <span class="stat-label">Reboot required</span>
+      </div>
+      {% if machine_stats.pending_count %}
+      <div class="stat-card">
+        <span class="stat-value">{{ machine_stats.pending_count }}</span>
+        <span class="stat-label">Pending review</span>
+      </div>
+      {% endif %}
+    </div>
+    <p class="hint">
+      <a href="/machines">All machines</a>{% if group_count is not none %} · <a href="/machine-groups">{{ group_count }} group(s)</a>{% endif %}
+      {% if machine_stats.pending_count %} · <a href="/machines">{{ machine_stats.pending_count }} pending self-registration(s)</a>{% endif %}
+    </p>
+  </section>
+  {% endif %}
+
+  {% if upcoming_tasks is defined %}
+  <section class="panel">
+    <h2>Scheduling</h2>
+    <p class="hint">{{ enabled_task_count }} enabled scheduled task(s).</p>
+    {% if upcoming_tasks %}
+      <table class="data-table">
+        <thead><tr><th>Task</th><th>Next run</th></tr></thead>
+        <tbody>
+          {% for task in upcoming_tasks %}
+          <tr>
+            <td>{{ task.name }}</td>
+            <td>{{ task.next_run_at.strftime('%Y-%m-%d %H:%M UTC') if task.next_run_at else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No enabled scheduled tasks.</p>
+    {% endif %}
+    <p class="hint"><a href="/scheduling">All scheduled tasks</a></p>
+  </section>
+  {% endif %}
+
+  {% if recent_audit_entries is defined %}
+  <section class="panel">
+    <h2>Recent activity</h2>
+    {% if recent_denied_count %}
+      <p class="hint">{{ recent_denied_count }} denied/failed action(s) recorded in total.</p>
+    {% endif %}
+    {% if recent_audit_entries %}
+      <table class="data-table">
+        <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Outcome</th></tr></thead>
+        <tbody>
+          {% for entry in recent_audit_entries %}
+          <tr>
+            <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+            <td>{{ entry.actor or '—' }}</td>
+            <td>{{ entry.summary }}</td>
+            <td>
+              {% if entry.outcome.value == 'success' %}<span class="badge badge-ok">success</span>
+              {% elif entry.outcome.value == 'denied' %}<span class="badge badge-warn">denied</span>
+              {% else %}<span class="badge badge-error">{{ entry.outcome.value }}</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No audited activity yet.</p>
+    {% endif %}
+    <p class="hint"><a href="/audit">Full audit log</a></p>
+  </section>
+  {% endif %}
+
+  {% if not machine_stats and upcoming_tasks is not defined and recent_audit_entries is not defined %}
+  <section class="panel">
+    <p class="hint">Your role doesn't have view access to any of the areas this dashboard summarizes.</p>
+  </section>
+  {% endif %}
+{% endblock %}

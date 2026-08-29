@@ -14,7 +14,8 @@ this calls into.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import client_ip, log_event
 from app.auth import totp as totp_module
+from app.auth.api_tokens import create_api_token, revoke_api_token
 from app.auth.dependencies import get_current_user
 from app.auth.login import (
     check_password,
@@ -32,6 +34,7 @@ from app.auth.login import (
     verify_totp_step,
 )
 from app.auth.oidc import OidcNotConfiguredError, handle_callback, redirect_to_provider
+from app.auth.rate_limit import check_rate_limit
 from app.auth.security import hash_password, verify_password
 from app.auth.sessions import (
     PENDING_TOTP_COOKIE_NAME,
@@ -50,6 +53,7 @@ from app.auth.sessions import (
 from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.core.security import decrypt_secret, encrypt_secret
+from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.totp_recovery_code import TotpRecoveryCode
@@ -59,6 +63,15 @@ from app.schemas.user import MIN_PASSWORD_LENGTH
 from app.web.templating import templates
 
 router = APIRouter()
+
+# High-limit-by-design per-source-IP caps — see app.auth.rate_limit's module
+# docstring for why these exist alongside (not instead of) the per-account
+# lockout in app.auth.login.
+_LOGIN_RATE_LIMIT = 30
+_TOTP_RATE_LIMIT = 30
+_RATE_WINDOW_SECONDS = 300  # 5 minutes
+
+_RATE_LIMIT_MESSAGE = "Too many attempts from your network — try again in a few minutes."
 
 _OIDC_ERROR_MESSAGES = {
     "not_configured": "OIDC isn't fully configured — ask an administrator to finish setting it up.",
@@ -151,6 +164,12 @@ async def login_form(
     )
 
 
+async def _within_rate_limit(request: Request, *, bucket: str, limit: int) -> bool:
+    redis = request.app.state.arq_redis
+    key = f"rate_limit:{bucket}:{client_ip(request) or 'unknown'}"
+    return await check_rate_limit(redis, key, limit=limit, window_seconds=_RATE_WINDOW_SECONDS)
+
+
 @router.post("/login", dependencies=[Depends(verify_csrf)])
 async def login_submit(
     request: Request,
@@ -161,6 +180,24 @@ async def login_submit(
 ) -> Response:
     next_url = _safe_next(next)
     app_settings = await get_or_create_app_settings(db)
+
+    if not await _within_rate_limit(request, bucket="login", limit=_LOGIN_RATE_LIMIT):
+        await log_event(
+            db,
+            request=request,
+            action="auth.rate_limited",
+            summary=f'Blocked login attempt for "{username}": too many attempts from this network',
+            outcome=AuditOutcome.DENIED,
+        )
+        return _render_login(
+            request,
+            app_settings,
+            next_url=next_url,
+            error=_RATE_LIMIT_MESSAGE,
+            username=username,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     result = await check_password(db, app_settings, username, password)
 
     if result.reason == "provider_unavailable":
@@ -273,6 +310,28 @@ async def totp_challenge_submit(
         response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
         clear_pending_totp_cookie(response)
         return response
+
+    if not await _within_rate_limit(request, bucket="totp", limit=_TOTP_RATE_LIMIT):
+        await log_event(
+            db,
+            request=request,
+            action="auth.rate_limited",
+            summary=f'Blocked TOTP attempt for "{user.username}": too many attempts from this IP',
+            outcome=AuditOutcome.DENIED,
+            target_type="user",
+            target_id=user.id,
+            target_label=user.username,
+        )
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_challenge.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "next": next_url,
+                "error": _RATE_LIMIT_MESSAGE,
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
 
     if user.is_locked_out:
         return templates.TemplateResponse(
@@ -408,12 +467,18 @@ async def _render_account(
         )
     )
     unused_recovery_codes = len(count_result.scalars().all())
+    tokens_result = await db.execute(
+        select(ApiToken)
+        .where(ApiToken.user_id == user.id, ApiToken.revoked_at.is_(None))
+        .order_by(ApiToken.created_at.desc())
+    )
     context: dict[str, object] = {
         "user": user,
         "csrf_token": request.state.csrf_token,
         "errors": errors or [],
         "unused_recovery_codes": unused_recovery_codes,
         "min_password_length": MIN_PASSWORD_LENGTH,
+        "api_tokens": list(tokens_result.scalars().all()),
         **extra,
     }
     return templates.TemplateResponse(request, "auth/account.html", context)
@@ -666,4 +731,68 @@ async def revoke_other_sessions(
         target_id=user.id,
         target_label=user.username,
     )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/account/api-tokens", dependencies=[Depends(verify_csrf)])
+async def create_own_api_token(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    name: str = Form(...),
+    expires_in_days: str = Form(""),
+) -> Response:
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    name = name.strip()
+    if not name:
+        return await _render_account(request, db, user, errors=["Token name can't be empty."])
+
+    expires_at: datetime | None = None
+    raw_days = expires_in_days.strip()
+    if raw_days:
+        try:
+            days = int(raw_days)
+            if days <= 0:
+                raise ValueError
+        except ValueError:
+            return await _render_account(
+                request,
+                db,
+                user,
+                errors=["Expiry must be a positive whole number of days, or blank for no expiry."],
+            )
+        expires_at = datetime.now(UTC) + timedelta(days=days)
+
+    token, raw_token = await create_api_token(db, user, name=name, expires_at=expires_at)
+    await log_event(
+        db,
+        request=request,
+        action="user.api_token.create",
+        summary=f'"{user.username}" created an API token ("{token.name}")',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return await _render_account(request, db, user, new_api_token=raw_token)
+
+
+@router.post("/account/api-tokens/{token_id}/revoke", dependencies=[Depends(verify_csrf)])
+async def revoke_own_api_token(
+    request: Request,
+    token_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    revoked = await revoke_api_token(db, token_id, owner_id=current_user.id)
+    if revoked:
+        await log_event(
+            db,
+            request=request,
+            action="user.api_token.revoke",
+            summary=f'"{current_user.username}" revoked an API token',
+            target_type="user",
+            target_id=current_user.id,
+            target_label=current_user.username,
+        )
     return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)

@@ -61,10 +61,21 @@ class FakeArqRedis:
 
     def __init__(self) -> None:
         self.enqueued: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        self._counters: dict[str, int] = {}
 
     async def enqueue_job(self, function: str, *args: Any, **kwargs: Any) -> FakeArqJob:
         self.enqueued.append((function, args, kwargs))
         return FakeArqJob(result={"ok": True, "output": "fake"})
+
+    # Minimal INCR/EXPIRE stand-in for app.auth.rate_limit — no real TTL
+    # behaviour (counters never expire within a test), which is fine since
+    # each test gets its own fresh instance anyway.
+    async def incr(self, key: str) -> int:
+        self._counters[key] = self._counters.get(key, 0) + 1
+        return self._counters[key]
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return True
 
 
 @pytest_asyncio.fixture

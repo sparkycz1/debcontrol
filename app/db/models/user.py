@@ -32,6 +32,7 @@ from app.db.base import Base
 from app.db.models.role import Permission, Role
 
 if TYPE_CHECKING:
+    from app.db.models.api_token import ApiToken
     from app.db.models.totp_recovery_code import TotpRecoveryCode
     from app.db.models.user_session import UserSession
 
@@ -121,6 +122,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     totp_recovery_codes: Mapped[list[TotpRecoveryCode]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    api_tokens: Mapped[list[ApiToken]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 

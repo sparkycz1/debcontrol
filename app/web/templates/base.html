@@ -8,9 +8,10 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/machines">debcontrol</a>
+    <a class="brand" href="/dashboard">debcontrol</a>
     <nav>
       {% set current_user = request.state.user %}
+      <a href="/dashboard">Dashboard</a>
       {% if current_user.has_permission('machine.view') %}<a href="/machines">Machines</a>{% endif %}
       {% if current_user.has_permission('group.view') %}<a href="/machine-groups">Machine groups</a>{% endif %}
       {% if current_user.has_permission('scheduling.view') %}<a href="/scheduling">Scheduling</a>{% endif %}

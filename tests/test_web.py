@@ -16,10 +16,10 @@ async def test_healthz(client):
     assert response.json() == {"status": "ok"}
 
 
-async def test_root_redirects_to_machines(client):
+async def test_root_redirects_to_dashboard(client):
     response = await client.get("/")
     assert response.status_code in (302, 307)
-    assert response.headers["location"] == "/machines"
+    assert response.headers["location"] == "/dashboard"
 
 
 async def test_create_machine_requires_csrf_token(client):

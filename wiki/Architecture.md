@@ -53,8 +53,9 @@ maintained and supports modern algorithms (Ed25519, etc.).
 ```
 app/
   audit.py      the single audit-log write path (hash chaining, verification)
-  auth/         login (local/LDAP/OIDC), sessions, RBAC permissions, TOTP —
-                see "Authentication & RBAC" below
+  auth/         login (local/LDAP/OIDC), sessions, RBAC permissions, TOTP,
+                per-IP rate limiting, per-user API tokens — see
+                "Authentication & RBAC" below
   core/         config (pydantic-settings), logging, encryption, CSRF,
                 editable app settings (app/core/app_settings.py)
   db/           SQLAlchemy models + async session
@@ -66,7 +67,8 @@ app/
   web/          FastAPI routers, Jinja2 templates, static files
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
-scripts/        helper scripts (secret generation, first-admin bootstrap)
+scripts/        helper scripts (secret generation, first-admin bootstrap,
+                console-only account recovery)
 wiki/           this documentation
 ```
 
@@ -259,11 +261,56 @@ permission and a `local` account with a prompted password. Deliberately a
 CLI script, not an unauthenticated "first-run setup" page — a page like
 that is exactly the kind of thing that's easy to forget to disable/remove.
 
+`scripts/reset_account.py` is the same idea for an account that's already
+locked out with no way in through the web UI at all (forgotten password,
+lost TOTP device) — also console-only, for the same reason, and able to
+bypass a locked account's own second factor precisely because it requires
+shell access on the server rather than anything web-reachable.
+
+### Per-IP login rate limiting, alongside per-account lockout
+
+The per-account lockout above stops one account from being guessed, but has
+no limit on how many *different* usernames one source tries — that's what
+`app.auth.rate_limit.check_rate_limit` closes: a coarse, high-limit-by-design
+cap (30 attempts / 5 minutes) per source IP on both `POST /login` and
+`POST /login/totp`, using a plain Redis `INCR`+`EXPIRE` fixed-window counter
+on `app.state.arq_redis` (the same connection arq's job queue already holds
+open — no second Redis client needed). "High-limit-by-design" is
+deliberate: this exists to blunt obviously abusive volume (credential
+stuffing, enumeration at scale), not to lock out a shared office/VPN egress
+IP or someone who mistypes a password a few times.
+
+### Per-user API tokens: read-only, and inheriting the role live
+
+`app.db.models.api_token.ApiToken` gives each user their own bearer tokens
+(`dcpat_...`, only the SHA-256 hash stored — same scheme as session
+tokens) for two things, both under `/api/` and therefore outside
+`app.auth.middleware`'s session requirement (see "Self-registration" below
+for why that prefix is public in the first place):
+
+- The read-only REST API (`app.web.routes.api_v1`) — `GET /api/v1/machines`,
+  `/machines/{id}`, `/machine-groups` — meant for external scripts/
+  monitoring, not the web UI.
+- `POST /api/inform`, as a per-user alternative to the shared
+  `INFORM_TOKEN` (which still works, for backward compatibility);
+  attributable and individually revocable instead of one token every
+  machine shares.
+
+A token authorizes whatever its owning user's role permits *at the moment
+of each request* (`app.auth.api_tokens.get_user_for_api_token` re-checks,
+never a snapshot taken at creation) — revoking a permission or deactivating
+the account takes effect on every token it ever issued immediately, the
+same as it would on that user's browser session. Self-service, like TOTP:
+created and revoked from "My account", and the raw value is shown exactly
+once at creation.
+
 ## Security model
 
-The app has no user authentication yet. Everything below is scoped to
-what's true *before* that lands — see the root `README.md`'s "What's
-deliberately empty" section for what's coming later.
+See "Authentication & RBAC" above for logins, sessions, and permissions —
+everything below covers the rest of the app's security posture (SSH
+handling, secrets at rest, audit integrity, HTTP hardening), most of which
+predates auth and is unrelated to it. See the root `README.md`'s "What's
+deliberately empty" section for what's still missing.
 
 ### SSH host key pinning
 
@@ -295,6 +342,17 @@ step today (see
 [Managed Machine Requirements](Managed-Machine-Requirements.md)).
 Per-machine passwords remain available as a fallback, with the UI calling
 that out as not recommended.
+
+Rotating this key (Settings → "Generate replacement key") generates a
+*second* keypair into `pending_*` columns on the same singleton row rather
+than replacing the active one immediately (`app.ssh.identity.
+generate_pending_identity`) — every machine's `authorized_keys` still only
+has the old public key at that point, so switching immediately would lock
+the app out of all of them at once. The operator appends the pending public
+key everywhere (alongside the old line, not replacing it yet), then
+"Activate" swaps it in (`activate_pending_identity`). Getting the key onto
+each machine is still a manual step either way — only the app's own side of
+rotation is automated.
 
 ### Self-registration is not the same as trust
 
@@ -620,10 +678,11 @@ published to the host at all by default.
 
 ### Deliberately deferred
 
-- IP-based login rate limiting — only per-account lockout exists today (see
-  "Authentication & RBAC" above); a reverse proxy or upstream service is
-  expected to handle broader rate limiting.
 - Per-schedule timezones (everything is UTC) and a scheduled "power on" to
   pair with scheduled shutdown (there's no way for the app to power on a
   machine that's off — see [Managed Machine
   Requirements](Managed-Machine-Requirements.md)).
+- CSRF rejections aren't audit-logged (rate-limit rejections are, as
+  `auth.rate_limited` — see "Per-IP login rate limiting" above).
+- The read-only REST API (`/api/v1/...`) has no write counterpart yet —
+  creating/editing machines is web-UI-only.

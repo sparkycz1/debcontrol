@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 import uuid
 
@@ -211,6 +213,88 @@ async def create_machine(
     )
 
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/import")
+async def import_machines_form(request: Request) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/import.html",
+        {"csrf_token": csrf_token, "errors": [], "result": None},
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/import", dependencies=[_manage, Depends(verify_csrf)])
+async def import_machines_submit(
+    request: Request, db: AsyncSession = Depends(get_db), csv_text: str = Form("")
+) -> Response:
+    """Bulk-add machines from pasted CSV — each row becomes a `PendingMachine`
+    in the same review queue self-registration (`POST /api/inform`) uses,
+    rather than a `Machine` directly: nothing here is trusted for connecting
+    to a machine (no credentials, no host key), so it still goes through the
+    normal add-machine form and mandatory host-key confirmation per machine.
+
+    Expected columns (header row required): `ip_address` (required),
+    `hostname` (optional). Anything else is ignored.
+    """
+    errors: list[str] = []
+    text = csv_text.strip()
+    if not text:
+        errors.append("Paste some CSV text first.")
+        return templates.TemplateResponse(
+            request,
+            "machines/import.html",
+            {"csrf_token": request.state.csrf_token, "errors": errors, "result": None},
+        )
+
+    reader = csv.DictReader(io.StringIO(text))
+    fieldnames = [f.strip().lower() for f in (reader.fieldnames or [])]
+    if "ip_address" not in fieldnames:
+        errors.append('The CSV needs a header row with at least an "ip_address" column.')
+        return templates.TemplateResponse(
+            request,
+            "machines/import.html",
+            {"csrf_token": request.state.csrf_token, "errors": errors, "result": None},
+        )
+
+    created = 0
+    skipped = 0
+    for row in reader:
+        normalized = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items() if k}
+        ip_address = normalized.get("ip_address", "")
+        if not ip_address:
+            skipped += 1
+            continue
+        db.add(
+            PendingMachine(
+                ip_address=ip_address,
+                reported_hostname=normalized.get("hostname") or None,
+                source_ip=None,
+            )
+        )
+        created += 1
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.bulk_import",
+        summary=f"Bulk-imported {created} pending machine(s) from CSV ({skipped} row(s) skipped)",
+        details={"created": created, "skipped": skipped},
+    )
+    return templates.TemplateResponse(
+        request,
+        "machines/import.html",
+        {
+            "csrf_token": request.state.csrf_token,
+            "errors": [],
+            "result": {"created": created, "skipped": skipped},
+        },
+    )
 
 
 @router.get("/{machine_id}")
@@ -647,9 +731,7 @@ async def machine_update_run_status(
     run = await _get_update_run_or_404(run_id, db)
     if run.machine_id != machine_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
-    return templates.TemplateResponse(
-        request, "partials/update_run_status.html", {"run": run}
-    )
+    return templates.TemplateResponse(request, "partials/update_run_status.html", {"run": run})
 
 
 @router.get("/{machine_id}/power/{action}")

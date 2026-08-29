@@ -107,6 +107,20 @@ exist yet. You'll be asked to change that password on first login. See
 and permissions work, and [Development](Development.md) for adding a new
 permission.
 
+If any account (including this one) later gets locked out with no way in at
+all — a forgotten password, a lost TOTP device — `scripts/reset_account.py`
+is the same kind of console-only tool, but for an existing account instead
+of creating a new one:
+
+```bash
+docker compose exec web python scripts/reset_account.py --username admin --disable-totp
+```
+
+Always resets the password (prompted, or `DEBCONTROL_RESET_PASSWORD` in the
+environment) and clears any lockout; `--disable-totp` additionally turns off
+two-factor. See the script's own `--help`/module docstring for the full
+set of options.
+
 ## 4. Verify
 
 ```bash

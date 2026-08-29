@@ -1,3 +1,4 @@
+from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
@@ -12,6 +13,7 @@ from app.db.models.user import AuthProvider, User
 from app.db.models.user_session import UserSession
 
 __all__ = [
+    "ApiToken",
     "AppSettings",
     "AuditChainState",
     "AuditLogEntry",

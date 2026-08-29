@@ -35,11 +35,13 @@ class AuditLogEntry(Base):
     """One row per audited event. Written once and never updated — see
     `app.audit.log_event`, the only place that creates these.
 
-    `actor` is nullable and, for now, always NULL: there's no login yet
-    (see the Architecture wiki page's "Deliberately deferred" section), so
-    there's no real identity to record. The column exists now so that once
-    authentication lands, entries can start carrying a real actor without
-    another migration — `ip_address` is what stands in for "who" today.
+    `actor` holds the logged-in username responsible for the action, filled
+    in automatically by `app.audit.log_event` from `request.state.user` (see
+    `app.auth.middleware`) — still nullable, since a background job with no
+    request (a scheduled task firing on its own) sets a fixed actor label
+    instead (see `app.scheduling.jobs._SCHEDULER_ACTOR`), and a handful of
+    entries predate logins existing at all. `ip_address` is the request's
+    source IP either way.
 
     `target_id`/`target_type` are plain strings, not foreign keys: the
     machine/group/schedule an entry refers to can later be renamed or

@@ -24,7 +24,12 @@ from app.db.models.app_settings import (
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.role import Permission
 from app.db.session import get_db
-from app.ssh.identity import get_or_create_identity
+from app.ssh.identity import (
+    activate_pending_identity,
+    discard_pending_identity,
+    generate_pending_identity,
+    get_or_create_identity,
+)
 from app.web.templating import templates
 
 router = APIRouter(
@@ -111,6 +116,45 @@ async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db
         details={"checked": result.checked, "broken_at_sequence": result.broken_at_sequence},
     )
     return await _render_settings(request, db, [], verify_result=result)
+
+
+@router.post("/ssh-key/generate", dependencies=[_manage, Depends(verify_csrf)])
+async def generate_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    identity = await generate_pending_identity(db)
+    await log_event(
+        db,
+        request=request,
+        action="settings.ssh_key.generate",
+        summary=f"Generated a replacement SSH key ({identity.pending_fingerprint})",
+    )
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/ssh-key/activate", dependencies=[_manage, Depends(verify_csrf)])
+async def activate_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    try:
+        identity = await activate_pending_identity(db)
+    except ValueError:
+        return await _render_settings(request, db, ["No pending SSH key to activate."])
+    await log_event(
+        db,
+        request=request,
+        action="settings.ssh_key.activate",
+        summary=f"Activated new SSH key ({identity.fingerprint})",
+    )
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/ssh-key/discard", dependencies=[_manage, Depends(verify_csrf)])
+async def discard_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    await discard_pending_identity(db)
+    await log_event(
+        db,
+        request=request,
+        action="settings.ssh_key.discard",
+        summary="Discarded the pending (not-yet-activated) SSH key",
+    )
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/ldap", dependencies=[_manage, Depends(verify_csrf)])

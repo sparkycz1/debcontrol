@@ -18,7 +18,18 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import AsyncSessionLocal
 from app.scheduling.builtin_actions import register_builtin_actions
-from app.web.routes import audit, auth, inform, machine_groups, machines, roles, scheduling, users
+from app.web.routes import (
+    api_v1,
+    audit,
+    auth,
+    dashboard,
+    inform,
+    machine_groups,
+    machines,
+    roles,
+    scheduling,
+    users,
+)
 from app.web.routes import settings as settings_routes
 
 settings = get_settings()
@@ -113,18 +124,20 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(auth.router)
+    app.include_router(dashboard.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
     app.include_router(scheduling.router)
     app.include_router(audit.router)
     app.include_router(inform.router)
+    app.include_router(api_v1.router)
     app.include_router(users.router)
     app.include_router(roles.router)
     app.include_router(settings_routes.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:
-        return RedirectResponse(url="/machines")
+        return RedirectResponse(url="/dashboard")
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:

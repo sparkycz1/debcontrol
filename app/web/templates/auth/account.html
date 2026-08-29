@@ -99,4 +99,60 @@
       <button type="submit" class="button button-secondary">Log out everywhere else</button>
     </form>
   </section>
+
+  <section class="panel">
+    <h2>API tokens</h2>
+    <p class="hint">
+      For scripts/monitoring reading the read-only API (<code>GET /api/v1/machines</code>,
+      <code>/api/v1/machines/&lt;id&gt;</code>, <code>/api/v1/machine-groups</code>) as
+      <code>Authorization: Bearer &lt;token&gt;</code>, or in place of the shared
+      <code>INFORM_TOKEN</code> for <code>POST /api/inform</code> (needs a role with
+      "Manage machines"). A token can do whatever your role currently permits — it stops
+      working immediately if your role changes or your account is deactivated.
+    </p>
+
+    {% if new_api_token %}
+      <div class="alert alert-ok">
+        <p><strong>Copy this token now — it won't be shown again.</strong></p>
+        <textarea readonly rows="2">{{ new_api_token }}</textarea>
+      </div>
+    {% endif %}
+
+    {% if api_tokens %}
+      <table class="data-table">
+        <thead>
+          <tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for token in api_tokens %}
+          <tr>
+            <td>{{ token.name }}</td>
+            <td><code>{{ token.token_prefix }}…</code></td>
+            <td>{{ token.created_at.strftime('%Y-%m-%d') }}</td>
+            <td>{{ token.last_used_at.strftime('%Y-%m-%d %H:%M') if token.last_used_at else 'never' }}</td>
+            <td>{{ token.expires_at.strftime('%Y-%m-%d') if token.expires_at else 'never' }}</td>
+            <td>
+              <form method="post" action="/account/api-tokens/{{ token.id }}/revoke" class="inline-form"
+                    data-confirm="Revoke this API token? Anything using it will stop working immediately.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button button-danger">Revoke</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No active API tokens.</p>
+    {% endif %}
+
+    <form method="post" action="/account/api-tokens" class="form stack-gap" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="token_name">Name</label>
+      <input type="text" id="token_name" name="name" maxlength="100" placeholder="monitoring script" required>
+      <label for="expires_in_days">Expires in (days, blank for never)</label>
+      <input type="number" id="expires_in_days" name="expires_in_days" min="1" step="1">
+      <button type="submit" class="button">Create API token</button>
+    </form>
+  </section>
 {% endblock %}

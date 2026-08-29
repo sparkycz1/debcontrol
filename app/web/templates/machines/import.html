@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Bulk import — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Bulk import machines</h1>
+
+  <p class="hint">
+    Paste CSV with a header row — <code>ip_address</code> is required,
+    <code>hostname</code> is optional and anything else is ignored. Rows
+    become pending machines in the same review queue self-registration
+    uses (see <a href="/machines">Machines</a>) — no credentials or host
+    keys are set here, so each one still needs the normal add-machine form
+    and host-key confirmation before debcontrol connects to it.
+  </p>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if result %}
+    <div class="alert alert-ok">
+      <p>
+        Added {{ result.created }} pending machine(s).
+        {% if result.skipped %}Skipped {{ result.skipped }} row(s) with no ip_address.{% endif %}
+      </p>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/machines/import" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="csv_text">CSV</label>
+    <textarea id="csv_text" name="csv_text" rows="10" required
+              placeholder="ip_address,hostname&#10;10.0.0.11,web1&#10;10.0.0.12,web2"></textarea>
+    <button type="submit" class="button">Import</button>
+  </form>
+{% endblock %}
