@@ -7,7 +7,7 @@ There are two ways to use Caddy with debcontrol:
   run a reverse proxy on this host.
 - **Standalone**: you already run your own Caddy instance (for other
   sites, or because you prefer managing it outside this repo). Point it at
-  debcontrol's `127.0.0.1:8000`.
+  debcontrol's `127.0.0.1:8080`.
 
 ## Option A — the bundled Caddy
 
@@ -31,7 +31,7 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 
 Caddy will automatically request and renew a certificate from Let's
 Encrypt for `DOMAIN`, store it (and its ACME account state) in the
-`caddy_data` named volume, and reverse-proxy everything to `web:8000`
+`caddy_data` named volume, and reverse-proxy everything to `web:8080`
 over the internal Docker network.
 
 ### What's configured (`./Caddyfile`)
@@ -95,7 +95,7 @@ openssl s_client -connect your-domain.example.com:443 -tls1_3 </dev/null
 
 If you run Caddy separately (not via this repo's compose files), add a
 site block pointing at wherever debcontrol's `web` service is reachable
-from your Caddy host — typically `127.0.0.1:8000` if Caddy runs directly
+from your Caddy host — typically `127.0.0.1:8080` if Caddy runs directly
 on the same machine as `docker compose up -d --build` (the base file,
 without `docker-compose.caddy.yml`):
 
@@ -112,13 +112,16 @@ your-domain.example.com {
 		-Server
 	}
 
-	reverse_proxy 127.0.0.1:8000 {
+	reverse_proxy 127.0.0.1:8080 {
 		header_up X-Forwarded-Proto {scheme}
 	}
 }
 ```
 
 If your Caddy instance is itself a container in a different Compose
-project, either join it to debcontrol's Docker network (so it can resolve
-the `web` service by name) or publish `web`'s port more broadly than
-loopback — the former is preferable from a security standpoint.
+project, join it to debcontrol's Docker network so it can resolve the
+`web` service by name, rather than going through the published `8080`
+port at all — the base `docker-compose.yml` publishes that port on every
+interface (not just loopback), so joining the network is the more
+locked-down option even though going through `127.0.0.1:8080` would also
+work.

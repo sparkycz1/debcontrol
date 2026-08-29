@@ -13,7 +13,7 @@
 # If you already run nginx, Traefik, or your own Caddy elsewhere, skip this
 # file entirely and see the reverse-proxy guides in the wiki instead — just
 # run `docker compose up -d --build` (the base file) and point your proxy
-# at 127.0.0.1:8000 on this host.
+# at 127.0.0.1:8080 on this host.
 
 services:
   caddy:

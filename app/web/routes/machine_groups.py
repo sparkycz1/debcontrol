@@ -55,18 +55,22 @@ async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGro
 
 
 @router.get("")
-async def list_groups(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    result = await db.execute(
-        select(MachineGroup)
-        .options(selectinload(MachineGroup.machines))
-        .order_by(MachineGroup.name)
-    )
+async def list_groups(
+    request: Request, db: AsyncSession = Depends(get_db), q: str = ""
+) -> Response:
+    query = select(MachineGroup).options(selectinload(MachineGroup.machines))
+    if q.strip():
+        needle = f"%{q.strip()}%"
+        query = query.where(
+            or_(MachineGroup.name.ilike(needle), MachineGroup.description.ilike(needle))
+        )
+    result = await db.execute(query.order_by(MachineGroup.name))
     groups = result.scalars().all()
     all_machines_count = await db.scalar(select(func.count()).select_from(Machine))
     return templates.TemplateResponse(
         request,
         "machine_groups/list.html",
-        {"groups": groups, "all_machines_count": all_machines_count or 0},
+        {"groups": groups, "all_machines_count": all_machines_count or 0, "q": q},
     )
 
 

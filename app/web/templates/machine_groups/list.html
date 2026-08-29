@@ -8,34 +8,50 @@
     <a class="button" href="/machine-groups/new">Add group</a>
   </div>
 
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Description</th>
-        <th>Machines</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><a href="/machine-groups/all">All machines</a> <span class="badge badge-ok">automatic</span></td>
-        <td>Every machine, always — built in, nothing to manage.</td>
-        <td>{{ all_machines_count }}</td>
-        <td><a href="/machine-groups/all">Details</a></td>
-      </tr>
-      {% for group in groups %}
-        <tr>
-          <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
-          <td>{{ group.description or '—' }}</td>
-          <td>{{ group.machines | length }}</td>
-          <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <form method="get" action="/machine-groups" class="search-form">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search groups by name or description...">
+    <button type="submit" class="button">Search</button>
+    {% if q %}<a class="button button-secondary" href="/machine-groups">Clear</a>{% endif %}
+  </form>
 
-  {% if not groups %}
+  {% set show_all_row = not q or 'all' in q.lower() or 'machine' in q.lower() %}
+
+  {% if not groups and not show_all_row %}
+    <div class="empty-state">
+      <p>No groups match "{{ q }}".</p>
+    </div>
+  {% else %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Machines</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if show_all_row %}
+          <tr>
+            <td><a href="/machine-groups/all">All machines</a> <span class="badge badge-ok">automatic</span></td>
+            <td>Every machine, always — built in, nothing to manage.</td>
+            <td>{{ all_machines_count }}</td>
+            <td><a href="/machine-groups/all">Details</a></td>
+          </tr>
+        {% endif %}
+        {% for group in groups %}
+          <tr>
+            <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
+            <td>{{ group.description or '—' }}</td>
+            <td>{{ group.machines | length }}</td>
+            <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if not groups and not q %}
     <div class="empty-state">
       <p>No custom groups yet — "All machines" above is built in and always there.</p>
       <a class="button" href="/machine-groups/new">Add your first custom group</a>

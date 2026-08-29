@@ -115,9 +115,11 @@ published as the GitHub wiki once this repo is pushed there (see
   (`X-Frame-Options`, `X-Content-Type-Options`, ...) — no inline
   scripts/styles, no external CDN. See [app/main.py](app/main.py).
 - **Non-root user in Docker**, minimal multi-stage image, no DB/Redis
-  ports published to the host by default, and the app's own HTTP port is
-  bound to loopback only (`127.0.0.1:8000`) — it's meant to sit behind a
-  TLS-terminating reverse proxy.
+  ports published to the host by default. The app's own HTTP port
+  (`8080`) is published on all interfaces — it's meant to sit behind a
+  TLS-terminating reverse proxy, but nothing stops direct access; block
+  `8080` at the firewall if you don't want that (or bind it to
+  `127.0.0.1:8080:8080` in `docker-compose.yml` instead).
 - **Optional bundled Caddy reverse proxy** with TLS 1.3 only, HTTP/3, and
   hardened headers — or bring your own (nginx/Traefik/Caddy guides in the
   wiki).
@@ -150,9 +152,9 @@ Paste the printed values (`SECRET_KEY`, `ENCRYPTION_KEY`,
 docker compose up -d --build
 ```
 
-The app listens on `127.0.0.1:8000` (plain HTTP, loopback only). Point
-your own nginx/Traefik/Caddy at that address — see the reverse-proxy
-guides in the wiki:
+The app listens on port `8080` (plain HTTP, all interfaces — see the
+firewall note above). Point your own nginx/Traefik/Caddy at
+`127.0.0.1:8080` — see the reverse-proxy guides in the wiki:
 [nginx](wiki/Reverse-Proxy-Nginx.md) ·
 [Traefik](wiki/Reverse-Proxy-Traefik.md) ·
 [Caddy (standalone)](wiki/Reverse-Proxy-Caddy.md).
@@ -309,12 +311,14 @@ wiki/           documentation, meant to become the GitHub wiki
   machines in a group; power still requires typing a fixed confirmation
   phrase.
 - **Machine groups** — organize machines into named groups (e.g. by
-  environment or role); assign/remove machines from a group. Search,
-  system updates, update checks, and power actions all work here too,
-  scoped to the group (or to **All machines**, a built-in group that's
-  always literally every machine — see the "All machines" details on the
-  Machine groups page) — machines without a pinned host key are silently
-  skipped and the count surfaced.
+  environment or role); assign/remove machines from a group. The groups
+  list itself is searchable by name/description, and each group's member
+  list is separately searchable by the same machine fields as the main
+  Machines list. System updates, update checks, and power actions all
+  work here too, scoped to the group (or to **All machines**, a built-in
+  group that's always literally every machine — see the "All machines"
+  details on the Machine groups page) — machines without a pinned host
+  key are silently skipped and the count surfaced.
 - **Scheduling** — run any existing action (system update, update check,
   reboot, shut down) against a machine, a group, or **All machines** on a
   cron expression (standard 5-field, always UTC). Adding a schedule reuses

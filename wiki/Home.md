@@ -27,8 +27,9 @@ admin account.
 
 ## Reverse proxy guides
 
-debcontrol itself only speaks plain HTTP on `127.0.0.1:8000` — it always
-expects to sit behind a TLS-terminating reverse proxy. Pick one:
+debcontrol itself only speaks plain HTTP, on port `8080` — it always
+expects to sit behind a TLS-terminating reverse proxy, though nothing
+stops direct access unless you firewall that port off. Pick one:
 
 - **[Caddy (bundled)](Reverse-Proxy-Caddy.md)** — the easiest path:
   `docker-compose.caddy.yml` gives you automatic HTTPS (Let's Encrypt),
@@ -45,7 +46,7 @@ expects to sit behind a TLS-terminating reverse proxy. Pick one:
 |---|---|
 | Dashboard | Post-login landing page: machine/update/reboot counts, upcoming scheduled tasks, recent audit activity — each section only shown if your role can see that area |
 | Machines | Add/view/edit/remove managed machines, pin host keys, test connectivity, auto-discovered facts (OS, kernel, CPU architecture/cores, RAM, disks, filesystem usage, network interfaces, uptime, process count, reboot-required), installed packages (apt/flatpak/snap, with versions and held/pinned status, searchable) plus a fleet-wide package search across every machine, online/offline status, self-registration review (incl. via the [Ansible playbook](Ansible-Onboarding.md)), CSV bulk import (pending queue), free-text search, system updates (apt + flatpak + snap) with dry-run update checks that also list *which* packages are pending, reboot/shutdown (double-confirmed) — all three also available as bulk actions on an ad-hoc checkbox selection, not just per-machine or per-group |
-| Machine groups | Organize machines into named groups; built-in "All machines" group; search, system updates, update checks, and power actions all scoped to a group |
+| Machine groups | Organize machines into named groups; built-in "All machines" group; the group list itself is searchable, and each group's members are separately searchable; system updates, update checks, and power actions all scoped to a group |
 | Scheduling | Run any existing action (system update, update check, reboot, shut down) against a machine, a group, or "All machines" on a cron expression (UTC); enable/disable, run on demand, see when it last fired |
 | Audit | Read-only log of every mutating action across the app — who (account + source IP), what happened, its outcome, and when; searchable and filterable by outcome; hash-chained so tampering is detectable; exportable as CSV/JSON; optional live syslog forwarding (e.g. to a SIEM) |
 | Users | Create/edit/deactivate/delete accounts; assign a role; login method (local/LDAP/OIDC) is per-account; reset a local password; force sign-out |

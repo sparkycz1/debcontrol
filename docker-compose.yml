@@ -62,13 +62,16 @@ services:
   web:
     <<: *app-image
     ports:
-      # Bound to loopback only, and plain HTTP — this app is meant to sit
-      # behind a TLS-terminating reverse proxy (the bundled `caddy` service
-      # from docker-compose.caddy.yml, or your own; see the wiki). Any
-      # reverse proxy running on this host can reach it at 127.0.0.1:8000;
-      # one running as its own container needs to join this compose
-      # project's network instead.
-      - "127.0.0.1:8000:8000"
+      # Published on all interfaces, and plain HTTP — this app is meant to
+      # sit behind a TLS-terminating reverse proxy (the bundled `caddy`
+      # service from docker-compose.caddy.yml, or your own; see the wiki),
+      # but nothing here restricts direct access to loopback. If you don't
+      # want port 8080 reachable from outside this host, block it at the
+      # firewall (or bind to "127.0.0.1:8080:8080" instead) — debcontrol
+      # itself no longer does that for you. A reverse proxy running as its
+      # own container should join this compose project's network instead
+      # of going through the published port at all.
+      - "8080:8080"
     volumes:
       - ssh_data:/app/data
     depends_on:

@@ -66,9 +66,11 @@ docker compose up -d --build
 ```
 
 This starts Postgres, Redis, runs migrations once (`migrate` service), then
-starts `web` and `worker`. The app listens on `127.0.0.1:8000` — plain
-HTTP, loopback-only. If you have your own nginx/Traefik/Caddy already
-running on this host, point it at `127.0.0.1:8000`; see:
+starts `web` and `worker`. The app listens on port `8080` — plain HTTP,
+published on all interfaces (block it at the firewall, or bind
+`docker-compose.yml`'s `web.ports` to `127.0.0.1:8080:8080`, if you don't
+want it reachable directly). If you have your own nginx/Traefik/Caddy
+already running on this host, point it at `127.0.0.1:8080`; see:
 [nginx](Reverse-Proxy-Nginx.md), [Traefik](Reverse-Proxy-Traefik.md),
 [Caddy](Reverse-Proxy-Caddy.md).
 

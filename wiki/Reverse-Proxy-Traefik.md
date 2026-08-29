@@ -3,13 +3,14 @@
 Use this if you already run Traefik on the host where debcontrol's
 `docker compose up -d --build` (the base file, without
 `docker-compose.caddy.yml`) is running, exposing the app on
-`127.0.0.1:8000`.
+`127.0.0.1:8080`.
 
 There are two common ways to wire Traefik up to a service: a static
 **file provider** entry pointing at an address, or **Docker labels** read
 via Traefik's Docker provider. The file provider is simpler when debcontrol
 and Traefik aren't in the same Compose project (which is the default
-here, since debcontrol only binds to `127.0.0.1:8000`).
+here, since debcontrol publishes port `8080` rather than joining
+Traefik's network).
 
 ## Static config (`traefik.yml`)
 
@@ -83,7 +84,7 @@ http:
     debcontrol:
       loadBalancer:
         servers:
-          - url: "http://127.0.0.1:8000"
+          - url: "http://127.0.0.1:8080"
 ```
 
 If Traefik itself runs inside Docker, `127.0.0.1` from its point of view
@@ -107,7 +108,7 @@ labels:
   - traefik.http.routers.debcontrol.entrypoints=websecure
   - traefik.http.routers.debcontrol.tls.certresolver=letsencrypt
   - traefik.http.routers.debcontrol.tls.options=tls13only@file
-  - traefik.http.services.debcontrol.loadbalancer.server.port=8000
+  - traefik.http.services.debcontrol.loadbalancer.server.port=8080
 ```
 
 This requires exposing the Docker socket to the Traefik container, which

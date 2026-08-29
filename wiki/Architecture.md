@@ -27,6 +27,30 @@ supply chain, no bundler). htmx is used sparingly for the two truly
 async-feeling interactions (discovering a host key fingerprint, testing a
 connection) and is vendored locally rather than pulled from a CDN.
 
+The same reasoning shaped the visual design pass over the whole UI: it's
+one shared stylesheet (`app/web/static/css/style.css`) applied to a small,
+consistent set of utility classes every template already used (`.button`,
+`.panel`, `.data-table`, `.badge`, `.alert`, `.form`, `.page-header`, ...)
+rather than a per-template redesign — a design-token change (spacing,
+color, radius) or a component fix (e.g. the alert icon layout below)
+propagates everywhere at once, and no template needed to change markup to
+pick it up. The one interactive addition — a collapsible mobile nav — is
+a checkbox-driven CSS toggle (`.nav-toggle`), not JavaScript: it works
+under the same strict CSP (no inline scripts) without adding a script,
+and stays keyboard-operable (visually hidden via clip/absolute
+positioning, not `display: none`, so Tab still reaches it). The active
+nav link is computed from `request.url.path` directly in `base.html`, not
+from a per-page flag every route would otherwise need to remember to set.
+
+One layout detail worth calling out because it looks like it should be
+simpler than it is: `.alert`'s icon is CSS `::before` content positioned
+*absolutely* inside reserved left padding, not a flex sibling of the
+message. Several alerts in this app render a variable number of `<p>`
+tags (one per validation error) inside a single `.alert` div — as flex
+siblings of the icon, those would lay out in a row instead of stacking;
+absolutely positioning the icon out of flow lets the message content keep
+its normal block layout regardless of how many paragraphs it has.
+
 ### Why arq over Celery
 
 `arq` is a thin, async-native task queue on top of Redis — it fits
@@ -923,10 +947,14 @@ the edge.
 ### Container hardening
 
 The runtime image runs as a non-root user, is built via a multi-stage
-Dockerfile (build tools never ship in the final image), and the app's own
-port is bound to `127.0.0.1` only — it never listens on a
-publicly-reachable interface directly. Postgres and Redis ports aren't
-published to the host at all by default.
+Dockerfile (build tools never ship in the final image), and Postgres/
+Redis ports aren't published to the host at all by default. The app's own
+port (`8080`) *is* published on every interface, not just loopback —
+still plain HTTP, still meant to sit behind a TLS-terminating reverse
+proxy, but debcontrol no longer restricts direct access to this host for
+you. If that matters for your deployment, either firewall port `8080`
+from anything but your reverse proxy, or bind
+`docker-compose.yml`'s `web.ports` entry to `127.0.0.1:8080:8080`.
 
 ### Deliberately deferred
 
