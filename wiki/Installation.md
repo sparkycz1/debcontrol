@@ -20,11 +20,10 @@ python scripts/generate_secrets.py
 ```
 
 Copy the printed `SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, and
-`REDIS_PASSWORD` values into `.env`. Then make sure `DATABASE_URL` and
-`REDIS_URL` embed the *same* passwords you just set for
-`POSTGRES_PASSWORD` / `REDIS_PASSWORD` — they're separate variables
-because Postgres/Redis images and the app read them differently, but the
-values must match.
+`REDIS_PASSWORD` values into `.env`. Each password is written once — the app
+builds its Postgres/Redis connection URLs from these values itself. Set
+`DATABASE_URL`/`REDIS_URL` directly instead only if you need a URL these
+parts can't express (a different host/port, a managed database).
 
 The app validates configuration at startup and **refuses to start** if any
 secret still looks like a placeholder from `.env.example` — that's
@@ -37,10 +36,10 @@ intentional.
 | `APP_ENV` | app | `development` or `production`. Controls `/docs` exposure and HSTS. |
 | `SECRET_KEY` | app | Signs the OIDC-flow session cookie and the pending-TOTP token between login steps. |
 | `ENCRYPTION_KEY` | app | Fernet key encrypting stored SSH passwords/private keys. |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | db | Postgres container credentials. |
-| `DATABASE_URL` | app | Full async SQLAlchemy URL to Postgres. |
-| `REDIS_PASSWORD` | redis | Redis container password (`--requirepass`). |
-| `REDIS_URL` | app, worker, beat | Full Redis URL. Serves as Celery's **broker and result backend**, and backs the login rate limiter. |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | db, app | Postgres credentials, and the parts the app builds its connection URL from. `POSTGRES_HOST`/`POSTGRES_PORT` (default `db`/`5432`) override the host/port. |
+| `DATABASE_URL` | app | Optional — set to fully override the built Postgres URL. |
+| `REDIS_PASSWORD` | redis, app | Redis password (`--requirepass`), and the part the app builds its connection URL from. `REDIS_HOST`/`REDIS_PORT`/`REDIS_DB` (default `redis`/`6379`/`0`) override the rest. |
+| `REDIS_URL` | app | Optional — set to fully override the built Redis URL. Redis serves as Celery's broker and result backend, and backs the login rate limiter. |
 | `SSH_DATA_DIR` | app | Reserved data directory inside the container. |
 | `SSH_CONNECT_TIMEOUT` | app | SSH connection timeout, in seconds. |
 | `FACTS_REFRESH_INTERVAL_SECONDS` | beat | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 3600. |

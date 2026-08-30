@@ -12,6 +12,10 @@ os.environ.setdefault("SECRET_KEY", "test-only-secret-key-not-for-real-use-00000
 os.environ.setdefault("ENCRYPTION_KEY", "IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+# Required fields even though DATABASE_URL/REDIS_URL above override them —
+# see app.core.config.Settings.
+os.environ.setdefault("POSTGRES_PASSWORD", "test-only-not-for-real-use")
+os.environ.setdefault("REDIS_PASSWORD", "test-only-not-for-real-use")
 os.environ.setdefault("INFORM_TOKEN", "test-only-inform-token-not-for-real-use-000000")
 
 from collections.abc import Awaitable, Callable

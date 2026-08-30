@@ -42,10 +42,9 @@ uv run celery -A app.tasks.celery_app beat --loglevel=info
 > Run **exactly one** `beat` process. Two of them publish the same schedule
 > twice, so every sweep and every daily purge fires twice.
 
-`DATABASE_URL`/`REDIS_URL` in `.env` should point at `localhost` (not the
-Docker service names `db`/`redis`) when running the app itself outside
-Docker like this, since `db`/`redis` are only resolvable from inside the
-Compose network.
+Set `POSTGRES_HOST=localhost`/`REDIS_HOST=localhost` in `.env` when running
+the app itself outside Docker like this — `db`/`redis` (the defaults) are
+only resolvable from inside the Compose network.
 
 ## ✅ Tests
 
