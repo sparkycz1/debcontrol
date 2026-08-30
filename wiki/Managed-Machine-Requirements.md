@@ -1,4 +1,4 @@
-# Managed machine requirements
+# 🖥️ Managed machine requirements
 
 What a machine needs — network-wise, account-wise, and package-wise — to
 be added to and managed by debcontrol. Short version: a stock Debian
@@ -6,7 +6,7 @@ install already satisfies almost all of this. Doing all of it by hand is
 the point of this page; see [Ansible Onboarding](Ansible-Onboarding.md)
 for a playbook that does it for you.
 
-## Network
+## 🌐 Network
 
 - Reachable from the debcontrol host over TCP, on whatever port its SSH
   daemon listens on (default 22).
@@ -38,7 +38,7 @@ for a playbook that does it for you.
   sudo systemctl enable --now ssh
   ```
 
-## Account
+## 👤 Account
 
 - A user for debcontrol to connect as. Using a dedicated non-root user
   with passwordless sudo scoped to `apt-get` (see "System updates" below)
@@ -60,7 +60,7 @@ for a playbook that does it for you.
   `/etc/ssh/sshd_config` if you go this route — many hardened Debian
   images disable it by default.
 
-## Fact gathering — no agent, no extra packages
+## 🔍 Fact gathering — no agent, no extra packages
 
 When a host key fingerprint is confirmed, and then periodically after
 that, debcontrol runs one shell command over SSH to collect facts. It
@@ -91,7 +91,7 @@ one fact is simply left empty/unknown rather than failing the whole
 refresh. Filesystem usage excludes pseudo-filesystems (`tmpfs`,
 `devtmpfs`, `squashfs`, `overlay`) — only real, sized mounts are shown.
 
-## Installed packages — also no agent, no root
+## 📦 Installed packages — also no agent, no root
 
 **Machines → a machine → Installed packages** lists every apt package,
 plus every flatpak app and snap if either is installed, each with its
@@ -121,7 +121,7 @@ machine's most recent package snapshot at once — useful after a CVE
 announcement to find every machine still running a vulnerable version of
 something, without opening each machine individually.
 
-## System updates and power actions — require root
+## ⚡ System updates and power actions — require root
 
 Running updates (**Machines → a machine → System updates**: `apt-get
 update`, then `dist-upgrade` or `full-upgrade`, then
@@ -195,7 +195,7 @@ fresh, specific answer to "what's pending on this machine right now,"
 either click the button or create a schedule for it; whatever ran last is
 what's shown.
 
-## Interactive terminal — nothing extra needed
+## 🖧 Interactive terminal — nothing extra needed
 
 **Machines → a machine → Terminal** (if your role has been granted the
 `action.terminal` permission) needs nothing beyond ordinary SSH access —
@@ -258,7 +258,7 @@ create pending entries (though, again, not manage anything). Bake it into
 a golden image or secrets-injected cloud-init template rather than a
 shell history.
 
-## Summary checklist
+## ✅ Summary checklist
 
 Everything below is what [Ansible Onboarding](Ansible-Onboarding.md)'s
 playbook automates — do it by hand, or run that instead.

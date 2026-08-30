@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,9 +36,10 @@ class ScheduledActionParam:
     default: str
 
 
-ActionRunFunc = Callable[
-    [AsyncSession, Any, list[Machine], dict[str, str]], Awaitable[ActionRunResult]
-]
+# (db session, target machines, the action's stored params) -> what happened.
+# No queue handle is threaded through: an action enqueues Celery tasks by
+# importing and calling them (see `app.services.machine_actions`).
+ActionRunFunc = Callable[[AsyncSession, list[Machine], dict[str, str]], Awaitable[ActionRunResult]]
 
 
 @dataclass(frozen=True)

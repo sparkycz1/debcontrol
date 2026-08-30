@@ -6,8 +6,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from arq import create_pool
-from arq.connections import RedisSettings
+import redis.asyncio as aioredis
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,8 +41,9 @@ from app.web.routes import settings as settings_routes
 settings = get_settings()
 configure_logging(settings.log_level)
 # Populates app.scheduling.actions' registry — the "New scheduled task" form
-# reads from it. Idempotent, and also called from app.tasks.worker so the
-# worker process has it too without needing to import this module.
+# reads from it. Idempotent, and also called from app.scheduling.jobs (and
+# again in each forked Celery worker child) so the worker processes have it
+# too without needing to import this module.
 register_builtin_actions()
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -73,17 +73,23 @@ CONTENT_SECURITY_POLICY = (
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings.ssh_data_dir.mkdir(parents=True, exist_ok=True)
-    app.state.arq_redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    # One long-lived Redis connection pool for the *login rate limiter*
+    # (app.auth.rate_limit) — nothing to do with the task queue, which is
+    # Celery and talks to Redis from the worker processes on its own. Kept
+    # here so a burst of login attempts doesn't open a fresh connection per
+    # request.
+    # redis-py's `from_url` carries no annotations, hence the ignore.
+    app.state.redis = aioredis.from_url(settings.redis_url)  # type: ignore[no-untyped-call]
     # The auth middleware (app.auth.middleware) needs a DB session but runs
     # outside FastAPI's dependency injection — this is what it opens one
-    # from. Kept on app.state (like arq_redis above) rather than imported
+    # from. Kept on app.state (like `redis` above) rather than imported
     # directly so tests can point it at their own SQLite engine instead of
     # the real Postgres one `AsyncSessionLocal` is bound to.
     app.state.db_session_factory = AsyncSessionLocal
     try:
         yield
     finally:
-        await app.state.arq_redis.close()
+        await app.state.redis.aclose()
 
 
 def create_app() -> FastAPI:

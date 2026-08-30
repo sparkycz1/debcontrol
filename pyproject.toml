@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.1.1"
+version = "0.2.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -15,10 +15,18 @@ dependencies = [
     "asyncpg>=0.31.0",
     "alembic>=1.19.1",
     # Note: the `redis-py` client library is independent from the Redis SERVER
-    # version (8.10) — it's pinned to the <6 line because `arq` (task queue)
-    # currently only supports redis-py <6. See README.md, "Dependency version notes".
-    "redis[hiredis]>=5.3.1,<6",
-    "arq>=0.28.0",
+    # version (8.10). It used to carry a hard `<6` cap here, purely because the
+    # old task queue (arq) refused redis-py 6.x. That reason is gone: the queue
+    # is Celery now, and `kombu[redis]` (Celery's transport layer) declares
+    # `redis >=4.5.2,!=4.5.5,!=5.0.2,<6.5` itself — so the real upper bound is
+    # kombu's, and repeating a stricter one here would only mask it. Only the
+    # lower bound stays, since the app is not tested below 5.3.1.
+    # See README.md, "Dependency version notes".
+    "redis[hiredis]>=5.3.1",
+    # Task queue: broker AND result backend are the same Redis instance
+    # (REDIS_URL). `[redis]` pulls kombu's redis transport. See
+    # app/tasks/celery_app.py and wiki/Architecture.md.
+    "celery[redis]>=5.6.3",
     "asyncssh>=2.24.0",
     "jinja2>=3.1.6",
     "python-multipart>=0.0.32",
@@ -92,6 +100,21 @@ python_version = "3.14"
 plugins = ["pydantic.mypy"]
 strict = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# Celery ships no type information (no py.typed, no stub package on PyPI as
+# of 5.6). Without this every `import celery...` is an error and the whole
+# task layer goes unchecked for unrelated reasons.
+module = ["celery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Consequence of the override above: `celery_app` is `Any`, so every
+# `@celery_app.task(...)` counts as an "untyped decorator" under strict mode.
+# The decorated wrappers here are one-liners whose *bodies* are still fully
+# checked; only the decorator itself is opaque.
+module = ["app.tasks.celery_app", "app.tasks.jobs", "app.scheduling.jobs"]
+disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 # Strict typing pays off mainly in `app/` — test fixtures and asserts don't

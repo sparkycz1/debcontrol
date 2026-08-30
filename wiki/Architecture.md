@@ -1,6 +1,6 @@
-# Architecture
+# 🏗️ Architecture
 
-## Stack
+## 🧱 Stack
 
 | Layer | Choice | Notes |
 |---|---|---|
@@ -9,7 +9,8 @@
 | Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
 | Database | PostgreSQL 18.6 | via `asyncpg` + SQLAlchemy 2.0 (async); image pinned to an exact patch |
 | Migrations | Alembic | async engine |
-| Cache / task queue | Redis 8.10.1 | queue via [`arq`](https://github.com/python-arq/arq); image pinned to an exact patch |
+| Task queue / broker | Redis 8.10.1 | **broker _and_ result backend** for [Celery](https://docs.celeryq.dev/); also backs the login rate limiter; image pinned to an exact patch |
+| Background tasks | [Celery](https://docs.celeryq.dev/) + Celery Beat | one `worker` process pool, exactly one `beat` scheduler — see [Background tasks](#background-tasks-celery-and-celery-beat) |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
 | Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
 | Auth: passwords | [`argon2-cffi`](https://github.com/hynek/argon2-cffi) | argon2id hashing for local accounts |
@@ -22,13 +23,20 @@
 
 ### Dependency version notes
 
-- **`redis-py` (the client library) is intentionally pinned to the `<6`
-  line**, even though the Redis *server* above runs `redis:8.10`. The
-  client library version and the server version are independent — `arq`
-  only supports `redis-py <6` as of August 2026 (see its `pyproject.toml`),
-  but redis-py 5.x talks to a Redis 8.x server just fine. If/when `arq`
-  raises that ceiling, `redis[hiredis]` in this repo's `pyproject.toml` can
-  be unpinned.
+- **`redis-py` (the client library) no longer carries an upper pin.** It
+  used to be capped at `<6` for one reason only: the **previous task queue**
+  refused redis-py 6.x (see
+  [Why Celery](#why-celery-and-why-the-project-moved-off-the-previous-queue)).
+  That cap retired with it — the effective ceiling now comes from
+  `kombu[redis]` (Celery's transport
+  layer), which declares `redis >=4.5.2,!=4.5.5,!=5.0.2,<6.5`. Repeating a
+  stricter bound in this repo would only hide the real one, so
+  `pyproject.toml` keeps just the lower bound (`redis[hiredis]>=5.3.1`) and
+  the resolver currently lands on **redis-py 6.4.0**.
+  > [!NOTE]
+  > The client library version and the Redis **server** version are
+  > independent of each other. redis-py 5.x and 6.x both talk to a Redis
+  > 8.x server perfectly well — do not try to "match" them.
 - Versions in `pyproject.toml` are lower bounds (`>=`); exact, reproducible
   versions for installation come from the committed `uv.lock`.
 - Docker images for stateful services (`postgres:18.6`, `redis:8.10.1`,
@@ -70,28 +78,138 @@ siblings of the icon, those would lay out in a row instead of stacking;
 absolutely positioning the icon out of flow lets the message content keep
 its normal block layout regardless of how many paragraphs it has.
 
-### Why arq over Celery
+### Background tasks: Celery and Celery Beat
 
-`arq` is a thin, async-native task queue on top of Redis — it fits
-naturally into an already-async FastAPI app without pulling in Celery's
-much larger dependency and configuration surface. The trade-off: `arq` is
-currently in "maintenance only" mode upstream, and it pins `redis-py <6`
-(see "Dependency version notes" above for the version-pinning
-implications). The **Scheduling** feature (cron-triggered
-actions) is built entirely on top of `arq`'s existing `cron()` jobs plus
-[`croniter`](https://github.com/kiorky/croniter) for expression parsing —
-see "Scheduling: reusing actions, not reimplementing them" below — rather
-than needing a heavier queue with built-in scheduling. If heavier queue
-features are needed later (retries with complex backoff, multiple
-queues/priorities), Celery or `ReArq` are the natural next steps.
+All background work runs on **Celery**, with the existing Redis instance
+(`REDIS_URL`) as **both** the broker and the result backend. That covers
+three different kinds of work:
 
-### Why AsyncSSH over Paramiko
+| Kind | Examples | Triggered by |
+|---|---|---|
+| **Periodic sweeps** | reachability ping, facts refresh, package refresh, update-availability check | Celery **Beat**, on `timedelta` schedules read from Settings |
+| **Daily housekeeping** | audit-log purge, fleet snapshot, snapshot purge | Celery **Beat**, on `crontab()` schedules |
+| **One-off, per machine** | SSH connect test, facts/packages refresh, apt update, update preview, reboot/shutdown | a route or another task calling `some_task.delay(...)` |
+
+Two Compose services back this: **`worker`** (executes tasks; safe to
+scale) and **`beat`** (publishes the schedule; **must never be scaled past
+one replica** — every replica would publish the same entries, so each daily
+purge would fire once per replica).
+
+#### Why Celery, and why the project moved off the previous queue
+
+Until version 0.2.0 the queue was
+[`arq`](https://github.com/python-arq/arq) — thin, async-native, and a
+natural fit for an async FastAPI app without Celery's configuration
+surface. Two things pushed the project off it:
+
+- **It is in maintenance-only mode upstream**, and its hard
+  `redis-py <6` pin had started dictating an unrelated dependency's version
+  for the whole project (see [Dependency version notes](#dependency-version-notes)).
+- **Its `cron()` is minute-grained only.** The three configurable
+  fleet sweeps needed arbitrary second-level intervals, so each one was
+  written as a *self-rescheduling* job: it did its work and then re-enqueued
+  itself with `_defer_by=timedelta(...)`, with a hand-written startup hook
+  to kick the first one off. That was a workaround, and a fragile one — if
+  a job ever died before its re-enqueue, that sweep simply stopped forever
+  with nothing to notice.
+
+Celery Beat supports `timedelta(seconds=N)` schedules natively, so all of
+that self-rescheduling boilerplate is gone: every periodic job is now a
+plain declarative entry in `celery_app.conf.beat_schedule` and each job body
+just does its work and returns. Beat owning the cadence also means a dead
+worker no longer silently ends a sweep — the next tick is published
+regardless.
+
+What Celery costs in return: a **noticeably larger dependency tree**
+(`kombu`, `billiard`, `amqp`, `vine`, `click-*`) and the two design points
+below, neither of which the async-native queue needed.
+
+#### Async bodies, sync task wrappers
+
+Celery tasks are synchronous; this app's logic (SQLAlchemy async sessions,
+`asyncssh`) is not. Every job is therefore written twice over, deliberately:
+
+```python
+async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
+    ...  # the real work
+
+@celery_app.task(name="app.tasks.jobs.refresh_machine_facts")
+def refresh_machine_facts(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_refresh_machine_facts(machine_id))
+```
+
+The wrapper is kept to exactly one line so no logic ever lives on the sync
+side. Tests call the `_`-prefixed coroutine directly.
+
+Every task is registered with an **explicit `name=`** rather than Celery's
+auto-derived dotted path. Beat entries, `.delay()` call sites, and messages
+already sitting in Redis all refer to a task by name — deriving it from the
+file layout would mean that moving or renaming a module silently orphans
+queued messages instead of failing loudly. The names happen to match today's
+paths; they are a contract, not a coincidence.
+
+> [!WARNING]
+> **`celery.exceptions.TimeoutError` is not the builtin `TimeoutError`** —
+> it does not subclass it. A few routes enqueue a task and block on its
+> result inline; every one of them must catch
+> `from celery.exceptions import TimeoutError as CeleryTimeoutError`.
+> Catching the builtin compiles fine and turns the timeout branch into dead
+> code. Related: `AsyncResult.get()` is a **blocking, synchronous** call,
+> so those routes wrap it in `asyncio.to_thread(...)` — calling it straight
+> from an `async def` handler stalls the entire event loop, and every other
+> concurrent request with it, for the full duration.
+
+#### Fork safety: the DB engine is rebuilt in every worker child
+
+> [!IMPORTANT]
+> This is the subtlest part of the Celery setup, and the kind of bug that
+> **never shows up in the test suite** — tests run against in-memory SQLite
+> in a single process. It only bites a real Postgres deployment.
+
+Celery's default worker pool is **prefork**. The parent process imports the
+entire application — including `app/db/session.py`, which builds its async
+engine and session factory as module-level singletons at import time — and
+*then* forks its child processes. Left alone, every child would inherit the
+same asyncpg connection pool: the same already-open TCP sockets to Postgres,
+shared across the parent and all its siblings.
+
+That is not merely untidy. Two processes writing into one socket interleave
+their protocol frames; one process closing a connection yanks it out from
+under another; per-connection state (prepared-statement cache, transaction
+status) becomes a lie in whichever process did not create it. The symptoms
+are sporadic `InterfaceError`/`InternalClientError`, results arriving for
+the wrong query, or a wedged worker — never a clean, obvious crash.
+
+`app/tasks/celery_app.py` therefore connects a **`worker_process_init`**
+signal handler that discards what the child inherited and builds a fresh
+engine and session factory inside each forked child, after the fork:
+
+```python
+@worker_process_init.connect
+def _init_worker_process(**kwargs):
+    from app.db import session as db_session
+    db_session.engine = create_async_engine(...)
+    db_session.AsyncSessionLocal = async_sessionmaker(bind=db_session.engine, ...)
+    register_builtin_actions()   # idempotent; each child needs its own registry
+```
+
+> [!CAUTION]
+> The inherited engine is **never** `dispose()`d — that would close sockets
+> the parent and every sibling are still using. It is abandoned, not closed.
+
+For that rebind to be visible, **every job body must reach the factory
+through the module** — `db_session.AsyncSessionLocal(...)`, never
+`from app.db.session import AsyncSessionLocal`. A name bound at import time
+would keep pointing at the parent's pool no matter what the signal handler
+does. If you add a new task, follow that convention.
+
+### 🔑 Why AsyncSSH over Paramiko
 
 AsyncSSH is fully asynchronous and integrates directly with FastAPI's
 event loop, avoiding a thread pool just to do SSH I/O. It's actively
 maintained and supports modern algorithms (Ed25519, etc.).
 
-## Project structure
+## 📂 Project structure
 
 ```
 app/
@@ -106,7 +224,7 @@ app/
   scheduling/   cron-scheduled actions: registry, cron parsing, scheduler jobs
   services/     logic shared between manual routes and the scheduler
   ssh/          AsyncSSH client (host key pinning), facts, updates, power
-  tasks/        arq worker + background jobs
+  tasks/        Celery app (beat schedule, fork-safety hook) + task bodies
   web/          FastAPI routers, Jinja2 templates, static files
 alembic/        DB migrations
 tests/          pytest (async, isolated from real infrastructure)
@@ -371,8 +489,10 @@ no limit on how many *different* usernames one source tries — that's what
 `app.auth.rate_limit.check_rate_limit` closes: a coarse, high-limit-by-design
 cap (30 attempts / 5 minutes) per source IP on both `POST /login` and
 `POST /login/totp`, using a plain Redis `INCR`+`EXPIRE` fixed-window counter
-on `app.state.arq_redis` (the same connection arq's job queue already holds
-open — no second Redis client needed). "High-limit-by-design" is
+on `app.state.redis` — a plain `redis.asyncio` pool opened once in
+`app.main`'s lifespan, so a burst of login attempts doesn't open a fresh
+connection per request. It hits the same Redis *server* Celery uses but
+shares nothing else with the queue. "High-limit-by-design" is
 deliberate: this exists to blunt obviously abusive volume (credential
 stuffing, enumeration at scale), not to lock out a shared office/VPN egress
 IP or someone who mistypes a password a few times.
@@ -453,9 +573,9 @@ looser one:
   against deactivating/deleting/reassigning your own account) are called
   from the same functions the web routes use, not re-derived.
 - **Same underlying service calls.** Machine/group actions call
-  `app.services.machine_actions` and the same `arq` job names the web
-  routes enqueue — a scheduled task, a web click, and an API call all end
-  up running the identical background job.
+  `app.services.machine_actions`, which enqueues the same Celery tasks the
+  web routes do — a scheduled task, a web click, and an API call all end
+  up running the identical background task.
 - **Typed confirmation becomes an explicit field.** Where the web UI
   requires typing a machine's/group's exact name (or a fixed phrase like
   `ALL MACHINES`) before a destructive action (power, delete), the API
@@ -488,7 +608,7 @@ only what's unambiguously safe to read over a bearer token: version/commit
 info, the SSH public key/fingerprint (meant to be copied elsewhere anyway),
 background-check intervals, and audit log retention.
 
-## Security model
+## 🔒 Security model
 
 See "Authentication & RBAC" above for logins, sessions, and permissions —
 everything below covers the rest of the app's security posture (SSH
@@ -496,7 +616,7 @@ handling, secrets at rest, audit integrity, HTTP hardening), most of which
 predates auth and is unrelated to it. See "Deliberately out of scope"
 below for what's still missing.
 
-### SSH host key pinning
+### 🔑 SSH host key pinning
 
 Covered in depth in
 [SSH Host Key Verification](SSH-Host-Key-Verification.md). Summary: no
@@ -604,9 +724,10 @@ shaped the design:
 
 - **A dedicated long timeout.** `open_connection`'s timeout only bounds
   the SSH handshake; the apt sequence itself gets its own budget
-  (`UPDATE_TIMEOUT_SECONDS`, default 30 minutes) via arq's `func(...,
-  timeout=...)`, distinct from the default job timeout every other
-  background job uses. See `app/tasks/worker.py`.
+  (`UPDATE_TIMEOUT_SECONDS`, default 30 minutes) via a per-task
+  `@celery_app.task(..., time_limit=...)`, distinct from the 60-second
+  default (`task_time_limit`) every other background task uses. See
+  `app/tasks/jobs.py` and `app/tasks/celery_app.py`.
 - **Cleanup always runs, chained by `;` not `&&`.** If the upgrade step
   fails, `autoremove`/`autoclean` still run — they're independently
   useful and shouldn't be skipped because of an unrelated upgrade
@@ -620,9 +741,9 @@ shaped the design:
   over a non-interactive SSH exec. See
   [Managed Machine Requirements](Managed-Machine-Requirements.md) for the
   sudoers line this expects.
-- **Every run is a row, not just a Redis job.** `MachineUpdateRun`
-  persists status/output/error/timestamps in Postgres — arq's own result
-  storage is Redis-backed with a TTL and isn't a domain record, so it's
+- **Every run is a row, not just a queued message.** `MachineUpdateRun`
+  persists status/output/error/timestamps in Postgres — Celery's own result
+  backend is Redis-backed with a TTL and isn't a domain record, so it's
   not what the UI's run-detail and batch pages are built on. A `batch_id`
   (just a shared UUID, not a foreign key to anything) is the only thing
   connecting the runs from one group/"All machines" trigger — there's no
@@ -946,7 +1067,7 @@ SSH action in the app:
   skipped-count message), since `open_connection` would refuse those
   anyway.
 
-### Interactive SSH terminal: the most powerful capability in the app
+### 🖥️ Interactive SSH terminal: the most powerful capability in the app
 
 **Machines → a machine → Terminal** opens a real, interactive shell to that
 machine in the browser — not a fixed command like updates/power, but
@@ -1033,7 +1154,7 @@ machine's configured account has. It's treated accordingly:
   for the same reasoning already applied to SSH key rotation and LDAP/OIDC
   configuration: some things are deliberately web-UI-only).
 
-### Scheduling: reusing actions, not reimplementing them
+### 🕒 Scheduling: reusing actions, not reimplementing them
 
 **Scheduling** (`app.scheduling`) runs an existing action — system update,
 update check, reboot, shut down — against a machine, a group, or "All
@@ -1048,24 +1169,26 @@ decisions shaped it:
   buttons use (see below) — nothing about the `ScheduledTask` model, the
   scheduler tick, or the "New scheduled task" form needs to change to add a
   future fifth action; it only needs one more `register_action()` call.
-  It's idempotent and called from both `app.main` (so the web UI has
-  something to list) and `app.tasks.worker` (so the scheduler tick does
-  too) — either process can run without importing the other.
+  It's idempotent and called from `app.main` (so the web UI has something
+  to list), from `app.scheduling.jobs` at import time, and again in each
+  forked Celery worker child — every process can run without importing the
+  others.
 - **One shared implementation for "trigger this against N machines".**
   `_trigger_updates` / `_trigger_check_updates` / `_send_power_to_machines`
   used to live only in the machine-groups routes; they moved to
-  `app.services.machine_actions` (taking the arq redis pool directly rather
-  than a `Request`) so a scheduled run and a human clicking "Update now" on
+  `app.services.machine_actions`, which takes no `Request` and no queue
+  handle at all — Celery tasks are importable objects, so it just calls
+  `some_task.delay(...)` — so a scheduled run and a human clicking "Update now" on
   a group go through the exact same code path, including the same
   skip-unpinned-machines behavior.
-- **A fixed one-minute tick, not a configurable self-rescheduling interval.**
+- **A fixed one-minute tick, not a configurable interval.**
   Unlike the facts/update-check sweeps (`FACTS_REFRESH_INTERVAL_SECONDS`),
   cron expressions are minute-grained by construction, so
-  `run_due_scheduled_tasks` runs on a plain fixed `cron(second=0)` rather
-  than needing a new setting. (`ping_all_machines`'s reachability sweep
-  used to be exactly this shape too, but is now a configurable
-  self-rescheduling interval — see `REACHABILITY_CHECK_INTERVAL_SECONDS` —
-  since sub-minute/multi-minute cadences are both reasonable there.)
+  `run_due_scheduled_tasks` is a plain `crontab()` Beat entry (every
+  minute) rather than needing a new setting. (`ping_all_machines`'s
+  reachability sweep was once this shape too, but has its own configurable
+  `timedelta` schedule — see `REACHABILITY_CHECK_INTERVAL_SECONDS` — since
+  sub-minute and multi-minute cadences are both reasonable there.)
   Each `ScheduledTask` keeps a denormalized `next_run_at` (computed via
   [`croniter`](https://github.com/kiorky/croniter) on create/edit/enable and
   advanced immediately when the tick fires it), so the tick itself is one
@@ -1096,7 +1219,7 @@ decisions shaped it:
   listing "All machines", every group, and every machine — no client-side
   JS needed to hide whichever selector doesn't apply.
 
-### Audit log: who, what, outcome, when
+### 📝 Audit log: who, what, outcome, when
 
 **Audit** (`app.audit`, `app/db/models/audit_log.py`) records what happened,
 its outcome, the source IP, and when — for essentially every mutating
@@ -1175,8 +1298,8 @@ Every `AuditLogEntry` is linked into a hash chain (`sequence`, `prev_hash`,
   row happens to be."** `AuditChainState` is a dedicated one-row table;
   `log_event` reads it with `SELECT ... FOR UPDATE` and holds that lock for
   the rest of its transaction, so two audit writes racing from different
-  requests — or from different *processes*, since both the web app and the
-  arq worker write audit entries — can never both link a new entry to the
+  requests — or from different *processes*, since the web app and every
+  forked Celery worker child all write audit entries — can never both link a new entry to the
   same previous hash. Postgres enforces the lock for real; on SQLite (used
   in tests) `FOR UPDATE` is accepted but is a no-op, which is fine there
   since aiosqlite has no real concurrent writers to race in the first
@@ -1216,7 +1339,7 @@ just starts from whatever the current oldest surviving entry is. The purge
 itself is logged (`audit_log.purge`, actor `"retention policy
 (automatic)"`) with how many entries were removed.
 
-### Dashboard trends: a daily snapshot, retained the same way as the audit log
+### 📊 Dashboard trends: a daily snapshot, retained the same way as the audit log
 
 `FleetSnapshot` (`app/db/models/fleet_snapshot.py`) is one row per calendar
 day of the exact fleet-wide counts the Dashboard already shows live — total/

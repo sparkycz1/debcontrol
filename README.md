@@ -1,4 +1,11 @@
-# debcontrol
+# 🖥️ debcontrol
+
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/web-FastAPI-009688?logo=fastapi&logoColor=white)
+![Task queue](https://img.shields.io/badge/task%20queue-Celery-37814A?logo=celery&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/db-PostgreSQL%2018-336791?logo=postgresql&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)
 
 A web application for managing Debian machines over SSH. Officially
 supported: Debian and its derivatives (e.g. Ubuntu), for as long as each
@@ -15,7 +22,7 @@ proxy guides, and local development/testing
 ([Development](wiki/Development.md)). This file only covers getting a
 fresh instance running.
 
-## Quick start (Docker)
+## 🚀 Quick start (Docker)
 
 ```bash
 cp .env.example .env
@@ -55,7 +62,15 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 See [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md) for details
 and troubleshooting.
 
-**Then create the first administrator account** — every debcontrol account
+> [!WARNING]
+> The app speaks **plain HTTP only** and publishes port `8080` on all
+> interfaces. Always put TLS termination in front of it, and firewall that
+> port off (or bind it to `127.0.0.1`) if you don't want it reachable
+> directly.
+
+## 🔑 First login
+
+**Create the first administrator account** — every debcontrol account
 is created inside the app itself, so there's no other way in on a fresh
 deployment:
 
@@ -72,7 +87,7 @@ and account recovery if you ever get locked out) and
 [wiki/Installation.md#updating](wiki/Installation.md#updating) for
 upgrading later (`./scripts/upgrade.sh`).
 
-## Local development without Docker
+## 🛠️ Local development without Docker
 
 ```bash
 uv sync
@@ -80,14 +95,21 @@ docker compose up -d db redis
 uv run alembic upgrade head
 uv run python scripts/create_admin.py --username admin
 uv run uvicorn app.main:app --reload
-# in a second terminal:
-uv run arq app.tasks.worker.WorkerSettings
+# second terminal — background tasks:
+uv run celery -A app.tasks.celery_app worker --loglevel=info
+# third terminal — periodic sweeps and the scheduled-task tick (optional):
+uv run celery -A app.tasks.celery_app beat --loglevel=info
 ```
+
+> [!IMPORTANT]
+> Run **exactly one** `beat` process, here and in production. Every replica
+> publishes the same schedule, so a second one makes each periodic sweep and
+> daily purge fire twice.
 
 See [wiki/Development.md](wiki/Development.md) for running tests
 (`uv run pytest`), linting/type-checking, adding a migration, and other
 project conventions.
 
-## License
+## 📄 License
 
 [MIT](LICENSE)

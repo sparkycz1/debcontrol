@@ -1,9 +1,11 @@
 """Registers the schedulable actions that exist today.
 
-`register_builtin_actions()` is called once, at import time, from both
-`app.main` (so the web UI's "New scheduled task" form has something to
-list) and `app.tasks.worker` (so the scheduler tick job does too) — it's
-idempotent, so calling it from both is harmless.
+`register_builtin_actions()` is called from `app.main` at import time (so the
+web UI's "New scheduled task" form has something to list), from
+`app.scheduling.jobs` at import time, and again from each forked Celery
+worker child (`app.tasks.celery_app`'s `worker_process_init` handler, so a
+child that inherited an empty registry still has one) — it's idempotent, so
+calling it from all three is harmless.
 
 To make a new feature schedulable: write an `ActionRunFunc` (reusing
 `app.services.machine_actions` where it fits) and add one
@@ -13,8 +15,6 @@ all read from the registry, not from a hardcoded list of actions.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,31 +36,31 @@ from app.ssh.power import PowerAction
 
 
 async def _run_system_update(
-    db: AsyncSession, redis: Any, machines: list[Machine], params: dict[str, str]
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
     strategy = UpgradeStrategy(params.get("strategy") or UpgradeStrategy.DIST_UPGRADE.value)
-    _batch_id, skipped = await trigger_updates(db, redis, machines, strategy)
+    _batch_id, skipped = await trigger_updates(db, machines, strategy)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
 async def _run_check_updates(
-    db: AsyncSession, redis: Any, machines: list[Machine], params: dict[str, str]
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
-    skipped = await trigger_check_updates(redis, machines)
+    skipped = await trigger_check_updates(machines)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
 async def _run_reboot(
-    db: AsyncSession, redis: Any, machines: list[Machine], params: dict[str, str]
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
-    skipped = await send_power_to_machines(redis, machines, PowerAction.REBOOT)
+    skipped = await send_power_to_machines(machines, PowerAction.REBOOT)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
 async def _run_shutdown(
-    db: AsyncSession, redis: Any, machines: list[Machine], params: dict[str, str]
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
-    skipped = await send_power_to_machines(redis, machines, PowerAction.SHUTDOWN)
+    skipped = await send_power_to_machines(machines, PowerAction.SHUTDOWN)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 

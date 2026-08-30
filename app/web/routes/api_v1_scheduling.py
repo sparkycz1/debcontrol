@@ -21,6 +21,7 @@ from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
 from app.db.session import get_db
 from app.scheduling.cron import compute_next_run
+from app.scheduling.jobs import run_scheduled_task
 from app.schemas.scheduled_task import ScheduledTaskCreate
 
 router = APIRouter(prefix="/api/v1/scheduling")
@@ -184,7 +185,7 @@ async def run_scheduled_task_now_api(
     request: Request, task_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> dict[str, object]:
     task = await _get_task_or_404(task_id, db)
-    await request.app.state.arq_redis.enqueue_job("run_scheduled_task", str(task.id))
+    run_scheduled_task.delay(str(task.id))
     await log_event(
         db,
         request=request,

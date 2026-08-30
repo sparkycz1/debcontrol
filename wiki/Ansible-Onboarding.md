@@ -1,4 +1,4 @@
-# Ansible onboarding
+# 🤖 Ansible onboarding
 
 Everything in [Managed Machine Requirements](Managed-Machine-Requirements.md)
 done by hand, in one playbook run: installs/enables `sshd`, creates a
@@ -25,7 +25,7 @@ separate, deliberate step a human does in the **Machines** tab. See
 [Architecture](Architecture.md#self-registration-is-not-the-same-as-trust)
 for why that boundary exists.
 
-## Requirements
+## ✅ Requirements
 
 - Ansible on the machine you run the playbook from (not on the target) —
   `ansible-core` plus the `ansible.posix` collection for the
@@ -41,7 +41,7 @@ for why that boundary exists.
   This is separate from — and only needed once, up front — the
   passwordless sudo the playbook then sets up *for debcontrol's own user*.
 
-## Setup
+## ⚙️ Setup
 
 1. Copy the two example files and fill them in:
    ```bash
@@ -80,7 +80,7 @@ for why that boundary exists.
    key fingerprint — this is still a manual, deliberate step; see
    [SSH Host Key Verification](SSH-Host-Key-Verification.md) for why).
 
-## What it does, and what it deliberately doesn't
+## 🧭 What it does, and what it deliberately doesn't
 
 | Step | Does | Doesn't |
 |---|---|---|
@@ -90,7 +90,7 @@ for why that boundary exists.
 | sudo | Two `/etc/sudoers.d/` files, `apt-get`/`shutdown` always, `flatpak`/`snap` only if either is found installed | Scoped to exactly those binaries — never a blanket `NOPASSWD: ALL` |
 | Self-registration | Posts hostname/OS/kernel/CPU/RAM to `/api/inform` | Doesn't send credentials, a host key, or anything else — see the self-registration payload in `app/schemas/inform.py` |
 
-## Variables reference
+## 🗂️ Variables reference
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
@@ -100,7 +100,7 @@ for why that boundary exists.
 | `debcontrol_user` | no | `debcontrol` | the dedicated account created on each machine |
 | `debcontrol_enable_flatpak_snap_sudo` | no | `true` | set `false` to skip the flatpak/snap sudoers file even if either is installed |
 
-## Extending it
+## 🔧 Extending it
 
 Adding this playbook to your own machine-provisioning pipeline (cloud-init,
 Packer, an existing site-wide Ansible repo) is the intended use — it's

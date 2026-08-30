@@ -205,7 +205,7 @@ async def trigger_all_machines_update(
     result = await db.execute(select(Machine))
     machines = list(result.scalars().all())
 
-    batch_id, skipped = await trigger_updates(db, request.app.state.arq_redis, machines, strategy)
+    batch_id, skipped = await trigger_updates(db, machines, strategy)
 
     await log_event(
         db,
@@ -227,7 +227,7 @@ async def trigger_all_check_updates(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> Response:
     result = await db.execute(select(Machine))
-    skipped = await trigger_check_updates(request.app.state.arq_redis, list(result.scalars().all()))
+    skipped = await trigger_check_updates(list(result.scalars().all()))
     await log_event(
         db,
         request=request,
@@ -300,7 +300,7 @@ async def all_power_action(
 
     result = await db.execute(select(Machine))
     machines = list(result.scalars().all())
-    skipped = await send_power_to_machines(request.app.state.arq_redis, machines, action)
+    skipped = await send_power_to_machines(machines, action)
     await log_event(
         db,
         request=request,
@@ -416,8 +416,7 @@ async def trigger_group_update(
     strategy: UpgradeStrategy = Form(...),
 ) -> Response:
     group = await _get_group_or_404(group_id, db)
-    redis = request.app.state.arq_redis
-    batch_id, skipped = await trigger_updates(db, redis, group.machines, strategy)
+    batch_id, skipped = await trigger_updates(db, group.machines, strategy)
 
     await log_event(
         db,
@@ -441,7 +440,7 @@ async def trigger_group_check_updates(
     request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     group = await _get_group_or_404(group_id, db)
-    skipped = await trigger_check_updates(request.app.state.arq_redis, group.machines)
+    skipped = await trigger_check_updates(group.machines)
     await log_event(
         db,
         request=request,
@@ -521,7 +520,7 @@ async def group_power_action(
             set_csrf_cookie(response, new_cookie)
         return response
 
-    skipped = await send_power_to_machines(request.app.state.arq_redis, group.machines, action)
+    skipped = await send_power_to_machines(group.machines, action)
     await log_event(
         db,
         request=request,

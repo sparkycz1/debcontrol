@@ -35,7 +35,7 @@ RUN groupadd --system app && useradd --system --gid app --home-dir /app --create
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    # uvicorn (web/worker's CMD) and alembic (alembic.ini's
+    # uvicorn (web's CMD), celery (worker/beat's), and alembic (alembic.ini's
     # prepend_sys_path = .) both already make "app.*" importable relative
     # to the working directory on their own — a plain `python
     # scripts/create_admin.py` invocation (docker compose exec) doesn't

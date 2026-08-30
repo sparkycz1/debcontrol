@@ -1,4 +1,4 @@
-# Reverse proxy: Caddy
+# 🔒 Reverse proxy: Caddy
 
 There are two ways to use Caddy with debcontrol:
 

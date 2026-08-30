@@ -9,9 +9,11 @@ volume (credential stuffing, username enumeration at scale), not to
 inconvenience a legitimate user who mistypes a password a few times or a
 shared office/VPN egress IP with several people logging in.
 
-Reuses `app.state.arq_redis` (the same Redis connection arq's job queue
-already holds open) rather than opening a second one — it's a real
-`redis.asyncio.Redis` under the hood, so plain `INCR`/`EXPIRE` work fine.
+Uses `app.state.redis` — a plain `redis.asyncio.Redis` pool opened once in
+`app.main`'s lifespan, so a burst of login attempts doesn't open a fresh
+connection per request. It hits the same Redis *server* the Celery queue
+uses, but shares nothing else with it: this is straight `INCR`/`EXPIRE`, no
+queue involvement whatsoever.
 """
 
 from __future__ import annotations

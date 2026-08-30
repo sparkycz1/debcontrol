@@ -165,7 +165,7 @@ async def login_form(
 
 
 async def _within_rate_limit(request: Request, *, bucket: str, limit: int) -> bool:
-    redis = request.app.state.arq_redis
+    redis = request.app.state.redis
     key = f"rate_limit:{bucket}:{client_ip(request) or 'unknown'}"
     return await check_rate_limit(redis, key, limit=limit, window_seconds=_RATE_WINDOW_SECONDS)
 

@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.db.models.role import Permission
-from app.main import app as fastapi_app
 from app.ssh.updates import (
     build_update_preview_command,
     parse_apt_simulated_changes,
 )
-from tests.conftest import FakeArqJob
 from tests.test_web import _create_machine, _pin_host_key
 
 # --- Pure parsing/command-building functions (no I/O) ---
@@ -92,43 +90,38 @@ async def test_preview_route_refuses_without_pinned_fingerprint(client):
     assert response.status_code == 400
 
 
-async def test_preview_route_shows_simulated_plan(client, db_session_factory, monkeypatch):
+async def test_preview_route_shows_simulated_plan(client, db_session_factory, celery_calls):
     await client.get("/machines/new")
     machine_id = await _create_machine(client, client.cookies.get("csrftoken"))
     await _pin_host_key(db_session_factory, machine_id)
 
-    async def _fake_enqueue_job(function, *args, **kwargs):
-        assert function == "preview_machine_update"
-        return FakeArqJob(
-            result={
-                "ok": True,
-                "to_install_or_upgrade": [
-                    {"name": "libfoo", "current_version": "1.0", "new_version": "1.1"}
-                ],
-                "to_remove": [
-                    {"name": "old-kernel-headers", "current_version": "5.10", "new_version": None}
-                ],
-            }
-        )
-
-    monkeypatch.setattr(fastapi_app.state.arq_redis, "enqueue_job", _fake_enqueue_job)
+    celery_calls.result_for["app.tasks.jobs.preview_machine_update"] = {
+        "ok": True,
+        "to_install_or_upgrade": [
+            {"name": "libfoo", "current_version": "1.0", "new_version": "1.1"}
+        ],
+        "to_remove": [
+            {"name": "old-kernel-headers", "current_version": "5.10", "new_version": None}
+        ],
+    }
 
     response = await client.get(f"/machines/{machine_id}/updates/preview")
     assert response.status_code == 200
     assert "old-kernel-headers" in response.text
     assert "libfoo" in response.text
     assert "Confirm" in response.text
+    assert "app.tasks.jobs.preview_machine_update" in celery_calls.names
 
 
-async def test_preview_route_surfaces_simulate_failure(client, db_session_factory, monkeypatch):
+async def test_preview_route_surfaces_simulate_failure(client, db_session_factory, celery_calls):
     await client.get("/machines/new")
     machine_id = await _create_machine(client, client.cookies.get("csrftoken"))
     await _pin_host_key(db_session_factory, machine_id)
 
-    async def _fake_enqueue_job(function, *args, **kwargs):
-        return FakeArqJob(result={"ok": False, "error": "machine unreachable"})
-
-    monkeypatch.setattr(fastapi_app.state.arq_redis, "enqueue_job", _fake_enqueue_job)
+    celery_calls.result_for["app.tasks.jobs.preview_machine_update"] = {
+        "ok": False,
+        "error": "machine unreachable",
+    }
 
     response = await client.get(f"/machines/{machine_id}/updates/preview")
     assert response.status_code == 200

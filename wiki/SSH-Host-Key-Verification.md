@@ -1,6 +1,6 @@
-# SSH host key verification
+# 🔑 SSH host key verification
 
-## The problem with "trust on first use"
+## ⚠️ The problem with "trust on first use"
 
 Most SSH tooling, by default, trusts whatever host key a server presents
 the first time you connect to it (TOFU — "trust on first use"), then
@@ -10,11 +10,12 @@ attacker can intercept that first connection (a compromised network,
 DNS spoofing, a rogue DHCP server, etc.), they can present their own key
 and silently man-in-the-middle every session from then on.
 
-debcontrol never does this automatically. A machine's host key fingerprint
-must be explicitly discovered and confirmed by a human before any real
-connection is attempted.
+> [!IMPORTANT]
+> **debcontrol never trusts on first use.** A machine's host key fingerprint
+> must be explicitly discovered and **confirmed by a human** before any real
+> connection is attempted. There is no setting that turns this off.
 
-## The flow in the UI
+## 🖱️ The flow in the UI
 
 1. Add a machine (**Machines → Add machine**). At this point it has no
    pinned fingerprint, and the **Test connection** button is disabled.
@@ -28,8 +29,8 @@ connection is attempted.
    nothing is trusted yet. Automating *this* step is safe precisely
    because it still can't establish a real connection or trust anything
    on its own — see step 4.
-3. The fingerprint is displayed with a warning: verify it through a
-   channel *other than this application* before confirming — for example:
+3. The fingerprint is displayed with a warning: **verify it through a
+   channel *other than this application*** before confirming — for example:
    - your hosting provider's console/control panel, which often shows the
      host key fingerprint for a freshly-provisioned VM;
    - running `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` (or
@@ -46,13 +47,13 @@ connection is attempted.
    TCP connect with no authentication at all, so it runs for every active
    machine regardless of whether a fingerprint is pinned yet.)
 5. From then on, **Test connection** (and every background job that
-   connects over SSH: facts refresh, etc.) verifies the presented key
+   connects over SSH: facts refresh, package refresh, updates, power) verifies the presented key
    against this stored fingerprint on every single connection. A mismatch
    immediately aborts with an explicit "possible Man-in-the-Middle" error —
    it is never silently accepted, and the stored fingerprint is never
    auto-updated.
 
-## Why not just use `~/.ssh/known_hosts`?
+## 🤔 Why not just use `~/.ssh/known_hosts`?
 
 A conventional `known_hosts` file conflates "I've seen this key before"
 with "I trust this key," and typically gets populated via the same TOFU
@@ -61,7 +62,7 @@ per-machine in the database, set only through an explicit human
 confirmation step, keeps that trust decision visible and auditable in the
 UI rather than buried in a dotfile.
 
-## Implementation notes
+## 🔧 Implementation notes
 
 The logic lives in `app/ssh/client.py`:
 
@@ -78,8 +79,12 @@ The logic lives in `app/ssh/client.py`:
   `HostKeyMismatchError`, which the UI surfaces distinctly from a generic
   connection failure.
 
-**A sharp edge worth knowing about if you ever touch this file**: that
-comparison callback only gets consulted at all if the `known_hosts=`
+> [!CAUTION]
+> **A sharp edge worth knowing about if you ever touch this file.** The
+> details below describe a real bug this project shipped and fixed; the
+> shape of it is easy to reintroduce.
+
+That comparison callback only gets consulted at all if the `known_hosts=`
 option passed to `asyncssh.connect()` is anything other than the literal
 sentinel `None`. Passing `known_hosts=None` doesn't mean "no known_hosts
 file, ask my callback for every key" — it means "there are no trusted keys
@@ -101,9 +106,11 @@ fingerprint is actually rejected — the earlier bug looked correct on
 inspection and passed every existing test, since nothing exercised it
 against a real AsyncSSH connection.
 
-If you're extending this code (e.g. adding a "re-discover fingerprint"
-flow, or bulk machine import), keep this property intact: nothing should
-be able to establish a real, authenticated connection to a machine without
-a fingerprint that a human explicitly confirmed through this app's UI —
-and if you change anything about how host keys are validated, verify it
-against a real SSH server in a test, not just by reading the code.
+> [!WARNING]
+> If you're extending this code (e.g. adding a "re-discover fingerprint"
+> flow, or bulk machine import), **keep this property intact**: nothing
+> should be able to establish a real, authenticated connection to a machine
+> without a fingerprint a human explicitly confirmed through this app's UI.
+> And if you change anything about how host keys are validated, **verify it
+> against a real SSH server in a test**, not just by reading the code — the
+> earlier bug above read as correct and passed every test that existed.

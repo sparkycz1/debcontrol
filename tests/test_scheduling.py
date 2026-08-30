@@ -94,7 +94,7 @@ def test_system_update_action_has_strategy_param():
 
 
 def test_register_action_rejects_duplicate_key():
-    async def _run(db, redis, machines, params):  # pragma: no cover - never invoked
+    async def _run(db, machines, params):  # pragma: no cover - never invoked
         return ActionRunResult(attempted=0, skipped=0)
 
     spec = ScheduledActionSpec(key="a-test-only-action", label="x", description="x", run=_run)

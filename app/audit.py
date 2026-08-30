@@ -12,8 +12,8 @@ purge) passes a fixed label instead, since it has no request/user at all.
 Every entry is hash-chained: `entry_hash` covers this entry's own fields
 plus the previous entry's `entry_hash`, so altering or deleting an entry
 breaks the chain from that point on — `verify_chain` below detects that.
-Writers (possibly in different processes — the web app and the arq worker
-both log events) serialize through `AuditChainState`, a one-row table
+Writers (possibly in different processes — the web app and every Celery
+worker child both log events) serialize through `AuditChainState`, a one-row table
 locked with `SELECT ... FOR UPDATE` for the duration of one entry's write,
 so two concurrent entries can never both link to the same previous hash.
 

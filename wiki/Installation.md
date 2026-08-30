@@ -1,9 +1,10 @@
-# Installation
+# 📦 Installation
 
-debcontrol ships as a Docker Compose stack: PostgreSQL 18.6, Redis 8.10.1, the
-web app, a background worker, and an optional Caddy reverse proxy.
+debcontrol ships as a Docker Compose stack: PostgreSQL 18.6, Redis 8.10.1,
+the web app, a **Celery worker**, a **Celery Beat scheduler**, and an
+optional Caddy reverse proxy.
 
-## Prerequisites
+## ✅ Prerequisites
 
 - Docker and Docker Compose v2 (the `docker compose` subcommand, not the
   old standalone `docker-compose`).
@@ -11,7 +12,7 @@ web app, a background worker, and an optional Caddy reverse proxy.
   bundled Caddy for automatic HTTPS. Not needed if you already have a
   reverse proxy, or you're just trying this out over plain HTTP locally.
 
-## 1. Configure
+## ⚙️ 1. Configure
 
 ```bash
 cp .env.example .env
@@ -29,7 +30,7 @@ The app validates configuration at startup and **refuses to start** if any
 secret still looks like a placeholder from `.env.example` — that's
 intentional.
 
-### Environment variables
+### 🗂️ Environment variables
 
 | Variable | Used by | Purpose |
 |---|---|---|
@@ -39,15 +40,15 @@ intentional.
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | db | Postgres container credentials. |
 | `DATABASE_URL` | app | Full async SQLAlchemy URL to Postgres. |
 | `REDIS_PASSWORD` | redis | Redis container password (`--requirepass`). |
-| `REDIS_URL` | app | Full Redis URL (cache + arq queue). |
+| `REDIS_URL` | app, worker, beat | Full Redis URL. Serves as Celery's **broker and result backend**, and backs the login rate limiter. |
 | `SSH_DATA_DIR` | app | Reserved data directory inside the container. |
 | `SSH_CONNECT_TIMEOUT` | app | SSH connection timeout, in seconds. |
-| `FACTS_REFRESH_INTERVAL_SECONDS` | worker | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 3600. |
-| `REACHABILITY_CHECK_INTERVAL_SECONDS` | worker | How often (seconds) the online/offline status badge's TCP-only reachability sweep runs per machine. Default 60. |
+| `FACTS_REFRESH_INTERVAL_SECONDS` | beat | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 3600. |
+| `REACHABILITY_CHECK_INTERVAL_SECONDS` | beat | How often (seconds) the online/offline status badge's TCP-only reachability sweep runs per machine. Default 60. |
 | `UPDATE_TIMEOUT_SECONDS` | worker | Max time (seconds) for one machine's full update/upgrade/autoremove/autoclean run. Default 1800. |
 | `INFORM_TOKEN` | app | Bearer token required by `POST /api/inform` (self-registration). |
 | `LOG_LEVEL` | app | Python logging level. |
-| `TZ` | db, redis, app, worker, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container. Affects log timestamps and local-time display only — data is always stored as UTC, and Scheduling's cron expressions are always interpreted as UTC regardless of this. Defaults to UTC if unset. |
+| `TZ` | db, redis, app, worker, beat, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container. Affects log timestamps and local-time display only — data is always stored as UTC, and Scheduling's cron expressions are always interpreted as UTC regardless of this. Defaults to UTC if unset. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
@@ -59,7 +60,7 @@ environment variables — see
 [Architecture](Architecture.md#audit-log-retention-the-first-setting-editable-through-the-ui)
 and [Architecture](Architecture.md#authentication--rbac).
 
-## 2. Run
+## ▶️ 2. Run
 
 ### Option A — behind your own reverse proxy (or no proxy, local testing)
 
@@ -68,13 +69,24 @@ docker compose up -d --build
 ```
 
 This starts Postgres, Redis, runs migrations once (`migrate` service), then
-starts `web` and `worker`. The app listens on port `8080` — plain HTTP,
+starts `web`, `worker`, and `beat`. The app listens on port `8080` — plain HTTP,
 published on all interfaces (block it at the firewall, or bind
 `docker-compose.yml`'s `web.ports` to `127.0.0.1:8080:8080`, if you don't
 want it reachable directly). If you have your own nginx/Traefik/Caddy
 already running on this host, point it at `127.0.0.1:8080`; see:
 [nginx](Reverse-Proxy-Nginx.md), [Traefik](Reverse-Proxy-Traefik.md),
 [Caddy](Reverse-Proxy-Caddy.md).
+
+> [!IMPORTANT]
+> The `beat` service is the periodic scheduler, and **exactly one instance
+> of it must ever run**. Never `--scale beat=N`: every replica publishes the
+> same schedule, so the daily audit-log purge and fleet snapshot would fire
+> once per replica. The `worker` service, by contrast, is safe to scale.
+
+> [!NOTE]
+> `beat` reads `FACTS_REFRESH_INTERVAL_SECONDS` and
+> `REACHABILITY_CHECK_INTERVAL_SECONDS` **once, at startup**. Restart that
+> service after changing either — the running app will not pick them up.
 
 If your reverse proxy runs in its own separate Docker Compose project, it
 needs to join this project's network instead of using the loopback
@@ -94,7 +106,7 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 See [Reverse Proxy: Caddy](Reverse-Proxy-Caddy.md) for details,
 TLS/HTTP-3 verification, and troubleshooting.
 
-## 3. Create the first administrator
+## 👤 3. Create the first administrator
 
 Every debcontrol account is created inside the app itself — there's no
 auto-provisioning from LDAP or OIDC, and every page requires a login — so
@@ -125,7 +137,7 @@ environment) and clears any lockout; `--disable-totp` additionally turns off
 two-factor. See the script's own `--help`/module docstring for the full
 set of options.
 
-## 4. Verify
+## 🔎 4. Verify
 
 ```bash
 docker compose ps
@@ -161,7 +173,7 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 ```
 
 Either way, the `migrate` service re-runs on every `up`, applying any new
-Alembic migrations before `web`/`worker` start — there's no separate
+Alembic migrations before `web`/`worker`/`beat` start — there's no separate
 "run migrations" step.
 
 Postgres, Redis, and Caddy are pinned to exact versions in
