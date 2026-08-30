@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.machine import Machine
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
+from app.db.models.user import User
+from app.services.access_scope import allowed_group_ids
 
 _ALL_MACHINES_VALUE = "all"
 _GROUP_PREFIX = "group:"
@@ -72,3 +74,51 @@ async def resolve_target_machines(db: AsyncSession, task: ScheduledTask) -> list
         return list(result.scalars().all())
 
     return []
+
+
+async def target_within_scope(
+    db: AsyncSession,
+    user: User,
+    target_type: ScheduleTargetType,
+    target_machine_id: uuid.UUID | None,
+    target_group_id: uuid.UUID | None,
+) -> bool:
+    """Whether `user`'s machine-group scope covers this task's target.
+
+    Checked when a schedule is **created or edited**, and to decide whether
+    an existing one is listed — never when it fires. A stored schedule runs
+    on its cron expression with no "current user" at all (see
+    `app.scheduling.jobs`), so execution-time scoping would be meaningless:
+    the boundary is enforced against whoever writes the schedule.
+
+    `ALL_MACHINES` is refused outright for a restricted account rather than
+    narrowed to its groups the way the live "All machines" *page* is. The
+    two differ because a stored target outlives the moment it was written:
+    a task saved as "every machine" would silently start covering machines
+    the account was later granted — or, read the other way, would claim a
+    fleet-wide guarantee its author can't see the whole of."""
+    group_ids = await allowed_group_ids(db, user)
+    if group_ids is None:
+        return True
+    if target_type == ScheduleTargetType.ALL_MACHINES:
+        return False
+    if target_type == ScheduleTargetType.GROUP:
+        return target_group_id is not None and target_group_id in group_ids
+    if target_type == ScheduleTargetType.MACHINE:
+        if target_machine_id is None:
+            return False
+        machine = await db.get(Machine, target_machine_id)
+        return (
+            machine is not None
+            and machine.group_id is not None
+            and machine.group_id in group_ids
+        )
+    return False
+
+
+async def task_within_scope(db: AsyncSession, user: User, task: ScheduledTask) -> bool:
+    """`target_within_scope` for an already-stored task — used to decide
+    whether a schedule is listed to, and openable by, this account."""
+    return await target_within_scope(
+        db, user, task.target_type, task.target_machine_id, task.target_group_id
+    )

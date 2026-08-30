@@ -51,6 +51,28 @@
       API access — allows this user to create and use their own API tokens
     </label>
 
+    <label>Restrict this account to specific machine groups</label>
+    {% if all_groups %}
+      <div class="permission-grid">
+        {% for group in all_groups %}
+          <label>
+            <input type="checkbox" name="group_access" value="{{ group.id }}"
+                   {{ 'checked' if group.id | string in selected_group_ids else '' }}>
+            {{ group.name }}
+          </label>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="hint">No machine groups exist yet.</p>
+    {% endif %}
+    <p class="hint">
+      Leave all unchecked for full access. Ticking one or more limits this
+      account to those groups' machines everywhere — lists, search, actions,
+      scheduling, and the AI assistant. Machines in no group stay hidden from
+      a restricted account, and "All machines" isn't available to it as a
+      scheduling target. The audit log is never restricted.
+    </p>
+
     <button type="submit" class="button">Create user</button>
     <a class="button button-secondary" href="/users">Cancel</a>
   </form>

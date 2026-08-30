@@ -6,6 +6,13 @@ locking everyone out of user management: you can't deactivate, delete, or
 demote your own account, and the last active account holding `user.manage`
 can't be deactivated, deleted, or demoted away from it either (see
 `app.auth.login.count_active_users_with_permission`).
+
+This is also where an account's **machine-group scope** is set (the
+checkbox list on the create/edit forms): which groups it may see at all,
+independent of what its role lets it do. That's account administration in
+exactly the same sense as `User.api_access_enabled`, so it's gated by the
+existing `user.manage` rather than a `Permission` of its own — see
+`app.services.access_scope` and `app.db.models.user_machine_group_access`.
 """
 
 from __future__ import annotations
@@ -26,10 +33,16 @@ from app.auth.security import hash_password
 from app.auth.sessions import revoke_all_sessions_for_user
 from app.core.csrf import verify_csrf
 from app.db.models.audit_log import AuditOutcome
+from app.db.models.machine_group import MachineGroup
 from app.db.models.role import Permission, Role
 from app.db.models.user import AuthProvider, User, role_has_permission
 from app.db.session import get_db
 from app.schemas.user import UserCreate, UserUpdate
+from app.services.access_scope import (
+    allowed_group_ids,
+    group_names_for,
+    set_group_access,
+)
 from app.web.templating import templates
 
 router = APIRouter(
@@ -50,6 +63,64 @@ async def _get_user_or_404(user_id: uuid.UUID, db: AsyncSession) -> User:
 async def _get_roles(db: AsyncSession) -> list[Role]:
     result = await db.execute(select(Role).order_by(Role.name))
     return list(result.scalars().all())
+
+
+async def _get_all_groups(db: AsyncSession) -> list[MachineGroup]:
+    """Every machine group, for the scope checkbox list. Deliberately *not*
+    scoped to the acting admin: `user.manage` is account administration, and
+    an admin who could only grant the groups they personally see would be a
+    surprising, half-working control. (An admin can't change their own scope
+    at all — see `update_user`.)"""
+    result = await db.execute(select(MachineGroup).order_by(MachineGroup.name))
+    return list(result.scalars().all())
+
+
+async def _parse_group_access(
+    db: AsyncSession, raw_group_ids: list[str]
+) -> tuple[list[uuid.UUID], str | None]:
+    """Turn the submitted checkbox values into group ids, or an error
+    message. An unparseable/unknown id means a tampered form (the list is
+    server-rendered), so it's rejected rather than silently dropped —
+    silently narrowing somebody's scope is exactly the kind of quiet
+    failure a security boundary shouldn't have."""
+    parsed: list[uuid.UUID] = []
+    for raw in raw_group_ids:
+        if not raw.strip():
+            continue
+        try:
+            parsed.append(uuid.UUID(raw.strip()))
+        except ValueError:
+            return [], "One of the selected machine groups is not a valid group."
+    if not parsed:
+        return [], None
+    known = set(
+        (
+            await db.execute(select(MachineGroup.id).where(MachineGroup.id.in_(parsed)))
+        )
+        .scalars()
+        .all()
+    )
+    missing = [gid for gid in parsed if gid not in known]
+    if missing:
+        return [], "One of the selected machine groups no longer exists."
+    return list(dict.fromkeys(parsed)), None
+
+
+async def _log_group_access_change(
+    db: AsyncSession, request: Request, user: User, group_ids: list[uuid.UUID]
+) -> None:
+    names = await group_names_for(db, group_ids)
+    scope = ", ".join(names) if names else "full access (no group restriction)"
+    await log_event(
+        db,
+        request=request,
+        action="user.group_access.update",
+        summary=f'Set machine-group access for "{user.username}" to {scope}',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+        details={"groups": names},
+    )
 
 
 async def _would_remove_last_admin(db: AsyncSession, target: User) -> bool:
@@ -80,6 +151,8 @@ async def new_user_form(request: Request, db: AsyncSession = Depends(get_db)) ->
         {
             "roles": await _get_roles(db),
             "auth_providers": list(AuthProvider),
+            "all_groups": await _get_all_groups(db),
+            "selected_group_ids": [],
             "errors": [],
             "form": {},
             "csrf_token": request.state.csrf_token,
@@ -97,6 +170,7 @@ async def create_user(
     password: str = Form(""),
     role_id: str = Form(...),
     api_access_enabled: str = Form(""),
+    group_access: list[str] = Form(default=[]),
 ) -> Response:
     async def _rerender(errors: list[str], status_code: int) -> Response:
         await log_event(
@@ -112,6 +186,8 @@ async def create_user(
             {
                 "roles": await _get_roles(db),
                 "auth_providers": list(AuthProvider),
+                "all_groups": await _get_all_groups(db),
+                "selected_group_ids": group_access,
                 "errors": errors,
                 "form": {
                     "username": username,
@@ -123,6 +199,10 @@ async def create_user(
             },
             status_code=status_code,
         )
+
+    scoped_group_ids, group_error = await _parse_group_access(db, group_access)
+    if group_error is not None:
+        return await _rerender([group_error], status.HTTP_422_UNPROCESSABLE_CONTENT)
 
     try:
         role_uuid = uuid.UUID(role_id)
@@ -174,6 +254,10 @@ async def create_user(
         target_id=user.id,
         target_label=user.username,
     )
+    if scoped_group_ids:
+        await set_group_access(db, user.id, scoped_group_ids)
+        await db.commit()
+        await _log_group_access_change(db, request, user, scoped_group_ids)
     return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -189,6 +273,8 @@ async def edit_user_form(
             "target_user": user,
             "roles": await _get_roles(db),
             "auth_providers": list(AuthProvider),
+            "all_groups": await _get_all_groups(db),
+            "selected_group_ids": [str(gid) for gid in (await allowed_group_ids(db, user) or [])],
             "errors": [],
             "csrf_token": request.state.csrf_token,
         },
@@ -208,8 +294,10 @@ async def update_user(
     role_id: str = Form(...),
     is_active: str = Form(""),
     api_access_enabled: str = Form(""),
+    group_access: list[str] = Form(default=[]),
 ) -> Response:
     user = await _get_user_or_404(user_id, db)
+    current_group_ids = await allowed_group_ids(db, user) or set()
 
     async def _rerender(errors: list[str], status_code: int) -> Response:
         return templates.TemplateResponse(
@@ -219,11 +307,18 @@ async def update_user(
                 "target_user": user,
                 "roles": await _get_roles(db),
                 "auth_providers": list(AuthProvider),
+                "all_groups": await _get_all_groups(db),
+                "selected_group_ids": group_access,
                 "errors": errors,
                 "csrf_token": request.state.csrf_token,
             },
             status_code=status_code,
         )
+
+    scoped_group_ids, group_error = await _parse_group_access(db, group_access)
+    if group_error is not None:
+        return await _rerender([group_error], status.HTTP_422_UNPROCESSABLE_CONTENT)
+    group_access_changed = set(scoped_group_ids) != current_group_ids
 
     try:
         role_uuid = uuid.UUID(role_id)
@@ -254,6 +349,18 @@ async def update_user(
         if not payload.is_active:
             return await _rerender(
                 ["You can't deactivate your own account."], status.HTTP_403_FORBIDDEN
+            )
+        # Same reasoning as the self-role-change guard directly above: an
+        # admin editing something unrelated must not be able to lock
+        # themselves out of most of the fleet in passing. Another
+        # administrator can still do it.
+        if group_access_changed:
+            return await _rerender(
+                [
+                    "You can't change your own machine-group access — "
+                    "ask another administrator."
+                ],
+                status.HTTP_403_FORBIDDEN,
             )
 
     becoming_local = payload.auth_provider == AuthProvider.LOCAL
@@ -293,6 +400,9 @@ async def update_user(
         user.password_hash = None
         user.must_change_password = False
 
+    if group_access_changed:
+        await set_group_access(db, user.id, scoped_group_ids)
+
     try:
         await db.commit()
     except IntegrityError:
@@ -315,6 +425,8 @@ async def update_user(
         target_id=user.id,
         target_label=user.username,
     )
+    if group_access_changed:
+        await _log_group_access_change(db, request, user, scoped_group_ids)
     return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -339,6 +451,10 @@ async def reset_password(
                 "target_user": user,
                 "roles": await _get_roles(db),
                 "auth_providers": list(AuthProvider),
+                "all_groups": await _get_all_groups(db),
+                "selected_group_ids": [
+                    str(gid) for gid in (await allowed_group_ids(db, user) or [])
+                ],
                 "errors": ["Password must be at least 12 characters."],
                 "csrf_token": request.state.csrf_token,
             },

@@ -43,7 +43,9 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.user import User
 from app.schemas.machine_config import GroupExport, MachineConfigExport, MachineExport
+from app.services.access_scope import groups_visible_to, machines_visible_to
 
 # Shown once per import result, regardless of how many machines were
 # created — every one of them starts with no pinned host key.
@@ -54,13 +56,26 @@ HOST_KEY_WARNING = (
 )
 
 
-async def export_machine_config(db: AsyncSession) -> MachineConfigExport:
-    """Every non-pending `Machine` and every `MachineGroup`, in the
-    import-compatible shape. `PendingMachine` rows (self-registration /
-    CSV bulk-import review queue) are never included — this is a snapshot
-    of known, already-confirmed configuration, not undiscovered hosts."""
+async def export_machine_config(db: AsyncSession, user: User) -> MachineConfigExport:
+    """Every non-pending `Machine` and every `MachineGroup` **that `user` can
+    see**, in the import-compatible shape. `PendingMachine` rows
+    (self-registration / CSV bulk-import review queue) are never included —
+    this is a snapshot of known, already-confirmed configuration, not
+    undiscovered hosts.
+
+    Scoped through `app.services.access_scope` like every other read path: an
+    export is a listing, and a restricted account must not be able to read
+    out the whole fleet's connection details through a download link. A
+    group's `members` list is filtered to visible machines for the same
+    reason (the machines are the scoped thing; naming them under a group the
+    account *can* see would leak them anyway).
+
+    Import is deliberately not scope-checked — it only ever creates brand-new
+    rows, so there is nothing existing to check against. See
+    `import_machine_config`."""
+    machines_query = await machines_visible_to(db, user)
     machine_result = await db.execute(
-        select(Machine).options(selectinload(Machine.group)).order_by(Machine.name)
+        machines_query.options(selectinload(Machine.group)).order_by(Machine.name)
     )
     machines = [
         MachineExport(
@@ -76,16 +91,18 @@ async def export_machine_config(db: AsyncSession) -> MachineConfigExport:
         for m in machine_result.scalars().all()
     ]
 
+    exported_machine_names = {m.name for m in machines}
+    groups_query = await groups_visible_to(db, user)
     group_result = await db.execute(
-        select(MachineGroup).options(selectinload(MachineGroup.machines)).order_by(
-            MachineGroup.name
-        )
+        groups_query.options(selectinload(MachineGroup.machines)).order_by(MachineGroup.name)
     )
     groups = [
         GroupExport(
             name=g.name,
             description=g.description,
-            members=sorted(m.name for m in g.machines),
+            members=sorted(
+                m.name for m in g.machines if m.name in exported_machine_names
+            ),
         )
         for g in group_result.scalars().all()
     ]

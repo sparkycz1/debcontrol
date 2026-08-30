@@ -13,9 +13,11 @@
 
   <label for="target">Applies to</label>
   <select id="target" name="target">
-    <option value="all" {% if form.get('target', 'all') == 'all' %}selected{% endif %}>
-      All machines
-    </option>
+    {% if allow_all_machines %}
+      <option value="all" {% if form.get('target', 'all') == 'all' %}selected{% endif %}>
+        All machines
+      </option>
+    {% endif %}
     {% for group in groups %}
       <option value="group:{{ group.id }}" {% if form.get('target') == 'group:' ~ group.id %}selected{% endif %}>
         Group: {{ group.name }}
@@ -30,6 +32,10 @@
   <p class="hint">
     Machines without a pinned host key fingerprint are silently skipped when
     the schedule fires, same as the manual buttons.
+    {% if not allow_all_machines %}
+      Your account is restricted to specific machine groups, so "All machines"
+      isn't available as a target.
+    {% endif %}
   </p>
 
   <label for="action">Action</label>

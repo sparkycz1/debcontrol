@@ -136,6 +136,13 @@ your own audit trail.
    since; and a proposal can only ever be executed once (its status must
    still be `pending`).
 
+Machine-group scoping applies independently of all three (see
+Architecture.md). Every lookup and every target resolution runs through
+`app.services.access_scope`, so an account restricted to specific groups
+gets `No machine named "..." exists.` for anything outside them — the
+assistant can neither list nor target a machine that account couldn't
+already reach in the UI. Confirming re-filters by scope too.
+
 ## ✅ What runs automatically, and what does not
 
 **Executes immediately, server-side, without asking:** `list_machines` and

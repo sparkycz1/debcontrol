@@ -250,13 +250,50 @@ are their own permissions, independent of `machine.manage` and of each
 other. `user.manage` covers both user and role management.
 
 > [!IMPORTANT]
-> Because permissions are resource-grained rather than per-object, **any
-> two users whose roles grant a given permission see exactly the same
-> things for it** — two users with `machine.view` see every machine; two
-> with `scheduling.view` see every scheduled task. Nothing is "private" to
-> whoever created it, and no permission is scoped per group. Limiting users
-> to a subset of machines/groups would need a new access model on top of
-> this one.
+> Permissions themselves are resource-grained rather than per-object: a role
+> grants `machine.view`, not "view machine X". *Which* machines and groups an
+> account may use those permissions on is a separate, orthogonal, opt-in
+> layer — see "Machine-group scoping" below. Nothing else is per-object:
+> nothing is "private" to whoever created it, and scheduled tasks are not
+> owned by their author.
+
+### Machine-group scoping: which machines an account may see
+
+An orthogonal layer on top of the permission matrix — permissions decide
+*what* an account may do, this decides *to which machines and groups*.
+
+- **Model**: `UserMachineGroupAccess`
+  (`app/db/models/user_machine_group_access.py`), a plain many-to-many join
+  of `users` × `machine_groups`. One row = "this account may see this group
+  and its machines".
+- **Default, and the whole backward-compatibility story**: an account with
+  **zero rows is unrestricted** and sees everything. One or more rows
+  restricts it to exactly those groups. Machines in no group
+  (`Machine.group_id IS NULL`) are never visible to a restricted account.
+  The migration needs no backfill.
+- **Where it's set**: the Users page (`user.manage`), as a checkbox list on
+  the create/edit form — account administration, alongside
+  `api_access_enabled`, not a new `Permission`. Audit-logged as
+  `user.group_access.update`. An admin cannot change **their own** scope,
+  mirroring the existing self-role-change guard.
+- **Enforcement**: one service, `app/services/access_scope.py`, used by
+  every read and write path — machines and groups (lists, detail, package
+  search, bulk actions, membership, config export), scheduling, the
+  Dashboard's live counts, the REST API, the SSH terminal WebSocket, and
+  the AI assistant's tools. Out of scope reads as **404, never 403** (a 403
+  would confirm the row exists), and bulk endpoints drop out-of-scope
+  machine ids from a client-submitted selection rather than trusting them.
+- **"All machines"**: narrowed to the account's own machines on the live
+  page, but **refused outright as a scheduling target** for a restricted
+  account (validated server-side at create/edit, not just hidden in the
+  form) — a stored schedule outlives the scope that created it.
+- **Not affected**: the **audit log**. `audit.view` stays a single global
+  permission with no group filtering — the audit trail is a security
+  control over the whole deployment, and a partial one would be worse than
+  none. The daily fleet-snapshot job also stays fleet-wide (it has no
+  current user); a restricted account is simply not shown the trend chart,
+  since a stored fleet-wide total has nothing left to narrow. Scheduled
+  tasks are scope-checked when written, never when they fire.
 
 ### Guardrails against locking everyone out
 

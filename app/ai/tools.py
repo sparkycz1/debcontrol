@@ -50,7 +50,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -61,6 +61,11 @@ from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.db.models.role import Permission
 from app.db.models.user import User
+from app.services.access_scope import (
+    groups_visible_to,
+    machines_visible_to,
+    visible_machines_by_ids,
+)
 
 LIST_MACHINES = "list_machines"
 LIST_GROUPS = "list_groups"
@@ -299,13 +304,22 @@ class TargetResolutionError(Exception):
 
 
 async def resolve_target(
-    db: AsyncSession, target_type: str, target_name: str
+    db: AsyncSession, user: User, target_type: str, target_name: str
 ) -> ResolvedTarget:
-    """Resolve a tool call's target to concrete machines.
+    """Resolve a tool call's target to concrete machines, within `user`'s
+    machine-group scope (`app.services.access_scope`).
 
     Name matching is case-insensitive but *exact* — no fuzzy or prefix
     matching. "Did you mean ...?" guessing is precisely the wrong behaviour
     when the answer decides which machines a command runs on.
+
+    A name outside the caller's scope resolves to "does not exist", not to
+    "not allowed" — the same 404-not-403 rule the web routes follow, and for
+    the same reason: the assistant must not be a way to learn that a machine
+    exists, let alone to target it. That makes this the fourth place a
+    boundary is checked here, alongside the three permission checks in the
+    module docstring; scope and permission are independent, and a tool call
+    has to clear both.
     """
     name = (target_name or "").strip()
     if not name:
@@ -313,17 +327,19 @@ async def resolve_target(
 
     machines: list[Machine]
     if target_type == "machine":
+        machine_query = await machines_visible_to(db, user)
         machine_result = await db.execute(
-            select(Machine).where(func.lower(Machine.name) == name.lower())
+            machine_query.where(func.lower(Machine.name) == name.lower())
         )
         machines = list(machine_result.scalars().all())
         if not machines:
             raise TargetResolutionError(f'No machine named "{name}" exists.')
     elif target_type == "group":
+        group_query = await groups_visible_to(db, user)
         group_result = await db.execute(
-            select(MachineGroup)
-            .options(selectinload(MachineGroup.machines))
-            .where(func.lower(MachineGroup.name) == name.lower())
+            group_query.options(selectinload(MachineGroup.machines)).where(
+                func.lower(MachineGroup.name) == name.lower()
+            )
         )
         group = group_result.scalars().first()
         if group is None:
@@ -355,14 +371,21 @@ async def resolve_target(
 # --- Read-only tools: executed immediately -----------------------------------
 
 
-async def _machines_summary(db: AsyncSession, group_name: str | None) -> str:
-    query = select(Machine).options(selectinload(Machine.group)).order_by(Machine.name)
+async def _machines_summary(db: AsyncSession, user: User, group_name: str | None) -> str:
+    query = (
+        (await machines_visible_to(db, user))
+        .options(selectinload(Machine.group))
+        .order_by(Machine.name)
+    )
     if group_name:
+        group_query = await groups_visible_to(db, user)
         group_result = await db.execute(
-            select(MachineGroup).where(func.lower(MachineGroup.name) == group_name.strip().lower())
+            group_query.where(func.lower(MachineGroup.name) == group_name.strip().lower())
         )
         group = group_result.scalars().first()
         if group is None:
+            # Out of scope is reported exactly like nonexistent — see
+            # `resolve_target`'s docstring.
             return f'No machine group named "{group_name}" exists.'
         query = query.where(Machine.group_id == group.id)
 
@@ -392,9 +415,10 @@ async def _machines_summary(db: AsyncSession, group_name: str | None) -> str:
     return "\n".join(lines)
 
 
-async def _groups_summary(db: AsyncSession) -> str:
+async def _groups_summary(db: AsyncSession, user: User) -> str:
+    group_query = await groups_visible_to(db, user)
     result = await db.execute(
-        select(MachineGroup.name, func.count(Machine.id))
+        group_query.with_only_columns(MachineGroup.name, func.count(Machine.id))
         .outerjoin(Machine, Machine.group_id == MachineGroup.id)
         .group_by(MachineGroup.id, MachineGroup.name)
         .order_by(MachineGroup.name)
@@ -428,9 +452,9 @@ async def execute_read_only_tool(db: AsyncSession, user: User, call: ToolCall) -
 
     if call.name == LIST_MACHINES:
         raw_group = call.arguments.get("group_name")
-        return await _machines_summary(db, str(raw_group) if raw_group else None)
+        return await _machines_summary(db, user, str(raw_group) if raw_group else None)
     if call.name == LIST_GROUPS:
-        return await _groups_summary(db)
+        return await _groups_summary(db, user)
     return f"Unknown tool: {call.name}."
 
 
@@ -480,7 +504,7 @@ async def build_pending_action(
     target_type = str(call.arguments.get("target_type") or "").strip().lower()
     target_name = str(call.arguments.get("target_name") or "").strip()
     try:
-        target = await resolve_target(db, target_type, target_name)
+        target = await resolve_target(db, user, target_type, target_name)
     except TargetResolutionError as exc:
         return {
             "tool": call.name,
@@ -540,12 +564,17 @@ async def build_pending_action(
     return entry
 
 
-async def load_machines(db: AsyncSession, machine_ids: Sequence[str]) -> list[Machine]:
+async def load_machines(
+    db: AsyncSession, user: User, machine_ids: Sequence[str]
+) -> list[Machine]:
     """Re-load the machines a pending action targets, at confirm time.
 
     Re-read from the stored ids rather than trusting anything else in the
     entry: a machine may have been deleted since the proposal was written,
-    and the confirm route must act on what exists now.
+    and the confirm route must act on what exists now. Re-filtered by
+    `user`'s scope for the same reason the confirm route re-checks
+    permissions there (check #3): a proposal written before the account was
+    restricted must not still reach machines it can no longer see.
     """
     parsed: list[uuid.UUID] = []
     for raw in machine_ids:
@@ -555,6 +584,6 @@ async def load_machines(db: AsyncSession, machine_ids: Sequence[str]) -> list[Ma
             continue
     if not parsed:
         return []
-    result = await db.execute(select(Machine).where(Machine.id.in_(parsed)))
-    by_id = {machine.id: machine for machine in result.scalars().all()}
+    machines = await visible_machines_by_ids(db, user, parsed)
+    by_id = {machine.id: machine for machine in machines}
     return [by_id[machine_id] for machine_id in parsed if machine_id in by_id]

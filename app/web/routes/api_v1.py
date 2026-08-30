@@ -43,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
-from app.auth.dependencies import require_api_permission
+from app.auth.dependencies import get_api_token_user, require_api_permission
 from app.core.config import get_settings
 from app.core.security import encrypt_secret
 from app.db.models.audit_log import AuditOutcome
@@ -52,10 +52,19 @@ from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.role import Permission
+from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
+from app.services.access_scope import (
+    can_see_group_id,
+    can_see_machine,
+    groups_visible_to,
+    is_restricted,
+    machines_visible_to,
+    visible_machines_by_ids,
+)
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -161,9 +170,15 @@ def _update_run_to_dict(run: MachineUpdateRun) -> dict[str, object]:
     }
 
 
-async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession) -> Machine:
+async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession, user: User) -> Machine:
+    """Scoped exactly like the web UI's equivalent helper — a token whose
+    account is restricted to specific machine groups gets a 404, not a 403
+    and certainly not the data, for anything outside them. This API is "a
+    second door into the same house, not a looser one" (see the module
+    docstring), and that applies to visibility scoping too."""
+    query = await machines_visible_to(db, user)
     result = await db.execute(
-        select(Machine).options(selectinload(Machine.group)).where(Machine.id == machine_id)
+        query.options(selectinload(Machine.group)).where(Machine.id == machine_id)
     )
     machine = result.scalar_one_or_none()
     if machine is None:
@@ -171,11 +186,10 @@ async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession) -> Machin
     return machine
 
 
-async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGroup:
+async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession, user: User) -> MachineGroup:
+    query = await groups_visible_to(db, user)
     result = await db.execute(
-        select(MachineGroup)
-        .options(selectinload(MachineGroup.machines))
-        .where(MachineGroup.id == group_id)
+        query.options(selectinload(MachineGroup.machines)).where(MachineGroup.id == group_id)
     )
     group = result.scalar_one_or_none()
     if group is None:
@@ -183,28 +197,60 @@ async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGro
     return group
 
 
+async def _require_group_in_scope(
+    db: AsyncSession, user: User, group_id: uuid.UUID | None
+) -> None:
+    """A restricted account may only file a machine into a group it can see
+    — ungrouped included, since an ungrouped machine would be invisible to
+    its own creator. A 403 rather than a 404: the caller submitted this
+    group id itself, so there is nothing left to conceal."""
+    if not await can_see_group_id(db, user, group_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='"group_id" must name a machine group this account has access to.',
+        )
+
+
+async def _visible_machines(db: AsyncSession, user: User) -> list[Machine]:
+    """Every machine this token's account can see — what "All machines"
+    means for it. Same reasoning as the web UI's `_all_visible_machines`."""
+    result = await db.execute(await machines_visible_to(db, user))
+    return list(result.scalars().all())
+
+
 # --- Machines: reads --------------------------------------------------------
 
 
 @router.get("/machines", dependencies=[_view_machines])
-async def list_machines_api(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
-    result = await db.execute(select(Machine).options(selectinload(Machine.group)))
+async def list_machines_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    query = (await machines_visible_to(db, user)).options(selectinload(Machine.group))
+    result = await db.execute(query)
     return [_machine_to_dict(m) for m in result.scalars().all()]
 
 
 @router.get("/machines/package-search", dependencies=[_view_machines])
 async def package_search_api(
-    db: AsyncSession = Depends(get_db), q: str = "", pkg_source: str = ""
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+    q: str = "",
+    pkg_source: str = "",
 ) -> dict[str, object]:
     """Fleet-wide package search — the API equivalent of `GET
     /machines/package-search`. See that route for the reasoning behind the
     500-row cap."""
     if not q.strip():
         return {"results": [], "truncated": False}
+    visible_ids = (await machines_visible_to(db, user)).with_only_columns(Machine.id)
     query = (
         select(MachinePackage)
         .options(selectinload(MachinePackage.machine))
-        .where(MachinePackage.name.ilike(f"%{q.strip()}%"))
+        .where(
+            MachinePackage.name.ilike(f"%{q.strip()}%"),
+            MachinePackage.machine_id.in_(visible_ids),
+        )
     )
     if pkg_source in {source.value for source in PackageSource}:
         query = query.where(MachinePackage.source == PackageSource(pkg_source))
@@ -220,12 +266,15 @@ async def package_search_api(
 
 
 @router.get("/machines/config/export", dependencies=[_view_machines])
-async def export_machine_config_api(db: AsyncSession = Depends(get_db)) -> MachineConfigExport:
+async def export_machine_config_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> MachineConfigExport:
     """The API equivalent of `GET /machines/config/export?format=json` — see
     `app.services.machine_config`'s module docstring for exactly what's
     included/excluded and why. No CSV variant here (the web UI's is a plain
     download link for a browser; a script consuming this API wants JSON)."""
-    return await export_machine_config(db)
+    return await export_machine_config(db, user)
 
 
 @router.post("/machines/config/import", dependencies=[_manage_machines])
@@ -247,9 +296,10 @@ async def import_machine_config_api(
 
 @router.get("/machines/{machine_id}", dependencies=[_view_machines])
 async def get_machine_api(
-    machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    return _machine_to_dict(await _get_machine_or_404(machine_id, db))
+    return _machine_to_dict(await _get_machine_or_404(machine_id, db, user))
 
 
 @router.get("/machines/{machine_id}/packages", dependencies=[_view_machines])
@@ -259,8 +309,9 @@ async def list_machine_packages_api(
     q: str = "",
     pkg_source: str = "",
     held_only: bool = False,
+    user: User = Depends(get_api_token_user),
 ) -> list[dict[str, object]]:
-    await _get_machine_or_404(machine_id, db)
+    await _get_machine_or_404(machine_id, db, user)
     query = select(MachinePackage).where(MachinePackage.machine_id == machine_id)
     if q.strip():
         query = query.where(MachinePackage.name.ilike(f"%{q.strip()}%"))
@@ -274,9 +325,10 @@ async def list_machine_packages_api(
 
 @router.get("/machines/{machine_id}/packages/held", dependencies=[_view_machines])
 async def list_machine_held_packages_api(
-    machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> list[dict[str, object]]:
-    await _get_machine_or_404(machine_id, db)
+    await _get_machine_or_404(machine_id, db, user)
     result = await db.execute(
         select(MachinePackage)
         .where(MachinePackage.machine_id == machine_id, MachinePackage.held.is_(True))
@@ -291,10 +343,11 @@ async def list_machine_update_runs_api(
     db: AsyncSession = Depends(get_db),
     status_filter: str = "",
     page: int = 1,
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """The API equivalent of `GET /machines/{id}/updates` — every update run
     for this machine, newest first, paginated/filterable the same way."""
-    await _get_machine_or_404(machine_id, db)
+    await _get_machine_or_404(machine_id, db, user)
     page = max(page, 1)
 
     query = select(MachineUpdateRun).where(MachineUpdateRun.machine_id == machine_id)
@@ -322,8 +375,10 @@ async def list_machine_update_runs_api(
 
 @router.post("/machines", dependencies=[_manage_machines], status_code=status.HTTP_201_CREATED)
 async def create_machine_api(
-    request: Request, payload: MachineCreate, db: AsyncSession = Depends(get_db)
+    request: Request, payload: MachineCreate, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
+    await _require_group_in_scope(db, user, payload.group_id)
     machine = Machine(
         name=payload.name,
         ip_address=payload.ip_address,
@@ -337,7 +392,7 @@ async def create_machine_api(
     db.add(machine)
     await db.commit()
     await db.refresh(machine)
-    machine = await _get_machine_or_404(machine.id, db)
+    machine = await _get_machine_or_404(machine.id, db, user)
 
     await log_event(
         db,
@@ -357,8 +412,10 @@ async def update_machine_api(
     machine_id: uuid.UUID,
     payload: MachineUpdate,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, user)
+    await _require_group_in_scope(db, user, payload.group_id)
 
     connection_target_changed = (
         payload.ip_address != machine.ip_address or payload.port != machine.port
@@ -390,7 +447,7 @@ async def update_machine_api(
         machine.facts_updated_at = None
 
     await db.commit()
-    machine = await _get_machine_or_404(machine.id, db)
+    machine = await _get_machine_or_404(machine.id, db, user)
 
     await log_event(
         db,
@@ -418,8 +475,9 @@ async def delete_machine_api(
     machine_id: uuid.UUID,
     payload: _ConfirmDelete,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, user)
     if payload.confirm_name.strip() != machine.name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -459,16 +517,20 @@ class _BulkPowerAction(_BulkMachineIds):
     )
 
 
-async def _get_machines_by_ids(machine_ids: list[uuid.UUID], db: AsyncSession) -> list[Machine]:
-    result = await db.execute(select(Machine).where(Machine.id.in_(machine_ids)))
-    return list(result.scalars().all())
+async def _get_machines_by_ids(
+    machine_ids: list[uuid.UUID], db: AsyncSession, user: User
+) -> list[Machine]:
+    """Submitted ids, minus anything outside this account's scope — dropped
+    silently, same as the web UI's bulk endpoints."""
+    return await visible_machines_by_ids(db, user, machine_ids)
 
 
 @router.post("/machines/bulk/check-updates", dependencies=[_action_updates])
 async def bulk_check_updates_api(
-    request: Request, payload: _BulkMachineIds, db: AsyncSession = Depends(get_db)
+    request: Request, payload: _BulkMachineIds, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    machines = await _get_machines_by_ids(payload.machine_ids, db)
+    machines = await _get_machines_by_ids(payload.machine_ids, db, user)
     skipped = await trigger_check_updates(machines)
     await log_event(
         db,
@@ -482,9 +544,10 @@ async def bulk_check_updates_api(
 
 @router.post("/machines/bulk/updates", dependencies=[_action_updates])
 async def bulk_trigger_updates_api(
-    request: Request, payload: _BulkUpdatesTrigger, db: AsyncSession = Depends(get_db)
+    request: Request, payload: _BulkUpdatesTrigger, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    machines = await _get_machines_by_ids(payload.machine_ids, db)
+    machines = await _get_machines_by_ids(payload.machine_ids, db, user)
     batch_id, skipped = await trigger_updates(db, machines, payload.strategy)
     await log_event(
         db,
@@ -501,7 +564,8 @@ async def bulk_trigger_updates_api(
 
 @router.post("/machines/bulk/power", dependencies=[_action_power])
 async def bulk_power_action_api(
-    request: Request, payload: _BulkPowerAction, db: AsyncSession = Depends(get_db)
+    request: Request, payload: _BulkPowerAction, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     if payload.confirm.strip() != _BULK_POWER_CONFIRM_PHRASE:
         await log_event(
@@ -518,7 +582,7 @@ async def bulk_power_action_api(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f'"confirm" must be exactly "{_BULK_POWER_CONFIRM_PHRASE}".',
         )
-    machines = await _get_machines_by_ids(payload.machine_ids, db)
+    machines = await _get_machines_by_ids(payload.machine_ids, db, user)
     skipped = await send_power_to_machines(machines, payload.action)
     await log_event(
         db,
@@ -535,6 +599,7 @@ async def preview_machine_update_api(
     machine_id: uuid.UUID,
     strategy: UpgradeStrategy = UpgradeStrategy.DIST_UPGRADE,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """The API equivalent of the web UI's `GET /machines/{id}/updates/preview`
     — a dry-run simulation (apt's `-s` flag; nothing on the machine changes)
@@ -550,7 +615,7 @@ async def preview_machine_update_api(
     wants to render its own preview UI), not a mandatory gate — see this
     module's docstring for how that compares to the destructive actions
     here that *do* require an explicit `confirm`/`confirm_name` field."""
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, user)
     if not machine.host_key_fingerprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -590,8 +655,9 @@ async def trigger_machine_update_api(
     machine_id: uuid.UUID,
     payload: _UpdatesTrigger,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, user)
     if not machine.host_key_fingerprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -618,9 +684,10 @@ async def trigger_machine_update_api(
 
 @router.post("/machines/{machine_id}/check-updates", dependencies=[_action_updates])
 async def check_machine_updates_api(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, user)
     skipped = await trigger_check_updates([machine])
     await log_event(
         db,
@@ -646,8 +713,9 @@ async def machine_power_api(
     machine_id: uuid.UUID,
     payload: _PowerAction,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, user)
     if payload.confirm_name.strip() != machine.name:
         await log_event(
             db,
@@ -687,8 +755,12 @@ async def machine_power_api(
 
 
 @router.get("/machine-groups", dependencies=[_view_groups])
-async def list_machine_groups_api(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
-    result = await db.execute(select(MachineGroup).options(selectinload(MachineGroup.machines)))
+async def list_machine_groups_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    query = (await groups_visible_to(db, user)).options(selectinload(MachineGroup.machines))
+    result = await db.execute(query)
     return [_group_to_dict(g) for g in result.scalars().all()]
 
 
@@ -696,8 +768,20 @@ async def list_machine_groups_api(db: AsyncSession = Depends(get_db)) -> list[di
     "/machine-groups", dependencies=[_manage_groups], status_code=status.HTTP_201_CREATED
 )
 async def create_machine_group_api(
-    request: Request, payload: MachineGroupCreate, db: AsyncSession = Depends(get_db)
+    request: Request, payload: MachineGroupCreate, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
+    # A restricted account creating a group would create something it can't
+    # then see (a new group is in nobody's grant set). Refusing is clearer
+    # than silently handing back a group that vanishes on the next request.
+    if await is_restricted(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This account is restricted to specific machine groups and can't "
+                "create new ones."
+            ),
+        )
     group = MachineGroup(name=payload.name, description=payload.description)
     db.add(group)
     try:
@@ -708,7 +792,7 @@ async def create_machine_group_api(
             status_code=status.HTTP_409_CONFLICT,
             detail=f'A group named "{payload.name}" already exists.',
         ) from None
-    group = await _get_group_or_404(group.id, db)
+    group = await _get_group_or_404(group.id, db, user)
     await log_event(
         db,
         request=request,
@@ -723,16 +807,18 @@ async def create_machine_group_api(
 
 @router.get("/machine-groups/{group_id}", dependencies=[_view_groups])
 async def get_machine_group_api(
-    group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    return _group_to_dict(await _get_group_or_404(group_id, db))
+    return _group_to_dict(await _get_group_or_404(group_id, db, user))
 
 
 @router.get("/machine-groups/{group_id}/members", dependencies=[_view_groups])
 async def list_group_members_api(
-    group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> list[dict[str, object]]:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     return [_machine_to_dict(m) for m in group.machines]
 
 
@@ -742,8 +828,9 @@ async def update_machine_group_api(
     group_id: uuid.UUID,
     payload: MachineGroupCreate,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     group.name = payload.name
     group.description = payload.description
     try:
@@ -754,7 +841,7 @@ async def update_machine_group_api(
             status_code=status.HTTP_409_CONFLICT,
             detail=f'A group named "{payload.name}" already exists.',
         ) from None
-    group = await _get_group_or_404(group.id, db)
+    group = await _get_group_or_404(group.id, db, user)
     await log_event(
         db,
         request=request,
@@ -769,9 +856,10 @@ async def update_machine_group_api(
 
 @router.delete("/machine-groups/{group_id}", dependencies=[_manage_groups])
 async def delete_machine_group_api(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     group_name = group.name
     for machine in group.machines:
         machine.group_id = None
@@ -799,10 +887,13 @@ async def add_machine_to_group_api(
     group_id: uuid.UUID,
     payload: _GroupMachineId,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     machine = await db.get(Machine, payload.machine_id)
-    if machine is None:
+    # Out-of-scope reads as missing, so membership editing can't be used to
+    # discover (or quietly reassign) a machine this account can't see.
+    if machine is None or not await can_see_machine(db, user, machine):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
     machine.group_id = group.id
     await db.commit()
@@ -825,9 +916,15 @@ async def remove_machine_from_group_api(
     group_id: uuid.UUID,
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> Response:
+    await _get_group_or_404(group_id, db, user)
     machine = await db.get(Machine, machine_id)
-    if machine is not None and machine.group_id == group_id:
+    if (
+        machine is not None
+        and machine.group_id == group_id
+        and await can_see_machine(db, user, machine)
+    ):
         machine.group_id = None
         await db.commit()
         await log_event(
@@ -847,10 +944,12 @@ async def remove_machine_from_group_api(
 
 @router.post("/machine-groups/all/updates", dependencies=[_action_updates])
 async def trigger_all_machines_update_api(
-    request: Request, payload: _UpdatesTrigger, db: AsyncSession = Depends(get_db)
+    request: Request,
+    payload: _UpdatesTrigger,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    result = await db.execute(select(Machine))
-    machines = list(result.scalars().all())
+    machines = await _visible_machines(db, user)
     batch_id, skipped = await trigger_updates(db, machines, payload.strategy)
     await log_event(
         db,
@@ -865,10 +964,11 @@ async def trigger_all_machines_update_api(
 
 @router.post("/machine-groups/all/check-updates", dependencies=[_action_updates])
 async def trigger_all_check_updates_api(
-    request: Request, db: AsyncSession = Depends(get_db)
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    result = await db.execute(select(Machine))
-    skipped = await trigger_check_updates(list(result.scalars().all()))
+    skipped = await trigger_check_updates(await _visible_machines(db, user))
     await log_event(
         db,
         request=request,
@@ -889,7 +989,10 @@ class _AllMachinesPowerAction(BaseModel):
 
 @router.post("/machine-groups/all/power", dependencies=[_action_power])
 async def all_power_action_api(
-    request: Request, payload: _AllMachinesPowerAction, db: AsyncSession = Depends(get_db)
+    request: Request,
+    payload: _AllMachinesPowerAction,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     if payload.confirm.strip() != _ALL_MACHINES_CONFIRM_PHRASE:
         await log_event(
@@ -904,8 +1007,7 @@ async def all_power_action_api(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f'"confirm" must be exactly "{_ALL_MACHINES_CONFIRM_PHRASE}".',
         )
-    result = await db.execute(select(Machine))
-    machines = list(result.scalars().all())
+    machines = await _visible_machines(db, user)
     skipped = await send_power_to_machines(machines, payload.action)
     await log_event(
         db,
@@ -924,8 +1026,9 @@ async def trigger_group_update_api(
     group_id: uuid.UUID,
     payload: _UpdatesTrigger,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     batch_id, skipped = await trigger_updates(db, group.machines, payload.strategy)
     await log_event(
         db,
@@ -942,9 +1045,10 @@ async def trigger_group_update_api(
 
 @router.post("/machine-groups/{group_id}/check-updates", dependencies=[_action_updates])
 async def trigger_group_check_updates_api(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     skipped = await trigger_check_updates(group.machines)
     await log_event(
         db,
@@ -970,8 +1074,9 @@ async def group_power_action_api(
     group_id: uuid.UUID,
     payload: _GroupPowerAction,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, user)
     if payload.confirm_name.strip() != group.name:
         await log_event(
             db,
@@ -1007,12 +1112,21 @@ async def group_power_action_api(
 
 @router.get("/machine-groups/batches/{batch_id}", dependencies=[_view_machines])
 async def update_batch_detail_api(
-    batch_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
+    # Restricted to this account's own machines, so a batch that straddles
+    # the boundary (an unrestricted admin's "All machines" run) reports only
+    # the part this account can see.
+    visible_ids = (await machines_visible_to(db, user)).with_only_columns(Machine.id)
     result = await db.execute(
         select(MachineUpdateRun)
         .options(selectinload(MachineUpdateRun.machine))
-        .where(MachineUpdateRun.batch_id == batch_id)
+        .where(
+            MachineUpdateRun.batch_id == batch_id,
+            MachineUpdateRun.machine_id.in_(visible_ids),
+        )
         .order_by(MachineUpdateRun.created_at)
     )
     runs = list(result.scalars().all())

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_current_user, require_permission
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
@@ -32,9 +32,16 @@ from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
+from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
+from app.services.access_scope import (
+    can_see_group_id,
+    groups_visible_to,
+    machines_visible_to,
+    visible_machines_by_ids,
+)
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -72,12 +79,17 @@ _terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
 
 
-async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession) -> Machine:
+async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession, user: User) -> Machine:
+    """The machine, or a 404 — including when it exists but is outside
+    `user`'s machine-group scope (`app.services.access_scope`). 404, never
+    403, for the same reason `app/web/routes/ai.py`'s `_get_conversation`
+    uses one: a 403 would confirm that a machine with that id exists."""
     # Eager-load `group` — templates read `machine.group` and the async ORM
     # can't lazy-load relationships outside of an `await` (it would raise
     # MissingGreenlet during template rendering).
+    query = await machines_visible_to(db, user)
     result = await db.execute(
-        select(Machine).options(selectinload(Machine.group)).where(Machine.id == machine_id)
+        query.options(selectinload(Machine.group)).where(Machine.id == machine_id)
     )
     machine = result.scalar_one_or_none()
     if machine is None:
@@ -85,8 +97,12 @@ async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession) -> Machin
     return machine
 
 
-async def _get_groups(db: AsyncSession) -> list[MachineGroup]:
-    result = await db.execute(select(MachineGroup).order_by(MachineGroup.name))
+async def _get_groups(db: AsyncSession, user: User) -> list[MachineGroup]:
+    """The groups offered in the machine form's group `<select>` — scoped,
+    so a restricted user can't move a machine into a group they can't see
+    (which would make it vanish from their own view)."""
+    query = await groups_visible_to(db, user)
+    result = await db.execute(query.order_by(MachineGroup.name))
     return list(result.scalars().all())
 
 
@@ -163,9 +179,12 @@ async def _get_update_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> Machine
 
 @router.get("")
 async def list_machines(
-    request: Request, db: AsyncSession = Depends(get_db), q: str = ""
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    q: str = "",
 ) -> Response:
-    query = select(Machine).options(selectinload(Machine.group))
+    query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
     result = await db.execute(query.order_by(Machine.name))
@@ -189,14 +208,18 @@ async def list_machines(
 
 
 @router.get("/new")
-async def new_machine_form(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+async def new_machine_form(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "machines/new.html",
         {
             "auth_methods": list(AuthMethod),
-            "groups": await _get_groups(db),
+            "groups": await _get_groups(db, current_user),
             "errors": [],
             "form": {
                 "name": request.query_params.get("name", ""),
@@ -222,6 +245,7 @@ async def create_machine(
     secret: str = Form(""),
     group_id: str = Form(""),
     description: str = Form(""),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     try:
         payload = MachineCreate(
@@ -248,7 +272,7 @@ async def create_machine(
             "machines/new.html",
             {
                 "auth_methods": list(AuthMethod),
-                "groups": await _get_groups(db),
+                "groups": await _get_groups(db, current_user),
                 "errors": [str(exc)],
                 "form": {
                     "name": name,
@@ -265,6 +289,22 @@ async def create_machine(
         if new_cookie:
             set_csrf_cookie(response, new_cookie)
         return response
+
+    # A restricted account may only file a new machine into a group it can
+    # see — otherwise it would create something it immediately can't find
+    # (an ungrouped machine is invisible to a restricted account by design).
+    if not await can_see_group_id(db, current_user, payload.group_id):
+        await log_event(
+            db,
+            request=request,
+            action="machine.create",
+            summary=f'Rejected new machine "{name}": group outside this account\'s access',
+            outcome=AuditOutcome.DENIED,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pick a machine group your account has access to.",
+        )
 
     machine = Machine(
         name=payload.name,
@@ -389,7 +429,10 @@ _CONFIG_EXPORT_CSV_FIELDS = (
 
 @router.get("/config/export")
 async def export_machine_config_endpoint(
-    request: Request, db: AsyncSession = Depends(get_db), format: str = "json"  # noqa: A002
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    format: str = "json",  # noqa: A002
 ) -> Response:
     """Export every existing (non-pending) machine's and group's *structural*
     configuration — deliberately never `secret_encrypted` or
@@ -397,7 +440,7 @@ async def export_machine_config_endpoint(
     docstring. JSON includes both machines and groups; CSV (machines only —
     groups don't flatten to CSV sensibly) is a plain download link, same
     pattern as the audit log's export (see `app/web/routes/audit.py`)."""
-    export = await export_machine_config(db)
+    export = await export_machine_config(db, current_user)
 
     await log_event(
         db,
@@ -513,6 +556,7 @@ _PACKAGE_SEARCH_LIMIT = 500
 async def package_search(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     q: str = "",
     pkg_source: str = "",
 ) -> Response:
@@ -523,10 +567,19 @@ async def package_search(
     results: list[MachinePackage] = []
     truncated = False
     if q.strip():
+        # Scoped by joining the machine each row belongs to — a restricted
+        # user searching fleet-wide must not learn which packages sit on a
+        # machine they can't otherwise see.
+        visible_ids = (await machines_visible_to(db, current_user)).with_only_columns(
+            Machine.id
+        )
         query = (
             select(MachinePackage)
             .options(selectinload(MachinePackage.machine))
-            .where(MachinePackage.name.ilike(f"%{q.strip()}%"))
+            .where(
+                MachinePackage.name.ilike(f"%{q.strip()}%"),
+                MachinePackage.machine_id.in_(visible_ids),
+            )
         )
         if pkg_source in {source.value for source in PackageSource}:
             query = query.where(MachinePackage.source == PackageSource(pkg_source))
@@ -543,23 +596,30 @@ async def package_search(
     )
 
 
-async def _get_machines_by_ids(machine_ids: list[uuid.UUID], db: AsyncSession) -> list[Machine]:
-    if not machine_ids:
-        return []
-    result = await db.execute(select(Machine).where(Machine.id.in_(machine_ids)))
-    return list(result.scalars().all())
+async def _get_machines_by_ids(
+    machine_ids: list[uuid.UUID], db: AsyncSession, user: User
+) -> list[Machine]:
+    """The submitted selection, minus anything outside `user`'s scope.
+
+    Client-submitted ids are never trusted here: the checkboxes were
+    rendered from a scoped list, so an id outside it can only have been
+    hand-crafted. Out-of-scope ids are dropped silently rather than
+    rejected with an error naming them (see
+    `app.services.access_scope.filter_machines`)."""
+    return await visible_machines_by_ids(db, user, machine_ids)
 
 
 @router.post("/bulk/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def bulk_check_updates(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     machine_ids: list[uuid.UUID] = Form(default=[]),
 ) -> Response:
     """Check-updates for an ad-hoc selection from the machine list — same
     underlying job as the group/"All machines" versions, just against
     whichever rows were ticked rather than a stored group."""
-    machines = await _get_machines_by_ids(machine_ids, db)
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
         return RedirectResponse(
             url="/machines?bulk_error=Select+at+least+one+machine.",
@@ -581,10 +641,11 @@ async def bulk_check_updates(
 async def bulk_trigger_updates(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     machine_ids: list[uuid.UUID] = Form(default=[]),
     strategy: UpgradeStrategy = Form(...),
 ) -> Response:
-    machines = await _get_machines_by_ids(machine_ids, db)
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
         return RedirectResponse(
             url="/machines?bulk_error=Select+at+least+one+machine.",
@@ -648,6 +709,7 @@ async def bulk_power_action(
     request: Request,
     action: PowerAction,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     machine_ids: list[uuid.UUID] = Form(default=[]),
     confirm_name: str = Form(...),
 ) -> Response:
@@ -685,7 +747,7 @@ async def bulk_power_action(
             set_csrf_cookie(response, new_cookie)
         return response
 
-    machines = await _get_machines_by_ids(machine_ids, db)
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
     skipped = await send_power_to_machines(machines, action)
     await log_event(
         db,
@@ -705,8 +767,9 @@ async def machine_detail(
     request: Request,
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -742,13 +805,14 @@ async def machine_packages_panel(
     pkg_q: str = "",
     pkg_source: str = "",
     held_only: bool = False,
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """The modal body for "Show installed packages" on the machine detail
     page — loaded on demand via htmx rather than embedded in that page's
     initial render. Also serves the filter form's own requests, which target
     just `#packages-panel` (not the whole modal) to stay open while filtering.
     """
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -773,9 +837,10 @@ async def machine_packages_panel(
 
 @router.get("/{machine_id}/edit")
 async def edit_machine_form(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -783,7 +848,7 @@ async def edit_machine_form(
         {
             "machine": machine,
             "auth_methods": list(AuthMethod),
-            "groups": await _get_groups(db),
+            "groups": await _get_groups(db, current_user),
             "errors": [],
             "csrf_token": csrf_token,
         },
@@ -807,8 +872,9 @@ async def update_machine(
     group_id: str = Form(""),
     description: str = Form(""),
     is_active: str = Form(""),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
 
     try:
         payload = MachineUpdate(
@@ -841,7 +907,7 @@ async def update_machine(
             {
                 "machine": machine,
                 "auth_methods": list(AuthMethod),
-                "groups": await _get_groups(db),
+                "groups": await _get_groups(db, current_user),
                 "errors": [str(exc)],
                 "csrf_token": csrf_token,
             },
@@ -850,6 +916,14 @@ async def update_machine(
         if new_cookie:
             set_csrf_cookie(response, new_cookie)
         return response
+
+    # Same scope rule as creation: a restricted account can't move a machine
+    # into a group (or out of every group) it can't see.
+    if not await can_see_group_id(db, current_user, payload.group_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pick a machine group your account has access to.",
+        )
 
     # Changing where/how we connect invalidates the trust and facts we
     # previously established for whatever was at the old address — force
@@ -905,9 +979,10 @@ async def update_machine(
 
 @router.post("/{machine_id}/discover-host-key", dependencies=[_manage, Depends(verify_csrf)])
 async def discover_host_key(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     settings = get_settings()
     csrf_token, new_cookie = get_or_create_csrf_token(request)
 
@@ -943,8 +1018,9 @@ async def trust_host_key(
     machine_id: uuid.UUID,
     fingerprint: str = Form(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     fingerprint = fingerprint.strip()
     if not _FINGERPRINT_RE.match(fingerprint):
         raise HTTPException(
@@ -980,9 +1056,10 @@ async def trust_host_key(
 
 @router.post("/{machine_id}/test-connection", dependencies=[_manage, Depends(verify_csrf)])
 async def test_connection_endpoint(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     settings = get_settings()
 
     async_result = tasks.test_machine_connection.delay(str(machine.id))
@@ -1021,9 +1098,10 @@ async def test_connection_endpoint(
 
 @router.post("/{machine_id}/refresh-facts", dependencies=[_manage, Depends(verify_csrf)])
 async def refresh_facts_endpoint(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     settings = get_settings()
 
     async_result = tasks.refresh_machine_facts.delay(str(machine.id))
@@ -1041,7 +1119,7 @@ async def refresh_facts_endpoint(
 
     if error is None:
         # Facts were updated in the DB by the job — reload to pick them up.
-        machine = await _get_machine_or_404(machine_id, db)
+        machine = await _get_machine_or_404(machine_id, db, current_user)
 
     await log_event(
         db,
@@ -1074,8 +1152,9 @@ async def refresh_packages_endpoint(
     pkg_q: str = Form(""),
     pkg_source: str = Form(""),
     held_only: bool = Form(False),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     settings = get_settings()
 
     async_result = tasks.refresh_machine_packages.delay(str(machine.id))
@@ -1093,7 +1172,7 @@ async def refresh_packages_endpoint(
 
     if error is None:
         # Packages were updated in the DB by the job — reload to pick them up.
-        machine = await _get_machine_or_404(machine_id, db)
+        machine = await _get_machine_or_404(machine_id, db, current_user)
 
     await log_event(
         db,
@@ -1129,9 +1208,10 @@ async def refresh_packages_endpoint(
 
 @router.post("/{machine_id}/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def check_updates_endpoint(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     settings = get_settings()
 
     async_result = tasks.check_machine_updates.delay(str(machine.id))
@@ -1149,7 +1229,7 @@ async def check_updates_endpoint(
 
     # Counts were updated in the DB by the job (even on failure, they're
     # reset to "unknown" rather than left stale) — reload either way.
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
 
     await log_event(
         db,
@@ -1177,6 +1257,7 @@ async def preview_machine_update(
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     strategy: UpgradeStrategy = UpgradeStrategy.DIST_UPGRADE,
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """Simulate (via apt's dry-run mode — nothing is changed on the machine)
     exactly what `POST /machines/{id}/updates` would do, so a human can see
@@ -1193,7 +1274,7 @@ async def preview_machine_update(
     fires from this page's own confirm button, or directly via the API for
     a scripted caller (see `app/web/routes/api_v1.py`'s module docstring for
     why the API doesn't get the same forced two-step)."""
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     if not machine.host_key_fingerprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1244,8 +1325,9 @@ async def trigger_machine_update(
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     strategy: UpgradeStrategy = Form(...),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     if not machine.host_key_fingerprint:
         await log_event(
             db,
@@ -1294,12 +1376,13 @@ async def machine_update_history(
     db: AsyncSession = Depends(get_db),
     status_filter: str = "",
     page: int = 1,
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """Every update run for this machine, newest first, paginated the same
     way `/audit` is (offset/limit, one extra row fetched to know whether an
     "Older" page exists) — the machine detail page's "Recent runs" table
     only ever shows the last 5; this is the full history behind it."""
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     page = max(page, 1)
 
     query = select(MachineUpdateRun).where(MachineUpdateRun.machine_id == machine_id)
@@ -1336,8 +1419,9 @@ async def machine_update_run_detail(
     machine_id: uuid.UUID,
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     run = await _get_update_run_or_404(run_id, db)
     if run.machine_id != machine.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
@@ -1352,11 +1436,16 @@ async def machine_update_run_status(
     machine_id: uuid.UUID,
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """Pollable fragment (htmx `hx-trigger="every ...s"`) showing one run's
     status/output. Once the run reaches a terminal state, the fragment stops
     including the polling attributes, so htmx naturally stops re-fetching it.
     """
+    # Resolve the machine through the scoped helper first — this fragment
+    # would otherwise expose an out-of-scope machine's update output to
+    # anyone who could guess the pair of ids.
+    await _get_machine_or_404(machine_id, db, current_user)
     run = await _get_update_run_or_404(run_id, db)
     if run.machine_id != machine_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
@@ -1365,7 +1454,8 @@ async def machine_update_run_status(
 
 @router.get("/{machine_id}/terminal", dependencies=[_terminal])
 async def terminal_page(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """The interactive web terminal's page shell — the actual byte relay
     happens over the WebSocket in `app/web/routes/terminal_ws.py`, which
@@ -1374,7 +1464,7 @@ async def terminal_page(
     page having already been reached. Gated behind `ACTION_TERMINAL` — see
     that permission's comment in `app/db/models/role.py` for why it's its
     own dedicated permission rather than folded into an existing one."""
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     if not machine.host_key_fingerprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1385,13 +1475,17 @@ async def terminal_page(
 
 @router.get("/{machine_id}/power/{action}")
 async def power_confirm_form(
-    request: Request, machine_id: uuid.UUID, action: PowerAction, db: AsyncSession = Depends(get_db)
+    request: Request,
+    machine_id: uuid.UUID,
+    action: PowerAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """First confirmation step: a dedicated page stating exactly what's
     about to happen. The second step — typing the machine's name — is
     enforced server-side in `power_action`, not just disabled-until-typed
     in the browser."""
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -1410,8 +1504,9 @@ async def power_action(
     db: AsyncSession = Depends(get_db),
     action: PowerAction = Form(...),
     confirm_name: str = Form(...),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
 
     if confirm_name.strip() != machine.name:
         await log_event(
@@ -1499,9 +1594,10 @@ async def dismiss_pending_machine(
 
 @router.post("/{machine_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
 async def delete_machine(
-    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    machine = await _get_machine_or_404(machine_id, db)
+    machine = await _get_machine_or_404(machine_id, db, current_user)
     machine_name = machine.name
     await db.delete(machine)
     await db.commit()

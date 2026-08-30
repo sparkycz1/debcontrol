@@ -14,10 +14,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import require_api_permission
+from app.auth.dependencies import get_api_token_user, require_api_permission
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.role import Permission
+from app.db.models.user import User
 from app.db.session import get_db
+from app.services.access_scope import is_restricted
 
 router = APIRouter(prefix="/api/v1/dashboard")
 
@@ -37,11 +39,22 @@ def _snapshot_to_dict(snapshot: FleetSnapshot) -> dict[str, object]:
 
 
 @router.get("/trends", dependencies=[_view])
-async def dashboard_trends_api(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
+async def dashboard_trends_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
     """Every retained daily snapshot, oldest first — whatever the retention
     purge (`app.tasks.jobs.purge_old_fleet_snapshots`) has left in the
     table, with no further filtering here (mirrors the web Dashboard, which
-    shows the same unfiltered set once there are at least two)."""
+    shows the same unfiltered set once there are at least two).
+
+    An account restricted to specific machine groups gets an empty series,
+    the same as the web Dashboard omits the trend chart for one: a snapshot
+    is a *stored* fleet-wide total recorded by a background job, so there is
+    nothing in it left to narrow — returning it anyway would report the
+    whole fleet's size to an account that can't see the whole fleet."""
+    if await is_restricted(db, user):
+        return {"snapshots": []}
     result = await db.execute(select(FleetSnapshot).order_by(FleetSnapshot.snapshot_date.asc()))
     snapshots = list(result.scalars().all())
     return {"snapshots": [_snapshot_to_dict(s) for s in snapshots]}

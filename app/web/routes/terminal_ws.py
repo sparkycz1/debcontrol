@@ -69,6 +69,7 @@ from app.core.config import get_settings
 from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
+from app.services.access_scope import can_see_machine
 from app.ssh.client import open_shell_session
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
@@ -113,7 +114,12 @@ async def _authenticate(
 
     async with db_session_factory() as db:
         machine = await db.get(Machine, machine_id)
-        if machine is None:
+        # A machine outside this account's machine-group scope is reported
+        # as missing, never as forbidden — the same rule the HTTP routes
+        # follow (see `app.services.access_scope`). The page shell at
+        # `GET /machines/{id}/terminal` already 404s, but this socket
+        # authenticates independently of it and must not rely on that.
+        if machine is None or not await can_see_machine(db, user, machine):
             await websocket.close(code=_POLICY_VIOLATION, reason="Machine not found.")
             return None
         if not machine.host_key_fingerprint:
