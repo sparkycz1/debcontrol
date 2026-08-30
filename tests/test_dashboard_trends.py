@@ -13,7 +13,11 @@ from httpx import AsyncClient
 from app.core.app_settings import get_or_create_app_settings
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
-from app.tasks.jobs import purge_old_fleet_snapshots, record_fleet_snapshot
+
+# The async implementations behind the Celery tasks of the same (unprefixed)
+# names — the tasks themselves are thin `asyncio.run(...)` wrappers, and
+# calling those from inside a running event loop is not possible.
+from app.tasks.jobs import _purge_old_fleet_snapshots, _record_fleet_snapshot
 
 
 async def _api_token(client: AsyncClient) -> dict[str, str]:
@@ -34,7 +38,7 @@ async def test_dashboard_hides_trend_chart_with_fewer_than_two_snapshots(client)
 
 
 async def test_record_fleet_snapshot_creates_one_row_per_day(db_session_factory, monkeypatch):
-    monkeypatch.setattr("app.tasks.jobs.AsyncSessionLocal", db_session_factory)
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
     async with db_session_factory() as db:
         db.add(
             Machine(
@@ -47,10 +51,7 @@ async def test_record_fleet_snapshot_creates_one_row_per_day(db_session_factory,
         )
         await db.commit()
 
-    class _Ctx(dict[str, object]):
-        pass
-
-    await record_fleet_snapshot(_Ctx())
+    await _record_fleet_snapshot()
 
     async with db_session_factory() as db:
         from sqlalchemy import select
@@ -62,7 +63,7 @@ async def test_record_fleet_snapshot_creates_one_row_per_day(db_session_factory,
         assert snapshots[0].online_machines == 1
 
     # Running it again the same day is a no-op (idempotent per calendar day).
-    await record_fleet_snapshot(_Ctx())
+    await _record_fleet_snapshot()
     async with db_session_factory() as db:
         from sqlalchemy import select
 
@@ -108,7 +109,7 @@ async def test_dashboard_shows_trend_chart_with_two_or_more_snapshots(client, db
 
 
 async def test_purge_old_fleet_snapshots_respects_retention(db_session_factory, monkeypatch):
-    monkeypatch.setattr("app.tasks.jobs.AsyncSessionLocal", db_session_factory)
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
     async with db_session_factory() as db:
         app_settings = await get_or_create_app_settings(db)
         app_settings.dashboard_trends_retention_days = 30
@@ -140,10 +141,7 @@ async def test_purge_old_fleet_snapshots_respects_retention(db_session_factory, 
         )
         await db.commit()
 
-    class _Ctx(dict[str, object]):
-        pass
-
-    await purge_old_fleet_snapshots(_Ctx())
+    await _purge_old_fleet_snapshots()
 
     async with db_session_factory() as db:
         from sqlalchemy import select
@@ -155,7 +153,7 @@ async def test_purge_old_fleet_snapshots_respects_retention(db_session_factory, 
 
 
 async def test_purge_skipped_when_retention_unset(db_session_factory, monkeypatch):
-    monkeypatch.setattr("app.tasks.jobs.AsyncSessionLocal", db_session_factory)
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
     async with db_session_factory() as db:
         app_settings = await get_or_create_app_settings(db)
         app_settings.dashboard_trends_retention_days = None
@@ -173,10 +171,7 @@ async def test_purge_skipped_when_retention_unset(db_session_factory, monkeypatc
         )
         await db.commit()
 
-    class _Ctx(dict[str, object]):
-        pass
-
-    await purge_old_fleet_snapshots(_Ctx())
+    await _purge_old_fleet_snapshots()
 
     async with db_session_factory() as db:
         from sqlalchemy import select

@@ -1,4 +1,4 @@
-# Reverse proxy: nginx
+# 🔒 Reverse proxy: nginx
 
 Use this if you already run nginx on the host where debcontrol's
 `docker compose up -d --build` (the base file, without

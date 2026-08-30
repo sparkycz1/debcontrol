@@ -27,9 +27,14 @@ call that would do anything useful without a human typing into it.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 
+# NOT the builtin `TimeoutError` — `celery.exceptions.TimeoutError` does not
+# subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
+# would silently never match.
+from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -59,6 +64,7 @@ from app.services.machine_actions import (
 from app.services.machine_config import export_machine_config, import_machine_config
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
+from app.tasks.jobs import preview_machine_update, run_machine_update, send_machine_power_command
 
 router = APIRouter(prefix="/api/v1")
 
@@ -463,7 +469,7 @@ async def bulk_check_updates_api(
     request: Request, payload: _BulkMachineIds, db: AsyncSession = Depends(get_db)
 ) -> dict[str, object]:
     machines = await _get_machines_by_ids(payload.machine_ids, db)
-    skipped = await trigger_check_updates(request.app.state.arq_redis, machines)
+    skipped = await trigger_check_updates(machines)
     await log_event(
         db,
         request=request,
@@ -479,9 +485,7 @@ async def bulk_trigger_updates_api(
     request: Request, payload: _BulkUpdatesTrigger, db: AsyncSession = Depends(get_db)
 ) -> dict[str, object]:
     machines = await _get_machines_by_ids(payload.machine_ids, db)
-    batch_id, skipped = await trigger_updates(
-        db, request.app.state.arq_redis, machines, payload.strategy
-    )
+    batch_id, skipped = await trigger_updates(db, machines, payload.strategy)
     await log_event(
         db,
         request=request,
@@ -515,7 +519,7 @@ async def bulk_power_action_api(
             detail=f'"confirm" must be exactly "{_BULK_POWER_CONFIRM_PHRASE}".',
         )
     machines = await _get_machines_by_ids(payload.machine_ids, db)
-    skipped = await send_power_to_machines(request.app.state.arq_redis, machines, payload.action)
+    skipped = await send_power_to_machines(machines, payload.action)
     await log_event(
         db,
         request=request,
@@ -553,13 +557,16 @@ async def preview_machine_update_api(
             detail="Confirm the host key fingerprint before previewing updates.",
         )
 
-    job = await request.app.state.arq_redis.enqueue_job(
-        "preview_machine_update", str(machine.id), strategy.value
-    )
+    async_result = preview_machine_update.delay(str(machine.id), strategy.value)
     settings = get_settings()
     try:
-        result = await job.result(timeout=settings.update_timeout_seconds + 5)
-    except TimeoutError as exc:
+        # `AsyncResult.get()` is a blocking, synchronous call — off the event
+        # loop it goes, or it would stall every other in-flight request for
+        # as long as this preview takes.
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.update_timeout_seconds + 5
+        )
+    except CeleryTimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="The background job did not respond in time.",
@@ -594,7 +601,7 @@ async def trigger_machine_update_api(
     db.add(run)
     await db.commit()
     await db.refresh(run)
-    await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
+    run_machine_update.delay(str(run.id))
 
     await log_event(
         db,
@@ -614,7 +621,7 @@ async def check_machine_updates_api(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db)
-    skipped = await trigger_check_updates(request.app.state.arq_redis, [machine])
+    skipped = await trigger_check_updates([machine])
     await log_event(
         db,
         request=request,
@@ -661,9 +668,7 @@ async def machine_power_api(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Confirm the host key fingerprint before sending power commands.",
         )
-    await request.app.state.arq_redis.enqueue_job(
-        "send_machine_power_command", str(machine.id), payload.action.value
-    )
+    send_machine_power_command.delay(str(machine.id), payload.action.value)
     await log_event(
         db,
         request=request,
@@ -846,9 +851,7 @@ async def trigger_all_machines_update_api(
 ) -> dict[str, object]:
     result = await db.execute(select(Machine))
     machines = list(result.scalars().all())
-    batch_id, skipped = await trigger_updates(
-        db, request.app.state.arq_redis, machines, payload.strategy
-    )
+    batch_id, skipped = await trigger_updates(db, machines, payload.strategy)
     await log_event(
         db,
         request=request,
@@ -865,7 +868,7 @@ async def trigger_all_check_updates_api(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> dict[str, object]:
     result = await db.execute(select(Machine))
-    skipped = await trigger_check_updates(request.app.state.arq_redis, list(result.scalars().all()))
+    skipped = await trigger_check_updates(list(result.scalars().all()))
     await log_event(
         db,
         request=request,
@@ -903,7 +906,7 @@ async def all_power_action_api(
         )
     result = await db.execute(select(Machine))
     machines = list(result.scalars().all())
-    skipped = await send_power_to_machines(request.app.state.arq_redis, machines, payload.action)
+    skipped = await send_power_to_machines(machines, payload.action)
     await log_event(
         db,
         request=request,
@@ -923,9 +926,7 @@ async def trigger_group_update_api(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     group = await _get_group_or_404(group_id, db)
-    batch_id, skipped = await trigger_updates(
-        db, request.app.state.arq_redis, group.machines, payload.strategy
-    )
+    batch_id, skipped = await trigger_updates(db, group.machines, payload.strategy)
     await log_event(
         db,
         request=request,
@@ -944,7 +945,7 @@ async def trigger_group_check_updates_api(
     request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> dict[str, object]:
     group = await _get_group_or_404(group_id, db)
-    skipped = await trigger_check_updates(request.app.state.arq_redis, group.machines)
+    skipped = await trigger_check_updates(group.machines)
     await log_event(
         db,
         request=request,
@@ -989,9 +990,7 @@ async def group_power_action_api(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f'"confirm_name" must exactly match the group\'s name ("{group.name}").',
         )
-    skipped = await send_power_to_machines(
-        request.app.state.arq_redis, group.machines, payload.action
-    )
+    skipped = await send_power_to_machines(group.machines, payload.action)
     await log_event(
         db,
         request=request,

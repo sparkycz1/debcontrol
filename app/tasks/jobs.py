@@ -1,4 +1,25 @@
-"""Background jobs processed by arq (queue in Redis)."""
+"""Background jobs processed by Celery (broker + result backend in Redis).
+
+Every job in here follows the same two-part shape:
+
+- `async def _do_the_thing(...)` — the real work. This app's logic is async
+  all the way down (SQLAlchemy's async sessions, asyncssh), so that is where
+  it lives.
+- `@celery_app.task(name="...") def do_the_thing(...)` — a thin synchronous
+  Celery task that does nothing but `asyncio.run(...)` the coroutine above.
+  Celery tasks are synchronous; this is the seam between the two worlds, and
+  it is deliberately kept to one line so there is never any logic that only
+  exists on the sync side.
+
+Task names are given explicitly and are a stable contract — see
+`app.tasks.celery_app`'s module docstring.
+
+DB sessions are always opened as `db_session.AsyncSessionLocal(...)` through
+the module, never via a `from app.db.session import AsyncSessionLocal`
+binding: each forked Celery worker child rebuilds that factory after the fork
+(again, see `app.tasks.celery_app`), and a name captured at import time would
+keep pointing at the parent's connection pool.
+"""
 
 from __future__ import annotations
 
@@ -13,12 +34,12 @@ from sqlalchemy import delete, func, select
 from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
+from app.db import session as db_session
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import Machine
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
-from app.db.session import AsyncSessionLocal
 from app.services.fleet_stats import compute_fleet_stats
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
@@ -28,6 +49,7 @@ from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
 from app.ssh.updates import check_updates, preview_update, run_system_update
+from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +62,12 @@ _REACHABILITY_CONCURRENCY = 20
 _MAX_STORED_OUTPUT_CHARS = 200_000
 
 
-async def test_machine_connection(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
+async def _test_machine_connection(machine_id: str) -> dict[str, Any]:
     """Full SSH connection test for the "Test connection" button: connect
     (with strict pinned host-key verification) and run `uname -a`."""
     settings = get_settings()
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
@@ -61,15 +83,17 @@ async def test_machine_connection(ctx: dict[str, Any], machine_id: str) -> dict[
         return {"ok": True, "output": output}
 
 
-async def ping_all_machines(ctx: dict[str, Any]) -> None:
-    """Cheap reachability sweep (TCP connect only, no auth) for the status
-    badge shown in the UI. Self-reschedules using
-    `REACHABILITY_CHECK_INTERVAL_SECONDS` rather than a fixed cron schedule,
-    since that interval is meant to be configurable (Settings page) — same
-    pattern as `refresh_all_machine_facts` below."""
-    settings = get_settings()
+@celery_app.task(name="app.tasks.jobs.test_machine_connection")
+def test_machine_connection(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_test_machine_connection(machine_id))
 
-    async with AsyncSessionLocal() as session:
+
+async def _ping_all_machines() -> None:
+    """Cheap reachability sweep (TCP connect only, no auth) for the status
+    badge shown in the UI. Cadence is owned by Celery Beat
+    (`REACHABILITY_CHECK_INTERVAL_SECONDS`, see `app.tasks.celery_app`) —
+    this job just does the sweep and returns."""
+    async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(select(Machine).where(Machine.is_active))
         machines = list(result.scalars().all())
         if machines:
@@ -88,19 +112,19 @@ async def ping_all_machines(ctx: dict[str, Any]) -> None:
                 machine.last_ping_at = now
             await session.commit()
 
-    await ctx["redis"].enqueue_job(
-        "ping_all_machines",
-        _defer_by=timedelta(seconds=settings.reachability_check_interval_seconds),
-    )
+
+@celery_app.task(name="app.tasks.jobs.ping_all_machines")
+def ping_all_machines() -> None:
+    asyncio.run(_ping_all_machines())
 
 
-async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
+async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
     """Connect to one machine and refresh its OS/kernel/arch/CPU/RAM/disk/
     uptime/process-count facts. Requires a pinned host key — machines
     without one are skipped."""
     settings = get_settings()
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
@@ -133,36 +157,37 @@ async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[st
         return {"ok": True}
 
 
-async def refresh_all_machine_facts(ctx: dict[str, Any]) -> None:
+@celery_app.task(name="app.tasks.jobs.refresh_machine_facts")
+def refresh_machine_facts(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_refresh_machine_facts(machine_id))
+
+
+async def _refresh_all_machine_facts() -> None:
     """Periodic sweep scheduling a facts refresh for every machine with a
-    pinned host key. Self-reschedules using `FACTS_REFRESH_INTERVAL_SECONDS`
-    rather than a fixed cron schedule, since that interval is meant to be
-    configurable.
+    pinned host key. Its cadence (`FACTS_REFRESH_INTERVAL_SECONDS`) is owned
+    by Celery Beat — see `app.tasks.celery_app`.
 
-    This only *enqueues* per-machine jobs rather than awaiting them inline,
-    so a slow or unreachable machine can't make this scheduler job itself
-    run long enough to hit arq's job timeout — each `refresh_machine_facts`
-    job gets its own timeout budget instead.
+    This only *enqueues* per-machine tasks rather than awaiting them inline,
+    so a slow or unreachable machine can't make this sweep itself run long
+    enough to hit the default task time limit — each `refresh_machine_facts`
+    task gets its own budget instead.
     """
-    settings = get_settings()
-    redis = ctx["redis"]
-
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(
             select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
         )
         machine_ids = [row[0] for row in result.all()]
 
     for machine_id in machine_ids:
-        await redis.enqueue_job("refresh_machine_facts", str(machine_id))
-
-    await redis.enqueue_job(
-        "refresh_all_machine_facts",
-        _defer_by=timedelta(seconds=settings.facts_refresh_interval_seconds),
-    )
+        refresh_machine_facts.delay(str(machine_id))
 
 
-async def refresh_machine_packages(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
+@celery_app.task(name="app.tasks.jobs.refresh_all_machine_facts")
+def refresh_all_machine_facts() -> None:
+    asyncio.run(_refresh_all_machine_facts())
+
+
+async def _refresh_machine_packages(machine_id: str) -> dict[str, Any]:
     """Connect to one machine and refresh its installed-package snapshot
     (apt/flatpak/snap, with versions). Requires a pinned host key — machines
     without one are skipped. Replaces the machine's whole `MachinePackage`
@@ -171,7 +196,7 @@ async def refresh_machine_packages(ctx: dict[str, Any], machine_id: str) -> dict
     history."""
     settings = get_settings()
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
@@ -205,29 +230,32 @@ async def refresh_machine_packages(ctx: dict[str, Any], machine_id: str) -> dict
         return {"ok": True, "package_count": len(packages)}
 
 
-async def refresh_all_machine_packages(ctx: dict[str, Any]) -> None:
+@celery_app.task(name="app.tasks.jobs.refresh_machine_packages")
+def refresh_machine_packages(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_refresh_machine_packages(machine_id))
+
+
+async def _refresh_all_machine_packages() -> None:
     """Periodic sweep scheduling a package refresh for every machine with a
     pinned host key — same fan-out pattern (and the same
-    `FACTS_REFRESH_INTERVAL_SECONDS` cadence) as `refresh_all_machine_facts`,
-    for the same reason: this only enqueues, it never awaits the refreshes
-    inline, so one slow/unreachable machine can't hold up the rest.
+    `FACTS_REFRESH_INTERVAL_SECONDS` Beat cadence) as
+    `_refresh_all_machine_facts`, for the same reason: this only enqueues, it
+    never awaits the refreshes inline, so one slow/unreachable machine can't
+    hold up the rest.
     """
-    settings = get_settings()
-    redis = ctx["redis"]
-
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(
             select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
         )
         machine_ids = [row[0] for row in result.all()]
 
     for machine_id in machine_ids:
-        await redis.enqueue_job("refresh_machine_packages", str(machine_id))
+        refresh_machine_packages.delay(str(machine_id))
 
-    await redis.enqueue_job(
-        "refresh_all_machine_packages",
-        _defer_by=timedelta(seconds=settings.facts_refresh_interval_seconds),
-    )
+
+@celery_app.task(name="app.tasks.jobs.refresh_all_machine_packages")
+def refresh_all_machine_packages() -> None:
+    asyncio.run(_refresh_all_machine_packages())
 
 
 def _truncate_output(output: str) -> str:
@@ -236,14 +264,14 @@ def _truncate_output(output: str) -> str:
     return "[... output truncated ...]\n" + output[-_MAX_STORED_OUTPUT_CHARS:]
 
 
-async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
+async def _run_machine_update(run_id: str) -> None:
     """Execute one `MachineUpdateRun`: apt update, the chosen upgrade
     strategy, autoremove/autoclean, then flatpak/snap if installed — see
     `app.ssh.updates`.
 
-    Given a long, dedicated timeout in `app.tasks.worker.WorkerSettings`
-    (`UPDATE_TIMEOUT_SECONDS`), separate from the default job timeout used
-    by every other job here.
+    Given a long, dedicated `time_limit` on its Celery task below
+    (`UPDATE_TIMEOUT_SECONDS`), separate from the default task time limit
+    used by every other job here.
 
     Once the run finishes (success or failure — the machine's packages and
     update counts may have changed either way, e.g. apt failed but flatpak/
@@ -252,9 +280,8 @@ async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
     the next periodic sweep, so the machine page reflects reality right away.
     """
     settings = get_settings()
-    redis = ctx["redis"]
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
         if run is None:
             return
@@ -296,18 +323,26 @@ async def run_machine_update(ctx: dict[str, Any], run_id: str) -> None:
         run.finished_at = datetime.now(UTC)
         await session.commit()
 
-    await redis.enqueue_job("refresh_machine_packages", str(run.machine_id))
-    await redis.enqueue_job("check_machine_updates", str(run.machine_id))
+    refresh_machine_packages.delay(str(run.machine_id))
+    check_machine_updates.delay(str(run.machine_id))
 
 
-async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
+@celery_app.task(
+    name="app.tasks.jobs.run_machine_update",
+    time_limit=get_settings().update_timeout_seconds,
+)
+def run_machine_update(run_id: str) -> None:
+    asyncio.run(_run_machine_update(run_id))
+
+
+async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
     """Dry-run: refresh the apt cache and record how many apt packages,
     flatpak apps, and snaps are upgradable, without installing anything.
     apt requires root/sudo, same as `run_machine_update`; flatpak/snap
     listing never does — see `app.ssh.updates`."""
     settings = get_settings()
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
@@ -353,9 +388,15 @@ async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[st
         return {"ok": False, "error": error}
 
 
-async def preview_machine_update(
-    ctx: dict[str, Any], machine_id: str, strategy: str
-) -> dict[str, Any]:
+@celery_app.task(
+    name="app.tasks.jobs.check_machine_updates",
+    time_limit=get_settings().update_timeout_seconds,
+)
+def check_machine_updates(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_check_machine_updates(machine_id))
+
+
+async def _preview_machine_update(machine_id: str, strategy: str) -> dict[str, Any]:
     """Dry-run preview for the manual "Run update" flow
     (`GET /machines/{id}/updates/preview` in `app/web/routes/machines.py`):
     simulate the exact update sequence with apt's `-s` flag and report what
@@ -366,7 +407,7 @@ async def preview_machine_update(
     right now, not a fact worth keeping around after they navigate away."""
     settings = get_settings()
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
@@ -399,42 +440,45 @@ async def preview_machine_update(
     }
 
 
-async def check_all_machine_updates(ctx: dict[str, Any]) -> None:
+@celery_app.task(
+    name="app.tasks.jobs.preview_machine_update",
+    time_limit=get_settings().update_timeout_seconds,
+)
+def preview_machine_update(machine_id: str, strategy: str) -> dict[str, Any]:
+    return asyncio.run(_preview_machine_update(machine_id, strategy))
+
+
+async def _check_all_machine_updates() -> None:
     """Periodic sweep scheduling an update check for every machine with a
     pinned host key — same fan-out pattern (and the same
-    `FACTS_REFRESH_INTERVAL_SECONDS` cadence) as `refresh_all_machine_facts`,
-    for the same reason: this only enqueues, it never awaits the checks
-    inline, so one slow/unreachable/misconfigured machine can't hold up the
-    rest.
+    `FACTS_REFRESH_INTERVAL_SECONDS` Beat cadence) as
+    `_refresh_all_machine_facts`, for the same reason: this only enqueues, it
+    never awaits the checks inline, so one slow/unreachable/misconfigured
+    machine can't hold up the rest.
     """
-    settings = get_settings()
-    redis = ctx["redis"]
-
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(
             select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
         )
         machine_ids = [row[0] for row in result.all()]
 
     for machine_id in machine_ids:
-        await redis.enqueue_job("check_machine_updates", str(machine_id))
-
-    await redis.enqueue_job(
-        "check_all_machine_updates",
-        _defer_by=timedelta(seconds=settings.facts_refresh_interval_seconds),
-    )
+        check_machine_updates.delay(str(machine_id))
 
 
-async def send_machine_power_command(
-    ctx: dict[str, Any], machine_id: str, action: str
-) -> dict[str, Any]:
+@celery_app.task(name="app.tasks.jobs.check_all_machine_updates")
+def check_all_machine_updates() -> None:
+    asyncio.run(_check_all_machine_updates())
+
+
+async def _send_machine_power_command(machine_id: str, action: str) -> dict[str, Any]:
     """Reboot or shut down one machine. Fire-and-forget — see
     `app.ssh.power` for why there's no persistent result to report beyond
     ok/error; the reachability check reflects the actual outcome over the
     following minutes."""
     settings = get_settings()
 
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         machine = await session.get(Machine, uuid.UUID(machine_id))
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
@@ -454,14 +498,19 @@ async def send_machine_power_command(
         return {"ok": True}
 
 
+@celery_app.task(name="app.tasks.jobs.send_machine_power_command")
+def send_machine_power_command(machine_id: str, action: str) -> dict[str, Any]:
+    return asyncio.run(_send_machine_power_command(machine_id, action))
+
+
 _AUDIT_PURGE_ACTOR = "retention policy (automatic)"
 
 
-async def purge_old_audit_log_entries(ctx: dict[str, Any]) -> None:
+async def _purge_old_audit_log_entries() -> None:
     """Delete audit log entries older than `AppSettings.
     audit_log_retention_days` — a fixed daily sweep, same shape as
-    `ping_all_machines`, since "once a day" needs no configurable interval
-    of its own (only *how many days to keep* is configurable, on the
+    the other Beat-driven sweeps, since "once a day" needs no configurable
+    interval of its own (only *how many days to keep* is configurable, on the
     Settings page).
 
     Only ever deletes from the oldest end (`created_at < cutoff`), never
@@ -471,7 +520,7 @@ async def purge_old_audit_log_entries(ctx: dict[str, Any]) -> None:
     the entries that remain (see the Architecture wiki page). Skipped
     entirely when retention is unset (`None` = keep forever, the default).
     """
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         retention_days = app_settings.audit_log_retention_days
         if not retention_days:
@@ -503,17 +552,22 @@ async def purge_old_audit_log_entries(ctx: dict[str, Any]) -> None:
         )
 
 
-async def record_fleet_snapshot(ctx: dict[str, Any]) -> None:
+@celery_app.task(name="app.tasks.jobs.purge_old_audit_log_entries")
+def purge_old_audit_log_entries() -> None:
+    asyncio.run(_purge_old_audit_log_entries())
+
+
+async def _record_fleet_snapshot() -> None:
     """Write today's fleet-wide snapshot row (Task 4's Dashboard trend
     chart), using the exact same queries the live Dashboard shows
     (`app.services.fleet_stats.compute_fleet_stats`) so the trend line and
     the current numbers can never disagree on what they mean.
 
-    A fixed once-a-day cron tick (see `app.tasks.worker.WorkerSettings`),
-    same idea as `purge_old_audit_log_entries` — only *how long to keep*
-    snapshots is configurable (Settings), not this cadence. Idempotent
-    per calendar day: if today's row already exists (e.g. the worker
-    restarted and its cron re-fired), this is a no-op rather than a second
+    A fixed once-a-day Beat entry (see `app.tasks.celery_app`), same idea as
+    `purge_old_audit_log_entries` — only *how long to keep* snapshots is
+    configurable (Settings), not this cadence. Idempotent per calendar day:
+    if today's row already exists (e.g. the beat process restarted and
+    re-fired the entry), this is a no-op rather than a second
     row for the same day — `FleetSnapshot.snapshot_date` is also uniquely
     constrained at the DB level as a second line of defense.
 
@@ -521,7 +575,7 @@ async def record_fleet_snapshot(ctx: dict[str, Any]) -> None:
     sweeps in this module (see wiki/Development.md's "Recording a new
     action in the audit log").
     """
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         today = datetime.now(UTC).date()
         existing = await session.scalar(
             select(FleetSnapshot).where(FleetSnapshot.snapshot_date == today)
@@ -544,15 +598,20 @@ async def record_fleet_snapshot(ctx: dict[str, Any]) -> None:
         await session.commit()
 
 
+@celery_app.task(name="app.tasks.jobs.record_fleet_snapshot")
+def record_fleet_snapshot() -> None:
+    asyncio.run(_record_fleet_snapshot())
+
+
 _FLEET_SNAPSHOT_PURGE_ACTOR = "retention policy (automatic)"
 
 
-async def purge_old_fleet_snapshots(ctx: dict[str, Any]) -> None:
+async def _purge_old_fleet_snapshots() -> None:
     """Delete `FleetSnapshot` rows older than `AppSettings.
     dashboard_trends_retention_days` — same shape as
     `purge_old_audit_log_entries` above, including being skipped entirely
     when retention is unset (`None` = keep forever)."""
-    async with AsyncSessionLocal() as session:
+    async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         retention_days = app_settings.dashboard_trends_retention_days
         if not retention_days:
@@ -583,3 +642,8 @@ async def purge_old_fleet_snapshots(ctx: dict[str, Any]) -> None:
             ),
             details={"deleted_count": deleted_count, "retention_days": retention_days},
         )
+
+
+@celery_app.task(name="app.tasks.jobs.purge_old_fleet_snapshots")
+def purge_old_fleet_snapshots() -> None:
+    asyncio.run(_purge_old_fleet_snapshots())

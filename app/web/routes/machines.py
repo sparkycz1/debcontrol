@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import re
 import uuid
 from datetime import UTC, datetime
 
+# NOT the builtin `TimeoutError` — `celery.exceptions.TimeoutError` does not
+# subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
+# would silently never match and the timeout branches below would be dead code.
+from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
@@ -41,6 +46,11 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.ssh.updates import PendingPackage
+
+# Imported as a module, not name-by-name: this file already has a route
+# function called `preview_machine_update`, which would shadow the task of
+# the same name.
+from app.tasks import jobs as tasks
 from app.web.machine_search import machine_search_clause
 from app.web.routes.audit import _csv_safe
 from app.web.templating import templates
@@ -556,7 +566,7 @@ async def bulk_check_updates(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    skipped = await trigger_check_updates(request.app.state.arq_redis, machines)
+    skipped = await trigger_check_updates(machines)
     await log_event(
         db,
         request=request,
@@ -581,7 +591,7 @@ async def bulk_trigger_updates(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    batch_id, skipped = await trigger_updates(db, request.app.state.arq_redis, machines, strategy)
+    batch_id, skipped = await trigger_updates(db, machines, strategy)
     await log_event(
         db,
         request=request,
@@ -676,7 +686,7 @@ async def bulk_power_action(
         return response
 
     machines = await _get_machines_by_ids(machine_ids, db)
-    skipped = await send_power_to_machines(request.app.state.arq_redis, machines, action)
+    skipped = await send_power_to_machines(machines, action)
     await log_event(
         db,
         request=request,
@@ -956,7 +966,7 @@ async def trust_host_key(
 
     # Now that the machine can be safely connected to, kick off an initial
     # facts gathering pass in the background — don't block the redirect on it.
-    await request.app.state.arq_redis.enqueue_job("refresh_machine_facts", str(machine.id))
+    tasks.refresh_machine_facts.delay(str(machine.id))
 
     redirect_url = f"/machines/{machine.id}"
     # The fingerprint-confirmation form only ever renders inside an htmx fragment —
@@ -975,16 +985,19 @@ async def test_connection_endpoint(
     machine = await _get_machine_or_404(machine_id, db)
     settings = get_settings()
 
-    job = await request.app.state.arq_redis.enqueue_job("test_machine_connection", str(machine.id))
+    async_result = tasks.test_machine_connection.delay(str(machine.id))
     result: dict[str, object] | None = None
     error: str | None = None
     try:
-        result = await job.result(timeout=settings.ssh_connect_timeout + 5)
-    except TimeoutError:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 5
+        )
+    except CeleryTimeoutError:
         error = "The background job did not respond in time."
     except Exception as exc:
-        # arq's `.result()` re-raises whatever exception happened inside the job —
-        # we want to show that to the user as a test failure, not crash the request.
+        # Celery's `AsyncResult.get()` re-raises whatever exception happened
+        # inside the task (propagate=True is the default) — we want to show
+        # that to the user as a test failure, not crash the request.
         error = str(exc)
 
     await log_event(
@@ -1013,13 +1026,15 @@ async def refresh_facts_endpoint(
     machine = await _get_machine_or_404(machine_id, db)
     settings = get_settings()
 
-    job = await request.app.state.arq_redis.enqueue_job("refresh_machine_facts", str(machine.id))
+    async_result = tasks.refresh_machine_facts.delay(str(machine.id))
     error: str | None = None
     try:
-        result = await job.result(timeout=settings.ssh_connect_timeout + 5)
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 5
+        )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
-    except TimeoutError:
+    except CeleryTimeoutError:
         error = "The background job did not respond in time."
     except Exception as exc:
         error = str(exc)
@@ -1063,15 +1078,15 @@ async def refresh_packages_endpoint(
     machine = await _get_machine_or_404(machine_id, db)
     settings = get_settings()
 
-    job = await request.app.state.arq_redis.enqueue_job(
-        "refresh_machine_packages", str(machine.id)
-    )
+    async_result = tasks.refresh_machine_packages.delay(str(machine.id))
     error: str | None = None
     try:
-        result = await job.result(timeout=settings.ssh_connect_timeout + 15)
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 15
+        )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
-    except TimeoutError:
+    except CeleryTimeoutError:
         error = "The background job did not respond in time."
     except Exception as exc:
         error = str(exc)
@@ -1119,13 +1134,15 @@ async def check_updates_endpoint(
     machine = await _get_machine_or_404(machine_id, db)
     settings = get_settings()
 
-    job = await request.app.state.arq_redis.enqueue_job("check_machine_updates", str(machine.id))
+    async_result = tasks.check_machine_updates.delay(str(machine.id))
     error: str | None = None
     try:
-        result = await job.result(timeout=settings.update_timeout_seconds + 5)
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.update_timeout_seconds + 5
+        )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
-    except TimeoutError:
+    except CeleryTimeoutError:
         error = "The background job did not respond in time."
     except Exception as exc:
         error = str(exc)
@@ -1184,14 +1201,14 @@ async def preview_machine_update(
         )
 
     settings = get_settings()
-    job = await request.app.state.arq_redis.enqueue_job(
-        "preview_machine_update", str(machine.id), strategy.value
-    )
+    async_result = tasks.preview_machine_update.delay(str(machine.id), strategy.value)
     error: str | None = None
     to_install_or_upgrade: list[PendingPackage] = []
     to_remove: list[PendingPackage] = []
     try:
-        result = await job.result(timeout=settings.update_timeout_seconds + 5)
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.update_timeout_seconds + 5
+        )
         if isinstance(result, dict):
             if not result.get("ok"):
                 error = str(result.get("error") or "Unknown error.")
@@ -1252,7 +1269,7 @@ async def trigger_machine_update(
     await db.commit()
     await db.refresh(run)
 
-    await request.app.state.arq_redis.enqueue_job("run_machine_update", str(run.id))
+    tasks.run_machine_update.delay(str(run.id))
 
     await log_event(
         db,
@@ -1442,9 +1459,7 @@ async def power_action(
     # Fire-and-forget, same reasoning as system updates: the connection can
     # legitimately drop once the machine actually reboots/shuts down, so
     # there's nothing meaningful to wait for here.
-    await request.app.state.arq_redis.enqueue_job(
-        "send_machine_power_command", str(machine.id), action.value
-    )
+    tasks.send_machine_power_command.delay(str(machine.id), action.value)
 
     await log_event(
         db,

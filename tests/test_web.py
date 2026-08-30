@@ -590,7 +590,7 @@ async def test_trigger_machine_update_creates_run_and_redirects(client, db_sessi
     assert run_page.status_code == 200
     assert "full-upgrade" in run_page.text
 
-    assert "run_machine_update" in [call[0] for call in app.state.arq_redis.enqueued]
+    assert "app.tasks.jobs.run_machine_update" in app.state.celery_calls.names
 
 
 async def test_trigger_group_update_batches_and_skips_unpinned(client, db_session_factory):
@@ -648,7 +648,7 @@ async def test_check_updates_endpoint_updates_machine_record(client, db_session_
         f"/machines/{machine_id}/check-updates", data={"csrf_token": csrf_token}
     )
     assert response.status_code == 200
-    assert "check_machine_updates" in [call[0] for call in app.state.arq_redis.enqueued]
+    assert "app.tasks.jobs.check_machine_updates" in app.state.celery_calls.names
 
 
 async def test_power_action_requires_matching_confirmation(client, db_session_factory):
@@ -667,7 +667,7 @@ async def test_power_action_requires_matching_confirmation(client, db_session_fa
     )
     assert wrong.status_code == 422
     assert "exactly to confirm" in wrong.text
-    assert "send_machine_power_command" not in [call[0] for call in app.state.arq_redis.enqueued]
+    assert "app.tasks.jobs.send_machine_power_command" not in app.state.celery_calls.names
 
     right = await client.post(
         f"/machines/{machine_id}/power",
@@ -675,7 +675,7 @@ async def test_power_action_requires_matching_confirmation(client, db_session_fa
     )
     assert right.status_code == 303
     assert right.headers["location"] == f"/machines/{machine_id}?power_sent=reboot"
-    assert "send_machine_power_command" in [call[0] for call in app.state.arq_redis.enqueued]
+    assert "app.tasks.jobs.send_machine_power_command" in app.state.celery_calls.names
 
 
 async def test_power_action_requires_pinned_host_key(client):
@@ -719,9 +719,9 @@ async def test_group_check_updates_and_power_endpoints(client, db_session_factor
     assert power.status_code == 303
     assert power.headers["location"] == group_url
 
-    enqueued_functions = [call[0] for call in app.state.arq_redis.enqueued]
-    assert "check_machine_updates" in enqueued_functions
-    assert "send_machine_power_command" in enqueued_functions
+    enqueued_tasks = app.state.celery_calls.names
+    assert "app.tasks.jobs.check_machine_updates" in enqueued_tasks
+    assert "app.tasks.jobs.send_machine_power_command" in enqueued_tasks
 
 
 async def test_all_machines_check_updates_and_power_endpoints(client, db_session_factory):
@@ -934,8 +934,8 @@ async def test_toggle_and_run_now_and_delete_scheduled_task(client):
     # Run now — enqueues the same job the per-minute tick would.
     run_now = await client.post(f"/scheduling/{task_id}/run-now", data={"csrf_token": csrf_token})
     assert run_now.status_code == 303
-    assert "run_scheduled_task" in [call[0] for call in app.state.arq_redis.enqueued]
-    assert (task_id,) == [call[1] for call in app.state.arq_redis.enqueued][-1]
+    assert "app.scheduling.jobs.run_scheduled_task" in app.state.celery_calls.names
+    assert (task_id,) == app.state.celery_calls[-1][1]
 
     ran_listing = await client.get(run_now.headers["location"])
     assert "Run enqueued" in ran_listing.text

@@ -113,8 +113,9 @@ class AuditChainState(Base):
     """Singleton (one row, fixed id) tracking the tip of the audit hash
     chain — `app.audit.log_event` reads and updates it under a row lock
     (`SELECT ... FOR UPDATE`) so concurrent writers from different requests
-    *and* different processes (the web app and the arq worker both write
-    audit entries) can never both link a new entry to the same previous
+    *and* different processes (the web app and every forked Celery worker
+    child both write audit entries) can never both link a new entry to the
+    same previous
     one. Kept as its own tiny table rather than "the last row of
     `audit_log_entries`" so the lock is one specific row, not a
     query-dependent one — and so it still has a stable answer immediately

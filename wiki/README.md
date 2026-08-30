@@ -1,4 +1,4 @@
-# About this folder
+# 📁 About this folder
 
 This directory holds the project documentation, written to become the
 **GitHub wiki** once this repository is pushed to GitHub. It isn't a GitHub
@@ -6,7 +6,7 @@ wiki yet — a wiki only exists once a repo is on GitHub with the feature
 enabled, and it lives in its own separate git repository
 (`<repo>.wiki.git`).
 
-## How to publish this as the actual GitHub wiki
+## 🚀 How to publish this as the actual GitHub wiki
 
 1. Push this repository to GitHub.
 2. Go to the repo's **Settings → Features** and make sure **Wikis** is
@@ -32,7 +32,7 @@ enabled, and it lives in its own separate git repository
    wiki and keep this folder in sync manually (or drop this folder from
    the main repo once the wiki is live — your call).
 
-## Pages
+## 📑 Pages
 
 - [Home](Home.md) — overview and table of contents
 - [Installation](Installation.md) — Docker quick start, with or without Caddy

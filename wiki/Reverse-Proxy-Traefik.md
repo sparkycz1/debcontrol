@@ -1,4 +1,4 @@
-# Reverse proxy: Traefik
+# 🔒 Reverse proxy: Traefik
 
 Use this if you already run Traefik on the host where debcontrol's
 `docker compose up -d --build` (the base file, without

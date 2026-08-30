@@ -106,9 +106,41 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Executes background tasks (SSH connects, facts/package refreshes, apt
+  # runs, power commands, scheduled-task fan-out). Safe to scale to several
+  # replicas — every task is idempotent enough for that, and Redis hands each
+  # message to exactly one worker.
+  #
+  # --concurrency=10 keeps the previous queue's ceiling of 10 jobs in flight.
+  # Each concurrency slot is a forked child process, which rebuilds its own DB
+  # engine after the fork — see app/tasks/celery_app.py for why that matters.
   worker:
     <<: *app-image
-    command: ["arq", "app.tasks.worker.WorkerSettings"]
+    command:
+      ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=10"]
+    volumes:
+      - ssh_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The periodic scheduler: it runs no work itself, it only publishes the
+  # beat_schedule entries (fleet sweeps, the per-minute scheduled-task tick,
+  # the daily snapshot/purge sweeps) onto the queue for `worker` to pick up.
+  #
+  # EXACTLY ONE beat process must ever run. Do not `docker compose up
+  # --scale beat=N` — every replica would publish the same schedule, so each
+  # daily purge/snapshot and every sweep would fire N times.
+  #
+  # It reads REACHABILITY_CHECK_INTERVAL_SECONDS / FACTS_REFRESH_INTERVAL_SECONDS
+  # once at startup, so restart this service after changing either.
+  beat:
+    <<: *app-image
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
     volumes:
       - ssh_data:/app/data
     depends_on:

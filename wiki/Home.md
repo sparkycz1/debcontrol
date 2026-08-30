@@ -1,4 +1,4 @@
-# debcontrol wiki
+# 📚 debcontrol wiki
 
 debcontrol is a web application for managing Debian machines over SSH —
 officially, Debian and its derivatives (e.g. Ubuntu), for as long as each
@@ -9,7 +9,7 @@ two-factor — see [Architecture](Architecture.md#authentication--rbac) for
 the design and [Installation](Installation.md) for bootstrapping the first
 admin account.
 
-## Pages
+## 📑 Pages
 
 - **[Installation](Installation.md)** — Docker quick start, running with or
   without the bundled Caddy reverse proxy, environment variables reference.
@@ -25,7 +25,15 @@ admin account.
 - **[Development](Development.md)** — running the app locally without
   Docker, tests, linting, and database migrations.
 
-## Reverse proxy guides
+> [!NOTE]
+> debcontrol runs as **three application processes**: the FastAPI **web**
+> app, a **Celery worker** that performs every SSH/background operation, and
+> a single **Celery Beat** scheduler that publishes the periodic sweeps and
+> the per-minute scheduled-task tick. Redis is both Celery's broker and its
+> result backend. See
+> [Architecture → Background tasks](Architecture.md#background-tasks-celery-and-celery-beat).
+
+## 🔒 Reverse proxy guides
 
 debcontrol itself only speaks plain HTTP, on port `8080` — it always
 expects to sit behind a TLS-terminating reverse proxy, though nothing
@@ -40,7 +48,7 @@ stops direct access unless you firewall that port off. Pick one:
 - **[Traefik](Reverse-Proxy-Traefik.md)** — if you already run Traefik
   (e.g. alongside other Docker Compose projects).
 
-## Feature overview
+## ✨ Feature overview
 
 | Tab | Status |
 |---|---|

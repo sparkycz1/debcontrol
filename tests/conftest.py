@@ -6,7 +6,8 @@ import os
 # validated right at import time, and tests don't run against real
 # infrastructure (the DB dependency is swapped for SQLite below; Redis is
 # never touched in tests via ASGITransport, since that doesn't trigger
-# FastAPI's lifespan).
+# FastAPI's lifespan, and Celery's `apply_async` is monkeypatched away by
+# the autouse `celery_calls` fixture below so no broker is contacted either).
 os.environ.setdefault("SECRET_KEY", "test-only-secret-key-not-for-real-use-000000")
 os.environ.setdefault("ENCRYPTION_KEY", "IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -19,6 +20,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from celery.app.task import Task
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -34,42 +36,74 @@ from app.main import app
 ADMIN_USERNAME = "test-admin"
 
 
-class FakeArqJob:
-    """Stand-in for `arq.jobs.Job` — enough for code that calls `.result()`."""
+_DEFAULT_TASK_RESULT: Any = {"ok": True, "output": "fake"}
 
-    def __init__(self, result: Any = None) -> None:
+
+class FakeAsyncResult:
+    """Stand-in for `celery.result.AsyncResult` — enough for the handful of
+    routes that enqueue a task and then block on its return value."""
+
+    def __init__(self, task_name: str, result: Any = None) -> None:
+        self.task_name = task_name
         self._result = result
 
-    async def result(self, timeout: float | None = None) -> Any:  # noqa: ASYNC109
-        # `timeout` has to be named exactly this — it mirrors arq's real
-        # `Job.result(timeout=...)`, which call sites pass as a keyword.
+    def get(self, timeout: float | None = None, **kwargs: Any) -> Any:
+        # Routes call this through `asyncio.to_thread(async_result.get,
+        # timeout=...)`, so it is deliberately synchronous, like the real one.
         return self._result
 
 
-class FakeArqRedis:
-    """Stand-in for the real Redis-backed arq pool.
+class RecordedCeleryCalls(list[tuple[str, tuple[Any, ...], dict[str, Any]]]):
+    """Every `(task_name, args, kwargs)` a test's requests enqueued.
 
-    Tests run via ASGITransport, which never triggers FastAPI's lifespan —
-    so `app.state.arq_redis` (normally a real connection made at startup)
-    doesn't exist at all. Routes that enqueue background jobs (SSH checks,
-    system updates, ...) would crash with an AttributeError without this.
-    It doesn't run anything — it just records what was enqueued and hands
-    back a canned "ok" result, which is enough to exercise the HTTP layer
-    (a run gets created, a redirect happens, ...) without a real worker or
-    SSH connectivity, neither of which is available in this environment.
+    No Celery broker, worker, or Redis exists in tests (they run through
+    ASGITransport, which never triggers FastAPI's lifespan either), so
+    `Task.apply_async` — what `.delay()` calls underneath — is monkeypatched
+    for the whole session to append here and hand back a `FakeAsyncResult`
+    instead of publishing a message. Nothing is executed: recording that a
+    route asked for job X with args Y, and controlling what it gets back, is
+    the entire point.
+
+    Set `.result_for[task_name]` to override what a specific task's
+    `AsyncResult.get()` returns (see tests/test_update_preview.py); anything
+    not overridden gets `{"ok": True, "output": "fake"}`.
     """
 
     def __init__(self) -> None:
-        self.enqueued: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        super().__init__()
+        self.result_for: dict[str, Any] = {}
+
+    @property
+    def names(self) -> list[str]:
+        return [name for name, _args, _kwargs in self]
+
+
+@pytest.fixture(autouse=True)
+def celery_calls(monkeypatch: pytest.MonkeyPatch) -> RecordedCeleryCalls:
+    """Autouse: every test gets a clean recorder, reachable both as this
+    fixture and as `app.state.celery_calls`."""
+    recorded = RecordedCeleryCalls()
+
+    def _fake_apply_async(self, args=None, kwargs=None, **options):
+        recorded.append((self.name, tuple(args or ()), dict(kwargs or {})))
+        result = recorded.result_for.get(self.name, _DEFAULT_TASK_RESULT)
+        return FakeAsyncResult(self.name, result)
+
+    monkeypatch.setattr(Task, "apply_async", _fake_apply_async)
+    app.state.celery_calls = recorded
+    return recorded
+
+
+class FakeRedis:
+    """Stand-in for `app.state.redis` — the plain Redis connection
+    `app.main`'s lifespan opens for the login rate limiter (and nothing
+    else). Minimal INCR/EXPIRE only, with no real TTL behaviour (counters
+    never expire within a test), which is fine since each test gets its own
+    fresh instance anyway."""
+
+    def __init__(self) -> None:
         self._counters: dict[str, int] = {}
 
-    async def enqueue_job(self, function: str, *args: Any, **kwargs: Any) -> FakeArqJob:
-        self.enqueued.append((function, args, kwargs))
-        return FakeArqJob(result={"ok": True, "output": "fake"})
-
-    # Minimal INCR/EXPIRE stand-in for app.auth.rate_limit — no real TTL
-    # behaviour (counters never expire within a test), which is fine since
-    # each test gets its own fresh instance anyway.
     async def incr(self, key: str) -> int:
         self._counters[key] = self._counters.get(key, 0) + 1
         return self._counters[key]
@@ -167,7 +201,7 @@ def _configure_app_for_tests(db_session_factory: Any) -> None:
             yield session
 
     app.dependency_overrides[get_db] = _override_get_db
-    app.state.arq_redis = FakeArqRedis()
+    app.state.redis = FakeRedis()
     # The auth middleware (app.auth.middleware) opens its own DB session
     # from `request.app.state.db_session_factory` rather than through
     # FastAPI's dependency injection — point it at the same SQLite engine
