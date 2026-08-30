@@ -115,6 +115,59 @@ async def test_failed_discovery_offers_a_retry_button(client, monkeypatch):
     assert "Retry discovery" in response.text
 
 
+async def test_installed_packages_load_lazily_in_a_modal(client, db_session_factory):
+    """The full package listing must not be embedded in the detail page's
+    initial render (hundreds of rows on a real machine made that page slow
+    and cluttered) — only the summary counts and a button that fetches the
+    listing on demand into #packages-panel."""
+    from datetime import UTC, datetime
+
+    from app.db.models.machine_package import MachinePackage
+    from app.ssh.packages import PackageSource
+
+    await client.get("/machines/new")
+    create = await client.post(
+        "/machines",
+        data={
+            "name": "pkgs1",
+            "ip_address": "10.0.0.20",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "ssh_key",
+            "csrf_token": client.cookies.get("csrftoken"),
+        },
+    )
+    assert create.status_code == 303
+    machine_url = create.headers["location"]
+    machine_id = machine_url.rsplit("/", 1)[-1]
+
+    async with db_session_factory() as db:
+        machine = await db.get(Machine, uuid.UUID(machine_id))
+        machine.packages_updated_at = datetime.now(UTC)
+        db.add(
+            MachinePackage(
+                machine_id=machine.id,
+                name="openssh-server",
+                version="1:9.6p1-3",
+                source=PackageSource.APT,
+                held=False,
+            )
+        )
+        await db.commit()
+
+    detail = await client.get(machine_url)
+    assert detail.status_code == 200
+    assert "1 package installed" in detail.text
+    assert "Show installed packages" in detail.text
+    # The row itself must not be pre-rendered on the page load.
+    assert "openssh-server" not in detail.text
+
+    panel = await client.get(f"{machine_url}/packages")
+    assert panel.status_code == 200
+    assert "openssh-server" in panel.text
+    assert 'hx-swap-oob="true"' in panel.text  # keeps the summary in sync
+
+
 async def test_edit_machine_updates_fields_and_resets_pinning_on_ip_change(
     client, db_session_factory
 ):

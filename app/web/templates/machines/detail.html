@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_packages_summary.html" import render as render_packages_summary %}
 
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
 
@@ -87,8 +88,33 @@
   </section>
 
   <section class="panel">
-    {% include "partials/machine_packages.html" %}
+    {{ render_packages_summary(machine, package_counts, held_count) }}
   </section>
+
+  {# Full package listing is fetched only when opened (hundreds of rows on a
+     typical machine — showing them inline made the page slow and cluttered).
+     A native popover, not a JS-built dialog: opens/closes with no script of
+     our own, and works fine under this app's strict CSP (no inline
+     scripts/styles). See wiki/Architecture.md. #}
+  <div id="packages-modal" popover class="modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">Installed packages — {{ machine.name }}</h2>
+        <button
+          type="button"
+          class="modal-close"
+          popovertarget="packages-modal"
+          popovertargetaction="hide"
+          aria-label="Close"
+        >
+          &times;
+        </button>
+      </div>
+      <div id="packages-panel">
+        <p class="hint">Loading…</p>
+      </div>
+    </div>
+  </div>
 
   <section class="panel">
     <h2>Test connection</h2>

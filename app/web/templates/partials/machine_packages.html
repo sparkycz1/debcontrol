@@ -1,6 +1,7 @@
-<div id="packages-panel">
-  <h2>Installed packages</h2>
+{% from "partials/_packages_summary.html" import render as render_packages_summary %}
+{{ render_packages_summary(machine, package_counts, held_count, oob=True) }}
 
+<div id="packages-panel">
   {% if error %}
     <div class="alert alert-error">
       <p>Could not refresh packages: {{ error }}</p>
@@ -14,16 +15,13 @@
       (and right after any update run on this machine).
     </p>
   {% else %}
-    <p class="hint">
-      {{ package_counts.total }} package{{ 's' if package_counts.total != 1 else '' }} installed
-      ({{ package_counts.apt }} apt, {{ package_counts.flatpak }} flatpak,
-      {{ package_counts.snap }} snap){% if held_count %}, {{ held_count }} held back{% endif %}
-      — last refreshed {{ machine.packages_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC.
-      {% if held_count %}"Held" (<code>apt-mark showhold</code>) means apt
-      won't upgrade that package even when a newer version is available.{% endif %}
-    </p>
-
-    <form method="get" action="/machines/{{ machine.id }}" class="search-form" id="package-filters">
+    <form
+      hx-get="/machines/{{ machine.id }}/packages"
+      hx-target="#packages-panel"
+      hx-swap="outerHTML"
+      class="search-form"
+      id="package-filters"
+    >
       <input type="search" name="pkg_q" value="{{ pkg_q }}" placeholder="Search packages by name...">
       <select name="pkg_source">
         <option value="" {% if not pkg_source %}selected{% endif %}>All sources</option>
@@ -37,7 +35,15 @@
       </label>
       <button type="submit" class="button">Filter</button>
       {% if pkg_q or pkg_source or held_only %}
-        <a class="button button-secondary" href="/machines/{{ machine.id }}">Clear</a>
+        <a
+          class="button button-secondary"
+          href="#"
+          hx-get="/machines/{{ machine.id }}/packages"
+          hx-target="#packages-panel"
+          hx-swap="outerHTML"
+        >
+          Clear
+        </a>
       {% endif %}
     </form>
 

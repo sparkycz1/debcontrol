@@ -695,9 +695,6 @@ async def machine_detail(
     request: Request,
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    pkg_q: str = "",
-    pkg_source: str = "",
-    held_only: bool = False,
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
@@ -708,6 +705,47 @@ async def machine_detail(
             "machine": machine,
             "csrf_token": csrf_token,
             "update_runs": await _get_recent_update_runs(machine_id, db),
+            # The package *rows* themselves are deliberately not fetched
+            # here — a machine can easily have several hundred installed
+            # packages, and rendering them inline made this page slow and
+            # cluttered. Only the cheap aggregate counts are needed for the
+            # summary line; the full listing loads lazily into a modal (see
+            # the "Show installed packages" button and
+            # GET /machines/{id}/packages below).
+            "package_counts": await _get_package_counts(machine_id, db),
+            "held_count": await _get_held_count(machine_id, db),
+            # One-time notice after a power action redirect — not persisted
+            # anywhere, just echoed back from the query string.
+            "power_sent": request.query_params.get("power_sent"),
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.get("/{machine_id}/packages")
+async def machine_packages_panel(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    pkg_q: str = "",
+    pkg_source: str = "",
+    held_only: bool = False,
+) -> Response:
+    """The modal body for "Show installed packages" on the machine detail
+    page — loaded on demand via htmx rather than embedded in that page's
+    initial render. Also serves the filter form's own requests, which target
+    just `#packages-panel` (not the whole modal) to stay open while filtering.
+    """
+    machine = await _get_machine_or_404(machine_id, db)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "partials/machine_packages.html",
+        {
+            "machine": machine,
+            "csrf_token": csrf_token,
             "packages": await _get_packages(
                 machine_id, db, pkg_q=pkg_q, pkg_source=pkg_source, held_only=held_only
             ),
@@ -716,9 +754,6 @@ async def machine_detail(
             "pkg_q": pkg_q,
             "pkg_source": pkg_source,
             "held_only": held_only,
-            # One-time notice after a power action redirect — not persisted
-            # anywhere, just echoed back from the query string.
-            "power_sent": request.query_params.get("power_sent"),
         },
     )
     if new_cookie:

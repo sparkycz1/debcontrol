@@ -43,15 +43,28 @@ _MIN_PASSWORD_LENGTH = 12
 async def _get_or_create_admin_role(db: AsyncSession) -> Role:
     result = await db.execute(select(Role).where(Role.name == _ADMIN_ROLE_NAME))
     role = result.scalar_one_or_none()
-    if role is not None:
+    if role is None:
+        role = Role(
+            name=_ADMIN_ROLE_NAME,
+            description="Full access to everything, including user and role management.",
+        )
+        role.permission_grants = [RolePermission(permission=p) for p in Permission]
+        db.add(role)
+        await db.flush()
         return role
-    role = Role(
-        name=_ADMIN_ROLE_NAME,
-        description="Full access to everything, including user and role management.",
-    )
-    role.permission_grants = [RolePermission(permission=p) for p in Permission]
-    db.add(role)
-    await db.flush()
+
+    # Top up rather than just reusing as-is: this role was created at some
+    # earlier point in time from whatever `Permission` values existed then.
+    # If the app has since gained a new permission (e.g. `action.terminal`
+    # for the SSH terminal), an "Administrator" role from before that point
+    # would otherwise silently keep missing it forever — contradicting its
+    # own "Full access to everything" description — since nothing else ever
+    # re-syncs an existing role's permissions against the current enum.
+    granted = {grant.permission for grant in role.permission_grants}
+    missing = [p for p in Permission if p not in granted]
+    if missing:
+        role.permission_grants.extend(RolePermission(permission=p) for p in missing)
+        await db.flush()
     return role
 
 
