@@ -411,39 +411,51 @@ async def _run_command_and_summarize(
 
     Unlike the fire-and-forget actions above, this one waits: the whole
     point of running an ad-hoc command is seeing what it printed. Each
-    machine gets its own Celery task and its own wait, using the same
-    enqueue-then-`asyncio.to_thread`-on-`.get()` pattern as
-    `test_connection_endpoint` in `app/web/routes/machines.py`.
+    machine gets its own Celery task, using the same enqueue-then-
+    `asyncio.to_thread`-on-`.get()` pattern as `test_connection_endpoint`
+    in `app/web/routes/machines.py` — but every machine's task is
+    dispatched *before* any of them are awaited, and all the waits run
+    concurrently via `asyncio.gather`. Dispatching one at a time and
+    waiting in between (dispatch, block, dispatch the next, block, ...)
+    would turn the `MAX_TARGET_MACHINES`-machine cap into up to 25
+    back-to-back per-task timeouts stacked serially on this one web
+    request instead of one shared wait — the whole point of a "fan out to
+    a group" tool is that it actually fans out.
     """
     settings = get_settings()
     per_task_timeout = settings.ssh_connect_timeout + 70
     errors: list[str] = []
-    sections: list[str] = []
 
-    for machine in machines:
-        async_result = tasks.run_remote_ssh_command.delay(str(machine.id), command)
+    dispatched = [
+        (machine, tasks.run_remote_ssh_command.delay(str(machine.id), command))
+        for machine in machines
+    ]
+
+    async def _await_one(machine: Any, async_result: Any) -> str:
         try:
             result = await asyncio.to_thread(async_result.get, timeout=per_task_timeout)
         except CeleryTimeoutError:
-            sections.append(f"### {machine.name}\n(the command did not finish in time)")
             errors.append(f"{machine.name}: the command did not finish in time.")
-            continue
+            return f"### {machine.name}\n(the command did not finish in time)"
         except Exception as exc:  # noqa: BLE001 - reported, not swallowed
-            sections.append(f"### {machine.name}\nfailed: {exc}")
             errors.append(f"{machine.name}: {exc}")
-            continue
+            return f"### {machine.name}\nfailed: {exc}"
 
         if isinstance(result, dict) and result.get("ok"):
-            sections.append(
+            return (
                 f"### {machine.name}\nexit status: {result.get('exit_status')}\n"
                 f"{result.get('output') or '(no output)'}"
             )
-        else:
-            reason = (
-                str(result.get("error")) if isinstance(result, dict) else "Unknown error."
-            )
-            sections.append(f"### {machine.name}\nfailed: {reason}")
-            errors.append(f"{machine.name}: {reason}")
+        reason = str(result.get("error")) if isinstance(result, dict) else "Unknown error."
+        errors.append(f"{machine.name}: {reason}")
+        return f"### {machine.name}\nfailed: {reason}"
+
+    # `errors.append` above runs from coroutines interleaved on one event
+    # loop thread, never truly in parallel with each other, so appending
+    # to a shared list from several of them here is safe without a lock.
+    sections = await asyncio.gather(
+        *(_await_one(machine, async_result) for machine, async_result in dispatched)
+    )
 
     summary_input = (
         f"Result of the confirmed command `{command}`:\n\n" + "\n\n".join(sections)

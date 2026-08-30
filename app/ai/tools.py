@@ -271,8 +271,12 @@ def available_tools(user: User) -> list[ToolDefinition]:
 
 def missing_permission(user: User, tool_name: str) -> Permission | None:
     """Permission checks #2 and #3 share this: the permission `tool_name`
-    needs and this user lacks, or `None` if they may use it. An unknown
-    tool name is treated as not permitted."""
+    needs and this user lacks, or `None` if they may use it (or if
+    `tool_name` isn't a recognized tool at all — this function only speaks
+    for tools it knows about). Callers must reject an unrecognized
+    `tool_name` themselves *before* calling this, rather than treat its
+    `None` return as "allowed" — both current callers
+    (`build_pending_action`, `execute_read_only_tool`) do exactly that."""
     spec = TOOL_SPECS.get(tool_name)
     if spec is None:
         return None
@@ -404,7 +408,17 @@ async def _groups_summary(db: AsyncSession) -> str:
 async def execute_read_only_tool(db: AsyncSession, user: User, call: ToolCall) -> str:
     """Run one read-only lookup and return its result as plain text for the
     model. Permission check #2 for the read-only half — a call for a tool
-    this user can't use returns a refusal string instead of data."""
+    this user can't use returns a refusal string instead of data.
+
+    Checks `call.name` against `TOOL_SPECS` explicitly, the same as
+    `build_pending_action` does, rather than relying on `missing_permission`
+    alone: that helper only speaks for tools it recognizes (see its
+    docstring), so an unrecognized name must be rejected here before ever
+    reaching it.
+    """
+    if call.name not in TOOL_SPECS:
+        return f"Unknown tool: {call.name}."
+
     denied = missing_permission(user, call.name)
     if denied is not None:
         return (
