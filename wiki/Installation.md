@@ -169,3 +169,30 @@ Postgres, Redis, and Caddy are pinned to exact versions in
 by hand — never silently bumps any of them. Bumping one of those versions
 is a deliberate, separate step: edit the tag, test against it, and commit
 that change on its own.
+
+### If `db` refuses to start with a "pg_ctlcluster" / "unused mount/volume" error
+
+Only affects a checkout from before the `db` volume mount was corrected —
+current `docker-compose.yml` already mounts it right. The `postgres:18`
+image expects its volume mounted at `/var/lib/postgresql` (it manages a
+major-version-specific subdirectory itself, `/var/lib/postgresql/18/docker`)
+rather than directly at `/var/lib/postgresql/data`, the older convention;
+an old checkout that initialized its `pg_data` volume the old way leaves
+real data sitting at the legacy path once you update — the image refuses
+to start rather than risk quietly initializing an empty cluster next to
+it. If that volume has nothing worth keeping (a fresh test deployment),
+the fix is a reset:
+
+```bash
+docker compose down -v   # drops pg_data (and redis_data, ssh_data) entirely
+git pull                 # picks up the corrected mount
+docker compose up -d --build
+```
+
+If it holds real data you need to keep, don't run the above — instead
+move the volume's existing contents into the layout the image now expects
+(no `pg_upgrade` needed, it's still the same 18.6): stop the stack, run a
+throwaway container with the `pg_data` volume mounted at
+`/var/lib/postgresql`, and inside it `mkdir -p 18 && mv data 18/docker`
+(adjust if you'd already customized `PGDATA`/cluster name), then bring the
+stack back up with the corrected `docker-compose.yml`.
