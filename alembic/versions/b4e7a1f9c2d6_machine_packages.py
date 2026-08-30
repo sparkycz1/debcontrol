@@ -30,8 +30,14 @@ def upgrade() -> None:
         "machines", sa.Column("packages_updated_at", sa.DateTime(timezone=True), nullable=True)
     )
 
+    # Not created explicitly here — `create_table` below creates it as part
+    # of the table DDL (via the column's own `_on_table_create` hook) with
+    # `checkfirst=False`, so an explicit `.create(checkfirst=True)` call
+    # first would just make that second, unguarded CREATE TYPE fail with
+    # "type already exists" on every real Postgres run (SQLite, used in
+    # tests, has no native enum type and silently no-ops either way, which
+    # is why this didn't surface until a real deployment hit it).
     package_source = sa.Enum("apt", "flatpak", "snap", name="package_source")
-    package_source.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "machine_packages",
