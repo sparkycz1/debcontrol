@@ -65,20 +65,45 @@ UI rather than buried in a dotfile.
 
 The logic lives in `app/ssh/client.py`:
 
-- `discover_host_key_fingerprint()` connects with a custom `SSHClient`
-  subclass whose `validate_host_public_key()` always returns `False` —
-  AsyncSSH aborts the handshake, but not before the callback captured the
-  server's key and computed its fingerprint.
+- `discover_host_key_fingerprint()` uses AsyncSSH's own
+  `get_server_host_key()` helper, which stops right after key exchange and
+  never proceeds to authentication at all — no username, no credentials,
+  nothing sent past the point of learning the key.
 - `open_connection()` refuses outright (`UnknownHostKeyError`) if
   `Machine.host_key_fingerprint` is empty — it never even attempts a
   connection.
-- Otherwise it connects with another `SSHClient` subclass whose
+- Otherwise it connects with a custom `SSHClient` subclass whose
   `validate_host_public_key()` compares the presented key's fingerprint
   against the stored one, byte for byte. A mismatch raises
   `HostKeyMismatchError`, which the UI surfaces distinctly from a generic
   connection failure.
 
+**A sharp edge worth knowing about if you ever touch this file**: that
+comparison callback only gets consulted at all if the `known_hosts=`
+option passed to `asyncssh.connect()` is anything other than the literal
+sentinel `None`. Passing `known_hosts=None` doesn't mean "no known_hosts
+file, ask my callback for every key" — it means "there are no trusted keys
+to compare against, so don't bother calling the callback either," and
+AsyncSSH accepts whatever key the server presents, silently. An earlier
+version of this file did exactly that, for both `open_connection()` and
+the (now-replaced) hand-rolled discovery client — which meant the pinned
+fingerprint was never actually checked against anything, ever, on real
+Postgres-backed deployments; `validate_host_public_key()` never ran, and a
+different key than the one pinned would have gone through as if nothing
+were wrong. `open_connection()` now passes `known_hosts=([], [], [])`
+instead — an explicit "empty sets, and don't touch any known_hosts file"
+tuple in AsyncSSH's own accepted `known_hosts` formats — which keeps an
+empty (not `None`) trusted-key set and *does* make AsyncSSH fall through
+to the callback for every key. See `app/ssh/client.py`'s module docstring
+for the full explanation, and `tests/test_ssh_client.py` for a regression
+test that opens a real local SSH server and asserts a mismatched pinned
+fingerprint is actually rejected — the earlier bug looked correct on
+inspection and passed every existing test, since nothing exercised it
+against a real AsyncSSH connection.
+
 If you're extending this code (e.g. adding a "re-discover fingerprint"
 flow, or bulk machine import), keep this property intact: nothing should
 be able to establish a real, authenticated connection to a machine without
-a fingerprint that a human explicitly confirmed through this app's UI.
+a fingerprint that a human explicitly confirmed through this app's UI —
+and if you change anything about how host keys are validated, verify it
+against a real SSH server in a test, not just by reading the code.

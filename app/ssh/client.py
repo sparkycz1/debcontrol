@@ -14,6 +14,22 @@ Security principle — no blind "trust on first use":
    the presented key against that stored fingerprint — a mismatch
    immediately aborts the connection as a possible Man-in-the-Middle
    attack; it is never silently ignored.
+
+`known_hosts=([], [], [])` below (an explicit "no trusted keys, no CA keys,
+no revoked keys, and don't touch any known_hosts file" tuple, per AsyncSSH's
+own `match_known_hosts()` docs) is NOT the same as `known_hosts=None`, and
+the difference matters a lot: passing `None` tells AsyncSSH's connection
+itself has no `_trusted_host_keys` set to compare against, which skips
+calling `SSHClient.validate_host_public_key()` entirely and accepts
+*any* presented key — silently. That would make `_PinnedSSHClient` below
+never actually get consulted, meaning `open_connection()` would accept a
+different key than the one pinned without ever raising
+`HostKeyMismatchError` — a MITM completely undetected, in direct
+contradiction to point 3 above. The empty-tuple form keeps an empty (but
+non-`None`) trusted-key set, which *does* make AsyncSSH fall through to
+the callback for every key. See `test_ssh_client.py`'s
+`test_open_connection_rejects_a_different_key_than_the_pinned_one` for the
+regression test that would catch this again.
 """
 
 from __future__ import annotations
@@ -31,18 +47,8 @@ if TYPE_CHECKING:
 
 FINGERPRINT_HASH = "sha256"
 
-
-class _DiscoverySSHClient(asyncssh.SSHClient):
-    """Learns the server's key fingerprint and always rejects — never authenticates."""
-
-    def __init__(self) -> None:
-        self.discovered_fingerprint: str | None = None
-
-    def validate_host_public_key(
-        self, host: str, addr: str, port: int, key: asyncssh.SSHKey
-    ) -> bool:
-        self.discovered_fingerprint = key.get_fingerprint(FINGERPRINT_HASH)
-        return False
+# See the module docstring for why this specific value, not `None`.
+_NO_TRUSTED_KNOWN_HOSTS: tuple[list[object], list[object], list[object]] = ([], [], [])
 
 
 class _PinnedSSHClient(asyncssh.SSHClient):
@@ -62,34 +68,33 @@ class _PinnedSSHClient(asyncssh.SSHClient):
 async def discover_host_key_fingerprint(hostname: str, port: int, timeout_seconds: int) -> str:
     """Learn the server's SHA256 host key fingerprint without ever trusting it.
 
+    Uses AsyncSSH's own `get_server_host_key()` — it stops right after key
+    exchange and never proceeds to authentication at all (no username, no
+    credentials, nothing sent past the point of learning the key), which is
+    both simpler and more reliable than emulating the same thing with a
+    custom `SSHClient` subclass returning `False` from
+    `validate_host_public_key()` (a previous version of this function did
+    exactly that with `known_hosts=None`, which — per the module
+    docstring's explanation of that flag — never actually invoked the
+    callback at all, so it silently proceeded toward real authentication
+    instead of stopping at key exchange, and never captured a fingerprint).
+
     Returns the fingerprint for human verification. Never "trusts" anything
     on its own.
     """
-    holder: dict[str, _DiscoverySSHClient] = {}
-
-    def factory() -> _DiscoverySSHClient:
-        client = _DiscoverySSHClient()
-        holder["client"] = client
-        return client
-
     try:
         async with asyncio.timeout(timeout_seconds):
-            await asyncssh.connect(
-                hostname,
-                port=port,
-                known_hosts=None,
-                client_factory=factory,
-                username="debcontrol-key-discovery",
-            )
-    except (asyncssh.Error, OSError, TimeoutError):
-        pass  # expected: the factory deliberately rejects every connection
+            key = await asyncssh.get_server_host_key(hostname, port=port)
+    except (asyncssh.Error, OSError, TimeoutError) as exc:
+        raise SSHConnectionError(
+            f"Could not determine the SSH host key fingerprint for {hostname}:{port}."
+        ) from exc
 
-    client = holder.get("client")
-    if client is None or client.discovered_fingerprint is None:
+    if key is None:
         raise SSHConnectionError(
             f"Could not determine the SSH host key fingerprint for {hostname}:{port}."
         )
-    return client.discovered_fingerprint
+    return key.get_fingerprint(FINGERPRINT_HASH)
 
 
 def _build_connect_kwargs(
@@ -103,7 +108,7 @@ def _build_connect_kwargs(
         "host": machine.ip_address,
         "port": machine.port,
         "username": machine.username,
-        "known_hosts": None,
+        "known_hosts": _NO_TRUSTED_KNOWN_HOSTS,
         "client_factory": client_factory,
         "client_keys": [],
     }
