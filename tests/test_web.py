@@ -631,7 +631,7 @@ async def test_check_updates_requires_pinned_host_key(client):
     csrf_token = client.cookies.get("csrftoken")
     machine_id = await _create_machine(client, csrf_token)
 
-    response = await client.get(f"/machines/{machine_id}")
+    response = await client.get(f"/machines/{machine_id}/updates")
     assert "Check for updates now" in response.text
     # The button itself is disabled (rendered with the `disabled` attribute)
     # rather than the endpoint refusing outright — confirm that's the case.
@@ -674,7 +674,7 @@ async def test_power_action_requires_matching_confirmation(client, db_session_fa
         data={"action": "reboot", "confirm_name": "power-me", "csrf_token": csrf_token},
     )
     assert right.status_code == 303
-    assert right.headers["location"] == f"/machines/{machine_id}?power_sent=reboot"
+    assert right.headers["location"] == f"/machines/{machine_id}/power?power_sent=reboot"
     assert "app.tasks.jobs.send_machine_power_command" in app.state.celery_calls.names
 
 
@@ -717,7 +717,7 @@ async def test_group_check_updates_and_power_endpoints(client, db_session_factor
         data={"action": "shutdown", "confirm_name": "powergroup", "csrf_token": csrf_token},
     )
     assert power.status_code == 303
-    assert power.headers["location"] == group_url
+    assert power.headers["location"] == f"{group_url}/power"
 
     enqueued_tasks = app.state.celery_calls.names
     assert "app.tasks.jobs.check_machine_updates" in enqueued_tasks

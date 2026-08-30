@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ group.name }} — debcontrol{% endblock %}
 
@@ -12,14 +13,10 @@
     </form>
   </div>
 
+  {{ render_tabnav(tabs, active_tab) }}
+
   {% if group.description %}
     <p>{{ group.description }}</p>
-  {% endif %}
-
-  {% if power_skipped %}
-    <div class="alert alert-warn">
-      <p>{{ power_skipped }} machine(s) were skipped — no confirmed host key fingerprint yet.</p>
-    </div>
   {% endif %}
 
   <section class="panel">
@@ -79,42 +76,5 @@
         <button type="submit" class="button">Add to group</button>
       </form>
     {% endif %}
-  </section>
-
-  <section class="panel">
-    <h2>Update all machines in this group</h2>
-    <p class="hint">
-      Runs update → upgrade → autoremove/autoclean on every machine in this
-      group that has a confirmed host key fingerprint — others are skipped.
-    </p>
-    <form method="post" action="/machine-groups/{{ group.id }}/updates" class="form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      {% include "partials/upgrade_strategy_fields.html" %}
-      <button type="submit" class="button">Run update on this group</button>
-    </form>
-
-    <h3>Check for updates</h3>
-    <p class="hint">
-      Dry run — refreshes each machine's package list and records how many
-      updates are available, without installing anything. Results appear
-      on each machine's page (and the table above) as each check finishes.
-    </p>
-    <form method="post" action="/machine-groups/{{ group.id }}/check-updates" class="inline-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-secondary">Check for updates on this group</button>
-    </form>
-  </section>
-
-  <section class="panel">
-    <h2>Power</h2>
-    <p class="hint">
-      Sends the command to every machine in this group with a confirmed
-      host key fingerprint — others are skipped. Requires typing the group
-      name to confirm.
-    </p>
-    <div class="page-header-actions">
-      <a class="button button-secondary" href="/machine-groups/{{ group.id }}/power/reboot">Reboot group</a>
-      <a class="button button-danger" href="/machine-groups/{{ group.id }}/power/shutdown">Shut down group</a>
-    </div>
   </section>
 {% endblock %}

@@ -1,12 +1,47 @@
 {% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Update history — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}Updates — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Update history — {{ machine.name }}</h1>
-    <a class="button button-secondary" href="/machines/{{ machine.id }}">Back to machine</a>
+    <h1>{{ machine.name }}</h1>
   </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <section class="panel">
+    <h2>System updates</h2>
+    <p class="hint">
+      Always runs <code>apt-get update</code>, then the selected upgrade
+      strategy, then <code>autoremove</code> and <code>autoclean</code>
+      (the cleanup steps run regardless of whether the upgrade step
+      succeeded) — and, if installed, <code>flatpak update</code> and
+      <code>snap refresh</code> too. Requires root for apt — either the
+      configured user is root, or has passwordless sudo for
+      <code>apt-get</code> (and, recommended, <code>flatpak</code>/
+      <code>snap</code> too). See the wiki page "Managed Machine
+      Requirements" for a sudoers example.
+    </p>
+
+    {% include "partials/update_availability.html" %}
+
+    <form method="get" action="/machines/{{ machine.id }}/updates/preview" class="form">
+      {% include "partials/upgrade_strategy_fields.html" %}
+      <button type="submit" class="button" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
+        Run update
+      </button>
+    </form>
+    <p class="hint">
+      Shows exactly what would happen — including anything <code>autoremove</code>
+      would remove — before anything actually runs.
+    </p>
+    {% if not machine.host_key_fingerprint %}
+      <p class="hint">Confirm the server's key fingerprint above first.</p>
+    {% endif %}
+  </section>
+
+  <h2>History</h2>
 
   <form method="get" class="search-form">
     <select name="status_filter">

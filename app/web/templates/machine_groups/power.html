@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}Power — {{ group.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ group.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  {% if power_skipped %}
+    <div class="alert alert-warn">
+      <p>{{ power_skipped }} machine(s) were skipped — no confirmed host key fingerprint yet.</p>
+    </div>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Power</h2>
+    <p class="hint">
+      Sends the command to every machine in this group with a confirmed
+      host key fingerprint — others are skipped. Requires typing the group
+      name to confirm.
+    </p>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machine-groups/{{ group.id }}/power/reboot">Reboot group</a>
+      <a class="button button-danger" href="/machine-groups/{{ group.id }}/power/shutdown">Shut down group</a>
+    </div>
+  </section>
+{% endblock %}

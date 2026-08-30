@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}Terminal — {{ machine.name }} — debcontrol{% endblock %}
 
@@ -7,7 +8,12 @@
 {% endblock %}
 
 {% block content %}
-  <h1>Terminal — {{ machine.name }}</h1>
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
   <p class="hint">
     Connecting as <code>{{ machine.username }}</code> ({{ machine.ip_address }}).
     This is a full interactive shell — whatever that account (and its sudo

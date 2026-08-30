@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}Power — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  {% if power_sent %}
+    <div class="alert alert-warn">
+      <p>
+        {{ 'Reboot' if power_sent == 'reboot' else 'Shutdown' }} command sent — the
+        status on the Overview tab will reflect it once it takes effect.
+      </p>
+    </div>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Power</h2>
+    <p class="hint">
+      Requires root/sudo, same as system updates. Both ask you to type the
+      machine's name to confirm before doing anything.
+    </p>
+    <div class="page-header-actions">
+      <a class="button button-secondary{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
+         href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/reboot{% else %}#{% endif %}">
+        Reboot
+      </a>
+      <a class="button button-danger{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
+         href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/shutdown{% else %}#{% endif %}">
+        Shut down
+      </a>
+    </div>
+    {% if not machine.host_key_fingerprint %}
+      <p class="hint">Confirm the server's key fingerprint on the Overview tab first.</p>
+    {% endif %}
+  </section>
+{% endblock %}

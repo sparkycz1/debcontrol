@@ -1,0 +1,12 @@
+{# Sub-navigation for a machine's or group's own pages (Overview / Updates /
+   Terminal / Power / Settings) — same "row of links, current one
+   highlighted" idea as the site header's own <nav>, just scoped to one
+   machine or group. `tabs` is a list of (key, label, url); `active` is the
+   current page's key. #}
+{% macro render(tabs, active) %}
+  <nav class="tab-nav">
+    {% for key, label, url in tabs %}
+      <a href="{{ url }}" {% if key == active %}class="active" aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+{% endmacro %}

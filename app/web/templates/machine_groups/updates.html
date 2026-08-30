@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}Updates — {{ group.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ group.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <section class="panel">
+    <h2>Update all machines in this group</h2>
+    <p class="hint">
+      Runs update → upgrade → autoremove/autoclean on every machine in this
+      group that has a confirmed host key fingerprint — others are skipped.
+    </p>
+    <form method="post" action="/machine-groups/{{ group.id }}/updates" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% include "partials/upgrade_strategy_fields.html" %}
+      <button type="submit" class="button">Run update on this group</button>
+    </form>
+
+    <h3>Check for updates</h3>
+    <p class="hint">
+      Dry run — refreshes each machine's package list and records how many
+      updates are available, without installing anything. Results appear on
+      each machine's own page as each check finishes.
+    </p>
+    <form method="post" action="/machine-groups/{{ group.id }}/check-updates" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">Check for updates on this group</button>
+    </form>
+  </section>
+{% endblock %}

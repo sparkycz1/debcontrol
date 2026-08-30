@@ -1,9 +1,14 @@
 {% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Edit {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}Settings — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Edit {{ machine.name }}</h1>
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
 
   {% if errors %}
     <div class="alert alert-error">
@@ -72,4 +77,14 @@
     <button type="submit" class="button">Save</button>
     <a class="button button-secondary" href="/machines/{{ machine.id }}">Cancel</a>
   </form>
+
+  <section class="panel">
+    <h2>Delete this machine</h2>
+    <p class="hint">This can't be undone.</p>
+    <form method="post" action="/machines/{{ machine.id }}/delete"
+          class="inline-form" data-confirm="Delete this machine?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger">Delete machine</button>
+    </form>
+  </section>
 {% endblock %}

@@ -50,6 +50,20 @@ _power = Depends(require_permission(Permission.ACTION_POWER))
 ALL_MACHINES_CONFIRM_PHRASE = "ALL MACHINES"
 
 
+def _group_tabs(group: MachineGroup) -> list[tuple[str, str, str]]:
+    """The (key, label, url) tabs shown on every one of this group's own
+    pages — mirrors `app.web.routes.machines._machine_tabs`. No "Settings"
+    tab: unlike a machine, a group has nothing else to configure yet beyond
+    its name/description (set once at creation) and deletion, which stays a
+    single button on the Overview tab."""
+    base = f"/machine-groups/{group.id}"
+    return [
+        ("overview", "Overview", base),
+        ("updates", "Updates", f"{base}/updates"),
+        ("power", "Power", f"{base}/power"),
+    ]
+
+
 async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession, user: User) -> MachineGroup:
     """The group, or a 404 — including when it exists but is outside `user`'s
     machine-group scope. 404 rather than 403, same convention as
@@ -398,11 +412,12 @@ async def group_detail(
         "machine_groups/detail.html",
         {
             "group": group,
+            "tabs": _group_tabs(group),
+            "active_tab": "overview",
             "machines": machines,
             "available_machines": available_machines,
             "q": q,
             "csrf_token": csrf_token,
-            "power_skipped": request.query_params.get("power_skipped"),
         },
     )
     if new_cookie:
@@ -476,6 +491,50 @@ async def remove_machine_from_group(
     )
 
 
+@router.get("/{group_id}/updates")
+async def group_updates_tab(
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    group = await _get_group_or_404(group_id, db, current_user)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machine_groups/updates.html",
+        {
+            "group": group,
+            "tabs": _group_tabs(group),
+            "active_tab": "updates",
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.get("/{group_id}/power")
+async def group_power_tab(
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    group = await _get_group_or_404(group_id, db, current_user)
+    return templates.TemplateResponse(
+        request,
+        "machine_groups/power.html",
+        {
+            "group": group,
+            "tabs": _group_tabs(group),
+            "active_tab": "power",
+            "power_skipped": request.query_params.get("power_skipped"),
+        },
+    )
+
+
 @router.post("/{group_id}/updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_group_update(
     request: Request,
@@ -524,7 +583,7 @@ async def trigger_group_check_updates(
         details={"skipped": skipped},
     )
     return RedirectResponse(
-        url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
+        url=f"/machine-groups/{group_id}/updates", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -546,7 +605,7 @@ async def group_power_confirm(
             "target_label": f'every machine in "{group.name}"',
             "confirm_phrase": group.name,
             "action_url": f"/machine-groups/{group_id}/power",
-            "cancel_url": f"/machine-groups/{group_id}",
+            "cancel_url": f"/machine-groups/{group_id}/power",
             "error": None,
             "csrf_token": csrf_token,
         },
@@ -587,7 +646,7 @@ async def group_power_action(
                 "target_label": f'every machine in "{group.name}"',
                 "confirm_phrase": group.name,
                 "action_url": f"/machine-groups/{group_id}/power",
-                "cancel_url": f"/machine-groups/{group_id}",
+                "cancel_url": f"/machine-groups/{group_id}/power",
                 "error": f'That doesn\'t match — type "{group.name}" exactly to confirm.',
                 "csrf_token": csrf_token,
             },
@@ -608,7 +667,7 @@ async def group_power_action(
         target_label=group.name,
         details={"skipped": skipped},
     )
-    redirect_url = f"/machine-groups/{group_id}"
+    redirect_url = f"/machine-groups/{group_id}/power"
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)

@@ -55,6 +55,14 @@
 - `.alert`'s icon is CSS `::before` content positioned *absolutely* inside
   reserved left padding, not a flex sibling, so an alert holding several
   `<p>` tags (one per validation error) still stacks them.
+- A machine's or group's own pages (Overview, Updates, Terminal, Power,
+  Settings) share a sub-navigation row (`partials/_tabnav.html`) below the
+  page header — plain links to real pages, no JS tabs. Each route builds its
+  own `tabs`/`active_tab` context (`_machine_tabs`/`_group_tabs` in
+  `app/web/routes/machines.py`/`machine_groups.py`) so the set and order is
+  identical everywhere; a tab is left out entirely rather than shown
+  disabled when the current user lacks the permission for it (e.g. Terminal
+  without `action.terminal`).
 
 ### Background tasks: Celery and Celery Beat
 

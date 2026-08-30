@@ -1,29 +1,15 @@
 {% extends "base.html" %}
 {% from "partials/_packages_summary.html" import render as render_packages_summary %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <h1>{{ machine.name }}</h1>
-    <div class="page-header-actions">
-      <a class="button button-secondary" href="/machines/{{ machine.id }}/edit">Edit</a>
-      <form method="post" action="/machines/{{ machine.id }}/delete"
-            class="inline-form" data-confirm="Delete this machine?">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="button button-danger">Delete</button>
-      </form>
-    </div>
   </div>
 
-  {% if power_sent %}
-    <div class="alert alert-warn">
-      <p>
-        {{ 'Reboot' if power_sent == 'reboot' else 'Shutdown' }} command sent — the
-        status below will reflect it once it takes effect.
-      </p>
-    </div>
-  {% endif %}
+  {{ render_tabnav(tabs, active_tab) }}
 
   <dl class="detail-list">
     <dt>IP address</dt><dd>{{ machine.ip_address }}</dd>
@@ -132,108 +118,5 @@
       <p class="hint">Confirm the server's key fingerprint above first.</p>
     {% endif %}
     <div id="test-result"></div>
-  </section>
-
-  {% if request.state.user.has_permission('action.terminal') %}
-    <section class="panel">
-      <h2>Terminal</h2>
-      <p class="hint">
-        A full interactive shell on this machine — whatever the configured
-        account (and its sudo rights, if any) can do, this can do. Sessions
-        end automatically after a few hours; closing the browser tab ends
-        one immediately.
-      </p>
-      {% if machine.host_key_fingerprint %}
-        <a class="button" href="/machines/{{ machine.id }}/terminal">Open terminal</a>
-      {% else %}
-        <a class="button button-disabled" href="#">Open terminal</a>
-        <p class="hint">Confirm the server's key fingerprint above first.</p>
-      {% endif %}
-    </section>
-  {% endif %}
-
-  <section class="panel">
-    <h2>System updates</h2>
-    <p class="hint">
-      Always runs <code>apt-get update</code>, then the selected upgrade
-      strategy, then <code>autoremove</code> and <code>autoclean</code>
-      (the cleanup steps run regardless of whether the upgrade step
-      succeeded) — and, if installed, <code>flatpak update</code> and
-      <code>snap refresh</code> too. Requires root for apt — either the
-      configured user is root, or has passwordless sudo for
-      <code>apt-get</code> (and, recommended, <code>flatpak</code>/
-      <code>snap</code> too). See the wiki page "Managed Machine
-      Requirements" for a sudoers example.
-    </p>
-
-    {% include "partials/update_availability.html" %}
-
-    <form method="get" action="/machines/{{ machine.id }}/updates/preview" class="form">
-      {% include "partials/upgrade_strategy_fields.html" %}
-      <button type="submit" class="button" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
-        Run update
-      </button>
-    </form>
-    <p class="hint">
-      Shows exactly what would happen — including anything <code>autoremove</code>
-      would remove — before anything actually runs.
-    </p>
-    {% if not machine.host_key_fingerprint %}
-      <p class="hint">Confirm the server's key fingerprint above first.</p>
-    {% endif %}
-
-    {% if update_runs %}
-      <h3>Recent runs</h3>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Started</th>
-            <th>Strategy</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for run in update_runs %}
-            <tr>
-              <td>{{ run.created_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
-              <td>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</td>
-              <td>
-                {% if run.status.value in ('pending', 'running') %}
-                  <span class="badge badge-warn">{{ run.status.value }}</span>
-                {% elif run.status.value == 'succeeded' %}
-                  <span class="badge badge-ok">succeeded</span>
-                {% else %}
-                  <span class="badge badge-error">failed</span>
-                {% endif %}
-              </td>
-              <td><a href="/machines/{{ machine.id }}/updates/{{ run.id }}">Details</a></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <p><a href="/machines/{{ machine.id }}/updates">View full history</a></p>
-    {% endif %}
-  </section>
-
-  <section class="panel">
-    <h2>Power</h2>
-    <p class="hint">
-      Requires root/sudo, same as System updates above. Both ask you to
-      type the machine's name to confirm before doing anything.
-    </p>
-    <div class="page-header-actions">
-      <a class="button button-secondary{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
-         href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/reboot{% else %}#{% endif %}">
-        Reboot
-      </a>
-      <a class="button button-danger{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
-         href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/shutdown{% else %}#{% endif %}">
-        Shut down
-      </a>
-    </div>
-    {% if not machine.host_key_fingerprint %}
-      <p class="hint">Confirm the server's key fingerprint above first.</p>
-    {% endif %}
   </section>
 {% endblock %}

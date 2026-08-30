@@ -79,6 +79,24 @@ _terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
 
 
+def _machine_tabs(machine: Machine, user: User) -> list[tuple[str, str, str]]:
+    """The (key, label, url) tabs shown on every one of this machine's own
+    pages — same set and order everywhere, so `partials/_tabnav.html` always
+    highlights the right one. Terminal is left out entirely for a user
+    without `action.terminal`, same as it was hidden inline before this page
+    had tabs at all."""
+    base = f"/machines/{machine.id}"
+    tabs = [
+        ("overview", "Overview", base),
+        ("updates", "Updates", f"{base}/updates"),
+    ]
+    if user.has_permission(Permission.ACTION_TERMINAL):
+        tabs.append(("terminal", "Terminal", f"{base}/terminal"))
+    tabs.append(("power", "Power", f"{base}/power"))
+    tabs.append(("settings", "Settings", f"{base}/edit"))
+    return tabs
+
+
 async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession, user: User) -> Machine:
     """The machine, or a 404 — including when it exists but is outside
     `user`'s machine-group scope (`app.services.access_scope`). 404, never
@@ -777,7 +795,8 @@ async def machine_detail(
         {
             "machine": machine,
             "csrf_token": csrf_token,
-            "update_runs": await _get_recent_update_runs(machine_id, db),
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "overview",
             # The package *rows* themselves are deliberately not fetched
             # here — a machine can easily have several hundred installed
             # packages, and rendering them inline made this page slow and
@@ -787,9 +806,6 @@ async def machine_detail(
             # GET /machines/{id}/packages below).
             "package_counts": await _get_package_counts(machine_id, db),
             "held_count": await _get_held_count(machine_id, db),
-            # One-time notice after a power action redirect — not persisted
-            # anywhere, just echoed back from the query string.
-            "power_sent": request.query_params.get("power_sent"),
         },
     )
     if new_cookie:
@@ -847,6 +863,8 @@ async def edit_machine_form(
         "machines/edit.html",
         {
             "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "settings",
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db, current_user),
             "errors": [],
@@ -906,6 +924,8 @@ async def update_machine(
             "machines/edit.html",
             {
                 "machine": machine,
+                "tabs": _machine_tabs(machine, current_user),
+                "active_tab": "settings",
                 "auth_methods": list(AuthMethod),
                 "groups": await _get_groups(db, current_user),
                 "errors": [str(exc)],
@@ -1399,11 +1419,15 @@ async def machine_update_history(
     has_older = len(runs) > _UPDATE_HISTORY_PAGE_SIZE
     runs = runs[:_UPDATE_HISTORY_PAGE_SIZE]
 
-    return templates.TemplateResponse(
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
         request,
         "machines/update_history.html",
         {
             "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "updates",
+            "csrf_token": csrf_token,
             "runs": runs,
             "statuses": list(UpdateRunStatus),
             "status_filter": status_filter,
@@ -1411,6 +1435,9 @@ async def machine_update_history(
             "has_older": has_older,
         },
     )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
 
 
 @router.get("/{machine_id}/updates/{run_id}")
@@ -1470,7 +1497,40 @@ async def terminal_page(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Confirm the host key fingerprint before opening a terminal.",
         )
-    return templates.TemplateResponse(request, "machines/terminal.html", {"machine": machine})
+    return templates.TemplateResponse(
+        request,
+        "machines/terminal.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "terminal",
+        },
+    )
+
+
+@router.get("/{machine_id}/power")
+async def power_tab(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The "Power" tab landing page — description plus the two confirm-flow
+    links; the actual double-confirmation happens on the dedicated pages
+    below (`GET/POST /{machine_id}/power/{action}`)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    return templates.TemplateResponse(
+        request,
+        "machines/power.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "power",
+            # One-time notice after a power action redirect — not persisted
+            # anywhere, just echoed back from the query string.
+            "power_sent": request.query_params.get("power_sent"),
+        },
+    )
 
 
 @router.get("/{machine_id}/power/{action}")
@@ -1567,7 +1627,7 @@ async def power_action(
     )
 
     return RedirectResponse(
-        url=f"/machines/{machine.id}?power_sent={action.value}",
+        url=f"/machines/{machine.id}/power?power_sent={action.value}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
