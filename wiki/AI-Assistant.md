@@ -1,7 +1,7 @@
 # 🤖 AI Assistant
 
 The **AI** tab is a chat page where you describe what you want in plain
-language — *"nainstaluj apache2 na skupině web-servers"*, *"how many
+language — *"install apache2 on group web-servers"*, *"how many
 machines still need updates?"*, *"reboot db1"* — and a third-party language
 model helps you get it done against your managed fleet.
 
