@@ -37,7 +37,7 @@
       connect as. This is a manual step for now.
     </p>
     <p>Fingerprint: <code>{{ identity.fingerprint }}</code></p>
-    <textarea readonly rows="3">{{ identity.public_key }}</textarea>
+    <pre><code>{{ identity.public_key }}</code></pre>
 
     {% if identity.pending_public_key %}
     <p class="hint">
@@ -49,15 +49,17 @@
       new line yet will become unreachable.
     </p>
     <p>Pending fingerprint: <code>{{ identity.pending_fingerprint }}</code></p>
-    <textarea readonly rows="3">{{ identity.pending_public_key }}</textarea>
-    <form method="post" action="/settings/ssh-key/activate" class="inline-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button">Activate new key</button>
-    </form>
-    <form method="post" action="/settings/ssh-key/discard" class="inline-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-secondary">Discard pending key</button>
-    </form>
+    <pre><code>{{ identity.pending_public_key }}</code></pre>
+    <div class="page-header-actions">
+      <form method="post" action="/settings/ssh-key/activate" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button">Activate new key</button>
+      </form>
+      <form method="post" action="/settings/ssh-key/discard" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-secondary">Discard pending key</button>
+      </form>
+    </div>
     {% else %}
     <form method="post" action="/settings/ssh-key/generate" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -70,7 +72,9 @@
     <h2>Background checks</h2>
     <dl class="detail-list">
       <dt>Reachability check</dt>
-      <dd>every minute (fixed, TCP connect to the SSH port)</dd>
+      <dd>every {{ settings.reachability_check_interval_seconds }} seconds
+        (<code>REACHABILITY_CHECK_INTERVAL_SECONDS</code> in <code>.env</code>) —
+        TCP connect to the SSH port, no authentication</dd>
       <dt>Facts refresh</dt>
       <dd>every {{ settings.facts_refresh_interval_seconds }} seconds
         (<code>FACTS_REFRESH_INTERVAL_SECONDS</code> in <code>.env</code>)</dd>

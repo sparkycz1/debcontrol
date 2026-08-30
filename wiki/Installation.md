@@ -43,6 +43,7 @@ intentional.
 | `SSH_DATA_DIR` | app | Reserved data directory inside the container. |
 | `SSH_CONNECT_TIMEOUT` | app | SSH connection timeout, in seconds. |
 | `FACTS_REFRESH_INTERVAL_SECONDS` | worker | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 3600. |
+| `REACHABILITY_CHECK_INTERVAL_SECONDS` | worker | How often (seconds) the online/offline status badge's TCP-only reachability sweep runs per machine. Default 60. |
 | `UPDATE_TIMEOUT_SECONDS` | worker | Max time (seconds) for one machine's full update/upgrade/autoremove/autoclean run. Default 1800. |
 | `INFORM_TOKEN` | app | Bearer token required by `POST /api/inform` (self-registration). |
 | `LOG_LEVEL` | app | Python logging level. |

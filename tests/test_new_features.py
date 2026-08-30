@@ -178,6 +178,17 @@ async def test_settings_shows_app_version(client):
     assert APP_VERSION in response.text
 
 
+async def test_settings_shows_configurable_reachability_check_interval(client):
+    from app.core.config import get_settings
+
+    response = await client.get("/settings")
+    assert response.status_code == 200
+    assert (
+        f"every {get_settings().reachability_check_interval_seconds} seconds" in response.text
+    )
+    assert "REACHABILITY_CHECK_INTERVAL_SECONDS" in response.text
+
+
 async def test_update_syslog_settings_persists_and_validates(client):
     await client.get("/settings")
     csrf_token = client.cookies.get("csrftoken")

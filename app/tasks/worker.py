@@ -48,6 +48,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     # after startup rather than waiting a full FACTS_REFRESH_INTERVAL_SECONDS;
     # each then keeps rescheduling itself.
     redis = ctx["redis"]
+    await redis.enqueue_job("ping_all_machines", _defer_by=timedelta(seconds=5))
     await redis.enqueue_job("refresh_all_machine_facts", _defer_by=timedelta(seconds=10))
     await redis.enqueue_job("refresh_all_machine_packages", _defer_by=timedelta(seconds=12))
     await redis.enqueue_job("check_all_machine_updates", _defer_by=timedelta(seconds=15))
@@ -64,6 +65,7 @@ def _redis_settings() -> RedisSettings:
 class WorkerSettings:
     functions = [
         test_machine_connection,
+        ping_all_machines,
         refresh_machine_facts,
         refresh_all_machine_facts,
         refresh_machine_packages,
@@ -82,10 +84,10 @@ class WorkerSettings:
         func(preview_machine_update, timeout=get_settings().update_timeout_seconds),
     ]
     cron_jobs = [
-        cron(ping_all_machines, second=0, unique=True),
         # Cron expressions are minute-grained anyway, so a fixed per-minute
         # tick (rather than a configurable self-rescheduling interval, like
-        # facts/update-check sweeps use) is the natural fit here.
+        # ping_all_machines/facts/update-check sweeps use) is the natural
+        # fit here.
         cron(run_due_scheduled_tasks, second=0, unique=True),
         # Once a day is plenty for a retention sweep — only *how many days
         # to keep* is configurable (Settings), not this cadence.

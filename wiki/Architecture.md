@@ -1061,8 +1061,11 @@ decisions shaped it:
 - **A fixed one-minute tick, not a configurable self-rescheduling interval.**
   Unlike the facts/update-check sweeps (`FACTS_REFRESH_INTERVAL_SECONDS`),
   cron expressions are minute-grained by construction, so
-  `run_due_scheduled_tasks` runs on a plain fixed `cron(second=0)` — the
-  same shape as `ping_all_machines` — rather than needing a new setting.
+  `run_due_scheduled_tasks` runs on a plain fixed `cron(second=0)` rather
+  than needing a new setting. (`ping_all_machines`'s reachability sweep
+  used to be exactly this shape too, but is now a configurable
+  self-rescheduling interval — see `REACHABILITY_CHECK_INTERVAL_SECONDS` —
+  since sub-minute/multi-minute cadences are both reasonable there.)
   Each `ScheduledTask` keeps a denormalized `next_run_at` (computed via
   [`croniter`](https://github.com/kiorky/croniter) on create/edit/enable and
   advanced immediately when the tick fires it), so the tick itself is one

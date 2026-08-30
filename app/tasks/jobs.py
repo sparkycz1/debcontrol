@@ -62,29 +62,36 @@ async def test_machine_connection(ctx: dict[str, Any], machine_id: str) -> dict[
 
 
 async def ping_all_machines(ctx: dict[str, Any]) -> None:
-    """Cheap per-minute reachability sweep (TCP connect only, no auth) for the
-    status badge shown in the UI. Runs on a fixed one-minute cron schedule —
-    see `app.tasks.worker.WorkerSettings.cron_jobs`."""
+    """Cheap reachability sweep (TCP connect only, no auth) for the status
+    badge shown in the UI. Self-reschedules using
+    `REACHABILITY_CHECK_INTERVAL_SECONDS` rather than a fixed cron schedule,
+    since that interval is meant to be configurable (Settings page) — same
+    pattern as `refresh_all_machine_facts` below."""
+    settings = get_settings()
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Machine).where(Machine.is_active))
         machines = list(result.scalars().all())
-        if not machines:
-            return
+        if machines:
+            semaphore = asyncio.Semaphore(_REACHABILITY_CONCURRENCY)
 
-        semaphore = asyncio.Semaphore(_REACHABILITY_CONCURRENCY)
+            async def _check(machine: Machine) -> tuple[Machine, bool]:
+                async with semaphore:
+                    reachable = await check_reachable(machine.ip_address, machine.port)
+                    return machine, reachable
 
-        async def _check(machine: Machine) -> tuple[Machine, bool]:
-            async with semaphore:
-                reachable = await check_reachable(machine.ip_address, machine.port)
-                return machine, reachable
+            results = await asyncio.gather(*(_check(m) for m in machines))
 
-        results = await asyncio.gather(*(_check(m) for m in machines))
+            now = datetime.now(UTC)
+            for machine, reachable in results:
+                machine.is_reachable = reachable
+                machine.last_ping_at = now
+            await session.commit()
 
-        now = datetime.now(UTC)
-        for machine, reachable in results:
-            machine.is_reachable = reachable
-            machine.last_ping_at = now
-        await session.commit()
+    await ctx["redis"].enqueue_job(
+        "ping_all_machines",
+        _defer_by=timedelta(seconds=settings.reachability_check_interval_seconds),
+    )
 
 
 async def refresh_machine_facts(ctx: dict[str, Any], machine_id: str) -> dict[str, Any]:
