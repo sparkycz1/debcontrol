@@ -158,6 +158,44 @@ async def open_connection(
         ) from exc
 
 
+async def open_shell_session(
+    machine: Machine,
+    secret: str | None,
+    timeout_seconds: int,
+    *,
+    term_type: str,
+    term_size: tuple[int, int],
+) -> tuple[asyncssh.SSHClientConnection, asyncssh.SSHClientProcess[bytes]]:
+    """Open a connection (same strict pinned host-key verification as
+    `open_connection` — this deliberately calls it rather than re-building
+    connect kwargs itself) and start an interactive PTY shell on it, for the
+    web terminal feature (`app/web/routes/terminal_ws.py`).
+
+    Returns the raw connection and process; the caller owns both and is
+    responsible for closing them (`conn.close()` / `process.terminate()`)
+    when the terminal session ends, including on every error path — there's
+    no context-manager wrapper here because the caller needs to hold both
+    open for the lifetime of a WebSocket, not just one request/response.
+
+    `encoding=None` (the default here) makes `process.stdout`/`.stdin` deal
+    in raw `bytes` rather than decoded `str` — the right choice for a
+    terminal, which relays arbitrary byte streams (including partial UTF-8
+    sequences and ANSI escape codes) rather than parsed text.
+    """
+    conn = await open_connection(machine, secret, timeout_seconds)
+    try:
+        process = await conn.create_process(
+            term_type=term_type,
+            term_size=term_size,
+            encoding=None,
+            stderr=asyncssh.STDOUT,
+        )
+    except (asyncssh.Error, OSError) as exc:
+        conn.close()
+        raise SSHConnectionError(f"Failed to start an interactive shell: {exc}") from exc
+    return conn, process
+
+
 async def test_connection(machine: Machine, secret: str | None, timeout_seconds: int) -> str:
     """Check machine reachability and return the output of a simple diagnostic command."""
     async with await open_connection(machine, secret, timeout_seconds) as conn:

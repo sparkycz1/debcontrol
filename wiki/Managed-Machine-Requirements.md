@@ -195,6 +195,16 @@ fresh, specific answer to "what's pending on this machine right now,"
 either click the button or create a schedule for it; whatever ran last is
 what's shown.
 
+## Interactive terminal — nothing extra needed
+
+**Machines → a machine → Terminal** (if your role has been granted the
+`action.terminal` permission) needs nothing beyond ordinary SSH access —
+the same account and key/password auth already set up above, and a shell
+configured for that account (true of any normal Debian account by
+default). It doesn't need root, sudo, or any extra package: whatever the
+connecting account can normally do at an interactive SSH prompt is exactly
+what the browser terminal can do too, since it's the same shell.
+
 ## Self-registration (optional, for future automation)
 
 A machine can announce itself to debcontrol during first boot /

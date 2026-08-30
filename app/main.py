@@ -34,6 +34,7 @@ from app.web.routes import (
     machines,
     roles,
     scheduling,
+    terminal_ws,
     users,
 )
 from app.web.routes import settings as settings_routes
@@ -48,12 +49,20 @@ register_builtin_actions()
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "web" / "static"
 
-# Strict CSP: no inline scripts/styles, no external CDN (htmx is vendored locally).
+# Strict CSP: no inline scripts/styles, no external CDN (htmx and xterm.js
+# are both vendored locally). `connect-src 'self'` is spelled out explicitly
+# (rather than relying on `default-src 'self'`'s fallback) for the
+# interactive terminal feature (`app/web/routes/terminal_ws.py`): a
+# WebSocket connection is governed by `connect-src`, and per the CSP spec
+# 'self' already matches the same-origin `ws`/`wss` upgrade of this page's
+# own `http`/`https` origin — no broader scheme/host needed, so this adds
+# nothing beyond what a same-origin WebSocket already requires.
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self'; "
     "img-src 'self' data:; "
+    "connect-src 'self'; "
     "object-src 'none'; "
     "base-uri 'none'; "
     "frame-ancestors 'none'; "
@@ -146,6 +155,10 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(roles.router)
     app.include_router(settings_routes.router)
+    # No HTTP dependency here — WebSocket connections never go through
+    # `app.auth.middleware`, so this router does its own auth entirely
+    # inside the handler. See terminal_ws.py's module docstring.
+    app.include_router(terminal_ws.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:
