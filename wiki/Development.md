@@ -197,6 +197,7 @@ module docstring for the full parameter list (`outcome`, `target_type`/
   CRUD routers should look like `app/web/routes/machine_groups.py`, new
   SQLAlchemy models should look like `app/db/models/machine_group.py`.
 - Keep `pyproject.toml`'s dependency lower bounds close to what's
-  actually installed (`uv.lock` pins the exact versions) — see the root
-  `README.md`'s "Dependency version notes" for the one deliberate
-  exception (`redis-py` pinned below Redis server's own version line).
+  actually installed (`uv.lock` pins the exact versions) — see
+  [Architecture](Architecture.md#dependency-version-notes) for the one
+  deliberate exception (`redis-py` pinned below Redis server's own
+  version line).

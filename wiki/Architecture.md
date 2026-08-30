@@ -12,10 +12,29 @@
 | Cache / task queue | Redis 8.10.1 | queue via [`arq`](https://github.com/python-arq/arq); image pinned to an exact patch |
 | SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification |
 | Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
-| Auth | `argon2-cffi`, `ldap3`, `Authlib`, `pyotp` + `qrcode` | local password hashing, LDAP bind, OIDC, TOTP — see "Authentication & RBAC" below |
+| Auth: passwords | [`argon2-cffi`](https://github.com/hynek/argon2-cffi) | argon2id hashing for local accounts |
+| Auth: LDAP | [`ldap3`](https://github.com/cannatag/ldap3) | pure Python, no system libldap headers needed |
+| Auth: OIDC | [`Authlib`](https://authlib.org/) | discovery, authorization-code flow, ID token validation |
+| Auth: TOTP | [`pyotp`](https://github.com/pyauth/pyotp) + [`qrcode`](https://github.com/lincolnloop/python-qrcode) | RFC 6238 two-factor codes; QR rendered as inline SVG |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
+
+### Dependency version notes
+
+- **`redis-py` (the client library) is intentionally pinned to the `<6`
+  line**, even though the Redis *server* above runs `redis:8.10`. The
+  client library version and the server version are independent — `arq`
+  only supports `redis-py <6` as of August 2026 (see its `pyproject.toml`),
+  but redis-py 5.x talks to a Redis 8.x server just fine. If/when `arq`
+  raises that ceiling, `redis[hiredis]` in this repo's `pyproject.toml` can
+  be unpinned.
+- Versions in `pyproject.toml` are lower bounds (`>=`); exact, reproducible
+  versions for installation come from the committed `uv.lock`.
+- Docker images for stateful services (`postgres:18.6`, `redis:8.10.1`,
+  and `caddy:2.11.4` if used) are pinned to an exact patch version rather
+  than a floating tag — see [Installation](Installation.md#updating) for
+  why and how that's bumped deliberately.
 
 ### Why server-rendered + htmx, not a SPA
 
@@ -57,8 +76,8 @@ its normal block layout regardless of how many paragraphs it has.
 naturally into an already-async FastAPI app without pulling in Celery's
 much larger dependency and configuration surface. The trade-off: `arq` is
 currently in "maintenance only" mode upstream, and it pins `redis-py <6`
-(see [Installation](Installation.md) / the root `README.md` for the
-version-pinning implications). The **Scheduling** feature (cron-triggered
+(see "Dependency version notes" above for the version-pinning
+implications). The **Scheduling** feature (cron-triggered
 actions) is built entirely on top of `arq`'s existing `cron()` jobs plus
 [`croniter`](https://github.com/kiorky/croniter) for expression parsing —
 see "Scheduling: reusing actions, not reimplementing them" below — rather
@@ -474,8 +493,8 @@ background-check intervals, and audit log retention.
 See "Authentication & RBAC" above for logins, sessions, and permissions —
 everything below covers the rest of the app's security posture (SSH
 handling, secrets at rest, audit integrity, HTTP hardening), most of which
-predates auth and is unrelated to it. See the root `README.md`'s "What's
-deliberately empty" section for what's still missing.
+predates auth and is unrelated to it. See "Deliberately out of scope"
+below for what's still missing.
 
 ### SSH host key pinning
 
@@ -1156,6 +1175,18 @@ Content-Security-Policy (no inline scripts/styles, no external origins),
 bundled Caddy config (see [Reverse Proxy: Caddy](Reverse-Proxy-Caddy.md))
 additionally sets its own HSTS header and strips the `Server` header at
 the edge.
+
+### Configuration is validated at startup
+
+`Settings` (`app/core/config.py`, pydantic-settings) refuses to construct —
+so the app refuses to start — if `SECRET_KEY`, `ENCRYPTION_KEY`, or
+`INFORM_TOKEN` still look like a placeholder copied straight from
+`.env.example` (starts with `change-me`, or is under 16 characters). This
+is checked once, at process startup, not discovered later at first use —
+a misconfigured deployment fails loudly and immediately instead of running
+with a guessable secret. `/docs` and `/openapi.json` are similarly
+disabled outright when `APP_ENV=production` (`app/main.py`), rather than
+just left unlinked.
 
 ### Container hardening
 
