@@ -27,6 +27,9 @@
       {% if current_user.has_permission('scheduling.view') %}
         <a href="/scheduling" {% if current_path.startswith('/scheduling') %}class="active" aria-current="page"{% endif %}>Scheduling</a>
       {% endif %}
+      {% if current_user.has_permission('ai.access') %}
+        <a href="/ai" {% if current_path.startswith('/ai') %}class="active" aria-current="page"{% endif %}>AI</a>
+      {% endif %}
       {% if current_user.has_permission('audit.view') %}
         <a href="/audit" {% if current_path.startswith('/audit') %}class="active" aria-current="page"{% endif %}>Audit</a>
       {% endif %}

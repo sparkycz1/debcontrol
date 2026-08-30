@@ -184,6 +184,105 @@
   </section>
 
   <section class="panel">
+    <h2>AI assistant</h2>
+    <p class="hint">
+      Configure the providers behind the <a href="/ai">AI</a> page. Enabling a
+      provider isn't the same as trusting its whole catalog: fetch its models,
+      then tick exactly which ones may be picked for a conversation. Everything
+      the assistant can actually do against a machine is still gated by the
+      requesting user's own role permissions, and every action it proposes must
+      be confirmed by a human before it runs.
+    </p>
+
+    {% for config in ai_configs %}
+      <h3>{{ config.kind.value }}</h3>
+      <form method="post" action="/settings/ai/provider" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="kind" value="{{ config.kind.value }}">
+
+        <label>
+          <input type="checkbox" name="enabled" {{ 'checked' if config.enabled else '' }}>
+          Enabled
+        </label>
+
+        <label for="api_key_{{ config.kind.value }}">API key</label>
+        <input type="password" id="api_key_{{ config.kind.value }}" name="api_key"
+               autocomplete="new-password"
+               placeholder="{{ 'unchanged' if config.api_key_encrypted else '' }}">
+        <p class="hint">Leave blank to keep the current value unchanged.</p>
+
+        {% if config.kind.value == openai_compatible_kind %}
+          <label for="base_url_{{ config.kind.value }}">Base URL</label>
+          <input type="text" id="base_url_{{ config.kind.value }}" name="base_url"
+                 placeholder="https://litellm.example.com/v1"
+                 value="{{ config.base_url or '' }}">
+          <p class="hint">
+            Required when this provider is enabled. Must expose the OpenAI
+            <code>/models</code> and <code>/chat/completions</code> endpoints.
+          </p>
+        {% endif %}
+
+        <button type="submit" class="button">Save</button>
+      </form>
+
+      <form method="post" action="/settings/ai/fetch-models" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="kind" value="{{ config.kind.value }}">
+        <button type="submit" class="button button-secondary">Fetch models now</button>
+      </form>
+      {% if config.models_fetched_at %}
+        <p class="hint">Last fetched {{ config.models_fetched_at.strftime('%Y-%m-%d %H:%M') }}.</p>
+      {% endif %}
+
+      {% if config.models %}
+        <form method="post" action="/settings/ai/models" class="form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="kind" value="{{ config.kind.value }}">
+          <div class="permission-grid">
+            {% for model in config.models %}
+              <label>
+                <input type="checkbox" name="enabled_models" value="{{ model.model_id }}"
+                       {{ 'checked' if model.enabled else '' }}>
+                {{ model.model_id }}
+              </label>
+            {% endfor %}
+          </div>
+          <button type="submit" class="button">Save model selection</button>
+        </form>
+      {% endif %}
+    {% endfor %}
+
+    <h3>Token limits</h3>
+    <p class="hint">
+      Global ceilings on total tokens (input + output, all providers together)
+      spent by the AI assistant in a <strong>rolling</strong> window — the last
+      24 hours, 7 days, and 30 days respectively, not calendar days/weeks/months.
+      A limit that is already reached blocks the next chat turn before any
+      provider call is made. Leave empty for no limit.
+    </p>
+    <form method="post" action="/settings/ai-limits" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <label for="ai_daily_token_limit">Tokens per rolling 24 hours</label>
+      <input type="number" id="ai_daily_token_limit" name="ai_daily_token_limit" min="0" step="1"
+             placeholder="unlimited"
+             value="{{ app_settings.ai_daily_token_limit if app_settings.ai_daily_token_limit is not none else '' }}">
+
+      <label for="ai_weekly_token_limit">Tokens per rolling 7 days</label>
+      <input type="number" id="ai_weekly_token_limit" name="ai_weekly_token_limit" min="0" step="1"
+             placeholder="unlimited"
+             value="{{ app_settings.ai_weekly_token_limit if app_settings.ai_weekly_token_limit is not none else '' }}">
+
+      <label for="ai_monthly_token_limit">Tokens per rolling 30 days</label>
+      <input type="number" id="ai_monthly_token_limit" name="ai_monthly_token_limit" min="0" step="1"
+             placeholder="unlimited"
+             value="{{ app_settings.ai_monthly_token_limit if app_settings.ai_monthly_token_limit is not none else '' }}">
+
+      <button type="submit" class="button">Save</button>
+    </form>
+  </section>
+
+  <section class="panel">
     <h2>LDAP login</h2>
     <p class="hint">
       When enabled, a user set to login method "ldap" (see <a href="/users">Users</a>)

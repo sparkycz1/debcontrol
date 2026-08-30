@@ -79,6 +79,21 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # --- AI assistant token limits (app.ai.usage) ---
+    #
+    # Global (fleet-wide, not per-user) ceilings on total tokens — input +
+    # output, summed across every provider and model — spent by the AI
+    # assistant in a rolling window. Same shape and spirit as the two
+    # retention settings above: NULL means "no limit", which is the default.
+    #
+    # "Day"/"week"/"month" here are rolling windows (the last 24 hours, 7
+    # days, 30 days), NOT calendar-aligned buckets — see
+    # `app.ai.usage.check_within_limits` and the wiki page for why that's the
+    # deliberate choice.
+    ai_daily_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_weekly_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_monthly_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # --- LDAP login (app.auth.ldap) ---
     ldap_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ldap_server_uri: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.3.0"
+version = "0.4.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -113,7 +113,12 @@ ignore_missing_imports = true
 # `@celery_app.task(...)` counts as an "untyped decorator" under strict mode.
 # The decorated wrappers here are one-liners whose *bodies* are still fully
 # checked; only the decorator itself is opaque.
-module = ["app.tasks.celery_app", "app.tasks.jobs", "app.scheduling.jobs"]
+module = [
+    "app.tasks.celery_app",
+    "app.tasks.jobs",
+    "app.tasks.ai_jobs",
+    "app.scheduling.jobs",
+]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]

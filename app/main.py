@@ -21,6 +21,7 @@ from app.core.version import APP_VERSION
 from app.db.session import AsyncSessionLocal
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.web.routes import (
+    ai,
     api_docs,
     api_v1,
     api_v1_audit,
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(machine_groups.router)
     app.include_router(scheduling.router)
     app.include_router(audit.router)
+    app.include_router(ai.router)
     app.include_router(inform.router)
     app.include_router(api_v1.router)
     app.include_router(api_v1_scheduling.router)

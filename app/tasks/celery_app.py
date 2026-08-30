@@ -75,8 +75,8 @@ celery_app = Celery(
     "debcontrol",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    # The two modules holding @celery_app.task functions. Listed rather than
-    # `autodiscover_tasks()`d — there are exactly two, and naming them means
+    # The modules holding @celery_app.task functions. Listed rather than
+    # `autodiscover_tasks()`d — there are only a few, and naming them means
     # a broken one fails loudly at worker startup instead of quietly
     # registering nothing.
     #
@@ -86,7 +86,7 @@ celery_app = Celery(
     # imports back into them, so importing them here at module-definition
     # time is a circular import. Celery imports these itself, once, when a
     # worker or beat process boots — after this module is fully loaded.
-    include=["app.tasks.jobs", "app.scheduling.jobs"],
+    include=["app.tasks.jobs", "app.tasks.ai_jobs", "app.scheduling.jobs"],
 )
 
 celery_app.conf.update(

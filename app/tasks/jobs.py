@@ -44,6 +44,7 @@ from app.services.fleet_stats import compute_fleet_stats
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
+from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
@@ -60,6 +61,10 @@ _REACHABILITY_CONCURRENCY = 20
 # Keep stored update output from growing unreasonably large for a very
 # chatty apt run — keep the tail, since that's where errors/summaries land.
 _MAX_STORED_OUTPUT_CHARS = 200_000
+
+# How long a one-shot `run_remote_ssh_command` may run for, on top of the
+# connect timeout.
+_SSH_COMMAND_EXTRA_SECONDS = 60
 
 
 async def _test_machine_connection(machine_id: str) -> dict[str, Any]:
@@ -86,6 +91,62 @@ async def _test_machine_connection(machine_id: str) -> dict[str, Any]:
 @celery_app.task(name="app.tasks.jobs.test_machine_connection")
 def test_machine_connection(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_test_machine_connection(machine_id))
+
+
+async def _run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
+    """Run one arbitrary command on one machine and return its exit status
+    and output — the execution half of the AI assistant's
+    `run_ssh_command` tool (`app.ai.tools`).
+
+    **This task performs no authorization of its own, and must never be
+    enqueued from anywhere that hasn't done it.** Its only call site is the
+    confirm route in `app.web.routes.ai`, which re-checks
+    `Permission.ACTION_TERMINAL` on the confirming user immediately before
+    enqueueing, after that user has seen the literal command string. That is
+    the same trust boundary the interactive terminal has: reaching this
+    point means a human with terminal rights asked for this exact command.
+    """
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            result = await run_command(
+                machine,
+                secret,
+                command,
+                settings.ssh_connect_timeout,
+                settings.ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("run_remote_ssh_command failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {
+            "ok": True,
+            "machine": machine.name,
+            "exit_status": result.exit_status,
+            "output": result.output,
+        }
+
+
+@celery_app.task(
+    name="app.tasks.jobs.run_remote_ssh_command",
+    # Deliberately far shorter than the apt tasks' `UPDATE_TIMEOUT_SECONDS`:
+    # an ad-hoc command isn't expected to run for half an hour, and a
+    # runaway one shouldn't tie up a worker child as if it were a
+    # dist-upgrade. Long enough to connect plus a minute of work.
+    time_limit=get_settings().ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS + 10,
+)
+def run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
+    return asyncio.run(_run_remote_ssh_command(machine_id, command))
 
 
 async def _ping_all_machines() -> None:

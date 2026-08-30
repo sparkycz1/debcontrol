@@ -49,6 +49,17 @@ class Permission(enum.StrEnum):
     # MACHINE_MANAGE. See app/web/routes/terminal_ws.py and
     # wiki/Architecture.md's "Interactive SSH terminal" section.
     ACTION_TERMINAL = "action.terminal"
+    # The AI assistant page (`/ai`, app/web/routes/ai.py). This gates
+    # *reaching the feature at all* and nothing else — it grants no new
+    # capability against any machine on its own. Every tool the assistant
+    # can invoke is separately gated by the very same permission a human
+    # clicking the equivalent button would need: `machine.view` /
+    # `group.view` for the two read-only lookups, `action.updates` for
+    # update runs and update checks, `action.power` for reboot/shutdown,
+    # `action.terminal` for an arbitrary SSH command. A role granted only
+    # AI_ACCESS can chat, and can do nothing else. See
+    # wiki/AI-Assistant.md's permission model section.
+    AI_ACCESS = "ai.access"
     SCHEDULING_VIEW = "scheduling.view"
     SCHEDULING_MANAGE = "scheduling.manage"
     AUDIT_VIEW = "audit.view"
