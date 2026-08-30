@@ -345,10 +345,13 @@ async def confirm_action(
         )
         return await _render_conversation(request, db, conversation, [str(entry["reason"])])
 
-    machines = await load_machines(db, [str(m) for m in entry.get("machine_ids") or []])
+    machines = await load_machines(db, user, [str(m) for m in entry.get("machine_ids") or []])
     if not machines:
         entry["status"] = PendingActionStatus.DENIED.value
-        entry["reason"] = "None of the target machines still exist."
+        # Also covers "no longer visible to this account": `load_machines`
+        # re-filters by machine-group scope, so a proposal written before the
+        # account was restricted resolves to nothing here.
+        entry["reason"] = "None of the target machines are still available to this account."
         _store_actions(message, actions, action_index, entry)
         await db.commit()
         return await _render_conversation(request, db, conversation, [str(entry["reason"])])

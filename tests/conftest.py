@@ -18,7 +18,8 @@ os.environ.setdefault("POSTGRES_PASSWORD", "test-only-not-for-real-use")
 os.environ.setdefault("REDIS_PASSWORD", "test-only-not-for-real-use")
 os.environ.setdefault("INFORM_TOKEN", "test-only-inform-token-not-for-real-use-000000")
 
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import Awaitable, Callable, Iterable
 from collections.abc import Set as AbstractSet
 from typing import Any
 
@@ -34,6 +35,7 @@ from app.auth.sessions import SESSION_COOKIE_NAME, create_session
 from app.db.base import Base
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.models.user import AuthProvider, User
+from app.db.models.user_machine_group_access import UserMachineGroupAccess
 from app.db.session import get_db
 from app.main import app
 
@@ -138,11 +140,17 @@ async def _create_user_with_permissions(
     username: str,
     permissions: set[Permission],
     auth_provider: AuthProvider = AuthProvider.LOCAL,
+    group_ids: Iterable[uuid.UUID] | None = None,
     **user_kwargs: Any,
 ) -> tuple[User, str]:
     """Creates a fresh role (granting exactly `permissions`) and a user with
     it, plus a real login session — returns (user, raw session token) so a
     test can put the token on whichever `AsyncClient` needs to act as them.
+
+    `group_ids` restricts the account to those machine groups
+    (`UserMachineGroupAccess` — see `app.services.access_scope`). `None` or
+    an empty iterable leaves it unrestricted, which is what the *account*
+    itself means by "no rows", not a special case here.
     """
     async with db_session_factory() as db:
         role = Role(name=f"role-for-{username}")
@@ -159,6 +167,9 @@ async def _create_user_with_permissions(
         )
         db.add(user)
         await db.flush()
+
+        for group_id in group_ids or ():
+            db.add(UserMachineGroupAccess(user_id=user.id, group_id=group_id))
 
         _session, raw_token = await create_session(
             db, user, ip_address="testclient", user_agent="pytest"
@@ -253,17 +264,26 @@ async def anonymous_client(db_session_factory):
 def login_as(db_session_factory: Any) -> Callable[..., Awaitable[User]]:
     """`await login_as(some_client, permissions={Permission.MACHINE_VIEW})`
     — creates a role+user with exactly those permissions and points
-    `some_client`'s session cookie at them, replacing whatever it had."""
+    `some_client`'s session cookie at them, replacing whatever it had.
+
+    Pass `group_ids={...}` to also restrict the account to those machine
+    groups (`app.services.access_scope`); omit it for the unrestricted
+    default every account has."""
 
     async def _login_as(
         ac: AsyncClient,
         *,
         permissions: AbstractSet[Permission] = frozenset(),
         username: str = "restricted-user",
+        group_ids: Iterable[uuid.UUID] | None = None,
         **user_kwargs: Any,
     ) -> User:
         user, raw_token = await _create_user_with_permissions(
-            db_session_factory, username=username, permissions=set(permissions), **user_kwargs
+            db_session_factory,
+            username=username,
+            permissions=set(permissions),
+            group_ids=group_ids,
+            **user_kwargs,
         )
         ac.cookies.set(SESSION_COOKIE_NAME, raw_token)
         return user

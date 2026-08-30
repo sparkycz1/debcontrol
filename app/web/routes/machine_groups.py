@@ -6,21 +6,29 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_current_user, require_permission
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.role import Permission
+from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
+from app.services.access_scope import (
+    can_see_machine,
+    count_visible_machines,
+    groups_visible_to,
+    is_restricted,
+    machines_visible_to,
+)
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -42,11 +50,13 @@ _power = Depends(require_permission(Permission.ACTION_POWER))
 ALL_MACHINES_CONFIRM_PHRASE = "ALL MACHINES"
 
 
-async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGroup:
+async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession, user: User) -> MachineGroup:
+    """The group, or a 404 — including when it exists but is outside `user`'s
+    machine-group scope. 404 rather than 403, same convention as
+    `app/web/routes/machines.py`'s `_get_machine_or_404`."""
+    query = await groups_visible_to(db, user)
     result = await db.execute(
-        select(MachineGroup)
-        .options(selectinload(MachineGroup.machines))
-        .where(MachineGroup.id == group_id)
+        query.options(selectinload(MachineGroup.machines)).where(MachineGroup.id == group_id)
     )
     group = result.scalar_one_or_none()
     if group is None:
@@ -54,11 +64,32 @@ async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> MachineGro
     return group
 
 
+async def _all_visible_machines(db: AsyncSession, user: User) -> list[Machine]:
+    """Every machine `user` can see — what the "All machines" virtual group
+    means for this account.
+
+    For an unrestricted account that is literally the whole fleet, exactly as
+    before. For a restricted one it is their groups' machines and nothing
+    else: acting on "all machines" must never reach past the boundary, and
+    the page would be lying if it counted machines the account can't open.
+    (Scheduling is the one place where "All machines" is refused outright
+    instead of narrowed — a *stored* schedule outlives the scope that
+    created it. See `app/web/routes/scheduling.py`.)"""
+    query = await machines_visible_to(db, user)
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
 @router.get("")
 async def list_groups(
-    request: Request, db: AsyncSession = Depends(get_db), q: str = ""
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    q: str = "",
 ) -> Response:
-    query = select(MachineGroup).options(selectinload(MachineGroup.machines))
+    query = (await groups_visible_to(db, current_user)).options(
+        selectinload(MachineGroup.machines)
+    )
     if q.strip():
         needle = f"%{q.strip()}%"
         query = query.where(
@@ -66,7 +97,7 @@ async def list_groups(
         )
     result = await db.execute(query.order_by(MachineGroup.name))
     groups = result.scalars().all()
-    all_machines_count = await db.scalar(select(func.count()).select_from(Machine))
+    all_machines_count = await count_visible_machines(db, current_user)
     return templates.TemplateResponse(
         request,
         "machine_groups/list.html",
@@ -89,9 +120,21 @@ async def new_group_form(request: Request) -> Response:
 async def create_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     name: str = Form(...),
     description: str = Form(""),
 ) -> Response:
+    # A restricted account creating a group would create something it can't
+    # then see (a new group is in nobody's grant set) — refuse rather than
+    # hand back a group that vanishes on the next request.
+    if await is_restricted(db, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Your account is restricted to specific machine groups and can't "
+                "create new ones."
+            ),
+        )
     try:
         payload = MachineGroupCreate(name=name, description=description or None)
     except ValueError as exc:
@@ -162,7 +205,10 @@ async def create_group(
 
 @router.get("/all")
 async def all_machines_group(
-    request: Request, db: AsyncSession = Depends(get_db), q: str = ""
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    q: str = "",
 ) -> Response:
     """The "All machines" virtual group — every machine, always, automatically.
 
@@ -174,7 +220,7 @@ async def all_machines_group(
     Registered before `/{group_id}` — `uuid.UUID` there won't match the
     literal "all" anyway, but route order is what actually decides it.
     """
-    query = select(Machine).options(selectinload(Machine.group))
+    query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
     result = await db.execute(query.order_by(Machine.name))
@@ -200,10 +246,10 @@ async def all_machines_group(
 async def trigger_all_machines_update(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     strategy: UpgradeStrategy = Form(...),
 ) -> Response:
-    result = await db.execute(select(Machine))
-    machines = list(result.scalars().all())
+    machines = await _all_visible_machines(db, current_user)
 
     batch_id, skipped = await trigger_updates(db, machines, strategy)
 
@@ -224,10 +270,11 @@ async def trigger_all_machines_update(
 
 @router.post("/all/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_all_check_updates(
-    request: Request, db: AsyncSession = Depends(get_db)
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    result = await db.execute(select(Machine))
-    skipped = await trigger_check_updates(list(result.scalars().all()))
+    skipped = await trigger_check_updates(await _all_visible_machines(db, current_user))
     await log_event(
         db,
         request=request,
@@ -264,6 +311,7 @@ async def all_power_confirm(request: Request, action: PowerAction) -> Response:
 async def all_power_action(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     action: PowerAction = Form(...),
     confirm_name: str = Form(...),
 ) -> Response:
@@ -298,8 +346,7 @@ async def all_power_action(
             set_csrf_cookie(response, new_cookie)
         return response
 
-    result = await db.execute(select(Machine))
-    machines = list(result.scalars().all())
+    machines = await _all_visible_machines(db, current_user)
     skipped = await send_power_to_machines(machines, action)
     await log_event(
         db,
@@ -317,9 +364,13 @@ async def all_power_action(
 
 @router.get("/{group_id}")
 async def group_detail(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db), q: str = ""
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    q: str = "",
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
 
     members_query = (
         select(Machine).options(selectinload(Machine.group)).where(Machine.group_id == group_id)
@@ -329,9 +380,13 @@ async def group_detail(
     result = await db.execute(members_query.order_by(Machine.name))
     machines = result.scalars().all()
 
+    # "Machines you could add to this group" — scoped, so a restricted
+    # account can only move machines it can already see. Ungrouped machines
+    # are invisible to a restricted account, so for one this list is just
+    # the members of its *other* granted groups.
+    available_query = await machines_visible_to(db, current_user)
     result = await db.execute(
-        select(Machine)
-        .options(selectinload(Machine.group))
+        available_query.options(selectinload(Machine.group))
         .where(or_(Machine.group_id.is_(None), Machine.group_id != group_id))
         .order_by(Machine.name)
     )
@@ -360,11 +415,15 @@ async def add_machine_to_group(
     request: Request,
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     machine_id: uuid.UUID = Form(...),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
     machine = await db.get(Machine, machine_id)
-    if machine is None:
+    # Not just "does it exist" — a machine outside this account's scope is
+    # reported as missing, so membership editing can't be used to discover
+    # (or quietly reassign) one.
+    if machine is None or not await can_see_machine(db, current_user, machine):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
 
     machine.group_id = group.id
@@ -388,10 +447,19 @@ async def add_machine_to_group(
     "/{group_id}/machines/{machine_id}/remove", dependencies=[_manage, Depends(verify_csrf)]
 )
 async def remove_machine_from_group(
-    request: Request, group_id: uuid.UUID, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    group_id: uuid.UUID,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
+    await _get_group_or_404(group_id, db, current_user)
     machine = await db.get(Machine, machine_id)
-    if machine is not None and machine.group_id == group_id:
+    if (
+        machine is not None
+        and machine.group_id == group_id
+        and await can_see_machine(db, current_user, machine)
+    ):
         machine.group_id = None
         await db.commit()
         await log_event(
@@ -413,9 +481,10 @@ async def trigger_group_update(
     request: Request,
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     strategy: UpgradeStrategy = Form(...),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
     batch_id, skipped = await trigger_updates(db, group.machines, strategy)
 
     await log_event(
@@ -437,9 +506,12 @@ async def trigger_group_update(
 
 @router.post("/{group_id}/check-updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_group_check_updates(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
     skipped = await trigger_check_updates(group.machines)
     await log_event(
         db,
@@ -458,9 +530,13 @@ async def trigger_group_check_updates(
 
 @router.get("/{group_id}/power/{action}")
 async def group_power_confirm(
-    request: Request, group_id: uuid.UUID, action: PowerAction, db: AsyncSession = Depends(get_db)
+    request: Request,
+    group_id: uuid.UUID,
+    action: PowerAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -485,10 +561,11 @@ async def group_power_action(
     request: Request,
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     action: PowerAction = Form(...),
     confirm_name: str = Form(...),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
 
     if confirm_name.strip() != group.name:
         await log_event(
@@ -537,17 +614,37 @@ async def group_power_action(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.get("/batches/{batch_id}")
-async def update_batch_detail(
-    request: Request, batch_id: uuid.UUID, db: AsyncSession = Depends(get_db), skipped: int = 0
-) -> Response:
+async def _visible_batch_runs(
+    batch_id: uuid.UUID, db: AsyncSession, user: User
+) -> list[MachineUpdateRun]:
+    """One batch's update runs, restricted to machines `user` can see.
+
+    A batch is an ad-hoc set of machines, so it can straddle the boundary
+    (an unrestricted admin triggering "All machines" produces one batch
+    covering everything). Showing a restricted account only its own rows
+    keeps the page useful without leaking the rest."""
+    visible_ids = (await machines_visible_to(db, user)).with_only_columns(Machine.id)
     result = await db.execute(
         select(MachineUpdateRun)
         .options(selectinload(MachineUpdateRun.machine))
-        .where(MachineUpdateRun.batch_id == batch_id)
+        .where(
+            MachineUpdateRun.batch_id == batch_id,
+            MachineUpdateRun.machine_id.in_(visible_ids),
+        )
         .order_by(MachineUpdateRun.created_at)
     )
-    runs = list(result.scalars().all())
+    return list(result.scalars().all())
+
+
+@router.get("/batches/{batch_id}")
+async def update_batch_detail(
+    request: Request,
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    skipped: int = 0,
+) -> Response:
+    runs = await _visible_batch_runs(batch_id, db, current_user)
     if not runs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
 
@@ -561,15 +658,12 @@ async def update_batch_detail(
 
 @router.get("/batches/{batch_id}/status")
 async def update_batch_status(
-    request: Request, batch_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    result = await db.execute(
-        select(MachineUpdateRun)
-        .options(selectinload(MachineUpdateRun.machine))
-        .where(MachineUpdateRun.batch_id == batch_id)
-        .order_by(MachineUpdateRun.created_at)
-    )
-    runs = list(result.scalars().all())
+    runs = await _visible_batch_runs(batch_id, db, current_user)
     has_pending = any(r.status in (UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING) for r in runs)
     return templates.TemplateResponse(
         request,
@@ -580,9 +674,12 @@ async def update_batch_status(
 
 @router.post("/{group_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
 async def delete_group(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    group_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    group = await _get_group_or_404(group_id, db)
+    group = await _get_group_or_404(group_id, db, current_user)
     group_name = group.name
     for machine in group.machines:
         machine.group_id = None
