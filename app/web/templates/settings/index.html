@@ -231,7 +231,7 @@
         <button type="submit" class="button button-secondary">Fetch models now</button>
       </form>
       {% if config.models_fetched_at %}
-        <p class="hint">Last fetched {{ config.models_fetched_at.strftime('%Y-%m-%d %H:%M') }}.</p>
+        <p class="hint">Last fetched {{ config.models_fetched_at | local_time('%Y-%m-%d %H:%M %Z') }}.</p>
       {% endif %}
 
       {% if config.models %}

@@ -6,7 +6,7 @@
   <h1>Edit {{ task.name }}</h1>
   {% if task.last_run_summary %}
     <p class="hint">
-      Last run: {{ task.last_run_at.strftime('%Y-%m-%d %H:%M UTC') if task.last_run_at else '—' }}
+      Last run: {{ task.last_run_at | local_time('%Y-%m-%d %H:%M %Z') }}
       — {{ task.last_run_summary }}
     </p>
   {% endif %}

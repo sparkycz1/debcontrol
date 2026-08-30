@@ -21,10 +21,10 @@
   </p>
 
   {% if run.started_at %}
-    <p class="hint">Started: {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
+    <p class="hint">Started: {{ run.started_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</p>
   {% endif %}
   {% if run.finished_at %}
-    <p class="hint">Finished: {{ run.finished_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
+    <p class="hint">Finished: {{ run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</p>
   {% endif %}
 
   {% if run.error %}

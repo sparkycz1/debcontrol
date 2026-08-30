@@ -18,7 +18,7 @@
       {{ package_counts.total }} package{{ 's' if package_counts.total != 1 else '' }} installed
       ({{ package_counts.apt }} apt, {{ package_counts.flatpak }} flatpak,
       {{ package_counts.snap }} snap){% if held_count %}, {{ held_count }} held back{% endif %}
-      — last refreshed {{ machine.packages_updated_at.strftime('%Y-%m-%d %H:%M') }} UTC.
+      — last refreshed {{ machine.packages_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
     </p>
   {% endif %}
   <button

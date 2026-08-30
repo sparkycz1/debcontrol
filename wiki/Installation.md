@@ -11,8 +11,42 @@ optional Caddy reverse proxy.
 - A domain name pointing at this host, **only if** you want to use the
   bundled Caddy for automatic HTTPS. Not needed if you already have a
   reverse proxy, or you're just trying this out over plain HTTP locally.
+- Python 3 on the host, **only for the automated setup below** (stdlib
+  only — nothing else to install first).
 
-## ⚙️ 1. Configure
+## 🚀 Option A — automated setup (recommended)
+
+```bash
+git clone https://github.com/sparkycz1/debcontrol.git
+cd debcontrol
+python scripts/setup.py
+```
+
+One interactive wizard does everything: copies `.env.example` to `.env`
+and fills in every secret with a freshly generated random value
+(`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
+`INFORM_TOKEN`), then asks:
+
+1. **Timezone** (IANA name, e.g. `Europe/Prague`) — used both for every
+   container's own clock and for how the app displays timestamps in the
+   UI. Defaults to UTC.
+2. **Whether to use the bundled Caddy** reverse proxy for automatic HTTPS
+   — if yes, the domain name and an email address for Let's Encrypt.
+3. **The facts-refresh and reachability-check intervals**, in seconds
+   (defaults 3600 and 60).
+4. **The Administrator account's password** — leave it empty and one is
+   generated and printed once at the end.
+5. **The host port** to publish the app on (default 8080).
+
+It then writes `.env`, runs `docker compose up -d --build` (adding
+`docker-compose.caddy.yml` too if Caddy was chosen), waits for the app to
+report healthy, and creates the `admin` account with the password from
+step 4. The final output prints the URL, username, and password (if one
+was generated) — save that password now, it's shown once.
+
+Re-running it on an existing `.env` asks before overwriting it.
+
+## 🔧 Option B — manual setup
 
 ```bash
 cp .env.example .env
@@ -25,9 +59,18 @@ builds its Postgres/Redis connection URLs from these values itself. Set
 `DATABASE_URL`/`REDIS_URL` directly instead only if you need a URL these
 parts can't express (a different host/port, a managed database).
 
+Also set `TZ` (IANA name, e.g. `Europe/Prague` — defaults to UTC) and, if
+you want the bundled Caddy reverse proxy, `DOMAIN` and `ACME_EMAIL`.
+`FACTS_REFRESH_INTERVAL_SECONDS`, `REACHABILITY_CHECK_INTERVAL_SECONDS`,
+and `APP_PORT` all have working defaults and only need changing if you
+want something other than 3600s/60s/8080.
+
 The app validates configuration at startup and **refuses to start** if any
-secret still looks like a placeholder from `.env.example` — that's
-intentional.
+secret still looks like a placeholder from `.env.example`.
+
+Then start the stack and create the first admin account yourself — see
+"2. Run" and "3. Create the first administrator" below — instead of
+running `scripts/setup.py`.
 
 ### 🗂️ Environment variables
 
@@ -47,7 +90,8 @@ intentional.
 | `UPDATE_TIMEOUT_SECONDS` | worker | Max time (seconds) for one machine's full update/upgrade/autoremove/autoclean run. Default 1800. |
 | `INFORM_TOKEN` | app | Bearer token required by `POST /api/inform` (self-registration). |
 | `LOG_LEVEL` | app | Python logging level. |
-| `TZ` | db, redis, app, worker, beat, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container. Affects log timestamps and local-time display only — data is always stored as UTC, and Scheduling's cron expressions are always interpreted as UTC regardless of this. Defaults to UTC if unset. |
+| `TZ` | db, redis, app, worker, beat, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container's own clock, **and used by the app to display every timestamp in the UI** (audit log, "last refreshed"/"last run" times, etc.) in that timezone instead of UTC. Data is always stored as UTC regardless of this, and Scheduling's cron expressions are always interpreted as UTC regardless of this too. Defaults to UTC if unset. |
+| `APP_PORT` | web | Host port the app is published on. Default 8080. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
@@ -59,22 +103,22 @@ environment variables — see
 [Architecture](Architecture.md#audit-log-retention-the-first-setting-editable-through-the-ui)
 and [Architecture](Architecture.md#authentication--rbac).
 
-## ▶️ 2. Run
+## ▶️ 2. Run (manual setup only — Option A's script already does this)
 
-### Option A — behind your own reverse proxy (or no proxy, local testing)
+### Without Caddy — behind your own reverse proxy, or no proxy at all
 
 ```bash
 docker compose up -d --build
 ```
 
 This starts Postgres, Redis, runs migrations once (`migrate` service), then
-starts `web`, `worker`, and `beat`. The app listens on port `8080` — plain HTTP,
-published on all interfaces (block it at the firewall, or bind
-`docker-compose.yml`'s `web.ports` to `127.0.0.1:8080:8080`, if you don't
-want it reachable directly). If you have your own nginx/Traefik/Caddy
-already running on this host, point it at `127.0.0.1:8080`; see:
-[nginx](Reverse-Proxy-Nginx.md), [Traefik](Reverse-Proxy-Traefik.md),
-[Caddy](Reverse-Proxy-Caddy.md).
+starts `web`, `worker`, and `beat`. The app listens on `APP_PORT` (default
+8080) — plain HTTP, published on all interfaces (block it at the firewall,
+or bind `docker-compose.yml`'s `web.ports` to
+`127.0.0.1:${APP_PORT}:8080`, if you don't want it reachable directly). If
+you have your own nginx/Traefik/Caddy already running on this host, point
+it at `127.0.0.1:${APP_PORT}`; see: [nginx](Reverse-Proxy-Nginx.md),
+[Traefik](Reverse-Proxy-Traefik.md), [Caddy](Reverse-Proxy-Caddy.md).
 
 > [!IMPORTANT]
 > The `beat` service is the periodic scheduler, and **exactly one instance
@@ -91,7 +135,7 @@ If your reverse proxy runs in its own separate Docker Compose project, it
 needs to join this project's network instead of using the loopback
 address — see the relevant guide for details.
 
-### Option B — with the bundled Caddy (automatic HTTPS)
+### With the bundled Caddy (automatic HTTPS)
 
 Set `DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's DNS A/AAAA
 record at this host's public IP, and make sure ports `80/tcp`, `443/tcp`,
@@ -105,7 +149,7 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 See [Reverse Proxy: Caddy](Reverse-Proxy-Caddy.md) for details,
 TLS/HTTP-3 verification, and troubleshooting.
 
-## 👤 3. Create the first administrator
+## 👤 3. Create the first administrator (manual setup only)
 
 Every debcontrol account is created inside the app itself — there's no
 auto-provisioning from LDAP or OIDC, and every page requires a login — so
@@ -177,10 +221,9 @@ Alembic migrations before `web`/`worker`/`beat` start — there's no separate
 
 Postgres, Redis, and Caddy are pinned to exact versions in
 `docker-compose.yml`/`docker-compose.caddy.yml` (`postgres:18.6`,
-`redis:8.10.1`, `caddy:2.11.4`) precisely so that an upgrade — scripted or
-by hand — never silently bumps any of them. Bumping one of those versions
-is a deliberate, separate step: edit the tag, test against it, and commit
-that change on its own.
+`redis:8.10.1`, `caddy:2.11.4`), so an upgrade — scripted or by hand —
+never silently bumps any of them. Bumping one is a deliberate, separate
+step: edit the tag, test against it, and commit that change on its own.
 
 ### If `db` refuses to start with a "pg_ctlcluster" / "unused mount/volume" error
 
@@ -188,12 +231,11 @@ Only affects a checkout from before the `db` volume mount was corrected —
 current `docker-compose.yml` already mounts it right. The `postgres:18`
 image expects its volume mounted at `/var/lib/postgresql` (it manages a
 major-version-specific subdirectory itself, `/var/lib/postgresql/18/docker`)
-rather than directly at `/var/lib/postgresql/data`, the older convention;
-an old checkout that initialized its `pg_data` volume the old way leaves
-real data sitting at the legacy path once you update — the image refuses
-to start rather than risk quietly initializing an empty cluster next to
-it. If that volume has nothing worth keeping (a fresh test deployment),
-the fix is a reset:
+rather than directly at `/var/lib/postgresql/data`, the older convention.
+An old checkout that initialized its `pg_data` volume the old way leaves
+real data sitting at the legacy path once you update, and the image
+refuses to start. If that volume has nothing worth keeping (a fresh test
+deployment), the fix is a reset:
 
 ```bash
 docker compose down -v   # drops pg_data (and redis_data, ssh_data) entirely

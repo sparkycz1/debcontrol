@@ -78,6 +78,15 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # IANA timezone name (e.g. "Europe/Prague") the UI renders timestamps
+    # in — audit log entries, "last refreshed"/"last run" times, etc.
+    # Falls back to UTC if unset or not a recognized zone. Data is always
+    # stored in Postgres as UTC regardless of this, and Scheduling's cron
+    # expressions are always interpreted as UTC regardless of this too —
+    # only display formatting is affected. The same variable also sets
+    # every container's own OS timezone (see docker-compose.yml).
+    tz: str = Field(default="UTC", alias="TZ")
+
     @field_validator("secret_key", "encryption_key", "inform_token")
     @classmethod
     def _reject_placeholder_secrets(cls, value: SecretStr) -> SecretStr:

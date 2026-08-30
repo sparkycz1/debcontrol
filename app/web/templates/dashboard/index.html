@@ -76,7 +76,7 @@
           {% for task in upcoming_tasks %}
           <tr>
             <td>{{ task.name }}</td>
-            <td>{{ task.next_run_at.strftime('%Y-%m-%d %H:%M UTC') if task.next_run_at else '—' }}</td>
+            <td>{{ task.next_run_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -100,7 +100,7 @@
         <tbody>
           {% for entry in recent_audit_entries %}
           <tr>
-            <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+            <td>{{ entry.created_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
             <td>{{ entry.actor or '—' }}</td>
             <td>{{ entry.summary }}</td>
             <td>

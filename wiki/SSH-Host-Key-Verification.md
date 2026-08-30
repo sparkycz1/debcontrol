@@ -1,14 +1,12 @@
 # 🔑 SSH host key verification
 
-## ⚠️ The problem with "trust on first use"
+## ⚠️ No trust on first use
 
-Most SSH tooling, by default, trusts whatever host key a server presents
-the first time you connect to it (TOFU — "trust on first use"), then
-remembers it for next time. That's convenient, but it means the very first
-connection to a machine is unauthenticated at the transport level: if an
-attacker can intercept that first connection (a compromised network,
-DNS spoofing, a rogue DHCP server, etc.), they can present their own key
-and silently man-in-the-middle every session from then on.
+Most SSH tooling trusts whatever host key a server presents the first time
+you connect (TOFU — "trust on first use"), which leaves that first
+connection unauthenticated at the transport level: an attacker who can
+intercept it can present their own key and silently man-in-the-middle every
+session from then on.
 
 > [!IMPORTANT]
 > **debcontrol never trusts on first use.** A machine's host key fingerprint
@@ -26,9 +24,7 @@ and silently man-in-the-middle every session from then on.
    Either way, the app connects just far enough to read the server's host
    key, computes its SHA256 fingerprint, and **always aborts before
    authenticating** — no credentials are ever sent at this stage, and
-   nothing is trusted yet. Automating *this* step is safe precisely
-   because it still can't establish a real connection or trust anything
-   on its own — see step 4.
+   nothing is trusted yet.
 3. The fingerprint is displayed with a warning: **verify it through a
    channel *other than this application*** before confirming — for example:
    - your hosting provider's console/control panel, which often shows the
@@ -53,14 +49,12 @@ and silently man-in-the-middle every session from then on.
    it is never silently accepted, and the stored fingerprint is never
    auto-updated.
 
-## 🤔 Why not just use `~/.ssh/known_hosts`?
+## 🤔 Not `~/.ssh/known_hosts`
 
-A conventional `known_hosts` file conflates "I've seen this key before"
-with "I trust this key," and typically gets populated via the same TOFU
-prompt that this design deliberately avoids. Storing a fingerprint
-per-machine in the database, set only through an explicit human
-confirmation step, keeps that trust decision visible and auditable in the
-UI rather than buried in a dotfile.
+The fingerprint is stored per-machine in the database, set only through an
+explicit human confirmation step, so the trust decision stays visible and
+auditable in the UI rather than buried in a dotfile populated by a TOFU
+prompt.
 
 ## 🔧 Implementation notes
 
@@ -80,31 +74,22 @@ The logic lives in `app/ssh/client.py`:
   connection failure.
 
 > [!CAUTION]
-> **A sharp edge worth knowing about if you ever touch this file.** The
-> details below describe a real bug this project shipped and fixed; the
-> shape of it is easy to reintroduce.
+> **A sharp edge worth knowing about if you ever touch this file.**
+> That comparison callback is only consulted at all if the `known_hosts=`
+> option passed to `asyncssh.connect()` is anything other than the literal
+> sentinel `None`. Passing `known_hosts=None` means "there are no trusted
+> keys to compare against, so don't bother calling the callback either" —
+> AsyncSSH then accepts whatever key the server presents, silently. An
+> earlier version of this file did exactly that, so the pinned fingerprint
+> was never actually checked.
 
-That comparison callback only gets consulted at all if the `known_hosts=`
-option passed to `asyncssh.connect()` is anything other than the literal
-sentinel `None`. Passing `known_hosts=None` doesn't mean "no known_hosts
-file, ask my callback for every key" — it means "there are no trusted keys
-to compare against, so don't bother calling the callback either," and
-AsyncSSH accepts whatever key the server presents, silently. An earlier
-version of this file did exactly that, for both `open_connection()` and
-the (now-replaced) hand-rolled discovery client — which meant the pinned
-fingerprint was never actually checked against anything, ever, on real
-Postgres-backed deployments; `validate_host_public_key()` never ran, and a
-different key than the one pinned would have gone through as if nothing
-were wrong. `open_connection()` now passes `known_hosts=([], [], [])`
-instead — an explicit "empty sets, and don't touch any known_hosts file"
-tuple in AsyncSSH's own accepted `known_hosts` formats — which keeps an
-empty (not `None`) trusted-key set and *does* make AsyncSSH fall through
-to the callback for every key. See `app/ssh/client.py`'s module docstring
-for the full explanation, and `tests/test_ssh_client.py` for a regression
-test that opens a real local SSH server and asserts a mismatched pinned
-fingerprint is actually rejected — the earlier bug looked correct on
-inspection and passed every existing test, since nothing exercised it
-against a real AsyncSSH connection.
+`open_connection()` passes `known_hosts=([], [], [])` — an explicit "empty
+sets, and don't touch any known_hosts file" tuple in AsyncSSH's own
+accepted `known_hosts` formats — which keeps an empty (not `None`)
+trusted-key set and *does* make AsyncSSH fall through to the callback for
+every key. See `app/ssh/client.py`'s module docstring, and
+`tests/test_ssh_client.py` for a regression test that opens a real local
+SSH server and asserts a mismatched pinned fingerprint is rejected.
 
 > [!WARNING]
 > If you're extending this code (e.g. adding a "re-discover fingerprint"

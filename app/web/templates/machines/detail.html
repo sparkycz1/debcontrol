@@ -49,7 +49,7 @@
         <span class="badge badge-error">offline</span>
       {% endif %}
       {% if machine.last_ping_at %}
-        <span class="hint">(checked {{ machine.last_ping_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span>
+        <span class="hint">(checked {{ machine.last_ping_at | local_time('%Y-%m-%d %H:%M %Z') }})</span>
       {% endif %}
     </dd>
     <dt>Notes</dt><dd>{{ machine.description or '—' }}</dd>
@@ -196,7 +196,7 @@
         <tbody>
           {% for run in update_runs %}
             <tr>
-              <td>{{ run.created_at.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+              <td>{{ run.created_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
               <td>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</td>
               <td>
                 {% if run.status.value in ('pending', 'running') %}

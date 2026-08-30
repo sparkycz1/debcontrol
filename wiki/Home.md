@@ -38,9 +38,10 @@ admin account.
 
 ## 🔒 Reverse proxy guides
 
-debcontrol itself only speaks plain HTTP, on port `8080` — it always
-expects to sit behind a TLS-terminating reverse proxy, though nothing
-stops direct access unless you firewall that port off. Pick one:
+debcontrol itself only speaks plain HTTP, on port `8080` by default
+(`APP_PORT` in `.env`) — it always expects to sit behind a
+TLS-terminating reverse proxy, though nothing stops direct access unless
+you firewall that port off. Pick one:
 
 - **[Caddy (bundled)](Reverse-Proxy-Caddy.md)** — the easiest path:
   `docker-compose.caddy.yml` gives you automatic HTTPS (Let's Encrypt),

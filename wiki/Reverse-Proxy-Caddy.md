@@ -7,7 +7,7 @@ There are two ways to use Caddy with debcontrol:
   run a reverse proxy on this host.
 - **Standalone**: you already run your own Caddy instance (for other
   sites, or because you prefer managing it outside this repo). Point it at
-  debcontrol's `127.0.0.1:8080`.
+  debcontrol's `127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`).
 
 ## Option A — the bundled Caddy
 
@@ -39,18 +39,15 @@ over the internal Docker network.
 - **TLS 1.3 only** — `tls { protocols tls1.3 tls1.3 }` on the site block;
   TLS 1.2 and older are rejected outright.
 - **HTTP/3** — enabled via the global `servers { protocols h1 h2 h3 }`
-  option (also the default once automatic HTTPS is active, but stated
-  explicitly here for clarity).
+  option.
 - **HSTS** — `Strict-Transport-Security` with a two-year max-age. The
   `preload` directive is included; remove it until you've confirmed
   everything works correctly over HTTPS, since preload-list submission is
   hard to undo.
 - **Hardened headers** — `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer`, and the `Server` header is stripped so
-  the proxy software isn't advertised.
+  `Referrer-Policy: no-referrer`, and the `Server` header is stripped.
 - **Request/idle timeouts** — conservative defaults under
-  `servers { timeouts { ... } }` to reduce exposure to slow-request style
-  abuse.
+  `servers { timeouts { ... } }`.
 
 ### Verifying it worked
 
@@ -120,8 +117,6 @@ your-domain.example.com {
 
 If your Caddy instance is itself a container in a different Compose
 project, join it to debcontrol's Docker network so it can resolve the
-`web` service by name, rather than going through the published `8080`
-port at all — the base `docker-compose.yml` publishes that port on every
-interface (not just loopback), so joining the network is the more
-locked-down option even though going through `127.0.0.1:8080` would also
-work.
+`web` service by name rather than going through the published `8080` port
+— the base `docker-compose.yml` publishes that port on every interface,
+so joining the network is the more locked-down option.

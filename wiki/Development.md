@@ -4,47 +4,16 @@
 
 ```bash
 uv sync
-cp .env.example .env
-python scripts/generate_secrets.py   # paste values into .env
-docker compose up -d db redis
-uv run alembic upgrade head
 ```
 
-## ▶️ Running the app
-
-The web app, the task worker, and the periodic scheduler are **three
-separate processes**:
-
-```bash
-# Terminal 1 — the web app
-uv run uvicorn app.main:app --reload
-
-# Terminal 2 — the Celery worker (needed if you're touching anything in
-# app/tasks, app/scheduling, or app/ssh, or clicking any button that
-# enqueues background work)
-uv run celery -A app.tasks.celery_app worker --loglevel=info
-
-# Terminal 3 — Celery Beat, ONLY if you need the periodic sweeps or the
-# per-minute scheduled-task tick. Most feature work does not.
-uv run celery -A app.tasks.celery_app beat --loglevel=info
-```
-
-> [!TIP]
-> On Windows the prefork pool isn't available; add `--pool=solo` to the
-> worker command. That runs one task at a time in-process and skips the
-> fork entirely — which also means the `worker_process_init` fork-safety
-> hook described in
-> [Architecture](Architecture.md#fork-safety-the-db-engine-is-rebuilt-in-every-worker-child)
-> never fires, so **never** use `--pool=solo` to reason about production
-> behaviour.
-
-> [!IMPORTANT]
-> Run **exactly one** `beat` process. Two of them publish the same schedule
-> twice, so every sweep and every daily purge fires twice.
-
-Set `POSTGRES_HOST=localhost`/`REDIS_HOST=localhost` in `.env` when running
-the app itself outside Docker like this — `db`/`redis` (the defaults) are
-only resolvable from inside the Compose network.
+Installs the project's dependencies into `.venv`, needed for the tests,
+linting, and type-checking below. There is no supported way to run the
+app itself outside Docker — see [Installation](Installation.md) to bring
+up the full stack (web, worker, beat, Postgres, Redis) with
+`python scripts/setup.py` or `docker compose up -d --build`. Iterate by
+editing code and re-running `docker compose up -d --build`, or add a
+volume mount + `--reload` to `docker-compose.yml`'s `web` service yourself
+for faster turnaround.
 
 ## ✅ Tests
 
@@ -56,8 +25,8 @@ Tests never touch real Postgres, Redis, **or a Celery broker**:
 `tests/conftest.py` sets dummy config values before `app.main` is imported,
 overrides the `get_db` dependency with an isolated in-memory SQLite session
 per test, and monkeypatches `celery.app.task.Task.apply_async` (what
-`.delay()` calls underneath) so no message is ever published. This makes the
-suite fast and independent of `docker compose` being up at all.
+`.delay()` calls underneath) so no message is ever published. The suite is
+independent of `docker compose` being up at all.
 
 Two fixtures exist specifically for background work:
 
@@ -78,18 +47,17 @@ Two fixtures exist specifically for background work:
 > running event loop. Point `app.db.session.AsyncSessionLocal` at the test
 > session factory with `monkeypatch.setattr` when doing so.
 
-Since every route now requires a session, `tests/conftest.py` offers three
-fixtures instead of just one `client`:
+Since every route requires a session, `tests/conftest.py` offers three
+client fixtures:
 
 - **`client`** — already logged in as a user with *every* permission. What
-  most tests want, since they're exercising a feature, not RBAC itself.
+  most tests want.
 - **`anonymous_client`** — no session cookie at all; for login/logout/
   TOTP/access-denied tests (see `tests/test_auth.py`).
 - **`login_as(some_client, permissions={Permission.X, ...})`** — creates a
   role+user with exactly those permissions and points `some_client`'s
   session cookie at them; for RBAC boundary tests (see
-  `tests/test_rbac.py`) — e.g. confirming a role with only `machine.view`
-  gets a 403 on a POST that needs `machine.manage`.
+  `tests/test_rbac.py`).
 
 `tests/conftest.py` also exposes `create_local_user(db_session_factory,
 username=..., password=...)` for tests that need to exercise the actual
@@ -105,8 +73,7 @@ uv run mypy app alembic tests
 ```
 
 `mypy` runs in `strict` mode for `app/` and `alembic/`; `tests/` has a
-relaxed override (see `pyproject.toml`) since annotating every fixture
-adds little value.
+relaxed override (see `pyproject.toml`).
 
 ## 🗄️ Database migrations
 
@@ -155,14 +122,12 @@ and `app/db/models/__init__.py`.
    `dependencies=[Depends(verify_csrf)]`. A page rendering a form can just
    use `request.state.csrf_token` (set for every request by
    `app.auth.middleware`) rather than calling `get_or_create_csrf_token()`
-   itself — that function still exists and is still used by
-   routes written before the middleware did this centrally (see
-   `app/web/routes/machines.py`), and stays consistent with it if you use
-   it in a new route, but a new route doesn't need to.
+   itself — that function still exists, is still used by older routes (see
+   `app/web/routes/machines.py`), and stays consistent with the middleware
+   if you use it.
 7. If it mutates something (or refuses to because a safeguard tripped),
    call `app.audit.log_event(...)` right after — see "Recording a new
-   action in the audit log" below. Every existing mutating route already
-   does this; a new one that doesn't is the exception, not the rule.
+   action in the audit log" below. Every existing mutating route does this.
 
 ## 🔐 Adding a new permission
 
@@ -170,9 +135,9 @@ and `app/db/models/__init__.py`.
    `lowercase.dot.separated` (mirroring the resource it gates, same
    convention as audit action codes).
 2. If it's a `MANAGE` permission with a matching `VIEW` one, add the pair to
-   `_MANAGE_IMPLIES_VIEW` in `app/db/models/user.py` — see that module's
-   docstring for why (a role granted MANAGE but not the matching VIEW
-   would otherwise 403 on the page listing the very thing it can manage).
+   `_MANAGE_IMPLIES_VIEW` in `app/db/models/user.py` — otherwise a role
+   granted MANAGE but not the matching VIEW 403s on the page listing the
+   very thing it can manage.
 3. Add a migration: the `permission` Postgres enum type needs the new value
    (`ALTER TYPE permission ADD VALUE ...` — Postgres requires this can't run
    inside the same transaction as other DDL, so give it its own
@@ -233,10 +198,9 @@ code path. Then:
    Beat owns cadence.
 5. If you put it in a **new module** rather than `app/tasks/jobs.py` (as
    `app/tasks/ai_jobs.py` does), add that module to `celery_app`'s
-   `include=[...]` list — that list is deliberately explicit rather than
-   `autodiscover_tasks()`, so a module missing from it simply never
-   registers its tasks and `.delay()` fails at runtime instead of at
-   startup.
+   `include=[...]` list — that list is explicit rather than
+   `autodiscover_tasks()`, so a module missing from it never registers its
+   tasks and `.delay()` fails at runtime.
 
 ## 📝 Recording a new action in the audit log
 
@@ -275,8 +239,7 @@ module docstring for the full parameter list (`outcome`, `target_type`/
   SQLAlchemy models should look like `app/db/models/machine_group.py`.
 - Keep `pyproject.toml`'s dependency lower bounds close to what's
   actually installed (`uv.lock` pins the exact versions) — see
-  [Architecture](Architecture.md#dependency-version-notes) for the
-  reasoning, including why `redis-py` no longer carries an upper pin.
+  [Architecture](Architecture.md#dependency-version-notes).
 - Bump `APP_VERSION` in `app/core/version.py` **and** `version` in
   `pyproject.toml` together on every round of changes: patch for small
   fixes, minor for a feature or infrastructure change.
@@ -286,13 +249,11 @@ module docstring for the full parameter list (`outcome`, `target_type`/
 > reading the code.** Vendored JS/CSS, a new inline `style=`/`<script>`, a
 > third-party bundle's boot sequence — CSP violations and missing-file/
 > wrong-global mistakes are silent at the Python layer (routes return 200,
-> tests pass) and only ever show up as a blank widget and a console error
-> in an actual browser. Two real examples from this codebase: an inline
-> `style=` attribute on the SSH terminal's container was silently dropped
-> under this app's strict CSP, collapsing it to zero height; and Swagger UI
-> (`GET /api`) needs *two* vendored bundles, not the one some examples show
-> — loading only `swagger-ui-bundle.js` renders a bare, chrome-less widget
-> with a `Could not find component: StandaloneLayout` console warning,
-> because the topbar/layout chrome ships in the separate
-> `swagger-ui-standalone-preset.js`. Both were only caught by actually
-> loading the page and reading the console, not by inspecting the HTML.
+> tests pass) and only show up as a blank widget and a console error in an
+> actual browser. Two real examples from this codebase: an inline `style=`
+> attribute on the SSH terminal's container was silently dropped under this
+> app's strict CSP, collapsing it to zero height; and Swagger UI
+> (`GET /api`) needs *two* vendored bundles — loading only
+> `swagger-ui-bundle.js` renders a bare, chrome-less widget with a
+> `Could not find component: StandaloneLayout` console warning, because the
+> topbar/layout chrome ships in `swagger-ui-standalone-preset.js`.

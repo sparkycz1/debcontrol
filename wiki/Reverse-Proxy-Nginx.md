@@ -3,7 +3,7 @@
 Use this if you already run nginx on the host where debcontrol's
 `docker compose up -d --build` (the base file, without
 `docker-compose.caddy.yml`) is running, exposing the app on
-`127.0.0.1:8080`.
+`127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`).
 
 ## Prerequisites
 

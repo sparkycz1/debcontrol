@@ -11,10 +11,8 @@ self-registers the machine so it shows up as **pending** in the
 - [`inventory.example.ini`](../ansible/inventory.example.ini) — copy to `inventory.ini`
 - [`group_vars/all.yml.example`](../ansible/group_vars/all.yml.example) — copy to `group_vars/all.yml`
 
-Like the manual checklist it replaces, it's safe to re-run — every task is
-idempotent (Ansible's `apt`/`user`/`copy`/`authorized_key` modules all are),
-so running it again on an already-onboarded machine just confirms nothing
-has drifted.
+It's safe to re-run — every task is idempotent (Ansible's
+`apt`/`user`/`copy`/`authorized_key` modules all are).
 
 **It never creates a manageable machine by itself.** The playbook's last
 step is the same `POST /api/inform` self-registration described in
@@ -22,8 +20,7 @@ step is the same `POST /api/inform` self-registration described in
 it only creates a *pending* entry. Approving it (pinning the host key
 fingerprint, confirming it's really the machine you meant) is still a
 separate, deliberate step a human does in the **Machines** tab. See
-[Architecture](Architecture.md#self-registration-is-not-the-same-as-trust)
-for why that boundary exists.
+[Architecture](Architecture.md#self-registration-is-not-the-same-as-trust).
 
 ## ✅ Requirements
 
@@ -50,10 +47,10 @@ for why that boundary exists.
    cp group_vars/all.yml.example group_vars/all.yml
    ```
    Both `inventory.ini` and `group_vars/all.yml` are gitignored — the
-   inventory can list real internal hostnames, and the vars file holds a
-   bearer token, so neither belongs in version control (even a private
-   one). Prefer `--extra-vars` or `ansible-vault` over `group_vars/all.yml`
-   for the token specifically if several people share this repo checkout.
+   inventory can list real internal hostnames and the vars file holds a
+   bearer token. Prefer `--extra-vars` or `ansible-vault` over
+   `group_vars/all.yml` for the token if several people share this
+   checkout.
 
 2. Fill in `inventory.ini` with the machine(s) to onboard, and whichever
    account Ansible should connect as *initially* (see Requirements above).
@@ -77,8 +74,8 @@ for why that boundary exists.
 
 5. Go to debcontrol's **Machines** tab — the machine is now listed under
    **Pending**. Review it, then add it properly (confirm/pin its SSH host
-   key fingerprint — this is still a manual, deliberate step; see
-   [SSH Host Key Verification](SSH-Host-Key-Verification.md) for why).
+   key fingerprint — still a manual, deliberate step; see
+   [SSH Host Key Verification](SSH-Host-Key-Verification.md)).
 
 ## 🧭 What it does, and what it deliberately doesn't
 
@@ -103,7 +100,6 @@ for why that boundary exists.
 ## 🔧 Extending it
 
 Adding this playbook to your own machine-provisioning pipeline (cloud-init,
-Packer, an existing site-wide Ansible repo) is the intended use — it's
-deliberately a single, dependency-light playbook rather than a role with
-opinions about your directory layout, so it's easy to `import_playbook` or
-copy the tasks into an existing one.
+Packer, an existing site-wide Ansible repo) is the intended use: it's a
+single, dependency-light playbook rather than a role, so it can be
+`import_playbook`'d or copied into an existing one.

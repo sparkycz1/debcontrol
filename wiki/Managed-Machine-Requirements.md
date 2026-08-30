@@ -20,14 +20,12 @@ for a playbook that does it for you.
 ## OS
 
 - **Officially supported: Debian and its derivatives (e.g. Ubuntu), for as
-  long as each is supported by its own upstream/developer.** debcontrol
-  deliberately doesn't pin a fixed list of version numbers here — that
-  would just go stale — the policy is "any currently-supported deb-based
-  release." Nothing in debcontrol is Debian-version-specific: everything
-  it runs (`dpkg`, `apt`, `systemd`'s `shutdown`, and optionally `flatpak`/
-  `snap`) is standard tooling any Debian-based distribution ships or can
-  install, so a derivative needs nothing extra beyond what its own vendor
-  already supports.
+  long as each is supported by its own upstream/developer.** The policy is
+  "any currently-supported deb-based release" rather than a fixed list of
+  version numbers. Nothing in debcontrol is Debian-version-specific:
+  everything it runs (`dpkg`, `apt`, `systemd`'s `shutdown`, and optionally
+  `flatpak`/`snap`) is standard tooling any Debian-based distribution ships
+  or can install.
 - `sshd` (the `openssh-server` package) installed and running. This is
   included by default on most Debian installation profiles (it's an
   explicit checkbox in the graphical installer, ticked by default when
@@ -40,11 +38,9 @@ for a playbook that does it for you.
 
 ## 👤 Account
 
-- A user for debcontrol to connect as. Using a dedicated non-root user
-  with passwordless sudo scoped to `apt-get` (see "System updates" below)
-  is recommended over connecting as `root` directly — least privilege,
-  and it keeps what debcontrol can do on a machine visible in one sudoers
-  line instead of "everything."
+- A user for debcontrol to connect as. A dedicated non-root user with
+  passwordless sudo scoped to `apt-get` (see "System updates" below) is
+  recommended over connecting as `root` directly.
 - **SSH key auth (recommended):** append the public key shown on
   debcontrol's **Settings** page to that user's
   `~/.ssh/authorized_keys`:
@@ -52,9 +48,9 @@ for a playbook that does it for you.
   echo 'ssh-ed25519 AAAA... debcontrol' >> ~/.ssh/authorized_keys
   chmod 600 ~/.ssh/authorized_keys
   ```
-  This is a manual step today — see
-  [Architecture](Architecture.md#one-shared-ssh-identity-not-one-key-per-machine)
-  for why debcontrol works this way instead of a key per machine.
+  This is a manual step today — debcontrol uses
+  [one shared SSH identity](Architecture.md#one-shared-ssh-identity-not-one-key-per-machine),
+  not a key per machine.
 - **Password auth:** supported as a fallback (the UI marks it as not
   recommended). Make sure `PasswordAuthentication yes` is set in
   `/etc/ssh/sshd_config` if you go this route — many hardened Debian
@@ -63,9 +59,9 @@ for a playbook that does it for you.
 ## 🔍 Fact gathering — no agent, no extra packages
 
 When a host key fingerprint is confirmed, and then periodically after
-that, debcontrol runs one shell command over SSH to collect facts. It
-deliberately only uses tools present on a stock Debian install — see
-`app/ssh/facts.py` for the exact command:
+that, debcontrol runs one shell command over SSH to collect facts, using
+only tools present on a stock Debian install — see `app/ssh/facts.py` for
+the exact command:
 
 | Fact | Command | Package (already on a default install) |
 |---|---|---|
@@ -105,21 +101,19 @@ after any update run on that machine. Also no root needed:
 | snap | `snap list` | skipped if `snap` isn't installed |
 | apt held/pinned | `apt-mark showhold` | marks matching apt entries above |
 
-Neither flatpak nor snap is required — most Debian/Ubuntu server installs
-have neither by default — each is simply omitted from the list (and from
-"System updates" below) when absent. See `app/ssh/packages.py`.
+Neither flatpak nor snap is required — each is simply omitted from the
+list (and from "System updates" below) when absent. See
+`app/ssh/packages.py`.
 
-A package apt has been told to hold (`apt-mark hold <package>`, e.g. to
-pin a kernel version or work around a known-bad release) shows a "held"
-badge in the list — held packages are still installed and listed
+A package apt has been told to hold (`apt-mark hold <package>`) shows a
+"held" badge in the list — held packages are still installed and listed
 normally, they're just excluded from `dist-upgrade`/`full-upgrade` until
 unheld, which is worth knowing when a machine's upgrade count doesn't
 match your expectations.
 
 **Fleet-wide search**: **Machines → Package search** looks across every
-machine's most recent package snapshot at once — useful after a CVE
-announcement to find every machine still running a vulnerable version of
-something, without opening each machine individually.
+machine's most recent package snapshot at once — e.g. after a CVE
+announcement, to find every machine still running a vulnerable version.
 
 ## ⚡ System updates and power actions — require root
 
@@ -151,16 +145,15 @@ requirement:
   pre-usrmerge system the paths are `/sbin/shutdown` instead — check with
   `which shutdown`). debcontrol always calls sudo as `sudo -n ...`
   (non-interactive) — if passwordless sudo isn't set up correctly, the
-  action fails immediately with a clear error instead of hanging forever
-  waiting for a password that can never arrive over a non-interactive SSH
-  command. Without the flatpak/snap sudoers lines, the apt part of an
-  update run still succeeds — the flatpak/snap steps just fail
+  action fails immediately with a clear error instead of hanging on a
+  password prompt. Without the flatpak/snap sudoers lines, the apt part of
+  an update run still succeeds — the flatpak/snap steps just fail
   individually (visible in the run's stored output) rather than blocking
   the rest.
 
 Reboot and shutdown are double-confirmed in the UI (a dedicated warning
-page, then typing the machine's — or group's — name exactly) precisely
-because there's no undo once sent. All three actions — update, check for
+page, then typing the machine's — or group's — name exactly); there's no
+undo once sent. All three actions — update, check for
 updates, reboot/shutdown — can also be put on a cron schedule (see
 **Scheduling** in the nav); a schedule someone deliberately created doesn't
 get a second confirmation prompt each time it fires, but destructive
@@ -186,24 +179,22 @@ shown in the UI so you can review exactly what happened.
 
 The update-availability panel also shows *which* apt packages, flatpak
 apps, and snaps are pending (name and version, under a "Which ... ?"
-disclosure) — not just the counts. This comes from whichever "check for
+disclosure), not just the counts. This comes from whichever "check for
 updates" run happened most recently for that machine: the automatic
 periodic sweep (same cadence as facts), the "Check for updates now"
 button, or a **scheduled task** using the "check_updates" action (see
-**Scheduling** in the nav). There's no separate history — if you want a
-fresh, specific answer to "what's pending on this machine right now,"
-either click the button or create a schedule for it; whatever ran last is
-what's shown.
+**Scheduling** in the nav). There's no separate history — whatever ran
+last is what's shown.
 
 ## 🖧 Interactive terminal — nothing extra needed
 
 **Machines → a machine → Terminal** (if your role has been granted the
 `action.terminal` permission) needs nothing beyond ordinary SSH access —
 the same account and key/password auth already set up above, and a shell
-configured for that account (true of any normal Debian account by
-default). It doesn't need root, sudo, or any extra package: whatever the
-connecting account can normally do at an interactive SSH prompt is exactly
-what the browser terminal can do too, since it's the same shell.
+configured for that account. It doesn't need root, sudo, or any extra
+package: whatever the connecting account can do at an interactive SSH
+prompt is exactly what the browser terminal can do, since it's the same
+shell.
 
 ## Self-registration (optional, for future automation)
 

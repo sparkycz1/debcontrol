@@ -78,7 +78,7 @@
             <tr>
               <td><a href="/ai/conversations/{{ conversation.id }}">{{ conversation.title }}</a></td>
               <td><code>{{ conversation.model_id }}</code></td>
-              <td>{{ conversation.updated_at.strftime('%Y-%m-%d %H:%M') if conversation.updated_at else '—' }}</td>
+              <td>{{ conversation.updated_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
               <td>
                 <form method="post" action="/ai/conversations/{{ conversation.id }}/delete"
                       class="inline-form"

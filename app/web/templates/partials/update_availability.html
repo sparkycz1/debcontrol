@@ -16,20 +16,20 @@
     </p>
   {% elif machine.upgradable_count is none %}
     <p class="hint">
-      Last check (checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)
+      Last check (checked {{ machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z') }})
       couldn't determine what's available via apt — see the error above, or
       try again. (flatpak/snap checks below don't depend on this.)
     </p>
   {% elif machine.upgradable_count == 0 and other_count == 0 %}
     <p><span class="badge badge-ok">up to date</span>
-      <span class="hint">(checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span></p>
+      <span class="hint">(checked {{ machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z') }})</span></p>
   {% else %}
     <p>
       <span class="badge badge-warn">
         {{ machine.upgradable_count }} apt update{{ 's' if machine.upgradable_count != 1 else '' }}
         {%- if machine.security_upgradable_count %}, {{ machine.security_upgradable_count }} security{% endif %}
       </span>
-      <span class="hint">(checked {{ machine.updates_checked_at.strftime('%Y-%m-%d %H:%M') }} UTC)</span>
+      <span class="hint">(checked {{ machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z') }})</span>
     </p>
     {% if machine.apt_upgradable_packages %}
       <details>

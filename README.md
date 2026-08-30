@@ -27,91 +27,67 @@ fresh instance running.
 
 ## 🚀 Quick start (Docker)
 
+**Recommended — one interactive script does everything:**
+
+```bash
+git clone https://github.com/sparkycz1/debcontrol.git
+cd debcontrol
+python scripts/setup.py
+```
+
+It generates every secret, asks a handful of questions (timezone, whether
+to use the bundled Caddy reverse proxy, background-check intervals, the
+Administrator password — or auto-generates one — and the host port), then
+brings the stack up and creates the first admin account for you. Full
+details: [wiki/Installation.md](wiki/Installation.md).
+
+**Manual setup**, if you'd rather configure everything by hand:
+
 ```bash
 cp .env.example .env
 python scripts/generate_secrets.py
 ```
 
 Paste the printed values (`SECRET_KEY`, `ENCRYPTION_KEY`,
-`POSTGRES_PASSWORD`, `REDIS_PASSWORD`) into `.env`, and make sure
-`DATABASE_URL`/`REDIS_URL` use the same passwords as
-`POSTGRES_PASSWORD`/`REDIS_PASSWORD`. Optionally set `TZ` (e.g.
-`Europe/Prague`) — it's applied to every container and only affects log
-timestamps and local-time display; defaults to UTC.
-
-**Without a reverse proxy in front (or if you already run your own):**
+`POSTGRES_PASSWORD`, `REDIS_PASSWORD`) into `.env`. Optionally set `TZ`
+(e.g. `Europe/Prague`) — it's applied to every container and used by the
+app to display timestamps in the UI in that timezone; defaults to UTC.
+Then:
 
 ```bash
 docker compose up -d --build
 ```
 
-The app listens on port `8080` (plain HTTP, all interfaces — meant to sit
-behind a TLS-terminating reverse proxy; firewall it off or bind it to
-`127.0.0.1:8080:8080` in `docker-compose.yml` if you don't want that). Point
-your own nginx/Traefik/Caddy at `127.0.0.1:8080` — see the reverse-proxy
-guides in the wiki: [nginx](wiki/Reverse-Proxy-Nginx.md) ·
+The app listens on `APP_PORT` (default `8080`, plain HTTP, all interfaces
+— meant to sit behind a TLS-terminating reverse proxy; firewall it off or
+bind it to `127.0.0.1` in `docker-compose.yml` if you don't want that).
+Point your own nginx/Traefik/Caddy at it — see the reverse-proxy guides in
+the wiki: [nginx](wiki/Reverse-Proxy-Nginx.md) ·
 [Traefik](wiki/Reverse-Proxy-Traefik.md) ·
-[Caddy (standalone)](wiki/Reverse-Proxy-Caddy.md).
+[Caddy (standalone)](wiki/Reverse-Proxy-Caddy.md). Or use the **bundled
+Caddy** (automatic HTTPS via Let's Encrypt, TLS 1.3 only, HTTP/3): set
+`DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's DNS at this host,
+open ports 80/tcp, 443/tcp and 443/udp, then
+`docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build`
+— see [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md).
 
-**With the bundled Caddy** (automatic HTTPS via Let's Encrypt, TLS 1.3
-only, HTTP/3): set `DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's
-DNS at this host, make sure ports 80/tcp, 443/tcp and 443/udp are open,
-then:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
-```
-
-See [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md) for details
-and troubleshooting.
-
-> [!WARNING]
-> The app speaks **plain HTTP only** and publishes port `8080` on all
-> interfaces. Always put TLS termination in front of it, and firewall that
-> port off (or bind it to `127.0.0.1`) if you don't want it reachable
-> directly.
-
-## 🔑 First login
-
-**Create the first administrator account** — every debcontrol account
-is created inside the app itself, so there's no other way in on a fresh
-deployment:
+Then create the first administrator account yourself:
 
 ```bash
 docker compose exec web python scripts/create_admin.py --username admin
 ```
 
-It prompts for a password (at least 12 characters) and creates an
-"Administrator" role with every permission if one doesn't exist yet. You'll
-be asked to change that password on first login. See
-[wiki/Installation.md](wiki/Installation.md) for the full walkthrough
-(what the Compose stack brings up, environment variables, LDAP/OIDC setup,
-and account recovery if you ever get locked out) and
-[wiki/Installation.md#updating](wiki/Installation.md#updating) for
-upgrading later (`./scripts/upgrade.sh`).
+> [!WARNING]
+> The app speaks **plain HTTP only**. Always put TLS termination in front
+> of it, and firewall its port off (or bind it to `127.0.0.1`) if you don't
+> want it reachable directly.
 
-## 🛠️ Local development without Docker
-
-```bash
-uv sync
-docker compose up -d db redis
-uv run alembic upgrade head
-uv run python scripts/create_admin.py --username admin
-uv run uvicorn app.main:app --reload
-# second terminal — background tasks:
-uv run celery -A app.tasks.celery_app worker --loglevel=info
-# third terminal — periodic sweeps and the scheduled-task tick (optional):
-uv run celery -A app.tasks.celery_app beat --loglevel=info
-```
-
-> [!IMPORTANT]
-> Run **exactly one** `beat` process, here and in production. Every replica
-> publishes the same schedule, so a second one makes each periodic sweep and
-> daily purge fire twice.
-
-See [wiki/Development.md](wiki/Development.md) for running tests
-(`uv run pytest`), linting/type-checking, adding a migration, and other
-project conventions.
+See [wiki/Installation.md](wiki/Installation.md) for the full walkthrough
+(environment variables, LDAP/OIDC setup, account recovery if you ever get
+locked out) and [wiki/Installation.md#updating](wiki/Installation.md#updating)
+for upgrading later (`./scripts/upgrade.sh`). See
+[wiki/Development.md](wiki/Development.md) for running the test suite,
+linting/type-checking, adding a migration, and other project conventions.
 
 ## 📄 License
 

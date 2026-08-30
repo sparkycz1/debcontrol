@@ -69,7 +69,7 @@
       <h2>Two-factor authentication</h2>
       {% if user.totp_enabled %}
         <p class="hint">
-          Enabled since {{ user.totp_confirmed_at.strftime('%Y-%m-%d') if user.totp_confirmed_at else 'unknown' }}.
+          Enabled since {{ user.totp_confirmed_at | local_time('%Y-%m-%d') if user.totp_confirmed_at else 'unknown' }}.
           {{ unused_recovery_codes }} unused recovery code(s) remaining.
         </p>
         <form method="post" action="/account/totp/recovery-codes/regenerate" class="form" autocomplete="off">
@@ -128,9 +128,9 @@
           <tr>
             <td>{{ token.name }}</td>
             <td><code>{{ token.token_prefix }}…</code></td>
-            <td>{{ token.created_at.strftime('%Y-%m-%d') }}</td>
-            <td>{{ token.last_used_at.strftime('%Y-%m-%d %H:%M') if token.last_used_at else 'never' }}</td>
-            <td>{{ token.expires_at.strftime('%Y-%m-%d') if token.expires_at else 'never' }}</td>
+            <td>{{ token.created_at | local_time('%Y-%m-%d') }}</td>
+            <td>{{ token.last_used_at | local_time('%Y-%m-%d %H:%M %Z') if token.last_used_at else 'never' }}</td>
+            <td>{{ token.expires_at | local_time('%Y-%m-%d') if token.expires_at else 'never' }}</td>
             <td>
               <form method="post" action="/account/api-tokens/{{ token.id }}/revoke" class="inline-form"
                     data-confirm="Revoke this API token? Anything using it will stop working immediately.">

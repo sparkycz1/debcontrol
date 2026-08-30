@@ -3,14 +3,49 @@ imported from routers without a circular dependency)."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi.templating import Jinja2Templates
+
+from app.core.config import get_settings
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.autoescape = True
+
+
+@lru_cache
+def _display_zone(tz_name: str) -> ZoneInfo:
+    """`lru_cache`d per zone name so a template rendering many timestamps
+    in a loop doesn't re-resolve the zone database on every one. Falls
+    back to UTC for an unset or unrecognized `TZ` — see `Settings.tz`."""
+    try:
+        return ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def local_time(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    """Render a stored datetime in the configured `TZ` (default UTC).
+
+    Every datetime this app writes to the DB is UTC, naive or not — a naive
+    one is treated as UTC rather than local time. Include `%Z` in `fmt` to
+    print the zone's abbreviation instead of hardcoding "UTC" in the
+    template. Returns "—" for `None` so callers don't need their own
+    `if value else "—"` ternary.
+    """
+    if value is None:
+        return "—"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(_display_zone(get_settings().tz)).strftime(fmt)
+
+
+templates.env.filters["local_time"] = local_time
 
 
 def format_uptime(seconds: int | None) -> str:

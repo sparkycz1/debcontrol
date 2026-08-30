@@ -43,14 +43,14 @@
             <td><code>{{ task.cron_expression }}</code></td>
             <td>
               {% if task.is_enabled and task.next_run_at %}
-                {{ task.next_run_at.strftime('%Y-%m-%d %H:%M') }}
+                {{ task.next_run_at | local_time('%Y-%m-%d %H:%M %Z') }}
               {% else %}
                 —
               {% endif %}
             </td>
             <td>
               {% if task.last_run_at %}
-                {{ task.last_run_at.strftime('%Y-%m-%d %H:%M') }}
+                {{ task.last_run_at | local_time('%Y-%m-%d %H:%M %Z') }}
                 <br><span class="hint">{{ task.last_run_summary }}</span>
               {% else %}
                 never

@@ -41,7 +41,7 @@
               <td>{{ pending.ip_address }}</td>
               <td>{{ pending.reported_hostname or '—' }}</td>
               <td>{{ pending.os_version or '—' }}</td>
-              <td>{{ pending.created_at.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+              <td>{{ pending.created_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
               <td>
                 <a class="button"
                    href="/machines/new?ip_address={{ pending.ip_address | urlencode }}&name={{ (pending.reported_hostname or '') | urlencode }}">

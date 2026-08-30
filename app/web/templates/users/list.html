@@ -39,7 +39,7 @@
               <span class="badge badge-error">disabled</span>
             {% endif %}
           </td>
-          <td>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else 'never' }}</td>
+          <td>{{ u.last_login_at | local_time('%Y-%m-%d %H:%M %Z') if u.last_login_at else 'never' }}</td>
           <td><a href="/users/{{ u.id }}/edit">Edit</a></td>
         </tr>
       {% endfor %}
