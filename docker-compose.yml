@@ -60,6 +60,12 @@ services:
     restart: unless-stopped
     environment:
       TZ: ${TZ:-UTC}
+      # Only ever read inside the container by the healthcheck below
+      # ($${REDIS_PASSWORD}, resolved by the container's own shell at
+      # healthcheck time) — the server itself gets its password from the
+      # command-line arg, substituted by Compose from the host/.env value
+      # at parse time, same as it always did.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
