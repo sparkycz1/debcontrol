@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}Preview update — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>Preview update for {{ machine.name }}</h1>
+
+  {% if error %}
+    <div class="alert alert-error"><p>Could not simulate the update: {{ error }}</p></div>
+    <p>
+      <a class="button button-secondary" href="/machines/{{ machine.id }}">Back</a>
+    </p>
+  {% else %}
+    <p class="hint">
+      Simulated with apt's dry-run mode (<code>apt-get -s</code>) — nothing on
+      {{ machine.name }} has changed yet. This is exactly what
+      <code>{{ 'dist-upgrade' if strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
+      followed by <code>autoremove</code> would do; review it, then confirm below
+      to actually run it.
+    </p>
+
+    <section class="panel">
+      <h2>Packages that would be removed ({{ to_remove|length }})</h2>
+      {% if to_remove %}
+        <div class="alert alert-warn">
+          <p>
+            This is the risky part of <code>autoremove</code> — double-check
+            nothing here is something you still need.
+          </p>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr><th>Package</th><th>Installed version</th></tr>
+          </thead>
+          <tbody>
+            {% for pkg in to_remove %}
+              <tr><td><code>{{ pkg.name }}</code></td><td>{{ pkg.current_version or '—' }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint">Nothing would be removed.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Packages that would be installed or upgraded ({{ to_install_or_upgrade|length }})</h2>
+      {% if to_install_or_upgrade %}
+        <table class="data-table">
+          <thead>
+            <tr><th>Package</th><th>Current version</th><th>New version</th></tr>
+          </thead>
+          <tbody>
+            {% for pkg in to_install_or_upgrade %}
+              <tr>
+                <td><code>{{ pkg.name }}</code></td>
+                <td>{{ pkg.current_version or '—' }}</td>
+                <td>{{ pkg.new_version or '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint">Nothing would be installed or upgraded.</p>
+      {% endif %}
+    </section>
+
+    {% if not to_remove and not to_install_or_upgrade %}
+      <div class="alert alert-warn">
+        <p>
+          Nothing is pending — <code>apt-get update</code> and the cleanup
+          steps will still run if you confirm, same as clicking "Run update"
+          always has, but there's nothing for the upgrade step to do.
+        </p>
+      </div>
+    {% endif %}
+
+    <form method="post" action="/machines/{{ machine.id }}/updates" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="strategy" value="{{ strategy.value }}">
+      <button type="submit" class="button{% if to_remove %} button-danger{% endif %}">
+        Confirm — run this update on {{ machine.name }}
+      </button>
+      <a class="button button-secondary" href="/machines/{{ machine.id }}">Cancel</a>
+    </form>
+  {% endif %}
+{% endblock %}

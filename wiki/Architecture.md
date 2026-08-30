@@ -643,6 +643,70 @@ shaped the design:
   already records every run permanently, this is purely a read-side view
   over data that already existed.
 
+### Previewing a manual update before it runs
+
+Clicking "Run update" on a machine's detail page no longer enqueues the
+real job directly — it links to `GET /machines/{id}/updates/preview`
+first, which simulates the *exact* same command sequence
+`build_update_command` would run for real, using apt's own dry-run mode
+(`apt-get -s`, aka `--simulate`) for both the upgrade step and
+`autoremove`, and shows what would be installed/upgraded and, most
+importantly, what would be *removed* — `autoremove` is the one step in
+this sequence capable of surprising an operator. Only the preview page's
+own "Confirm" button actually calls `POST /machines/{id}/updates`, which
+is otherwise unchanged (same permission, same pinned-fingerprint check,
+same audit action code `machine.updates.run`). A few decisions:
+
+- **Deliberately scoped to this one entry point.** Scheduled/cron-triggered
+  updates (`app.scheduling.builtin_actions`) still run immediately, with no
+  human present to preview or confirm anything — that's the entire point
+  of scheduling them. Manually-triggered group/bulk updates
+  (`app/web/routes/machine_groups.py`, `/machines/bulk/updates`) are also
+  unchanged: a preview naturally answers "what would happen on machine X",
+  and doesn't generalize cleanly to "what would happen across N machines
+  at once" without a lot more UI than this pass warrants — a future
+  iteration could add a per-machine-in-a-batch preview, but that's out of
+  scope here.
+- **A plain confirm button, not a typed-name confirmation.** Power actions
+  require typing the machine's exact name because they're irreversible and
+  immediate the moment the button is clicked with no preview involved at
+  all. This flow already *is* the extra step — the preview page itself is
+  the friction that a typed name would otherwise add, and requires an
+  actual SSH round trip (not just a client-side dialog) to reach, which a
+  reflexively-clicked JS `confirm()` never does. Requiring a typed name on
+  top of that would be redundant friction for a non-destructive-by-default
+  action (most update runs change nothing worth naming to confirm) whereas
+  the one destructive part is *specifically the removals list*, already
+  called out prominently and styled as a warning on the same page.
+- **A GET, not a POST.** The preview persists nothing to `Machine` (unlike
+  "Check for updates now", which writes its counts/lists to the DB) even
+  though it performs a real SSH round trip — same reasoning
+  `/machines/package-search` and the update-run history page already use
+  for a read-only GET that happens to do real work. No CSRF token needed.
+- **An empty plan still lets you confirm.** If nothing would be
+  installed, upgraded, or removed, the preview page says so but still
+  shows the same "Confirm — run this update" button — clicking it still
+  runs `apt-get update`/`autoremove`/`autoclean`/flatpak/snap exactly like
+  today, matching existing behavior for "nothing pending" rather than
+  silently skipping the run.
+- **The API keeps a direct trigger.** `POST /api/v1/machines/{id}/updates`
+  is intentionally *not* forced through a preview step first — see that
+  route's docstring in `app/web/routes/api_v1.py`; a scripted caller
+  presumably already knows what it's asking for, the same reasoning that
+  already applies to every other unconfirmed single-machine trigger in
+  that file (unlike the destructive, typed-confirmation actions, which
+  *do* require an explicit `confirm`/`confirm_name` field there).
+  `GET /api/v1/machines/{id}/updates/preview` is offered alongside it as an
+  optional tool for a caller that wants to check first or build its own
+  preview UI, not a mandatory gate.
+- **Reuses `check_updates`'s parsing conventions.** The simulate command
+  uses the same `echo ===MARKER===`-delimited-sections trick as
+  `_CHECK_UPDATES_COMMAND`, and `parse_apt_simulated_changes`
+  (`app/ssh/updates.py`) is a sibling of `parse_apt_upgradable_packages` —
+  same "pure function, no I/O, unit-testable against canned output" shape,
+  parsing `Inst `/`Remv `-prefixed lines from `apt-get -s`'s output instead
+  of `apt list --upgradable`'s.
+
 ### Checking for updates without installing them
 
 "Check for updates now" (`app/ssh/updates.check_updates`) still needs
@@ -881,6 +945,93 @@ SSH action in the app:
   any machine without a pinned host key fingerprint (surfaced as a
   skipped-count message), since `open_connection` would refuse those
   anyway.
+
+### Interactive SSH terminal: the most powerful capability in the app
+
+**Machines → a machine → Terminal** opens a real, interactive shell to that
+machine in the browser — not a fixed command like updates/power, but
+arbitrary command execution as whatever user (and sudo rights, if any) the
+machine's configured account has. It's treated accordingly:
+
+- **Its own dedicated permission**, `Permission.ACTION_TERMINAL` — not
+  folded into `ACTION_UPDATES` or `MACHINE_MANAGE`, since neither implies
+  "can run anything." A role has to be granted this explicitly, same as
+  every other permission (see "Adding a new permission" in
+  [Development](Development.md)).
+- **Same pinned-fingerprint requirement as every other SSH-connecting
+  action** — a machine with no confirmed host key fingerprint can't open a
+  terminal, same `UnknownHostKeyError` refusal `open_connection` already
+  gives every other action.
+- **Session start/end are audited, not keystrokes.** `machine.terminal.open`
+  is logged the moment the shell actually starts (after the SSH connection
+  succeeds); `machine.terminal.close` is logged with the session's duration
+  when it ends, however it ends (clean disconnect, error, or the hard time
+  cap below). What was typed or displayed is deliberately *not* recorded —
+  a keystroke-level transcript of a potentially root-capable shell would
+  itself become a sensitive artifact (any secret typed or shown during the
+  session would end up sitting in the audit log), and this app's existing
+  audit philosophy is already "who did what, not a full transcript of what
+  happened" (see "Audit log: who, what, outcome, when" above).
+- **A WebSocket, authenticated by hand.** `app.auth.middleware.require_auth`
+  is registered via `@app.middleware("http")` in `app.main` — Starlette
+  never invokes `http`-scoped middleware for a WebSocket connection, so a
+  WebSocket route gets *no* auth for free. `app/web/routes/terminal_ws.py`
+  re-implements the same session-cookie lookup
+  (`app.auth.sessions.get_valid_session`) and permission check by hand,
+  and closes the socket (code `1008`, policy violation) before accepting
+  the connection or touching SSH at all if either fails — never
+  accept-then-fail. The page shell itself
+  (`GET /machines/{id}/terminal` in `app/web/routes/machines.py`) *is*
+  gated by the ordinary `require_permission`/pinned-fingerprint checks
+  every other page uses, but that only proves someone could load the page;
+  the socket doesn't trust that on its own.
+- **A hard 2-hour session cap** (`TERMINAL_SESSION_MAX_SECONDS` in
+  `terminal_ws.py`), closed server-side regardless of activity — long
+  enough for real, uninterrupted admin work (installing something, chasing
+  a problem down, editing several files), short enough that a forgotten
+  browser tab against the single most powerful capability in this app
+  doesn't hold a live, potentially root-capable SSH connection open
+  indefinitely. The SSH connection and remote process are always torn down
+  in a `finally` block on every exit path (clean disconnect, error, or the
+  cap firing) — there's no path that leaks a connection.
+- **AsyncSSH's own PTY support, not a new dependency.** `app.ssh.client.
+  open_shell_session` is a sibling of `open_connection` (calls it, then
+  `conn.create_process(term_type=..., term_size=..., encoding=None)`) —
+  AsyncSSH already supports everything an interactive shell needs
+  (`create_process`, `change_terminal_size` for resize), so this needed no
+  new Python dependency. `encoding=None` keeps the byte stream raw rather
+  than decoded, since a terminal relays arbitrary bytes (partial UTF-8
+  sequences, ANSI escapes) rather than parsed text.
+- **A simple binary/text WebSocket protocol.** Binary frames carry raw
+  terminal bytes in both directions (client keystrokes in, remote PTY
+  output out); text frames carry small JSON control messages — a
+  client-sent `resize` (cols/rows), and a server-sent `error` for a failure
+  before there's a PTY to relay bytes from yet.
+- **xterm.js, vendored locally — real terminal emulation, not a hand-built
+  approximation.** This app's whole convention is vendored-locally JS (see
+  how htmx is vendored under `app/web/static/js/`, never pulled from a
+  CDN) under a strict CSP with no inline scripts. xterm.js (MIT-licensed)
+  plus its `addon-fit` (auto-sizing to the container) are vendored the same
+  way — `app/web/static/js/xterm.min.js` /
+  `xterm-addon-fit.min.js`, `app/web/static/css/xterm.css` — rather than a
+  hand-built renderer, since real terminal emulation (full ANSI/VT
+  handling, alternate screen buffer, `vim`/`htop`/`less` rendering
+  correctly) is exactly what a purpose-built library already does well;
+  reimplementing a meaningful subset of it would be strictly worse for no
+  benefit once the real library was available to fetch. `app/web/static/js/
+  terminal.js` is this app's own small, CSP-safe wiring script (external
+  file, no inline `<script>`) connecting xterm.js to the WebSocket above.
+- **CSP: `connect-src 'self'` added, nothing broader.** The existing policy
+  had no explicit `connect-src` at all (falling back to `default-src
+  'self'`); it's now spelled out explicitly for clarity, still scoped to
+  `'self'` — a WebSocket connection to this page's own origin is already
+  covered by the same-origin `ws`/`wss` upgrade CSP's `'self'` keyword
+  matches, so nothing wider was needed.
+- **Not exposed over the REST API.** The terminal is inherently an
+  interactive, browser-only feature — there's no meaningful "REST"
+  operation to expose (see `app/web/routes/api_v1.py`'s module docstring
+  for the same reasoning already applied to SSH key rotation and LDAP/OIDC
+  configuration: some things are deliberately web-UI-only).
 
 ### Scheduling: reusing actions, not reimplementing them
 

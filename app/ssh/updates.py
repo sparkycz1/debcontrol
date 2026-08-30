@@ -155,11 +155,15 @@ _CHECK_UPDATES_COMMAND = (
 )
 
 
-def _split_check_sections(raw: str) -> dict[str, str]:
-    pattern = "|".join(f"==={name}===" for name in _CHECK_SECTION_MARKERS)
+def _split_sections(raw: str, markers: tuple[str, ...]) -> dict[str, str]:
+    pattern = "|".join(f"==={name}===" for name in markers)
     parts = re.split(f"(?:{pattern})", raw)
     body = parts[1:]
-    return dict(zip(_CHECK_SECTION_MARKERS, (chunk.strip() for chunk in body), strict=False))
+    return dict(zip(markers, (chunk.strip() for chunk in body), strict=False))
+
+
+def _split_check_sections(raw: str) -> dict[str, str]:
+    return _split_sections(raw, _CHECK_SECTION_MARKERS)
 
 
 _UPGRADABLE_FROM_RE = re.compile(r"\[upgradable from:\s*([^\]]+)\]")
@@ -302,4 +306,136 @@ async def check_updates(
         apt_upgradable_packages=apt_packages,
         flatpak_upgradable_packages=flatpak_packages,
         snap_upgradable_packages=snap_packages,
+    )
+
+
+# --- Preview ("what would this update do?") ---
+#
+# A dry run of the exact same upgrade strategy `build_update_command` would
+# run for real, using apt's own simulate mode (`-s`, aka `--simulate` /
+# `--just-print` / `--dry-run` / `--recon` / `--no-act` — all synonyms for
+# the same flag) for both the upgrade step and `autoremove`, so an operator
+# can see what would be *removed* (the risky part of `autoremove`) before
+# confirming. Reuses `_SUDO_APT` (same `sudo -n ... apt-get -y -q` prefix
+# `build_update_command` uses) with `-s` appended — `-y` is harmless
+# alongside `-s` (apt never actually prompts in simulate mode either way).
+#
+# Deliberately apt-only: flatpak/snap have no equivalent "what would be
+# removed" concern here (`flatpak update`/`snap refresh` don't remove
+# packages the way `autoremove` does), so `check_updates`'s existing
+# flatpak/snap counts/lists are all the context the preview page needs for
+# those two sources — no new simulation added for them.
+
+_UPGRADE_SIM_MARKER = "===UPGRADE_SIM==="
+_AUTOREMOVE_SIM_MARKER = "===AUTOREMOVE_SIM==="
+_PREVIEW_SECTION_MARKERS = ("UPGRADE_SIM", "AUTOREMOVE_SIM")
+
+_INST_RE = re.compile(r"^Inst\s+(\S+)\s*(?:\[([^\]]*)\])?\s*\((\S+)")
+_REMV_RE = re.compile(r"^Remv\s+(\S+)\s*(?:\[([^\]]*)\])?")
+
+
+def build_update_preview_command(strategy: UpgradeStrategy) -> str:
+    """Build the remote shell script for a dry-run preview of one update
+    run — the same `apt-get update` + upgrade-strategy + `autoremove`
+    sequence `build_update_command` runs for real, with `-s` (simulate) on
+    both apt-mutating steps. `autoclean` and the flatpak/snap steps aren't
+    simulated: `autoclean` only deletes already-downloaded `.deb` files
+    from the local cache (nothing installed/removed to preview), and
+    flatpak/snap have no removal-preview concept relevant here (see the
+    section docstring above).
+    """
+    upgrade_subcommand = _UPGRADE_SUBCOMMAND[strategy]
+    return (
+        "{ "
+        "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null; "
+        'status=$?; '
+        f"echo {_UPGRADE_SIM_MARKER}; "
+        f'if [ "$status" -eq 0 ]; then {_SUDO_APT} -s {upgrade_subcommand}; fi; '
+        f"echo {_AUTOREMOVE_SIM_MARKER}; "
+        f'if [ "$status" -eq 0 ]; then {_SUDO_APT} -s autoremove; fi; '
+        'exit "$status"; '
+        "} 2>&1"
+    )
+
+
+def parse_apt_simulated_changes(raw: str) -> tuple[list[PendingPackage], list[PendingPackage]]:
+    """Parse `apt-get -s`'s simulated-transaction output into (to be
+    installed/upgraded, to be removed) — `Inst `-prefixed lines are
+    installs/upgrades, `Remv `-prefixed lines are removals. Pure function,
+    no I/O, same testing rationale as `parse_apt_upgradable_packages`.
+
+    Typical lines:
+        Inst libfoo [1.0-1] (1.1-1 Debian:12.5/stable [amd64])
+        Inst libbar (2.0-1 Debian:12.5/stable [amd64])
+        Remv libbaz [1.0-1]
+    """
+    installed_or_upgraded: list[PendingPackage] = []
+    removed: list[PendingPackage] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        inst_match = _INST_RE.match(line)
+        if inst_match:
+            name, current_version, new_version = inst_match.groups()
+            installed_or_upgraded.append(
+                PendingPackage(
+                    name=name, current_version=current_version, new_version=new_version
+                )
+            )
+            continue
+        remv_match = _REMV_RE.match(line)
+        if remv_match:
+            name, current_version = remv_match.groups()
+            removed.append(
+                PendingPackage(name=name, current_version=current_version, new_version=None)
+            )
+    return installed_or_upgraded, removed
+
+
+@dataclass
+class UpdatePreviewResult:
+    exit_status: int
+    output: str
+    to_install_or_upgrade: list[PendingPackage] = field(default_factory=list)
+    to_remove: list[PendingPackage] = field(default_factory=list)
+
+
+async def preview_update(
+    machine: Machine,
+    secret: str | None,
+    strategy: UpgradeStrategy,
+    connect_timeout_seconds: int,
+    run_timeout_seconds: int,
+) -> UpdatePreviewResult:
+    """Connect (strict pinned host-key verification, as always) and run the
+    dry-run preview. Shares `run_system_update`'s long timeout budget, since
+    `apt-get update` alone can take a while on a slow mirror even though the
+    simulate steps themselves are fast."""
+    script = build_update_preview_command(strategy)
+    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
+        result = await conn.run(script, check=False, timeout=run_timeout_seconds)
+
+    stdout = result.stdout or ""
+    output = stdout if isinstance(stdout, str) else stdout.decode()
+    exit_status = result.exit_status if result.exit_status is not None else -1
+    sections = _split_sections(output, _PREVIEW_SECTION_MARKERS)
+
+    upgrade_installed, upgrade_removed = parse_apt_simulated_changes(
+        sections.get("UPGRADE_SIM", "")
+    )
+    _autoremove_installed, autoremove_removed = parse_apt_simulated_changes(
+        sections.get("AUTOREMOVE_SIM", "")
+    )
+
+    # De-duplicate by name: a package apt already flags for removal during
+    # the upgrade step itself (rare, but possible with dist-upgrade) would
+    # otherwise also show up from the autoremove step's own simulation.
+    to_remove_by_name = {pkg["name"]: pkg for pkg in (*upgrade_removed, *autoremove_removed)}
+
+    return UpdatePreviewResult(
+        exit_status=exit_status,
+        output=output,
+        to_install_or_upgrade=upgrade_installed,
+        to_remove=list(to_remove_by_name.values()),
     )

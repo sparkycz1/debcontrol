@@ -17,7 +17,7 @@ from app.db.models.audit_log import AuditLogEntry
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import Machine
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.session import AsyncSessionLocal
 from app.services.fleet_stats import compute_fleet_stats
 from app.ssh.client import test_connection
@@ -27,7 +27,7 @@ from app.ssh.facts import gather_facts
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
-from app.ssh.updates import check_updates, run_system_update
+from app.ssh.updates import check_updates, preview_update, run_system_update
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +344,52 @@ async def check_machine_updates(ctx: dict[str, Any], machine_id: str) -> dict[st
         error = f"apt-get update exited with status {result.exit_status}."
         logger.warning("check_machine_updates failed for %s: %s", machine.name, error)
         return {"ok": False, "error": error}
+
+
+async def preview_machine_update(
+    ctx: dict[str, Any], machine_id: str, strategy: str
+) -> dict[str, Any]:
+    """Dry-run preview for the manual "Run update" flow
+    (`GET /machines/{id}/updates/preview` in `app/web/routes/machines.py`):
+    simulate the exact update sequence with apt's `-s` flag and report what
+    would be installed/upgraded and, especially, what `autoremove` would
+    remove — without changing anything on the machine. Nothing is persisted
+    to the `Machine` row here (unlike `check_machine_updates` above) — this
+    is a one-off, ephemeral view for whoever's looking at the preview page
+    right now, not a fact worth keeping around after they navigate away."""
+    settings = get_settings()
+
+    async with AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            result = await preview_update(
+                machine,
+                secret,
+                UpgradeStrategy(strategy),
+                settings.ssh_connect_timeout,
+                settings.update_timeout_seconds,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("preview_machine_update failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+    if result.exit_status != 0:
+        error = f"apt-get update exited with status {result.exit_status} while previewing."
+        logger.warning("preview_machine_update failed for %s: %s", machine.name, error)
+        return {"ok": False, "error": error}
+
+    return {
+        "ok": True,
+        "to_install_or_upgrade": [dict(p) for p in result.to_install_or_upgrade],
+        "to_remove": [dict(p) for p in result.to_remove],
+    }
 
 
 async def check_all_machine_updates(ctx: dict[str, Any]) -> None:
