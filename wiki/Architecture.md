@@ -667,6 +667,21 @@ handling, secrets at rest, audit integrity, HTTP hardening), most of which
 predates auth and is unrelated to it. See "Deliberately out of scope"
 below for what's still missing.
 
+> [!IMPORTANT]
+> The **AI assistant** (the `/ai` page, `app/ai/` and
+> `app/tasks/ai_jobs.py`) is the highest-risk surface in this application
+> by a wide margin: it can propose arbitrary shell commands, derived from a
+> third-party model's interpretation of natural language, against real
+> machines. Its safeguards — `ai.access` gating the page while every tool
+> stays gated by the same permission the equivalent manual button needs,
+> the permission being re-checked three separate times, and above all the
+> rule that no mutating action ever runs without a CSRF-protected human
+> confirmation showing the literal command and every resolved target — are
+> documented in full, including the residual prompt-injection risk they
+> deliberately do **not** eliminate, in
+> [AI Assistant](AI-Assistant.md). Read that page before enabling the
+> feature.
+
 ### 🔑 SSH host key pinning
 
 Covered in depth in
@@ -1544,3 +1559,7 @@ from anything but your reverse proxy, or bind
   web-UI-only over the REST API (see "The REST API: read and write,
   mirroring the web UI" above for why) — everything else the web UI can do
   now has an API equivalent.
+- The **AI assistant** is web-UI-only for the same reason, only more so,
+  and its conversations are private to the account that created them (no
+  shared or admin view). See
+  [AI Assistant → Deliberately out of scope](AI-Assistant.md#-deliberately-out-of-scope).

@@ -23,7 +23,7 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 # The canonical repo this version's commit hash links to, for the Settings
 # page's "view this commit on GitHub" link. A fork should update this.

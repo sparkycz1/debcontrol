@@ -232,6 +232,12 @@ code path. Then:
 4. If it should run periodically, add a `beat_schedule` entry in
    `app/tasks/celery_app.py`. Do **not** make the task re-enqueue itself —
    Beat owns cadence.
+5. If you put it in a **new module** rather than `app/tasks/jobs.py` (as
+   `app/tasks/ai_jobs.py` does), add that module to `celery_app`'s
+   `include=[...]` list — that list is deliberately explicit rather than
+   `autodiscover_tasks()`, so a module missing from it simply never
+   registers its tasks and `.delay()` fails at runtime instead of at
+   startup.
 
 ## 📝 Recording a new action in the audit log
 

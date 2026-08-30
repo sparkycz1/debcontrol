@@ -1,3 +1,8 @@
+from app.db.models.ai_conversation import AiConversation
+from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStatus
+from app.db.models.ai_model import AiModel
+from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
+from app.db.models.ai_usage import AiUsageRecord
 from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
@@ -15,6 +20,13 @@ from app.db.models.user import AuthProvider, User
 from app.db.models.user_session import UserSession
 
 __all__ = [
+    "AiConversation",
+    "AiMessage",
+    "AiMessageRole",
+    "AiModel",
+    "AiProviderConfig",
+    "AiProviderKind",
+    "AiUsageRecord",
     "ApiToken",
     "AppSettings",
     "AuditChainState",
@@ -27,6 +39,7 @@ __all__ = [
     "MachineGroup",
     "MachinePackage",
     "MachineUpdateRun",
+    "PendingActionStatus",
     "PendingMachine",
     "Permission",
     "Role",
