@@ -40,6 +40,7 @@ from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
+from app.ssh.updates import PendingPackage
 from app.web.machine_search import machine_search_clause
 from app.web.routes.audit import _csv_safe
 from app.web.templating import templates
@@ -55,6 +56,7 @@ router = APIRouter(
 _manage = Depends(require_permission(Permission.MACHINE_MANAGE))
 _updates = Depends(require_permission(Permission.ACTION_UPDATES))
 _power = Depends(require_permission(Permission.ACTION_POWER))
+_terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 
 # Fingerprint shaped like "SHA256:<base64...>", as returned by AsyncSSH/OpenSSH.
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
@@ -1117,6 +1119,73 @@ async def check_updates_endpoint(
     )
 
 
+@router.get("/{machine_id}/updates/preview", dependencies=[_updates])
+async def preview_machine_update(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    strategy: UpgradeStrategy = UpgradeStrategy.DIST_UPGRADE,
+) -> Response:
+    """Simulate (via apt's dry-run mode — nothing is changed on the machine)
+    exactly what `POST /machines/{id}/updates` would do, so a human can see
+    what would be removed (the risky part of `autoremove`) before actually
+    confirming it. A GET, not a POST: it's read-only against debcontrol's
+    own DB (nothing is persisted here, unlike "Check for updates now",
+    which writes the counts/lists it finds) even though it does perform a
+    real SSH round trip — same reasoning `/machines/package-search` and
+    `/machines/{id}/updates` (history) already use for a GET that only
+    reads, no CSRF token needed.
+
+    This is the page the detail page's "Run update" button now sends you to
+    first — the actual trigger (`trigger_machine_update` below) only ever
+    fires from this page's own confirm button, or directly via the API for
+    a scripted caller (see `app/web/routes/api_v1.py`'s module docstring for
+    why the API doesn't get the same forced two-step)."""
+    machine = await _get_machine_or_404(machine_id, db)
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before previewing updates.",
+        )
+
+    settings = get_settings()
+    job = await request.app.state.arq_redis.enqueue_job(
+        "preview_machine_update", str(machine.id), strategy.value
+    )
+    error: str | None = None
+    to_install_or_upgrade: list[PendingPackage] = []
+    to_remove: list[PendingPackage] = []
+    try:
+        result = await job.result(timeout=settings.update_timeout_seconds + 5)
+        if isinstance(result, dict):
+            if not result.get("ok"):
+                error = str(result.get("error") or "Unknown error.")
+            else:
+                to_install_or_upgrade = list(result.get("to_install_or_upgrade") or [])
+                to_remove = list(result.get("to_remove") or [])
+    except TimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/update_preview.html",
+        {
+            "machine": machine,
+            "strategy": strategy,
+            "error": error,
+            "to_install_or_upgrade": to_install_or_upgrade,
+            "to_remove": to_remove,
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
 @router.post("/{machine_id}/updates", dependencies=[_updates, Depends(verify_csrf)])
 async def trigger_machine_update(
     request: Request,
@@ -1240,6 +1309,26 @@ async def machine_update_run_status(
     if run.machine_id != machine_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
     return templates.TemplateResponse(request, "partials/update_run_status.html", {"run": run})
+
+
+@router.get("/{machine_id}/terminal", dependencies=[_terminal])
+async def terminal_page(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """The interactive web terminal's page shell — the actual byte relay
+    happens over the WebSocket in `app/web/routes/terminal_ws.py`, which
+    (since `app.auth.middleware` never runs for WebSocket requests) does its
+    own independent session/permission check rather than relying on this
+    page having already been reached. Gated behind `ACTION_TERMINAL` — see
+    that permission's comment in `app/db/models/role.py` for why it's its
+    own dedicated permission rather than folded into an existing one."""
+    machine = await _get_machine_or_404(machine_id, db)
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before opening a terminal.",
+        )
+    return templates.TemplateResponse(request, "machines/terminal.html", {"machine": machine})
 
 
 @router.get("/{machine_id}/power/{action}")

@@ -21,6 +21,7 @@ from app.tasks.jobs import (
     check_all_machine_updates,
     check_machine_updates,
     ping_all_machines,
+    preview_machine_update,
     purge_old_audit_log_entries,
     purge_old_fleet_snapshots,
     record_fleet_snapshot,
@@ -78,6 +79,7 @@ class WorkerSettings:
         # the default job_timeout below — give both their own budget.
         func(run_machine_update, timeout=get_settings().update_timeout_seconds),
         func(check_machine_updates, timeout=get_settings().update_timeout_seconds),
+        func(preview_machine_update, timeout=get_settings().update_timeout_seconds),
     ]
     cron_jobs = [
         cron(ping_all_machines, second=0, unique=True),

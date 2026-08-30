@@ -13,6 +13,16 @@ route does — this is a second door into the same house, not a looser one.
 Destructive actions that the web UI gates behind a typed confirmation
 phrase require an explicit `confirm` field here instead (see each route's
 docstring).
+
+What's deliberately still web-UI-only, and why: SSH key rotation
+(`/settings/ssh-key/...`) and LDAP/OIDC configuration are excluded for the
+reasons given in wiki/Architecture.md's "The REST API: read and write,
+mirroring the web UI" section. The interactive SSH terminal
+(`app/web/routes/terminal_ws.py`) is excluded for a different reason: it's
+inherently an interactive, browser-only feature (a live WebSocket relaying
+keystrokes to a PTY and a real terminal emulator's output back) with no
+meaningful "REST" shape to expose — there's nothing here for a script to
+call that would do anything useful without a human typing into it.
 """
 
 from __future__ import annotations
@@ -29,6 +39,7 @@ from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import require_api_permission
+from app.core.config import get_settings
 from app.core.security import encrypt_secret
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
@@ -513,6 +524,54 @@ async def bulk_power_action_api(
         details={"skipped": skipped},
     )
     return {"machine_count": len(machines), "skipped": skipped}
+
+@router.get("/machines/{machine_id}/updates/preview", dependencies=[_action_updates])
+async def preview_machine_update_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    strategy: UpgradeStrategy = UpgradeStrategy.DIST_UPGRADE,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """The API equivalent of the web UI's `GET /machines/{id}/updates/preview`
+    — a dry-run simulation (apt's `-s` flag; nothing on the machine changes)
+    of what `POST /machines/{id}/updates` would do, most importantly what
+    `autoremove` would remove.
+
+    Unlike the web UI, `POST /machines/{id}/updates` below is **not** forced
+    through this preview first — a scripted/API caller presumably already
+    knows what it's asking for (that's the whole point of automating it),
+    the same reasoning that already applies to every other unconfirmed
+    single-machine trigger in this file. This preview is offered as an
+    optional tool for a caller that *wants* to check before triggering (or
+    wants to render its own preview UI), not a mandatory gate — see this
+    module's docstring for how that compares to the destructive actions
+    here that *do* require an explicit `confirm`/`confirm_name` field."""
+    machine = await _get_machine_or_404(machine_id, db)
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before previewing updates.",
+        )
+
+    job = await request.app.state.arq_redis.enqueue_job(
+        "preview_machine_update", str(machine.id), strategy.value
+    )
+    settings = get_settings()
+    try:
+        result = await job.result(timeout=settings.update_timeout_seconds + 5)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="The background job did not respond in time.",
+        ) from exc
+    if not isinstance(result, dict) or not result.get("ok"):
+        error = str(result.get("error")) if isinstance(result, dict) else "Unknown error."
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {
+        "to_install_or_upgrade": result.get("to_install_or_upgrade") or [],
+        "to_remove": result.get("to_remove") or [],
+    }
+
 
 class _UpdatesTrigger(BaseModel):
     strategy: UpgradeStrategy

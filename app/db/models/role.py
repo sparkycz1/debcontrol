@@ -42,6 +42,13 @@ class Permission(enum.StrEnum):
     # destructive (see `destructive=True` on scheduled actions) and often
     # warrants a smaller set of trusted people than "can run apt upgrade".
     ACTION_POWER = "action.power"
+    # Interactive SSH terminal in the browser — the single most powerful
+    # capability in this app (arbitrary command execution as whatever
+    # user/sudo rights the machine's configured account has), so it's its
+    # own dedicated permission rather than folded into ACTION_UPDATES or
+    # MACHINE_MANAGE. See app/web/routes/terminal_ws.py and
+    # wiki/Architecture.md's "Interactive SSH terminal" section.
+    ACTION_TERMINAL = "action.terminal"
     SCHEDULING_VIEW = "scheduling.view"
     SCHEDULING_MANAGE = "scheduling.manage"
     AUDIT_VIEW = "audit.view"

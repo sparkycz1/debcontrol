@@ -108,6 +108,24 @@
     <div id="test-result"></div>
   </section>
 
+  {% if request.state.user.has_permission('action.terminal') %}
+    <section class="panel">
+      <h2>Terminal</h2>
+      <p class="hint">
+        A full interactive shell on this machine — whatever the configured
+        account (and its sudo rights, if any) can do, this can do. Sessions
+        end automatically after a few hours; closing the browser tab ends
+        one immediately.
+      </p>
+      {% if machine.host_key_fingerprint %}
+        <a class="button" href="/machines/{{ machine.id }}/terminal">Open terminal</a>
+      {% else %}
+        <a class="button button-disabled" href="#">Open terminal</a>
+        <p class="hint">Confirm the server's key fingerprint above first.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
   <section class="panel">
     <h2>System updates</h2>
     <p class="hint">
@@ -124,13 +142,16 @@
 
     {% include "partials/update_availability.html" %}
 
-    <form method="post" action="/machines/{{ machine.id }}/updates" class="form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <form method="get" action="/machines/{{ machine.id }}/updates/preview" class="form">
       {% include "partials/upgrade_strategy_fields.html" %}
       <button type="submit" class="button" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
         Run update
       </button>
     </form>
+    <p class="hint">
+      Shows exactly what would happen — including anything <code>autoremove</code>
+      would remove — before anything actually runs.
+    </p>
     {% if not machine.host_key_fingerprint %}
       <p class="hint">Confirm the server's key fingerprint above first.</p>
     {% endif %}
