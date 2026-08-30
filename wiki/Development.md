@@ -275,3 +275,19 @@ module docstring for the full parameter list (`outcome`, `target_type`/
 - Bump `APP_VERSION` in `app/core/version.py` **and** `version` in
   `pyproject.toml` together on every round of changes: patch for small
   fixes, minor for a feature or infrastructure change.
+
+> [!TIP]
+> **Anything CSP-adjacent must be verified in a real browser, not just by
+> reading the code.** Vendored JS/CSS, a new inline `style=`/`<script>`, a
+> third-party bundle's boot sequence — CSP violations and missing-file/
+> wrong-global mistakes are silent at the Python layer (routes return 200,
+> tests pass) and only ever show up as a blank widget and a console error
+> in an actual browser. Two real examples from this codebase: an inline
+> `style=` attribute on the SSH terminal's container was silently dropped
+> under this app's strict CSP, collapsing it to zero height; and Swagger UI
+> (`GET /api`) needs *two* vendored bundles, not the one some examples show
+> — loading only `swagger-ui-bundle.js` renders a bare, chrome-less widget
+> with a `Could not find component: StandaloneLayout` console warning,
+> because the topbar/layout chrome ships in the separate
+> `swagger-ui-standalone-preset.js`. Both were only caught by actually
+> loading the page and reading the console, not by inspecting the HTML.

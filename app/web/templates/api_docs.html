@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}API docs — debcontrol{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="/static/css/swagger-ui.css">
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>API docs</h1>
+  </div>
+  <p class="hint">
+    Interactive docs for the full read/write REST API
+    (<code>/api/v1/...</code>) — generated straight from the running app's
+    own route definitions, so it can't drift out of sync with them. Click
+    <strong>Authorize</strong> and paste one of your own API tokens
+    (<a href="/account">Account</a> — your account needs API access enabled
+    by an admin first) to try requests directly from this page. See the
+    wiki page <a href="https://github.com/sparkycz1/debcontrol/wiki/Architecture#the-rest-api-read-and-write-mirroring-the-web-ui">Architecture</a>
+    for the API's design rules and what's deliberately left out of it.
+  </p>
+  <div id="swagger-ui" data-openapi-url="/openapi.json"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/swagger-ui-bundle.js"></script>
+  <script src="/static/js/swagger-ui-standalone-preset.js"></script>
+  <script src="/static/js/swagger-init.js" defer></script>
+{% endblock %}

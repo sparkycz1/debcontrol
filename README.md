@@ -13,7 +13,10 @@ is supported by its own upstream — see the wiki:
 [Managed Machine Requirements](wiki/Managed-Machine-Requirements.md#os).
 Every page requires a login; access is controlled by custom roles (RBAC)
 an admin defines, and accounts can authenticate locally, against LDAP, or
-via OIDC SSO, with optional (or role-required) TOTP two-factor.
+via OIDC SSO, with optional (or role-required) TOTP two-factor. Everything
+in the web UI is also available as a full read/write REST API, with
+interactive [Swagger](https://swagger.io/tools/swagger-ui/) docs at `/api`
+once logged in.
 
 **Full documentation lives in the [wiki](wiki/Home.md)** — technology
 choices and the full security model ([Architecture](wiki/Architecture.md)),

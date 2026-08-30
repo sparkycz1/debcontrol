@@ -37,6 +37,7 @@
       {% if current_user.has_permission('settings.view') %}
         <a href="/settings" {% if current_path.startswith('/settings') %}class="active" aria-current="page"{% endif %}>Settings</a>
       {% endif %}
+      <a href="/api" {% if current_path == '/api' %}class="active" aria-current="page"{% endif %}>API docs</a>
     </nav>
     <div class="site-header-user">
       <a href="/account">{{ current_user.display_name or current_user.username }}</a>

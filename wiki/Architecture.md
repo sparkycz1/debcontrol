@@ -608,6 +608,57 @@ only what's unambiguously safe to read over a bearer token: version/commit
 info, the SSH public key/fingerprint (meant to be copied elsewhere anyway),
 background-check intervals, and audit log retention.
 
+#### Interactive docs: Swagger UI at `/api`
+
+The whole REST API above is browsable and directly callable from
+[**Swagger UI**](https://swagger.io/tools/swagger-ui/), served at plain
+`GET /api`. It's generated straight from the app's own live route
+definitions (via FastAPI's `openapi()`), so the docs and the API can never
+silently drift apart — there's no separate spec file to forget to update.
+
+> [!NOTE]
+> **This requires being logged in**, same as every other page. `/api` and
+> the schema it loads (`GET /openapi.json`) are deliberately *not* on the
+> same public, bearer-token-only footing as `/api/v1/...` itself — an
+> OpenAPI document is a complete map of every endpoint, parameter, and
+> permission this app has, and handing that to anyone with network access,
+> logged in or not, would be a reconnaissance gift. Once you're on the
+> page, click **Authorize** and paste one of your own API tokens (see
+> [Account](Home.md), or the "Per-user API tokens" section above) to
+> actually send requests from it — that's the same bearer-token auth the
+> real API uses, nothing special to the docs page.
+
+**Self-hosted, not the CDN default.** FastAPI's own built-in docs route
+normally pulls Swagger UI's JS/CSS from jsdelivr's CDN and inlines its own
+`<script>` to boot it — both are flatly incompatible with this app's CSP
+(`script-src 'self'`, `style-src 'self'`, no CDN, no inline scripts). So
+`/api` is a hand-written route (`app/web/routes/api_docs.py`) instead: a
+plain Jinja template, `swagger-ui-dist` vendored locally (same convention
+as htmx and xterm.js — pinned to an exact version, no CDN reference at
+runtime), and Swagger UI's boot logic in its own external file
+(`app/web/static/js/swagger-init.js`) instead of inline.
+
+> [!IMPORTANT]
+> Swagger UI ships its **topbar/page-chrome layout** ("StandaloneLayout")
+> as a *separate* bundle — `swagger-ui-standalone-preset.js` — from the
+> main `swagger-ui-bundle.js`. Plenty of examples floating around only
+> reference the one file and quietly render a bare, chrome-less widget (or,
+> depending on version, nothing at all with a console warning). Both files
+> must be vendored and loaded, in that order, for the page shown in the
+> screenshot-worthy version of Swagger UI to actually appear. This was only
+> caught by loading the real page in a real browser and reading the console
+> — see the note in `wiki/Development.md` about verifying anything
+> CSP-adjacent against an actual browser, not just by reading the code.
+
+**What "Authorize" documents.** The generated schema tags every
+`/api/v1/...` operation with a `bearerAuth` HTTP security scheme
+(`app/main.py`'s `_custom_openapi()`) — this is added by rewriting the
+generated OpenAPI document, not by adding a `Security(...)` dependency to
+every one of the ~100 API endpoints, since `app.auth.dependencies.
+get_api_token_user` already reads the `Authorization` header itself and
+doesn't need FastAPI's own security machinery to function. Web-only routes
+(session-cookie pages, not `/api/v1/...`) are left undecorated.
+
 ## 🔒 Security model
 
 See "Authentication & RBAC" above for logins, sessions, and permissions —
