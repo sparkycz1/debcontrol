@@ -10,12 +10,13 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Enum, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.pg_enum import pg_enum
 
 
 class ScheduleTargetType(enum.StrEnum):
@@ -51,7 +52,7 @@ class ScheduledTask(Base):
     action_params: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     target_type: Mapped[ScheduleTargetType] = mapped_column(
-        Enum(ScheduleTargetType, name="schedule_target_type", native_enum=True), nullable=False
+        pg_enum(ScheduleTargetType, name="schedule_target_type"), nullable=False
     )
     # Exactly one of these is set, matching target_type — enforced in the
     # route/schema layer, not via a DB constraint (SQLite in tests doesn't

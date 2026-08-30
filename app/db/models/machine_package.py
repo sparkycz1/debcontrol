@@ -13,10 +13,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Index, String, func
+from sqlalchemy import Boolean, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.pg_enum import pg_enum
 from app.ssh.packages import PackageSource
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ class MachinePackage(Base):
     machine: Mapped[Machine] = relationship(viewonly=True)
 
     source: Mapped[PackageSource] = mapped_column(
-        Enum(PackageSource, name="package_source", native_enum=True), nullable=False
+        pg_enum(PackageSource, name="package_source"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     version: Mapped[str] = mapped_column(String(255), nullable=False)

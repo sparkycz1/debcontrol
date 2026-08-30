@@ -25,11 +25,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, LargeBinary, String, func
+from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.role import Permission, Role
+from app.db.pg_enum import pg_enum
 
 if TYPE_CHECKING:
     from app.db.models.api_token import ApiToken
@@ -81,7 +82,7 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     auth_provider: Mapped[AuthProvider] = mapped_column(
-        Enum(AuthProvider, name="auth_provider", native_enum=True), nullable=False
+        pg_enum(AuthProvider, name="auth_provider"), nullable=False
     )
     # Only ever set for AuthProvider.LOCAL.
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)

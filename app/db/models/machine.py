@@ -11,7 +11,6 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
-    Enum,
     ForeignKey,
     Integer,
     LargeBinary,
@@ -21,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.pg_enum import pg_enum
 
 if TYPE_CHECKING:
     from app.db.models.machine_group import MachineGroup
@@ -75,7 +75,7 @@ class Machine(Base):
     username: Mapped[str] = mapped_column(String(255), nullable=False)
 
     auth_method: Mapped[AuthMethod] = mapped_column(
-        Enum(AuthMethod, name="auth_method", native_enum=True),
+        pg_enum(AuthMethod, name="auth_method"),
         nullable=False,
     )
     secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

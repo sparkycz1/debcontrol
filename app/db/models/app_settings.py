@@ -26,10 +26,11 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, Integer, LargeBinary, String, func
+from sqlalchemy import Boolean, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.pg_enum import pg_enum
 
 SINGLETON_ID = 1
 
@@ -119,7 +120,7 @@ class AppSettings(Base):
     syslog_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     syslog_port: Mapped[int] = mapped_column(Integer, default=DEFAULT_SYSLOG_PORT, nullable=False)
     syslog_protocol: Mapped[SyslogProtocol] = mapped_column(
-        Enum(SyslogProtocol, name="syslog_protocol", native_enum=True),
+        pg_enum(SyslogProtocol, name="syslog_protocol"),
         default=SyslogProtocol.UDP,
         nullable=False,
     )

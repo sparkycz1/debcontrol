@@ -9,11 +9,12 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, Index, String, Text, func
+from sqlalchemy import ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.machine import Machine
+from app.db.pg_enum import pg_enum
 
 
 class UpgradeStrategy(enum.StrEnum):
@@ -49,10 +50,10 @@ class MachineUpdateRun(Base):
     batch_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
 
     strategy: Mapped[UpgradeStrategy] = mapped_column(
-        Enum(UpgradeStrategy, name="upgrade_strategy", native_enum=True), nullable=False
+        pg_enum(UpgradeStrategy, name="upgrade_strategy"), nullable=False
     )
     status: Mapped[UpdateRunStatus] = mapped_column(
-        Enum(UpdateRunStatus, name="update_run_status", native_enum=True),
+        pg_enum(UpdateRunStatus, name="update_run_status"),
         nullable=False,
         default=UpdateRunStatus.PENDING,
     )

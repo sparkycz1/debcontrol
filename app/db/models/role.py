@@ -18,10 +18,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.pg_enum import pg_enum
 
 if TYPE_CHECKING:
     from app.db.models.user import User
@@ -111,7 +112,7 @@ class RolePermission(Base):
         ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
     )
     permission: Mapped[Permission] = mapped_column(
-        Enum(Permission, name="permission", native_enum=True), primary_key=True
+        pg_enum(Permission, name="permission"), primary_key=True
     )
 
     role: Mapped[Role] = relationship(back_populates="permission_grants")

@@ -13,10 +13,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Enum, Integer, String
+from sqlalchemy import JSON, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.pg_enum import pg_enum
 
 # Fixed id for the single AuditChainState row.
 CHAIN_STATE_SINGLETON_ID = 1
@@ -79,7 +80,7 @@ class AuditLogEntry(Base):
     # "scheduled_task.create" — see app.audit for the values in use.
     action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     outcome: Mapped[AuditOutcome] = mapped_column(
-        Enum(AuditOutcome, name="audit_outcome", native_enum=True),
+        pg_enum(AuditOutcome, name="audit_outcome"),
         nullable=False,
         default=AuditOutcome.SUCCESS,
     )
