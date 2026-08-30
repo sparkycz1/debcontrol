@@ -39,6 +39,14 @@ dependencies = [
     # new dependency needed for that) to carry state/nonce across the
     # redirect to/from the provider.
     "authlib>=1.7.2",
+    # Not used directly by this app's own code — but
+    # authlib.integrations.starlette_client (app/auth/oidc.py) imports
+    # authlib.integrations.httpx_client at module load time regardless of
+    # whether OIDC is actually configured, so httpx has to be a real
+    # runtime dependency, not just something the test suite happens to
+    # need. Without it here, a production image built with `uv sync
+    # --no-dev` fails to import app.main at all.
+    "httpx>=0.28.1",
     # TOTP (RFC 6238) generation/verification for two-factor authentication.
     "pyotp>=2.10.0",
     # Renders the TOTP enrollment QR code as inline SVG — deliberately used
@@ -48,7 +56,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "aiosqlite>=0.22.1",
