@@ -72,6 +72,47 @@ async def test_create_and_list_machine(client):
     assert detail.status_code == 200
     assert "Not gathered yet" in detail.text
     assert "s3cret" not in detail.text
+    # Discovery runs automatically as soon as the page loads (no manual
+    # click needed right after adding a machine) — still requires an
+    # explicit confirm click once a fingerprint comes back, though; this
+    # is a trigger attribute, not an auto-trust of whatever key shows up.
+    assert 'hx-trigger="click, load"' in detail.text
+
+
+async def test_failed_discovery_offers_a_retry_button(client, monkeypatch):
+    """A failed auto-triggered discovery (e.g. the machine isn't reachable
+    yet right after being added) must not strand the user without any way
+    to try again short of reloading the whole page."""
+    import app.web.routes.machines as machines_routes
+    from app.ssh.exceptions import SSHConnectionError
+
+    async def _always_fails(*args, **kwargs):
+        raise SSHConnectionError("connection refused")
+
+    monkeypatch.setattr(machines_routes, "discover_host_key_fingerprint", _always_fails)
+
+    await client.get("/machines/new")  # provisions the csrftoken cookie
+    create = await client.post(
+        "/machines",
+        data={
+            "name": "unreachable1",
+            "ip_address": "10.0.0.11",
+            "port": "22",
+            "username": "admin",
+            "auth_method": "ssh_key",
+            "csrf_token": client.cookies.get("csrftoken"),
+        },
+    )
+    assert create.status_code == 303
+    machine_url = create.headers["location"]
+
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        f"{machine_url}/discover-host-key", data={"csrf_token": csrf_token}
+    )
+    assert response.status_code == 200
+    assert "Could not determine the key fingerprint" in response.text
+    assert "Retry discovery" in response.text
 
 
 async def test_edit_machine_updates_fields_and_resets_pinning_on_ip_change(

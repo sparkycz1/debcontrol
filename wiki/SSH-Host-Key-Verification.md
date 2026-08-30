@@ -18,10 +18,16 @@ connection is attempted.
 
 1. Add a machine (**Machines → Add machine**). At this point it has no
    pinned fingerprint, and the **Test connection** button is disabled.
-2. On the machine's detail page, click **Discover key fingerprint**. The
-   app connects just far enough to read the server's host key, computes
-   its SHA256 fingerprint, and **always aborts before authenticating** —
-   no credentials are ever sent at this stage, and nothing is trusted yet.
+2. Its detail page runs discovery automatically as soon as it loads — no
+   click needed to kick it off; a **Discover key fingerprint** /
+   **Retry discovery** button stays available too, for whenever it needs
+   to run again (the machine wasn't reachable yet, its IP changed, ...).
+   Either way, the app connects just far enough to read the server's host
+   key, computes its SHA256 fingerprint, and **always aborts before
+   authenticating** — no credentials are ever sent at this stage, and
+   nothing is trusted yet. Automating *this* step is safe precisely
+   because it still can't establish a real connection or trust anything
+   on its own — see step 4.
 3. The fingerprint is displayed with a warning: verify it through a
    channel *other than this application* before confirming — for example:
    - your hosting provider's console/control panel, which often shows the

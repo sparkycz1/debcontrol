@@ -4,6 +4,15 @@
   <div class="alert alert-error">
     <p>Could not determine the key fingerprint: {{ error }}</p>
   </div>
+  <button
+    class="button"
+    hx-post="/machines/{{ machine.id }}/discover-host-key"
+    hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+    hx-target="#host-key-panel"
+    hx-swap="innerHTML"
+  >
+    Retry discovery
+  </button>
 {% elif fingerprint %}
   <div class="alert alert-warn">
     <p><strong>The server presents this key fingerprint:</strong></p>

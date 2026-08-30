@@ -65,7 +65,9 @@
       <p class="hint">
         This machine doesn't have a confirmed host key fingerprint yet — until it
         does, no connection can be safely established (no automatic "trust on
-        first use"), and facts can't be gathered.
+        first use"), and facts can't be gathered. Discovery runs automatically
+        below; you still have to confirm the fingerprint yourself once it's
+        shown, after checking it through a channel outside this app.
       </p>
       <button
         class="button"
@@ -73,6 +75,7 @@
         hx-vals='{"csrf_token": "{{ csrf_token }}"}'
         hx-target="#host-key-panel"
         hx-swap="innerHTML"
+        hx-trigger="click, load"
       >
         Discover key fingerprint
       </button>
