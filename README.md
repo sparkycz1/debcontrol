@@ -89,6 +89,10 @@ for upgrading later (`./scripts/upgrade.sh`). See
 [wiki/Development.md](wiki/Development.md) for running the test suite,
 linting/type-checking, adding a migration, and other project conventions.
 
+## 🔒 Security
+
+See [.github/SECURITY.md](.github/SECURITY.md) — supported versions and how to report a vulnerability. Dependency updates and security alerts are automated via [Dependabot](.github/dependabot.yml).
+
 ## 📄 License
 
 [MIT](LICENSE)
