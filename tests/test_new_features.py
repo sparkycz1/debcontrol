@@ -170,6 +170,81 @@ async def test_ssh_key_activate_without_pending_key_shows_error(client):
     assert "No pending SSH key to activate" in response.text
 
 
+async def test_push_pending_key_without_a_pending_key_shows_error(client):
+    csrf_token = client.cookies.get("csrftoken")
+    if not csrf_token:
+        await client.get("/settings")
+        csrf_token = client.cookies.get("csrftoken")
+    response = await client.post("/settings/ssh-key/push", data={"csrf_token": csrf_token})
+    assert response.status_code == 200
+    assert "No pending SSH key to push" in response.text
+
+
+async def test_push_pending_key_with_no_eligible_machines_shows_error(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/settings/ssh-key/generate", data={"csrf_token": csrf_token})
+    response = await client.post("/settings/ssh-key/push", data={"csrf_token": csrf_token})
+    assert response.status_code == 200
+    assert "No machines use the app" in response.text
+    assert "shared SSH key with a pinned host key" in response.text
+
+
+async def test_push_pending_key_dispatches_to_ssh_key_machines_only(
+    client, db_session_factory, celery_calls
+):
+    from tests.test_web import _create_machine, _pin_host_key
+
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/settings/ssh-key/generate", data={"csrf_token": csrf_token})
+
+    ssh_key_machine_id = await _create_machine(
+        client, csrf_token, name="ssh1", ip_address="10.0.2.1", auth_method="ssh_key", secret=""
+    )
+    password_machine_id = await _create_machine(
+        client, csrf_token, name="pw1", ip_address="10.0.2.2", auth_method="password", secret="x"
+    )
+    await _pin_host_key(db_session_factory, ssh_key_machine_id)
+    await _pin_host_key(db_session_factory, password_machine_id)
+
+    response = await client.post("/settings/ssh-key/push", data={"csrf_token": csrf_token})
+    assert response.status_code == 200
+    assert "Pushed to 1/1 machine(s)" in response.text
+
+    dispatched_ids = {
+        args[0]
+        for name, args, _kwargs in celery_calls
+        if name == "app.tasks.jobs.push_pending_ssh_key"
+    }
+    assert dispatched_ids == {str(ssh_key_machine_id)}
+
+
+async def test_push_pending_key_reports_per_machine_failures(
+    client, db_session_factory, celery_calls
+):
+    from tests.test_web import _create_machine, _pin_host_key
+
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/settings/ssh-key/generate", data={"csrf_token": csrf_token})
+
+    machine_id = await _create_machine(
+        client, csrf_token, name="ssh2", ip_address="10.0.2.3", auth_method="ssh_key", secret=""
+    )
+    await _pin_host_key(db_session_factory, machine_id)
+
+    celery_calls.result_for["app.tasks.jobs.push_pending_ssh_key"] = {
+        "ok": False,
+        "error": "Connection refused",
+    }
+
+    response = await client.post("/settings/ssh-key/push", data={"csrf_token": csrf_token})
+    assert response.status_code == 200
+    assert "Pushed to 0/1 machine(s)" in response.text
+    assert "ssh2: Connection refused" in response.text
+
+
 async def test_settings_shows_app_version(client):
     from app.core.version import APP_VERSION
 

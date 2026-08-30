@@ -34,7 +34,9 @@
       upload/generation to do per machine. To let it manage a machine,
       append the public key below to that machine's
       <code>~/.ssh/authorized_keys</code> for the user debcontrol will
-      connect as. This is a manual step for now.
+      connect as. Adding it to an already-managed machine can be done for
+      you — see "Push pending key to all machines" below once you've
+      generated a replacement key.
     </p>
     <p>Fingerprint: <code>{{ identity.fingerprint }}</code></p>
     <pre><code>{{ identity.public_key }}</code></pre>
@@ -50,7 +52,19 @@
     </p>
     <p>Pending fingerprint: <code>{{ identity.pending_fingerprint }}</code></p>
     <pre><code>{{ identity.pending_public_key }}</code></pre>
+
+    {% if push_result %}
+      <p class="hint">
+        Pushed to {{ push_result.succeeded }}/{{ push_result.total }} machine(s).
+        {% if push_result.succeeded < push_result.total %}See the errors above for the rest.{% endif %}
+      </p>
+    {% endif %}
+
     <div class="page-header-actions">
+      <form method="post" action="/settings/ssh-key/push" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-secondary">Push pending key to all machines</button>
+      </form>
       <form method="post" action="/settings/ssh-key/activate" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="button">Activate new key</button>
@@ -60,6 +74,15 @@
         <button type="submit" class="button button-secondary">Discard pending key</button>
       </form>
     </div>
+    <p class="hint">
+      "Push pending key to all machines" runs a command over SSH (using
+      each machine's currently active key) to append the pending key above
+      to <code>~/.ssh/authorized_keys</code> — for every machine using
+      "SSH key" authentication with a pinned host key. It does not remove
+      the old line or activate anything; it only saves you the manual
+      copy-paste step above. Machines using password authentication aren't
+      affected, since they don't use this key at all.
+    </p>
     {% else %}
     <form method="post" action="/settings/ssh-key/generate" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

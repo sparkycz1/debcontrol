@@ -35,6 +35,9 @@ data/*.db
 .DS_Store
 Thumbs.db
 
+# Claude Code — agent worktrees and local session state, never source
+.claude/
+
 # Docker
 docker-compose.override.yml
 

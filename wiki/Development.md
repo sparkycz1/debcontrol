@@ -243,6 +243,10 @@ module docstring for the full parameter list (`outcome`, `target_type`/
 - Bump `APP_VERSION` in `app/core/version.py` **and** `version` in
   `pyproject.toml` together on every round of changes: patch for small
   fixes, minor for a feature or infrastructure change.
+- New CSS must use the existing `--color-*` variables (`app/web/static/css/style.css`),
+  never a hardcoded color — the light theme (`:root[data-theme="light"]`)
+  overrides only those variables, so a hardcoded color renders identically,
+  and wrongly, in both themes.
 
 > [!TIP]
 > **Anything CSP-adjacent must be verified in a real browser, not just by

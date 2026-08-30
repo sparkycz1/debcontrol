@@ -549,8 +549,14 @@ Rotation (Settings → "Generate replacement key") generates a *second*
 keypair into `pending_*` columns on the same singleton row rather than
 replacing the active one (`app.ssh.identity.generate_pending_identity`) —
 switching immediately would lock the app out of every machine at once. The
-operator appends the pending public key everywhere (alongside the old
-line), then "Activate" swaps it in (`activate_pending_identity`).
+pending key needs to reach every machine's `authorized_keys` before
+activating, either by hand or via **"Push pending key to all machines"**
+(`app.tasks.jobs.push_pending_ssh_key`): the app connects to every
+`AuthMethod.SSH_KEY` machine with a pinned host key using its *currently
+active* credential and appends the pending public key, idempotently.
+Password-auth machines aren't touched — they don't use this key. Once
+every machine has the new line, "Activate" swaps it in
+(`activate_pending_identity`).
 
 ### Self-registration is not the same as trust
 

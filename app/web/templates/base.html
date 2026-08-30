@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{ 'light' if request.cookies.get('theme') == 'light' else 'dark' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -43,6 +43,17 @@
       <a href="/api" {% if current_path == '/api' %}class="active" aria-current="page"{% endif %}>API docs</a>
     </nav>
     <div class="site-header-user">
+      {% set current_theme = 'light' if request.cookies.get('theme') == 'light' else 'dark' %}
+      <form method="post" action="/theme" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+        <input type="hidden" name="next" value="{{ request.url.path }}">
+        <input type="hidden" name="theme" value="{{ 'dark' if current_theme == 'light' else 'light' }}">
+        <button type="submit" class="link-button theme-toggle"
+                title="Switch to {{ 'dark' if current_theme == 'light' else 'light' }} theme"
+                aria-label="Switch to {{ 'dark' if current_theme == 'light' else 'light' }} theme">
+          {{ '☀️' if current_theme == 'light' else '🌙' }}
+        </button>
+      </form>
       <a href="/account">{{ current_user.display_name or current_user.username }}</a>
       <form method="post" action="/logout" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">

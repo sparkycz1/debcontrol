@@ -7,7 +7,8 @@ controlled by custom RBAC roles,
 and accounts can be local, LDAP, or OIDC (SSO), with optional TOTP
 two-factor — see [Architecture](Architecture.md#authentication--rbac) for
 the design and [Installation](Installation.md) for bootstrapping the first
-admin account.
+admin account. A light/dark theme toggle is in the header next to your
+account link; the choice is remembered in a cookie, dark by default.
 
 ## 📑 Pages
 
@@ -66,4 +67,4 @@ you firewall that port off. Pick one:
 | Roles | Define named roles with an exact permission checkbox matrix; guardrails prevent locking everyone out of user management; a role can require TOTP two-factor for everyone holding it, enforced live on every request |
 | My account | Change your own password, enroll/disable TOTP two-factor with recovery codes, log out everywhere else, create/revoke your own API tokens (if an admin has granted this account API access) for the full read/write REST API |
 | API docs (`/api`) | Interactive [Swagger UI](https://swagger.io/tools/swagger-ui/) for the full REST API, generated live from the app's own routes — browse every endpoint, and use **Authorize** with one of your own API tokens to try requests directly from the page; requires being logged in like any other page (see [Architecture](Architecture.md#interactive-docs-swagger-ui-at-api)) |
-| Settings | Shows the running version/git commit, the app's SSH public key and background-check intervals, supports rotating the SSH key (generate/activate a replacement); sets the audit log retention policy, verifies hash-chain integrity, exports the audit log (CSV/JSON), sets the Dashboard trend snapshots' retention policy, configures syslog forwarding (UDP/TCP/TLS), configures LDAP/OIDC login, and configures the [AI assistant](AI-Assistant.md) (per-provider API key, fetch and opt-in individual models, global rolling token limits) |
+| Settings | Shows the running version/git commit, the app's SSH public key and background-check intervals, supports rotating the SSH key (generate/activate a replacement, with an assisted "push pending key to all machines" step); sets the audit log retention policy, verifies hash-chain integrity, exports the audit log (CSV/JSON), sets the Dashboard trend snapshots' retention policy, configures syslog forwarding (UDP/TCP/TLS), configures LDAP/OIDC login, and configures the [AI assistant](AI-Assistant.md) (per-provider API key, fetch and opt-in individual models, global rolling token limits) |

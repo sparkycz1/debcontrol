@@ -6,6 +6,9 @@ for why these are Settings-page config rather than environment variables).
 
 from __future__ import annotations
 
+import asyncio
+
+from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, Form, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -31,6 +34,7 @@ from app.db.models.app_settings import (
     SyslogProtocol,
 )
 from app.db.models.audit_log import AuditOutcome
+from app.db.models.machine import AuthMethod, Machine
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.ssh.identity import (
@@ -39,6 +43,7 @@ from app.ssh.identity import (
     generate_pending_identity,
     get_or_create_identity,
 )
+from app.tasks.jobs import push_pending_ssh_key
 from app.web.templating import templates
 
 router = APIRouter(
@@ -218,6 +223,85 @@ async def discard_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) 
         summary="Discarded the pending (not-yet-activated) SSH key",
     )
     return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# How long the web request waits for one machine's push to finish. All
+# machines are dispatched first and awaited concurrently (asyncio.gather),
+# same reasoning as app.web.routes.ai's _run_command_and_summarize — a
+# large fleet fans out in parallel instead of one slow/unreachable machine
+# stacking its timeout onto every machine after it.
+_PUSH_WAIT_SECONDS = 60
+
+
+@router.post("/ssh-key/push", dependencies=[_manage, Depends(verify_csrf)])
+async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    """Assisted alternative to copying the pending public key onto every
+    machine by hand: run the append-to-authorized_keys command over SSH,
+    using each machine's *currently active* credential, on every
+    `AuthMethod.SSH_KEY` machine with a pinned host key. A `PASSWORD`-auth
+    machine never uses the app's shared identity, so it's not a candidate
+    and isn't counted as skipped or failed — it's simply not in scope.
+
+    This never touches the active key or activates anything — it only adds
+    the new public key line alongside the current one, exactly like the
+    manual instructions above it on this page. "Activate new key" is still
+    a separate, deliberate click.
+    """
+    identity = await get_or_create_identity(db)
+    if identity.pending_public_key is None:
+        return await _render_settings(request, db, ["No pending SSH key to push."])
+
+    result = await db.execute(
+        select(Machine).where(
+            Machine.auth_method == AuthMethod.SSH_KEY,
+            Machine.host_key_fingerprint.is_not(None),
+        )
+    )
+    machines = list(result.scalars().all())
+    if not machines:
+        return await _render_settings(
+            request,
+            db,
+            ["No machines use the app's shared SSH key with a pinned host key yet."],
+        )
+
+    dispatched = [(machine, push_pending_ssh_key.delay(str(machine.id))) for machine in machines]
+
+    async def _await_one(machine: Machine, async_result: object) -> tuple[str, str | None]:
+        try:
+            outcome = await asyncio.to_thread(async_result.get, timeout=_PUSH_WAIT_SECONDS)  # type: ignore[attr-defined]
+        except CeleryTimeoutError:
+            return machine.name, "Timed out."
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            return machine.name, str(exc)
+        if isinstance(outcome, dict) and outcome.get("ok"):
+            return machine.name, None
+        reason = str(outcome.get("error")) if isinstance(outcome, dict) else "Unknown error."
+        return machine.name, reason
+
+    outcomes = await asyncio.gather(
+        *(_await_one(machine, async_result) for machine, async_result in dispatched)
+    )
+    failed = [(name, reason) for name, reason in outcomes if reason is not None]
+    succeeded_count = len(outcomes) - len(failed)
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.ssh_key.push",
+        summary=f"Pushed pending SSH key to {succeeded_count}/{len(outcomes)} machine(s)",
+        outcome=AuditOutcome.FAILURE if failed else AuditOutcome.SUCCESS,
+        details={
+            "fingerprint": identity.pending_fingerprint,
+            "succeeded": [name for name, reason in outcomes if reason is None],
+            "failed": dict(failed),
+        },
+    )
+
+    errors = [f"{name}: {reason}" for name, reason in failed]
+    return await _render_settings(
+        request, db, errors, push_result={"succeeded": succeeded_count, "total": len(outcomes)}
+    )
 
 
 @router.post("/ldap", dependencies=[_manage, Depends(verify_csrf)])

@@ -39,6 +39,7 @@ from app.web.routes import (
     roles,
     scheduling,
     terminal_ws,
+    theme,
     users,
 )
 from app.web.routes import settings as settings_routes
@@ -224,6 +225,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(roles.router)
     app.include_router(settings_routes.router)
+    app.include_router(theme.router)
     # No HTTP dependency here — WebSocket connections never go through
     # `app.auth.middleware`, so this router does its own auth entirely
     # inside the handler. See terminal_ws.py's module docstring.

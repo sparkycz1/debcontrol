@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -37,7 +38,7 @@ from app.core.config import get_settings
 from app.db import session as db_session
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.fleet_snapshot import FleetSnapshot
-from app.db.models.machine import Machine
+from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.services.fleet_stats import compute_fleet_stats
@@ -46,6 +47,7 @@ from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
+from app.ssh.identity import get_or_create_identity
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
@@ -147,6 +149,77 @@ async def _run_remote_ssh_command(machine_id: str, command: str) -> dict[str, An
 )
 def run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
     return asyncio.run(_run_remote_ssh_command(machine_id, command))
+
+
+async def _push_pending_ssh_key(machine_id: str) -> dict[str, Any]:
+    """Append the app's *pending* (not yet activated) SSH public key to one
+    machine's `~/.ssh/authorized_keys`, alongside the current one — the
+    assisted alternative to copying it there by hand during key rotation
+    (`app.ssh.identity`, `app/web/routes/settings.py`'s `/ssh-key/*`
+    routes).
+
+    Connects using the *currently active* credential
+    (`resolve_machine_credential`) — that is what is already authorized on
+    the machine; the point of this task is to add the new key next to it,
+    not to switch to it. Only ever called for `AuthMethod.SSH_KEY`
+    machines: a `PASSWORD`-auth machine doesn't use the app's shared
+    identity at all, so there is nothing to push there.
+
+    Idempotent: `grep -qxF` first, so running this again (e.g. retrying a
+    partially-failed push) never duplicates the line.
+    """
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+        if machine.auth_method != AuthMethod.SSH_KEY:
+            return {"ok": False, "error": "Machine does not use the app's shared SSH key."}
+
+        identity = await get_or_create_identity(session)
+        pending_key = identity.pending_public_key
+        if pending_key is None:
+            return {"ok": False, "error": "No pending SSH key to push."}
+
+        secret = await resolve_machine_credential(machine, session)
+        settings = get_settings()
+        quoted_key = shlex.quote(pending_key)
+        command = (
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            f"(grep -qxF {quoted_key} ~/.ssh/authorized_keys 2>/dev/null || "
+            f"echo {quoted_key} >> ~/.ssh/authorized_keys) && "
+            "chmod 600 ~/.ssh/authorized_keys"
+        )
+
+        try:
+            result = await run_command(
+                machine,
+                secret,
+                command,
+                settings.ssh_connect_timeout,
+                settings.ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("push_pending_ssh_key failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        if result.exit_status != 0:
+            return {
+                "ok": False,
+                "error": f"Command exited {result.exit_status}: {result.output or '(no output)'}",
+            }
+        return {"ok": True, "machine": machine.name}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.push_pending_ssh_key",
+    # Same reasoning as run_remote_ssh_command above — a short, fixed
+    # sequence of commands, not an apt run.
+    time_limit=get_settings().ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS + 10,
+)
+def push_pending_ssh_key(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_push_pending_ssh_key(machine_id))
 
 
 async def _ping_all_machines() -> None:
