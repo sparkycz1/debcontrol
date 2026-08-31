@@ -150,7 +150,8 @@ def main() -> None:
 
     docker_path = _require_docker()
 
-    if ENV_PATH.exists() and not _prompt_yes_no(
+    env_existed = ENV_PATH.exists()
+    if env_existed and not _prompt_yes_no(
         ".env already exists. Overwrite it with a freshly configured one?", default=False
     ):
         print("Aborted — .env left untouched.")
@@ -207,6 +208,24 @@ def main() -> None:
     compose_files = ["-f", "docker-compose.yml"]
     if use_caddy:
         compose_files += ["-f", "docker-compose.caddy.yml"]
+
+    if env_existed:
+        # We just generated a fresh POSTGRES_PASSWORD/REDIS_PASSWORD above, but
+        # Postgres only ever applies POSTGRES_PASSWORD while initializing an
+        # *empty* data directory — if a `pg_data` volume already exists from an
+        # earlier run of this script (e.g. one that failed partway through),
+        # it still has the old password baked in, and every container that
+        # connects with the new one fails with "password authentication
+        # failed" the moment `migrate` tries to connect. Since we're about to
+        # overwrite .env's secrets anyway, drop any previous containers and
+        # volumes first so the new ones start from a clean, matching state.
+        print("==> .env is being replaced — removing any previous containers/volumes "
+              "so the new secrets start from a clean database...")
+        subprocess.run(  # noqa: S603 - fixed args, no user input
+            [docker_path, "compose", *compose_files, "down", "-v"],
+            cwd=REPO_ROOT,
+            check=False,
+        )
 
     print("==> Building and starting the stack (this can take a few minutes)...")
     build_env = {**os.environ, "GIT_COMMIT": _git_commit()}
