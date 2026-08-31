@@ -63,6 +63,17 @@
   identical everywhere; a tab is left out entirely rather than shown
   disabled when the current user lacks the permission for it (e.g. Terminal
   without `action.terminal`).
+- Settings uses the same `_tabnav.html` macro, but with one twist: there's
+  only ever the single `GET /settings` route, not one per tab, since every
+  POST handler on the page (nine sections' worth of forms) has to redirect
+  back to *some* tab regardless of which section it belongs to — giving
+  each tab its own path would mean every one of those redirects needs to
+  know which page it's redirecting from. A `?tab=general|security|
+  integrations|ai` query param on the one route stands in for that; each
+  POST handler in `app/web/routes/settings.py` just needs to know which tab
+  *it itself* belongs to (e.g. `update_ldap_settings` always redirects to
+  `/settings?tab=integrations`), and an unrecognized/missing tab value
+  falls back to General rather than 404ing or rendering nothing.
 - A few fragments that a periodic Celery Beat sweep can change without any
   request from the browser — the online/offline badge, the Facts panel, the
   installed-packages summary, the update-availability panel — poll
@@ -684,10 +695,17 @@ group / "All machines") needs root on the target and can run long:
 - **Fan out, don't await.** A group/"all" trigger creates every
   `MachineUpdateRun` row and enqueues every job in one request/commit, then
   returns, so one slow machine can't hold up the others.
-- **Full history.** The detail page's "Recent runs" table shows the last 5;
-  `GET /machines/{id}/updates` is the full paginated, status-filterable
-  history, using the same offset/limit-plus-one-extra-row pagination
+- **Full history.** `GET /machines/{id}/updates` (the Updates tab) shows the
+  trigger form and the full paginated, status-filterable run history
+  together, using the same offset/limit-plus-one-extra-row pagination
   convention as `/audit`.
+- **Live output.** `run_system_update` (`app/ssh/updates.py`) reads the
+  remote process's stdout incrementally instead of buffering it all via
+  `conn.run()`, and `_run_machine_update` (`app/tasks/jobs.py`) writes it to
+  the run row every ~2s while the update is in progress — the run's own
+  page already polled itself every 3s (`partials/update_run_status.html`),
+  so this is what made that polling show something other than a static
+  "running" spinner until the whole thing finished.
 
 ### Previewing a manual update before it runs
 

@@ -44,7 +44,14 @@ report healthy, and creates the `admin` account with the password from
 step 4. The final output prints the URL, username, and password (if one
 was generated) — save that password now, it's shown once.
 
-Re-running it on an existing `.env` asks before overwriting it.
+Re-running it on an existing `.env` asks before overwriting it. If you say
+yes, it also runs `docker compose down -v` for you before starting the
+stack back up — a fresh `POSTGRES_PASSWORD` means nothing if the old
+`pg_data` volume is still around with the *previous* password baked into
+it (Postgres only ever applies that variable while initializing an empty
+data directory), so replacing `.env`'s secrets and keeping the old volume
+would otherwise leave every container failing to connect with "password
+authentication failed" the moment `migrate` runs.
 
 ## 🔧 Option B — manual setup
 

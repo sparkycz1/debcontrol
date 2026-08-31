@@ -129,18 +129,6 @@ async def _get_pending_machines(db: AsyncSession) -> list[PendingMachine]:
     return list(result.scalars().all())
 
 
-async def _get_recent_update_runs(
-    machine_id: uuid.UUID, db: AsyncSession, limit: int = 5
-) -> list[MachineUpdateRun]:
-    result = await db.execute(
-        select(MachineUpdateRun)
-        .where(MachineUpdateRun.machine_id == machine_id)
-        .order_by(MachineUpdateRun.created_at.desc())
-        .limit(limit)
-    )
-    return list(result.scalars().all())
-
-
 async def _get_package_counts(machine_id: uuid.UUID, db: AsyncSession) -> dict[str, int]:
     result = await db.execute(
         select(MachinePackage.source, func.count())

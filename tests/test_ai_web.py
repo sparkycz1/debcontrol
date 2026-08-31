@@ -596,7 +596,7 @@ async def test_settings_page_never_echoes_a_stored_api_key(client, db_session_fa
         )
         await db.commit()
 
-    response = await client.get("/settings")
+    response = await client.get("/settings?tab=ai")
     assert response.status_code == 200
     assert "sk-super-secret-value" not in response.text
     assert "unchanged" in response.text

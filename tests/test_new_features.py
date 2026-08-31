@@ -293,7 +293,7 @@ async def test_update_syslog_settings_persists_and_validates(client):
     )
     assert ok.status_code == 303
 
-    page = await client.get("/settings")
+    page = await client.get("/settings?tab=integrations")
     assert 'value="siem.example.com"' in page.text
     assert 'value="6514"' in page.text
 

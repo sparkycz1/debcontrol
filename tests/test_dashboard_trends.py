@@ -189,7 +189,7 @@ async def test_update_dashboard_trends_retention_persists_value(client):
     )
     assert response.status_code == 303
 
-    page = await client.get("/settings")
+    page = await client.get("/settings?tab=security")
     assert 'value="45"' in page.text
 
 

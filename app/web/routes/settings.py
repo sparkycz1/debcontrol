@@ -51,9 +51,41 @@ router = APIRouter(
 )
 _manage = Depends(require_permission(Permission.SETTINGS_MANAGE))
 
+# Settings grew to nine sections on one long page — split into tabs the same
+# way a machine's/group's own pages are (see `partials/_tabnav.html` and
+# `_machine_tabs`/`_group_tabs` in app/web/routes/machines.py/
+# machine_groups.py), except there's only ever one GET route here rather
+# than one per tab: every POST handler below redirects back to `/settings`
+# regardless of which tab it belongs to, and giving each tab its own route
+# would mean every one of those redirects needs to know which page it's
+# redirecting *from* just to send you back to the right place. A `tab` query
+# string param is simpler and gets the same result — every handler below
+# just needs to know which tab *it itself* belongs to, to redirect back to
+# `/settings?tab=<that tab>` instead of losing your place on every save.
+_TABS: list[tuple[str, str, str]] = [
+    ("general", "General", "/settings?tab=general"),
+    ("security", "Security", "/settings?tab=security"),
+    ("integrations", "Integrations", "/settings?tab=integrations"),
+    ("ai", "AI", "/settings?tab=ai"),
+]
+_VALID_TABS = {key for key, _, _ in _TABS}
+_DEFAULT_TAB = "general"
+
+
+def _normalize_tab(tab: str) -> str:
+    """An unrecognized/missing `tab` value (a stale bookmark, a typo'd URL)
+    falls back to the first tab rather than 404ing or rendering no tab's
+    content at all."""
+    return tab if tab in _VALID_TABS else _DEFAULT_TAB
+
 
 async def _render_settings(
-    request: Request, db: AsyncSession, errors: list[str], **extra: object
+    request: Request,
+    db: AsyncSession,
+    errors: list[str],
+    *,
+    tab: str = _DEFAULT_TAB,
+    **extra: object,
 ) -> Response:
     identity = await get_or_create_identity(db)
     app_settings = await get_or_create_app_settings(db)
@@ -76,6 +108,8 @@ async def _render_settings(
         # blocks in the same order.
         "ai_configs": [ai_configs[kind] for kind in AiProviderKind if kind in ai_configs],
         "openai_compatible_kind": AiProviderKind.OPENAI_COMPATIBLE.value,
+        "tabs": _TABS,
+        "active_tab": tab,
         **extra,
     }
     response = templates.TemplateResponse(request, "settings/index.html", context)
@@ -85,8 +119,27 @@ async def _render_settings(
 
 
 @router.get("")
-async def show_settings(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    return await _render_settings(request, db, [])
+async def show_settings(
+    request: Request, db: AsyncSession = Depends(get_db), tab: str = _DEFAULT_TAB
+) -> Response:
+    return await _render_settings(request, db, [], tab=_normalize_tab(tab))
+
+
+def _parse_retention_days(raw: str) -> tuple[int | None, str | None]:
+    """Shared by `update_audit_retention` and
+    `update_dashboard_trends_retention` below — both fields mean the same
+    thing (empty = keep forever, otherwise a non-negative whole number of
+    days). Returns `(days, error_message)`; exactly one is `None`."""
+    stripped = raw.strip()
+    if stripped == "":
+        return None, None
+    try:
+        value = int(stripped)
+        if value < 0:
+            raise ValueError("must not be negative")
+    except ValueError:
+        return None, f'"{stripped}" isn\'t a whole number of days (0 or more).'
+    return value, None
 
 
 @router.post("/audit-retention", dependencies=[_manage, Depends(verify_csrf)])
@@ -96,19 +149,9 @@ async def update_audit_retention(
     retention_days: str = Form(""),
 ) -> Response:
     app_settings = await get_or_create_app_settings(db)
-    raw = retention_days.strip()
-
-    if raw == "":
-        new_value = None
-    else:
-        try:
-            new_value = int(raw)
-            if new_value < 0:
-                raise ValueError("must not be negative")
-        except ValueError:
-            return await _render_settings(
-                request, db, [f'"{raw}" isn\'t a whole number of days (0 or more).']
-            )
+    new_value, error = _parse_retention_days(retention_days)
+    if error:
+        return await _render_settings(request, db, [error], tab="security")
 
     app_settings.audit_log_retention_days = new_value
     await db.commit()
@@ -124,7 +167,7 @@ async def update_audit_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/dashboard-trends-retention", dependencies=[_manage, Depends(verify_csrf)])
@@ -138,19 +181,9 @@ async def update_dashboard_trends_retention(
     `app.db.models.fleet_snapshot.FleetSnapshot` and
     `app.tasks.jobs.purge_old_fleet_snapshots`."""
     app_settings = await get_or_create_app_settings(db)
-    raw = retention_days.strip()
-
-    if raw == "":
-        new_value = None
-    else:
-        try:
-            new_value = int(raw)
-            if new_value < 0:
-                raise ValueError("must not be negative")
-        except ValueError:
-            return await _render_settings(
-                request, db, [f'"{raw}" isn\'t a whole number of days (0 or more).']
-            )
+    new_value, error = _parse_retention_days(retention_days)
+    if error:
+        return await _render_settings(request, db, [error], tab="security")
 
     app_settings.dashboard_trends_retention_days = new_value
     await db.commit()
@@ -166,7 +199,7 @@ async def update_dashboard_trends_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])
@@ -183,7 +216,7 @@ async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db
         outcome=AuditOutcome.SUCCESS if result.ok else AuditOutcome.FAILURE,
         details={"checked": result.checked, "broken_at_sequence": result.broken_at_sequence},
     )
-    return await _render_settings(request, db, [], verify_result=result)
+    return await _render_settings(request, db, [], tab="security", verify_result=result)
 
 
 @router.post("/ssh-key/generate", dependencies=[_manage, Depends(verify_csrf)])
@@ -195,7 +228,7 @@ async def generate_ssh_key(request: Request, db: AsyncSession = Depends(get_db))
         action="settings.ssh_key.generate",
         summary=f"Generated a replacement SSH key ({identity.pending_fingerprint})",
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=general", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/ssh-key/activate", dependencies=[_manage, Depends(verify_csrf)])
@@ -203,14 +236,16 @@ async def activate_ssh_key(request: Request, db: AsyncSession = Depends(get_db))
     try:
         identity = await activate_pending_identity(db)
     except ValueError:
-        return await _render_settings(request, db, ["No pending SSH key to activate."])
+        return await _render_settings(
+            request, db, ["No pending SSH key to activate."], tab="general"
+        )
     await log_event(
         db,
         request=request,
         action="settings.ssh_key.activate",
         summary=f"Activated new SSH key ({identity.fingerprint})",
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=general", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/ssh-key/discard", dependencies=[_manage, Depends(verify_csrf)])
@@ -222,7 +257,7 @@ async def discard_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) 
         action="settings.ssh_key.discard",
         summary="Discarded the pending (not-yet-activated) SSH key",
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=general", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # How long the web request waits for one machine's push to finish. All
@@ -249,7 +284,7 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
     """
     identity = await get_or_create_identity(db)
     if identity.pending_public_key is None:
-        return await _render_settings(request, db, ["No pending SSH key to push."])
+        return await _render_settings(request, db, ["No pending SSH key to push."], tab="general")
 
     result = await db.execute(
         select(Machine).where(
@@ -263,6 +298,7 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
             request,
             db,
             ["No machines use the app's shared SSH key with a pinned host key yet."],
+            tab="general",
         )
 
     dispatched = [(machine, push_pending_ssh_key.delay(str(machine.id))) for machine in machines]
@@ -300,7 +336,11 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
 
     errors = [f"{name}: {reason}" for name, reason in failed]
     return await _render_settings(
-        request, db, errors, push_result={"succeeded": succeeded_count, "total": len(outcomes)}
+        request,
+        db,
+        errors,
+        tab="general",
+        push_result={"succeeded": succeeded_count, "total": len(outcomes)},
     )
 
 
@@ -344,7 +384,7 @@ async def update_ldap_settings(
         errors.append("Enabling LDAP needs at least a server URI, bind DN, and search base.")
 
     if errors:
-        return await _render_settings(request, db, errors)
+        return await _render_settings(request, db, errors, tab="integrations")
 
     app_settings.ldap_enabled = bool(ldap_enabled)
     app_settings.ldap_server_uri = server_uri or None
@@ -363,7 +403,7 @@ async def update_ldap_settings(
         action="settings.ldap.update",
         summary=f"Updated LDAP settings ({'enabled' if app_settings.ldap_enabled else 'disabled'})",
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/oidc", dependencies=[_manage, Depends(verify_csrf)])
@@ -394,7 +434,7 @@ async def update_oidc_settings(
         errors.append("Enabling OIDC needs at least an issuer URL and client ID.")
 
     if errors:
-        return await _render_settings(request, db, errors)
+        return await _render_settings(request, db, errors, tab="integrations")
 
     app_settings.oidc_enabled = bool(oidc_enabled)
     app_settings.oidc_issuer_url = issuer_url or None
@@ -411,7 +451,7 @@ async def update_oidc_settings(
         action="settings.oidc.update",
         summary=f"Updated OIDC settings ({'enabled' if app_settings.oidc_enabled else 'disabled'})",
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/syslog", dependencies=[_manage, Depends(verify_csrf)])
@@ -445,7 +485,7 @@ async def update_syslog_settings(
         errors.append("Enabling syslog forwarding needs a server host/IP.")
 
     if errors:
-        return await _render_settings(request, db, errors)
+        return await _render_settings(request, db, errors, tab="integrations")
 
     app_settings.syslog_enabled = bool(syslog_enabled)
     app_settings.syslog_host = host or None
@@ -462,7 +502,7 @@ async def update_syslog_settings(
             f"({'enabled, ' + protocol.value if app_settings.syslog_enabled else 'disabled'})"
         ),
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- AI assistant (app/ai/) --------------------------------------------------
@@ -495,7 +535,9 @@ async def update_ai_provider(
 ) -> Response:
     config = await _get_provider_config(db, kind)
     if config is None:
-        return await _render_settings(request, db, [f'Unknown AI provider "{kind}".'])
+        return await _render_settings(
+            request, db, [f'Unknown AI provider "{kind}".'], tab="ai"
+        )
 
     errors: list[str] = []
     url = base_url.strip()
@@ -510,7 +552,7 @@ async def update_ai_provider(
         errors.append("Enabling a provider needs an API key.")
 
     if errors:
-        return await _render_settings(request, db, errors)
+        return await _render_settings(request, db, errors, tab="ai")
 
     config.enabled = bool(enabled)
     if api_key:
@@ -530,7 +572,7 @@ async def update_ai_provider(
         # Deliberately no key material, not even a length or a prefix.
         details={"provider": config.kind.value, "enabled": config.enabled},
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/ai/fetch-models", dependencies=[_manage, Depends(verify_csrf)])
@@ -549,7 +591,9 @@ async def fetch_ai_models(
     """
     config = await _get_provider_config(db, kind)
     if config is None:
-        return await _render_settings(request, db, [f'Unknown AI provider "{kind}".'])
+        return await _render_settings(
+            request, db, [f'Unknown AI provider "{kind}".'], tab="ai"
+        )
 
     try:
         client = build_client(config)
@@ -563,7 +607,7 @@ async def fetch_ai_models(
             outcome=AuditOutcome.FAILURE,
             details={"provider": config.kind.value, "error": str(exc)},
         )
-        return await _render_settings(request, db, [str(exc)])
+        return await _render_settings(request, db, [str(exc)], tab="ai")
 
     kept, removed = await replace_fetched_models(db, config, models)
     await log_event(
@@ -573,7 +617,7 @@ async def fetch_ai_models(
         summary=f"Fetched {kept} model(s) for AI provider {config.kind.value}",
         details={"provider": config.kind.value, "fetched": kept, "removed": removed},
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/ai/models", dependencies=[_manage, Depends(verify_csrf)])
@@ -588,7 +632,9 @@ async def update_ai_models(
     all-unticked submission sends it zero times."""
     config = await _get_provider_config(db, kind)
     if config is None:
-        return await _render_settings(request, db, [f'Unknown AI provider "{kind}".'])
+        return await _render_settings(
+            request, db, [f'Unknown AI provider "{kind}".'], tab="ai"
+        )
 
     form = await request.form()
     selected = {str(value) for value in form.getlist("enabled_models")}
@@ -605,7 +651,7 @@ async def update_ai_models(
         summary=f"Enabled {len(selected)} model(s) for chat on AI provider {config.kind.value}",
         details={"provider": config.kind.value, "enabled_models": sorted(selected)},
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)
 
 
 def _parse_optional_limit(raw: str, label: str, errors: list[str]) -> int | None:
@@ -637,7 +683,7 @@ async def update_ai_limits(
     weekly = _parse_optional_limit(ai_weekly_token_limit, "weekly", errors)
     monthly = _parse_optional_limit(ai_monthly_token_limit, "monthly", errors)
     if errors:
-        return await _render_settings(request, db, errors)
+        return await _render_settings(request, db, errors, tab="ai")
 
     app_settings.ai_daily_token_limit = daily
     app_settings.ai_weekly_token_limit = weekly
@@ -651,4 +697,4 @@ async def update_ai_limits(
         summary="Updated the AI token limits",
         details={"daily": daily, "weekly": weekly, "monthly": monthly},
     )
-    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)

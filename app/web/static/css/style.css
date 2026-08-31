@@ -492,6 +492,7 @@ p { margin: 0 0 var(--space-3); }
 }
 
 .data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr { transition: background var(--transition-fast); }
 .data-table tbody tr:hover { background: var(--color-surface-raised); }
 
 .data-table a { color: var(--color-accent); text-decoration: none; }
@@ -565,6 +566,10 @@ p { margin: 0 0 var(--space-3); }
 
 .detail-list dt { color: var(--color-muted); font-size: 0.9rem; }
 .detail-list dd { margin: 0; }
+/* A detail-list as the last thing in a panel would otherwise double up its
+   own bottom margin with the panel's own bottom padding (e.g. Settings'
+   "Version"/"Background checks" panels, which are nothing but one). */
+.panel .detail-list:last-child { margin-bottom: 0; }
 
 .panel {
   border: 1px solid var(--color-border);
@@ -630,6 +635,7 @@ p { margin: 0 0 var(--space-3); }
   padding: var(--space-3) var(--space-4);
   transition: border-color var(--transition-fast);
 }
+.stat-card:hover { border-color: var(--color-border-strong); }
 
 .stat-value { font-size: 1.85rem; font-weight: 700; line-height: 1.2; }
 .stat-label { color: var(--color-muted); font-size: 0.82rem; margin-top: var(--space-1); }
