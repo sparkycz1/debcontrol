@@ -934,6 +934,75 @@ async def edit_machine_form(
     return response
 
 
+@router.post("/{machine_id}/run-onboarding", dependencies=[_manage, Depends(verify_csrf)])
+async def run_onboarding_endpoint(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """See `app.ssh.onboarding` and `app.tasks.jobs._run_machine_onboarding`
+    for what this actually runs. Blocks on the result (like "Test
+    connection"/"Refresh facts" above) rather than polling: this is a
+    single bounded SSH exec, not something a fleet-wide sweep repeats, and
+    the machine's credential never leaves this process — the task resolves
+    it itself from the DB, it is never passed as a task argument."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    async_result = tasks.run_machine_onboarding.delay(str(machine.id))
+    error: str | None = None
+    output: str | None = None
+    try:
+        # Comfortably above the task's own time_limit
+        # (app.tasks.jobs._ONBOARDING_EXTRA_SECONDS + 15) so a real failure
+        # inside the task — a bad password, a network hiccup — is what
+        # this wait reports, not this endpoint giving up first.
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 120
+        )
+        if isinstance(result, dict):
+            if result.get("ok"):
+                output = str(result.get("output") or "")
+            else:
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The setup script did not finish in time. Reload this page shortly."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.onboarding.run",
+        summary=f'Ran initial setup on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/edit.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "settings",
+            "auth_methods": list(AuthMethod),
+            "groups": await _get_groups(db, current_user),
+            "errors": [],
+            "onboarding_error": error,
+            "onboarding_output": output,
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
 @router.post("/{machine_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
 async def update_machine(
     request: Request,

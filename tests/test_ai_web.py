@@ -27,7 +27,7 @@ from app.ai.usage import (
 from app.core.security import decrypt_secret, encrypt_secret
 from app.db import session as db_session
 from app.db.models.ai_conversation import AiConversation
-from app.db.models.ai_message import AiMessage
+from app.db.models.ai_message import AiMessage, AiMessageRole
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 from app.db.models.ai_usage import AiUsageRecord
@@ -132,7 +132,15 @@ async def setup_provider(
 ) -> tuple[uuid.UUID, str]:
     async with db_session_factory() as db:
         provider = AiProviderConfig(
-            kind=AiProviderKind.ANTHROPIC, enabled=True, api_key_encrypted=b"x"
+            kind=AiProviderKind.ANTHROPIC,
+            enabled=True,
+            # A validly-encrypted (if fake) key — needed because
+            # `app.web.routes.ai.post_message` now calls the *real*
+            # `build_client` itself (only `.build_user_message()`, never
+            # `.send()`, which stays test-doubled via `install_fake_client`
+            # patching `ai_jobs.build_client` for the actual turn). A
+            # decryptable value here, not the network, is what that needs.
+            api_key_encrypted=encrypt_secret("fake-key"),
         )
         db.add(provider)
         await db.flush()
@@ -190,6 +198,112 @@ async def pending_actions_of(
             if message.pending_actions:
                 return message.id, message.pending_actions
     return None, []
+
+
+# --- Sending a message: async turn, not a blocking wait ---------------------
+#
+# `post_message` used to enqueue the turn and block the whole HTTP request on
+# `AsyncResult.get(timeout=90)` — a real bug (see app/tasks/ai_jobs.py's
+# `_AI_TURN_TIME_LIMIT_SECONDS` comment): a turn can make several sequential
+# provider calls, easily exceeding both that wait and the Celery task's own
+# time limit, which could kill the task before either timeout ever fired,
+# silently. It now persists the human's message immediately, enqueues the
+# turn, and redirects without waiting — `partials/ai_messages_panel.html`
+# polls for the reply. These tests exercise that route directly (never
+# `_run_turn`), so `celery_calls`'s autouse `.delay()` stub means the turn
+# itself never actually runs — exactly the "still waiting" state being
+# tested.
+
+
+async def test_sending_a_message_persists_it_immediately_and_redirects(
+    client, db_session_factory, celery_calls
+):
+    user = await get_user(db_session_factory)
+    provider_id, model_id = await setup_provider(db_session_factory)
+    conversation_id = await create_conversation(db_session_factory, user.id, provider_id, model_id)
+
+    await client.get(f"/ai/conversations/{conversation_id}")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        f"/ai/conversations/{conversation_id}/messages",
+        data={"csrf_token": csrf_token, "message": "hello there"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/ai/conversations/{conversation_id}"
+
+    async with db_session_factory() as db:
+        result = await db.execute(
+            select(AiMessage).where(AiMessage.conversation_id == conversation_id)
+        )
+        messages = list(result.scalars().all())
+    assert len(messages) == 1
+    assert messages[0].content == "hello there"
+    assert messages[0].role.value == "user"
+    # Provider-native shape built eagerly too (not left for the task) — see
+    # post_message's docstring.
+    assert messages[0].provider_native == [{"role": "user", "content": "hello there"}]
+
+    # Enqueued with just the conversation id — the task reads the message
+    # back from history rather than receiving it as an argument, now that
+    # the route itself is what persisted it.
+    assert celery_calls.names == ["app.tasks.ai_jobs.run_ai_turn"]
+    assert celery_calls[0][1] == (str(conversation_id),)
+
+
+async def test_conversation_page_shows_disabled_form_while_awaiting_reply(
+    client, db_session_factory, celery_calls
+):
+    user = await get_user(db_session_factory)
+    provider_id, model_id = await setup_provider(db_session_factory)
+    conversation_id = await create_conversation(db_session_factory, user.id, provider_id, model_id)
+
+    await client.get(f"/ai/conversations/{conversation_id}")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        f"/ai/conversations/{conversation_id}/messages",
+        data={"csrf_token": csrf_token, "message": "hello there"},
+    )
+
+    page = await client.get(f"/ai/conversations/{conversation_id}")
+    assert page.status_code == 200
+    assert "hello there" in page.text
+    assert "disabled" in page.text
+    assert f'hx-get="/ai/conversations/{conversation_id}/messages-panel"' in page.text
+    assert 'hx-trigger="every 2s"' in page.text
+
+
+async def test_messages_panel_stops_polling_once_the_reply_arrives(
+    client, db_session_factory, celery_calls
+):
+    user = await get_user(db_session_factory)
+    provider_id, model_id = await setup_provider(db_session_factory)
+    conversation_id = await create_conversation(db_session_factory, user.id, provider_id, model_id)
+
+    await client.get(f"/ai/conversations/{conversation_id}")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        f"/ai/conversations/{conversation_id}/messages",
+        data={"csrf_token": csrf_token, "message": "hello there"},
+    )
+
+    # Simulate the (never-actually-run, per celery_calls) task completing.
+    async with db_session_factory() as db:
+        db.add(
+            AiMessage(
+                conversation_id=conversation_id,
+                role=AiMessageRole.ASSISTANT,
+                content="Hi! How can I help?",
+                provider_native=[{"role": "assistant", "content": "Hi! How can I help?"}],
+            )
+        )
+        await db.commit()
+
+    panel = await client.get(f"/ai/conversations/{conversation_id}/messages-panel")
+    assert panel.status_code == 200
+    assert "Hi! How can I help?" in panel.text
+    assert "hx-trigger" not in panel.text
+    assert "disabled" not in panel.text
 
 
 # --- Permission gating -------------------------------------------------------

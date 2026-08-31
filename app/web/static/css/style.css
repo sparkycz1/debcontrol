@@ -740,6 +740,133 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   overflow-y: auto;
 }
 
+/* Generic modal body — packages-modal predates this and keeps its own
+   ID-scoped rule above; every modal added since (the AI "Choose models"
+   picker) uses this instead. */
+.modal-body {
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+.model-search-input {
+  display: block;
+  width: 100%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  padding: 0.55rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  margin-bottom: var(--space-3);
+  transition: border-color var(--transition-fast);
+}
+.model-search-input:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(91, 143, 255, 0.2);
+}
+
+.model-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 45vh;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-3);
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.88rem;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  color: var(--color-text);
+}
+.model-row:last-child { border-bottom: none; }
+.model-row:hover { background: var(--color-surface-raised); }
+
+/* --- AI chat (app/web/templates/partials/ai_messages_panel.html) --- */
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.chat-row {
+  display: flex;
+}
+
+.chat-row-user { justify-content: flex-end; }
+.chat-row-assistant { justify-content: flex-start; }
+
+.chat-bubble {
+  max-width: min(85%, 640px);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+}
+
+.chat-bubble-user {
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.chat-bubble-assistant {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+}
+
+.chat-bubble-role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-muted);
+  margin-bottom: var(--space-1);
+}
+
+.chat-bubble-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-bubble-action {
+  margin: var(--space-3) 0 0;
+}
+.chat-bubble-action:last-child { margin-bottom: 0; }
+
+/* "Assistant is typing" — three dots, no JS, no inline style (CSP). */
+.chat-typing {
+  display: inline-flex;
+  gap: 0.3em;
+  padding: var(--space-1) 0;
+}
+
+.chat-typing span {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--color-muted);
+  animation: chat-typing-bounce 1.2s infinite ease-in-out;
+}
+
+.chat-typing span:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chat-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-0.25rem); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-typing span { animation: none; opacity: 0.8; }
+}
+
 /* --- Terminal --- */
 
 .terminal-shell {

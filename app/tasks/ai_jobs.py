@@ -113,8 +113,21 @@ async def _persist_assistant_error(
 
 
 async def _run_turn(
-    conversation_id: str, user_message: str, *, allow_tools: bool
+    conversation_id: str, user_message: str | None = None, *, allow_tools: bool
 ) -> dict[str, Any]:
+    """Run one provider turn and persist the assistant's reply.
+
+    `user_message`, when given, means *this call* is responsible for
+    recording that text as the turn's own user-role message (used by
+    `summarize_tool_output`, whose "user" input is really tool output fed
+    back to the model, not something a human typed and already on screen).
+    When `None` (the interactive chat's own `run_ai_turn`), the caller
+    (`app.web.routes.ai.post_message`) has already inserted the human's
+    message itself — synchronously, before enqueueing this task — so the
+    conversation page can show it immediately rather than waiting for a
+    background task to get scheduled first. This function then just
+    replays history, which already ends with that message.
+    """
     async with db_session.AsyncSessionLocal() as db:
         conversation = await db.get(AiConversation, uuid.UUID(conversation_id))
         if conversation is None:
@@ -128,15 +141,16 @@ async def _run_turn(
         # Before the provider call, never after — see app.ai.usage.
         limit_error = await check_within_limits(db, app_settings)
         if limit_error is not None:
-            db.add(
-                AiMessage(
-                    conversation_id=conversation.id,
-                    role=AiMessageRole.USER,
-                    content=user_message,
-                    provider_native=None,
+            if user_message is not None:
+                db.add(
+                    AiMessage(
+                        conversation_id=conversation.id,
+                        role=AiMessageRole.USER,
+                        content=user_message,
+                        provider_native=None,
+                    )
                 )
-            )
-            await db.commit()
+                await db.commit()
             return await _persist_assistant_error(db, conversation.id, limit_error)
 
         provider = conversation.provider
@@ -150,19 +164,22 @@ async def _run_turn(
         except AiProviderError as exc:
             return await _persist_assistant_error(db, conversation.id, str(exc))
 
-        history = await _load_history(db, conversation.id)
-        user_native = client.build_user_message(user_message)
-        db.add(
-            AiMessage(
-                conversation_id=conversation.id,
-                role=AiMessageRole.USER,
-                content=user_message,
-                provider_native=[user_native],
+        if user_message is not None:
+            history = await _load_history(db, conversation.id)
+            user_native = client.build_user_message(user_message)
+            db.add(
+                AiMessage(
+                    conversation_id=conversation.id,
+                    role=AiMessageRole.USER,
+                    content=user_message,
+                    provider_native=[user_native],
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
+            messages: list[Any] = [*history, user_native]
+        else:
+            messages = await _load_history(db, conversation.id)
 
-        messages: list[Any] = [*history, user_native]
         # Permission filter #1: re-derived from the owner's current role.
         tools = available_tools(owner) if allow_tools else []
 
@@ -240,12 +257,31 @@ async def _run_turn(
         }
 
 
-@celery_app.task(name="app.tasks.ai_jobs.run_ai_turn")
-def run_ai_turn(conversation_id: str, user_message: str) -> dict[str, Any]:
-    return asyncio.run(_run_turn(conversation_id, user_message, allow_tools=True))
+# A turn can make up to MAX_TOOL_ROUNDTRIPS (5) sequential provider calls,
+# each with its own 90s httpx read timeout (CHAT_TIMEOUT in
+# app/ai/providers.py) — worst case, a genuinely slow model's turn takes
+# close to 450s. Both tasks below need a `time_limit` comfortably above
+# that, or Celery's own default (60s, see task_time_limit in
+# app/tasks/celery_app.py) kills the task via SIGKILL mid-call, long before
+# it would ever hit its own internal timeout — silently: nothing gets
+# persisted, and the conversation just never receives a reply. This was a
+# real bug, not a hypothetical one.
+_AI_TURN_TIME_LIMIT_SECONDS = 480
 
 
-@celery_app.task(name="app.tasks.ai_jobs.summarize_tool_output")
+@celery_app.task(name="app.tasks.ai_jobs.run_ai_turn", time_limit=_AI_TURN_TIME_LIMIT_SECONDS)
+def run_ai_turn(conversation_id: str) -> dict[str, Any]:
+    """The interactive chat's own turn. Unlike `summarize_tool_output`
+    below, this never receives the user's message text as an argument —
+    `app.web.routes.ai.post_message` already persisted it (synchronously,
+    before enqueueing this task) so the conversation page shows it
+    immediately rather than waiting on a background task to even start."""
+    return asyncio.run(_run_turn(conversation_id, allow_tools=True))
+
+
+@celery_app.task(
+    name="app.tasks.ai_jobs.summarize_tool_output", time_limit=_AI_TURN_TIME_LIMIT_SECONDS
+)
 def summarize_tool_output(conversation_id: str, output_text: str) -> dict[str, Any]:
     """One extra provider call after a confirmed `run_ssh_command`, so the
     assistant can explain the command's output in plain language.
@@ -258,4 +294,4 @@ def summarize_tool_output(conversation_id: str, output_text: str) -> dict[str, A
     output can achieve is a misleading summary — it cannot reach a tool,
     and therefore cannot even produce a new proposal to confirm.
     """
-    return asyncio.run(_run_turn(conversation_id, output_text, allow_tools=False))
+    return asyncio.run(_run_turn(conversation_id, allow_tools=False, user_message=output_text))

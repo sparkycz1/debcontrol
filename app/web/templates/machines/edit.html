@@ -78,6 +78,46 @@
     <a class="button button-secondary" href="/machines/{{ machine.id }}">Cancel</a>
   </form>
 
+  {% if machine.auth_method.value == 'password' %}
+    <section class="panel">
+      <h2>Initial setup</h2>
+      {% if not machine.host_key_fingerprint %}
+        <p class="hint">Confirm the server's key fingerprint on the Overview tab first.</p>
+      {% else %}
+        <p class="hint">
+          Prepares this machine the same way the wiki page "Ansible Onboarding"'s
+          playbook would, run directly over SSH instead: creates a dedicated
+          "debcontrol" user, installs this app's own SSH public key into it,
+          grants it passwordless sudo scoped to <code>apt-get</code>/<code>shutdown</code>
+          (and <code>flatpak</code>/<code>snap</code>, if either is installed), and
+          installs <code>ncurses-term</code> (colors/box-drawing in the Terminal tab —
+          best-effort, never blocks the rest). <strong>The password above must belong
+          to root, or an account that already behaves like root</strong> — there is no
+          sudo escalation to fall back on here. On success this machine switches to
+          using debcontrol's own SSH key, and the password above is discarded.
+        </p>
+        {% if onboarding_error %}
+          <div class="alert alert-error"><p>{{ onboarding_error }}</p></div>
+        {% endif %}
+        {% if onboarding_output %}
+          <div class="alert alert-ok">
+            <p>Setup completed — this machine now uses debcontrol's own SSH key.</p>
+          </div>
+          <details>
+            <summary>Setup script output</summary>
+            <pre><code>{{ onboarding_output }}</code></pre>
+          </details>
+        {% endif %}
+        <form method="post" action="/machines/{{ machine.id }}/run-onboarding"
+              class="inline-form"
+              data-confirm="Create a &quot;debcontrol&quot; user, grant it scoped sudo, and switch this machine to debcontrol's own SSH key?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button">Run initial setup</button>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
+
   <section class="panel">
     <h2>Delete this machine</h2>
     <p class="hint">This can't be undone.</p>

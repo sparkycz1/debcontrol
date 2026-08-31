@@ -49,6 +49,7 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.identity import get_or_create_identity
+from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
@@ -225,6 +226,82 @@ async def _push_pending_ssh_key(machine_id: str) -> dict[str, Any]:
 )
 def push_pending_ssh_key(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_push_pending_ssh_key(machine_id))
+
+
+# The onboarding script does a handful of local operations (useradd, a few
+# file writes) plus one `apt-get update && apt-get install` — give it more
+# headroom than the plain-local-commands push above.
+_ONBOARDING_EXTRA_SECONDS = 90
+
+
+async def _run_machine_onboarding(machine_id: str) -> dict[str, Any]:
+    """Prepares a freshly-added, not-yet-managed machine for debcontrol —
+    see `app.ssh.onboarding` for exactly what the script does and why this
+    isn't a real `ansible-playbook` invocation.
+
+    Connects using the *currently stored* credential — the one-time root
+    (or root-equivalent) login the operator entered when adding this
+    machine (`POST /machines`, same as any other machine — see
+    `app.web.routes.machines.run_onboarding_endpoint`), since the whole
+    point is to bootstrap a machine that has nothing configured for
+    debcontrol's own shared identity yet. On success, switches the machine
+    over to that identity (`username="debcontrol"`, `auth_method=SSH_KEY`,
+    clearing the stored one-time secret) so every other feature (updates,
+    terminal, power, ...) treats it exactly like any other SSH_KEY machine
+    from then on — there is no separate "onboarded" flag to track.
+
+    Requires a pinned host key fingerprint first, same as every other
+    real connection this app makes — onboarding a machine is not an
+    exception to "no trust on first use."
+    """
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+        identity = await get_or_create_identity(session)
+        script = build_onboarding_command(identity.public_key)
+
+        try:
+            result = await run_command(
+                machine,
+                secret,
+                script,
+                settings.ssh_connect_timeout,
+                settings.ssh_connect_timeout + _ONBOARDING_EXTRA_SECONDS,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("run_machine_onboarding failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        if result.exit_status != 0 or ONBOARD_SUCCESS_MARKER not in result.output:
+            return {
+                "ok": False,
+                "error": (
+                    f"Setup script exited {result.exit_status}: "
+                    f"{result.output or '(no output)'}"
+                ),
+            }
+
+        machine.username = ONBOARD_USERNAME
+        machine.auth_method = AuthMethod.SSH_KEY
+        machine.secret_encrypted = None
+        await session.commit()
+
+        return {"ok": True, "output": result.output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.run_machine_onboarding",
+    time_limit=get_settings().ssh_connect_timeout + _ONBOARDING_EXTRA_SECONDS + 15,
+)
+def run_machine_onboarding(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_run_machine_onboarding(machine_id))
 
 
 async def _ping_all_machines() -> None:

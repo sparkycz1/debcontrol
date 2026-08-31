@@ -79,7 +79,17 @@ router = APIRouter()
 # See the module docstring for the reasoning behind this specific value.
 TERMINAL_SESSION_MAX_SECONDS = 2 * 60 * 60  # 2 hours
 
-_TERM_TYPE = "xterm-256color"
+# "xterm" rather than "xterm-256color": the latter's terminfo entry ships in
+# `ncurses-term`, an *extra* package a minimal Debian/Ubuntu install doesn't
+# have by default (only the base `ncurses-base` entries — "xterm", "vt100",
+# "screen", "linux", ... — are guaranteed present). Requesting a TERM the
+# remote can't look up doesn't fail loudly; ncurses silently falls back to a
+# near-blank capability set, which is what a flat monochrome/ASCII-only
+# htop (or any other curses app) actually is. Plain "xterm" is virtually
+# always present and still gets real ANSI colors — see
+# wiki/Managed-Machine-Requirements.md for installing ncurses-term anyway,
+# for 256-color depth specifically.
+_TERM_TYPE = "xterm"
 _DEFAULT_TERM_SIZE = (80, 24)
 # Refuse an obviously-bogus resize request rather than passing it straight
 # through to AsyncSSH's `change_terminal_size` — a client is untrusted input

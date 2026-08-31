@@ -14,6 +14,20 @@ self-registers the machine so it shows up as **pending** in the
 It's safe to re-run — every task is idempotent (Ansible's
 `apt`/`user`/`copy`/`authorized_key` modules all are).
 
+> [!TIP]
+> **Don't want to run Ansible yourself?** debcontrol can do the equivalent
+> setup itself, from the web UI, over the one-time root credential you'd
+> otherwise hand to this playbook: add the machine normally (**Machines →
+> Add machine**) with that root login, confirm its host key fingerprint as
+> usual, then use **Run initial setup** on the machine's Settings tab. It
+> creates the same dedicated user, installs debcontrol's own SSH public
+> key, and grants the same scoped sudo — directly over the SSH connection
+> this app already has, not by shelling out to `ansible-playbook` (no
+> Ansible dependency to add to the worker image for it) — and switches the
+> machine to that new identity on success. The one difference: it doesn't
+> self-register as *pending* first, since the machine already exists by
+> the time you run it. See `app/ssh/onboarding.py`.
+
 **It never creates a manageable machine by itself.** The playbook's last
 step is the same `POST /api/inform` self-registration described in
 [Managed Machine Requirements](Managed-Machine-Requirements.md#self-registration-optional-for-future-automation) —

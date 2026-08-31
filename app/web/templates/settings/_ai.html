@@ -51,20 +51,55 @@
       {% endif %}
 
       {% if config.models %}
-        <form method="post" action="/settings/ai/models" class="form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="kind" value="{{ config.kind.value }}">
-          <div class="permission-grid">
-            {% for model in config.models %}
-              <label>
-                <input type="checkbox" name="enabled_models" value="{{ model.model_id }}"
-                       {{ 'checked' if model.enabled else '' }}>
-                {{ model.model_id }}
-              </label>
-            {% endfor %}
+        {% set enabled_count = config.models | selectattr('enabled') | list | length %}
+        <p class="hint">
+          {{ enabled_count }} of {{ config.models | length }}
+          model{{ 's' if config.models | length != 1 else '' }} enabled for chat.
+        </p>
+        <button type="button" class="button button-secondary"
+                popovertarget="models-modal-{{ config.kind.value }}">
+          Choose models
+        </button>
+
+        <div id="models-modal-{{ config.kind.value }}" popover class="modal">
+          <div class="modal-dialog">
+            <div class="modal-header">
+              <h2 class="modal-title">Choose models — {{ config.kind.value }}</h2>
+              <button
+                type="button"
+                class="modal-close"
+                popovertarget="models-modal-{{ config.kind.value }}"
+                popovertargetaction="hide"
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+            <div class="modal-body">
+              <input
+                type="search"
+                class="model-search-input"
+                placeholder="Filter models…"
+                aria-label="Filter models for {{ config.kind.value }}"
+                data-model-search="models-list-{{ config.kind.value }}"
+              >
+              <form method="post" action="/settings/ai/models" class="form form-wide">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="kind" value="{{ config.kind.value }}">
+                <div class="model-list" id="models-list-{{ config.kind.value }}">
+                  {% for model in config.models %}
+                    <label class="model-row" data-model-row="{{ model.model_id | lower }}">
+                      <input type="checkbox" name="enabled_models" value="{{ model.model_id }}"
+                             {{ 'checked' if model.enabled else '' }}>
+                      {{ model.model_id }}
+                    </label>
+                  {% endfor %}
+                </div>
+                <button type="submit" class="button">Save model selection</button>
+              </form>
+            </div>
           </div>
-          <button type="submit" class="button">Save model selection</button>
-        </form>
+        </div>
       {% endif %}
     {% endfor %}
 

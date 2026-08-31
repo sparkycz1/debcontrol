@@ -32,10 +32,10 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, ForeignKey, Text, func
+from sqlalchemy import JSON, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -72,7 +72,22 @@ class AiMessage(Base):
     provider_native: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     pending_actions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    # Assigned in Python (`datetime.now(UTC)`), not via a DB `server_default`
+    # like most other timestamps in this app — same reasoning as
+    # `AuditLogEntry.created_at`'s own docstring, applied for a different
+    # need here: ordering messages within a conversation
+    # (`order_by(created_at, id)` in app.tasks.ai_jobs._load_history /
+    # app.web.routes.ai._get_messages) has to reflect actual chronological
+    # order. A DB-computed `now()` at Postgres's own resolution is plenty
+    # precise there, but SQLite's `CURRENT_TIMESTAMP` (what the test suite
+    # runs against) only has *second* resolution — two messages inserted
+    # within the same second tie on `created_at`, falling back to sorting
+    # by `id`, a random UUID with no relationship to insertion order.
+    # Python's `datetime.now(UTC)` has microsecond resolution everywhere,
+    # sidestepping the tie entirely.
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), nullable=False
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"AiMessage(id={self.id!r}, role={self.role!r})"

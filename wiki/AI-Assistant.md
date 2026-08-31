@@ -43,7 +43,7 @@ models, **90 seconds** for a chat turn.
 
 ### Configuring one
 
-**Settings → AI assistant**, one sub-block per kind:
+**Settings → AI tab**, one sub-block per kind:
 
 1. Tick **Enabled** and paste an **API key**. The key is encrypted at rest
    with the same Fernet key as SSH passwords and the LDAP bind password
@@ -53,8 +53,10 @@ models, **90 seconds** for a chat turn.
    — the page can only tell you that one exists.
 2. Click **Fetch models now**. debcontrol calls that provider's own
    list-models endpoint and stores every model id it returns.
-3. Tick the individual models you want to allow, then **Save model
-   selection**.
+3. Click **Choose models** to open a searchable picker (a modal, not an
+   inline checkbox grid — a large catalog like OpenRouter's is genuinely
+   unusable as a flat list) and tick the individual models you want to
+   allow, then **Save model selection**.
 
 Step 3 is not busywork. **Fetching a catalog is not the same as trusting
 it** — provider catalogs contain models with no tool-calling support,
@@ -72,7 +74,7 @@ provider's wire format.
 
 ## 💰 Token limits
 
-**Settings → AI assistant → Token limits** sets three optional ceilings on
+**Settings → AI tab → Token limits** sets three optional ceilings on
 total tokens (input + output, every provider and model added together).
 Empty means no limit, which is the default.
 
@@ -226,8 +228,17 @@ records what was *done* — see
   What was actually *run* as a result is still fully visible to anyone with
   `audit.view`; the privacy is over the chat text, not over the
   consequences.
-- **No streaming.** A turn is one request that waits for a complete answer
-  (in a Celery job, because it can make several sequential provider calls).
+- **No token-by-token streaming.** Sending a message persists it and
+  enqueues the turn (a Celery job, since it can make several sequential
+  provider calls — see `app.ai.tools.MAX_TOOL_ROUNDTRIPS`) without
+  blocking the request; the conversation page polls for the reply every
+  ~2s (`partials/ai_messages_panel.html`) and shows a "thinking…" indicator
+  meanwhile, but the reply itself still arrives all at once, not
+  word-by-word. This used to block the HTTP request on the job's result
+  with a 90s timeout — too short for a turn making several 90s-capped
+  provider calls, and shorter still than the Celery task's own inherited
+  60s time limit, which could (and did) kill the job mid-call with nothing
+  ever shown to the user. See `app.tasks.ai_jobs._AI_TURN_TIME_LIMIT_SECONDS`.
 - **No conversation export, search, or retention policy.** Conversations
   live until their owner deletes them, or until the account is deleted (the
   rows cascade).

@@ -1,0 +1,120 @@
+{# The chat itself, plus the compose form — polls itself every ~2s while
+   awaiting_reply (a reply was asked for but hasn't arrived yet), stopping
+   on its own once it has, the same self-replacing (outerHTML) pattern
+   partials/update_run_status.html uses and for the same reason: dropping
+   this element's own hx-trigger from the *next* response is how polling
+   stops, which only works if the whole polling element is what gets
+   replaced. See GET /ai/conversations/{id}/messages-panel. #}
+<div
+  id="ai-messages-panel"
+  {% if awaiting_reply %}
+  hx-get="/ai/conversations/{{ conversation.id }}/messages-panel"
+  hx-trigger="every 2s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <section class="panel chat-panel">
+    {% if messages %}
+      <div class="chat-log">
+        {% for message in messages %}
+          <div class="chat-row chat-row-{{ message.role.value }}">
+            <div class="chat-bubble chat-bubble-{{ message.role.value }}">
+              <div class="chat-bubble-role">{{ 'You' if message.role.value == 'user' else 'Assistant' }}</div>
+              <div class="chat-bubble-content">{{ message.content }}</div>
+
+              {% for action in message.pending_actions or [] %}
+                <div class="alert {{ 'alert-error' if action.status in ('denied',) else 'alert-warn' }} chat-bubble-action">
+                  <p><strong>{{ action.summary }}</strong></p>
+
+                  {% if action.command %}
+                    <p>Command, exactly as it will run:</p>
+                    <pre><code>{{ action.command }}</code></pre>
+                  {% endif %}
+                  {% if action.strategy %}
+                    <p>Strategy: <code>{{ action.strategy }}</code></p>
+                  {% endif %}
+
+                  {% if action.machine_names %}
+                    <p>
+                      Will run on {{ action.machine_names | length }} machine(s):
+                      {% for name in action.machine_names %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+                    </p>
+                  {% endif %}
+                  {% if action.skipped_unpinned %}
+                    <p class="hint">
+                      Skipped (no confirmed SSH host key fingerprint):
+                      {% for name in action.skipped_unpinned %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+                    </p>
+                  {% endif %}
+
+                  {% if action.status == 'pending' %}
+                    <p class="hint">
+                      Read the command and the target list above before confirming.
+                      Nothing has run yet.
+                    </p>
+                    <div class="page-header-actions">
+                      <form method="post"
+                            action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/confirm"
+                            class="inline-form"
+                            data-confirm="Really run this on {{ action.machine_names | length }} machine(s)?">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="action_index" value="{{ loop.index0 }}">
+                        <button type="submit" class="button button-danger">Confirm and run</button>
+                      </form>
+                      <form method="post"
+                            action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/discard"
+                            class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="action_index" value="{{ loop.index0 }}">
+                        <button type="submit" class="button button-secondary">Discard</button>
+                      </form>
+                    </div>
+                  {% elif action.status == 'confirmed' %}
+                    <p><span class="badge badge-ok">confirmed and triggered</span></p>
+                  {% elif action.status == 'discarded' %}
+                    <p><span class="badge badge-warn">discarded — nothing ran</span></p>
+                  {% else %}
+                    <p><span class="badge badge-warn">blocked</span> {{ action.reason }}</p>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endfor %}
+
+        {% if awaiting_reply %}
+          <div class="chat-row chat-row-assistant">
+            <div class="chat-bubble chat-bubble-assistant chat-bubble-pending">
+              <div class="chat-bubble-role">Assistant</div>
+              <div class="chat-typing" aria-live="polite">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <p>No messages yet — ask something below.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Your message</h2>
+    <form method="post" action="/ai/conversations/{{ conversation.id }}/messages"
+          class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="message">Message</label>
+      <textarea id="message" name="message" rows="4"
+                placeholder="e.g. nainstaluj apache2 na skupině web-servers"
+                {% if awaiting_reply %}disabled{% endif %}></textarea>
+      {% if awaiting_reply %}
+        <p class="hint">Waiting for the assistant's reply — this updates automatically.</p>
+      {% else %}
+        <p class="hint">Answers can take a little while for anything involving several machines.</p>
+      {% endif %}
+      <button type="submit" class="button" {% if awaiting_reply %}disabled{% endif %}>Send</button>
+    </form>
+  </section>
+</div>

@@ -181,6 +181,19 @@ async def open_shell_session(
     in raw `bytes` rather than decoded `str` — the right choice for a
     terminal, which relays arbitrary byte streams (including partial UTF-8
     sequences and ANSI escape codes) rather than parsed text.
+
+    Requests `LANG`/`LC_ALL=C.UTF-8` as the session's locale — without it,
+    an interactive shell's locale is whatever the remote account's own
+    login environment defaults to (commonly the POSIX/"C" locale on a
+    minimal, non-interactively-provisioned server), which makes ncurses
+    apps (htop, less, ...) draw meters/borders with plain ASCII characters
+    instead of the Unicode block/box-drawing ones they'd otherwise use.
+    "C.UTF-8" is a locale every glibc system has built in with no
+    `locale-gen` step required, unlike e.g. "en_US.UTF-8". This is a
+    best-effort SSH env request, not a guarantee: sshd only forwards
+    variables its own `AcceptEnv`/`SetEnv` allows (Debian/Ubuntu's default
+    sshd_config allows `LANG`/`LC_*`) — a server that doesn't accept these
+    just ignores the request rather than failing the connection.
     """
     conn = await open_connection(machine, secret, timeout_seconds)
     try:
@@ -189,6 +202,7 @@ async def open_shell_session(
             term_size=term_size,
             encoding=None,
             stderr=asyncssh.STDOUT,
+            env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
         )
     except (asyncssh.Error, OSError) as exc:
         conn.close()

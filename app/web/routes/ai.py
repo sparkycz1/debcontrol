@@ -44,7 +44,9 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.base import AiProviderError
 from app.ai.config import get_or_create_ai_provider_configs, get_selectable_models
+from app.ai.providers import build_client
 from app.ai.tools import (
     CHECK_UPDATES,
     REBOOT,
@@ -59,7 +61,7 @@ from app.auth.dependencies import get_current_user, require_permission
 from app.core.config import get_settings
 from app.core.csrf import verify_csrf
 from app.db.models.ai_conversation import AiConversation, derive_title
-from app.db.models.ai_message import AiMessage, PendingActionStatus
+from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStatus
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig
 from app.db.models.audit_log import AuditOutcome
@@ -118,6 +120,13 @@ async def _get_messages(db: AsyncSession, conversation_id: uuid.UUID) -> list[Ai
     return list(result.scalars().all())
 
 
+def _is_awaiting_reply(messages: list[AiMessage]) -> bool:
+    """True once the human's turn has been sent but the assistant hasn't
+    answered yet — the compose form disables itself and
+    `partials/ai_messages_panel.html` polls for the reply while this holds."""
+    return bool(messages) and messages[-1].role == AiMessageRole.USER
+
+
 async def _render_conversation(
     request: Request, db: AsyncSession, conversation: AiConversation, errors: list[str]
 ) -> Response:
@@ -128,7 +137,29 @@ async def _render_conversation(
         {
             "conversation": conversation,
             "messages": messages,
+            "awaiting_reply": _is_awaiting_reply(messages),
             "errors": errors,
+            "csrf_token": request.state.csrf_token,
+        },
+    )
+
+
+async def _render_messages_panel(
+    request: Request, db: AsyncSession, conversation: AiConversation
+) -> Response:
+    """The self-polling fragment — see `partials/ai_messages_panel.html`.
+    No `errors`: a mid-conversation provider failure is persisted as a
+    normal (if unhappy-looking) assistant message by `_run_turn`/
+    `_persist_assistant_error`, so it shows up as the next polled message
+    rather than needing a separate error channel here."""
+    messages = await _get_messages(db, conversation.id)
+    return templates.TemplateResponse(
+        request,
+        "partials/ai_messages_panel.html",
+        {
+            "conversation": conversation,
+            "messages": messages,
+            "awaiting_reply": _is_awaiting_reply(messages),
             "csrf_token": request.state.csrf_token,
         },
     )
@@ -237,6 +268,21 @@ async def show_conversation(
     return await _render_conversation(request, db, conversation, [])
 
 
+@router.get("/conversations/{conversation_id}/messages-panel")
+async def conversation_messages_panel(
+    request: Request,
+    conversation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Polled every ~2s by `partials/ai_messages_panel.html` while
+    `awaiting_reply` — a plain DB read, no provider call of its own — so the
+    conversation page picks up the assistant's reply as soon as `_run_turn`
+    commits it, instead of the human having to reload."""
+    conversation = await _get_conversation(db, conversation_id, user)
+    return await _render_messages_panel(request, db, conversation)
+
+
 @router.post("/conversations/{conversation_id}/messages", dependencies=[Depends(verify_csrf)])
 async def post_message(
     request: Request,
@@ -245,31 +291,53 @@ async def post_message(
     user: User = Depends(get_current_user),
     message: str = Form(""),
 ) -> Response:
+    """Persists the human's message and enqueues the reply, but does **not**
+    wait for it — see `partials/ai_messages_panel.html`'s self-poll for how
+    the reply actually shows up. This used to block the whole request on
+    `AsyncResult.get(timeout=90)`, which was two bugs stacked on each other:
+    a turn can make up to 5 sequential provider calls at up to 90s each
+    (`MAX_TOOL_ROUNDTRIPS`/`CHAT_TIMEOUT` in `app/ai/tools.py`/`providers.py`)
+    — comfortably longer than a 90s wait *or* the Celery task's own 60s
+    default time limit, which could (and did) kill the task outright before
+    either timeout ever fired, silently. Not waiting at all sidesteps both:
+    there's no web-request timeout to size against an unpredictable model,
+    and the fixed `time_limit` on the task itself
+    (`app.tasks.ai_jobs._AI_TURN_TIME_LIMIT_SECONDS`) only has to be a true
+    "this is stuck" ceiling, not a number a normal reply has to race.
+    """
     conversation = await _get_conversation(db, conversation_id, user)
     text = message.strip()
     if not text:
         return await _render_conversation(request, db, conversation, ["Write a message first."])
 
+    provider = conversation.provider
+    if provider is None or not provider.enabled:
+        return await _render_conversation(
+            request, db, conversation, ["This conversation's AI provider is no longer enabled."]
+        )
+    try:
+        client = build_client(provider)
+    except AiProviderError as exc:
+        return await _render_conversation(request, db, conversation, [str(exc)])
+
     if conversation.title in ("", "New conversation"):
         conversation.title = derive_title(text)
-        await db.commit()
 
-    errors: list[str] = []
-    async_result = ai_jobs.run_ai_turn.delay(str(conversation.id), text)
-    try:
-        result = await asyncio.to_thread(async_result.get, timeout=_TURN_WAIT_SECONDS)
-        if isinstance(result, dict) and not result.get("ok"):
-            errors.append(str(result.get("error") or "The assistant could not answer."))
-    except CeleryTimeoutError:
-        errors.append(
-            "The assistant did not respond in time. Reload this page shortly — "
-            "the answer may still arrive."
+    db.add(
+        AiMessage(
+            conversation_id=conversation.id,
+            role=AiMessageRole.USER,
+            content=text,
+            provider_native=[client.build_user_message(text)],
         )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
-        errors.append(str(exc))
+    )
+    await db.commit()
 
-    conversation = await _get_conversation(db, conversation_id, user)
-    return await _render_conversation(request, db, conversation, errors)
+    ai_jobs.run_ai_turn.delay(str(conversation.id))
+
+    return RedirectResponse(
+        url=f"/ai/conversations/{conversation.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 async def _get_pending_action(

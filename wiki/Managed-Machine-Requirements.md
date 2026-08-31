@@ -196,20 +196,38 @@ package: whatever the connecting account can do at an interactive SSH
 prompt is exactly what the browser terminal can do, since it's the same
 shell.
 
-**For colors and full-screen apps (htop, less, vim, ...) to render
-properly**, install `ncurses-term`:
+**Colors and box-drawing (htop, less, vim, ...) work out of the box** on
+any Debian/Ubuntu install, no extra package needed:
+
+- The browser terminal negotiates `TERM=xterm` — deliberately not
+  `xterm-256color`, whose terminfo entry ships in `ncurses-term`, an
+  *extra* package a minimal install doesn't have by default (only the base
+  `ncurses-base` entries — `xterm`, `vt100`, `screen`, `linux`, ... — are
+  guaranteed present). Requesting a `TERM` the remote can't look up
+  doesn't fail loudly; ncurses silently falls back to a near-blank
+  capability set instead, which is what a flat monochrome/ASCII-only
+  `htop` actually is. Plain `xterm` is virtually always present and still
+  gets real ANSI colors.
+- It also requests `LANG`/`LC_ALL=C.UTF-8` for the session, so ncurses
+  apps draw meters/borders with proper Unicode block/box-drawing
+  characters instead of falling back to plain ASCII (`|` instead of a
+  colored block) — a minimal, non-interactively-provisioned server
+  commonly defaults its login shell to the POSIX/"C" locale otherwise.
+  This is a best-effort SSH environment request: it works as long as
+  sshd's `AcceptEnv`/`SetEnv` allows `LANG`/`LC_*`, which is Debian/
+  Ubuntu's own sshd_config default.
+
+Installing `ncurses-term` is optional and only buys 256-color *depth*
+specifically (the browser terminal doesn't request `xterm-256color`, so
+this isn't required for the colors/box-drawing above):
 
 ```sh
 sudo apt-get install -y ncurses-term
 ```
 
-The browser terminal negotiates `TERM=xterm-256color`. A minimal Debian
-install's base terminfo database only ships plain `xterm`, with no colors
-and no box-drawing — ncurses apps silently fall back to a flat ASCII
-rendering (visible e.g. as `htop`'s meter bars drawn with `|` instead of
-colored blocks) rather than failing loudly, so this is easy to miss until
-you actually open something curses-based. The
-[Ansible playbook](Ansible-Onboarding.md) installs it automatically.
+The [Ansible playbook](Ansible-Onboarding.md) (and the web UI's
+equivalent, **Run initial setup** — see that same page) installs it
+automatically, best-effort.
 
 ## Self-registration (optional, for future automation)
 
@@ -279,5 +297,6 @@ playbook automates — do it by hand, or run that instead.
 - [ ] *(optional)* passwordless sudo for `flatpak`/`snap` too, if either is
       installed and you want debcontrol to keep it updated
 - [ ] *(optional)* `curl` installed, if using self-registration
-- [ ] *(optional)* `ncurses-term` installed, for colors/full-screen apps in
-      the Terminal tab
+- [ ] *(optional)* `ncurses-term` installed, for 256-color depth
+      specifically in the Terminal tab (colors/box-drawing already work
+      without it)
