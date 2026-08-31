@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -63,6 +64,13 @@ _REACHABILITY_CONCURRENCY = 20
 # Keep stored update output from growing unreasonably large for a very
 # chatty apt run — keep the tail, since that's where errors/summaries land.
 _MAX_STORED_OUTPUT_CHARS = 200_000
+
+# How often `_run_machine_update` is allowed to write apt's in-progress
+# output to the DB — see `_persist_partial_output` inside it. Comfortably
+# under the update-run page's 3s poll interval (`partials/
+# update_run_status.html`) so a poll never has to wait an extra round trip
+# to see the latest output.
+_PROGRESS_COMMIT_INTERVAL_SECONDS = 2.0
 
 # How long a one-shot `run_remote_ssh_command` may run for, on top of the
 # connect timeout.
@@ -434,6 +442,22 @@ async def _run_machine_update(run_id: str) -> None:
 
         secret = await resolve_machine_credential(machine, session)
 
+        # Persists apt's output as it arrives, so the update-run page (which
+        # polls `partials/update_run_status.html` every 3s) shows it live
+        # instead of only once the whole run has finished. Throttled to at
+        # most once per _PROGRESS_COMMIT_INTERVAL_SECONDS — apt can emit
+        # output far faster than that, and every call here is a DB write.
+        last_progress_commit = 0.0
+
+        async def _persist_partial_output(text: str) -> None:
+            nonlocal last_progress_commit
+            now = time.monotonic()
+            if now - last_progress_commit < _PROGRESS_COMMIT_INTERVAL_SECONDS:
+                return
+            last_progress_commit = now
+            run.output = _truncate_output(text)
+            await session.commit()
+
         try:
             result = await run_system_update(
                 machine,
@@ -441,8 +465,9 @@ async def _run_machine_update(run_id: str) -> None:
                 run.strategy,
                 settings.ssh_connect_timeout,
                 settings.update_timeout_seconds,
+                on_output=_persist_partial_output,
             )
-        except SSHConnectionError as exc:
+        except (SSHConnectionError, TimeoutError) as exc:
             logger.warning("run_machine_update failed for %s: %s", machine.name, exc)
             run.status = UpdateRunStatus.FAILED
             run.error = str(exc)

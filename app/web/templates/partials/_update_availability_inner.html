@@ -1,0 +1,99 @@
+{# Split out of update_availability.html so both the initial/POST-refresh
+   render and GET /machines/{id}/update-availability-panel (this section's
+   own periodic poll, see update_history.html) can render the same content
+   without the poll response re-nesting the wrapping #update-availability
+   div inside itself. #}
+{% if error %}
+  <div class="alert alert-error">
+    <p>Could not check for updates: {{ error }}</p>
+  </div>
+{% endif %}
+
+{% set other_count = (machine.flatpak_upgradable_count or 0) + (machine.snap_upgradable_count or 0) %}
+
+{% if not machine.updates_checked_at %}
+  <p class="hint">
+    Not checked yet. This runs automatically on the same periodic sweep as
+    facts, whenever you click "Check for updates now" below, and whenever
+    a scheduled "Check for updates" task fires (see the Scheduling tab) —
+    whichever ran last is what's shown here, including the package names.
+  </p>
+{% elif machine.upgradable_count is none %}
+  <p class="hint">
+    Last check (checked {{ machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z') }})
+    couldn't determine what's available via apt — see the error above, or
+    try again. (flatpak/snap checks below don't depend on this.)
+  </p>
+{% elif machine.upgradable_count == 0 and other_count == 0 %}
+  <p><span class="badge badge-ok">up to date</span>
+    <span class="hint">(checked {{ machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z') }})</span></p>
+{% else %}
+  <p>
+    <span class="badge badge-warn">
+      {{ machine.upgradable_count }} apt update{{ 's' if machine.upgradable_count != 1 else '' }}
+      {%- if machine.security_upgradable_count %}, {{ machine.security_upgradable_count }} security{% endif %}
+    </span>
+    <span class="hint">(checked {{ machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z') }})</span>
+  </p>
+  {% if machine.apt_upgradable_packages %}
+    <details>
+      <summary>Which apt packages?</summary>
+      <ul>
+        {% for pkg in machine.apt_upgradable_packages %}
+          <li>
+            <code>{{ pkg.name }}</code>
+            {%- if pkg.current_version and pkg.new_version %}: {{ pkg.current_version }} → {{ pkg.new_version }}
+            {%- elif pkg.new_version %}: {{ pkg.new_version }}{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+{% endif %}
+
+{% if machine.flatpak_upgradable_count %}
+  <p><span class="badge badge-warn">
+    {{ machine.flatpak_upgradable_count }} flatpak update{{ 's' if machine.flatpak_upgradable_count != 1 else '' }}
+  </span></p>
+  {% if machine.flatpak_upgradable_packages %}
+    <details>
+      <summary>Which flatpak apps?</summary>
+      <ul>
+        {% for pkg in machine.flatpak_upgradable_packages %}
+          <li><code>{{ pkg.name }}</code>{% if pkg.new_version %}: {{ pkg.new_version }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+{% endif %}
+{% if machine.snap_upgradable_count %}
+  <p><span class="badge badge-warn">
+    {{ machine.snap_upgradable_count }} snap update{{ 's' if machine.snap_upgradable_count != 1 else '' }}
+  </span></p>
+  {% if machine.snap_upgradable_packages %}
+    <details>
+      <summary>Which snaps?</summary>
+      <ul>
+        {% for pkg in machine.snap_upgradable_packages %}
+          <li><code>{{ pkg.name }}</code>{% if pkg.new_version %}: {{ pkg.new_version }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+{% endif %}
+
+{% if machine.reboot_required %}
+  <p><span class="badge badge-error">reboot needed</span>
+    <span class="hint">a newer kernel is installed but not yet running</span></p>
+{% endif %}
+
+<button
+  class="button button-secondary"
+  hx-post="/machines/{{ machine.id }}/check-updates"
+  hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+  hx-target="#update-availability"
+  hx-swap="outerHTML"
+  {% if not machine.host_key_fingerprint %}disabled{% endif %}
+>
+  Check for updates now
+</button>

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import cast
+
+from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
+from app.ssh import updates as updates_module
 from app.ssh.updates import (
     build_update_command,
     parse_apt_upgradable_packages,
@@ -9,6 +14,7 @@ from app.ssh.updates import (
     parse_snap_upgradable_output,
     parse_snap_upgradable_packages,
     parse_upgradable_output,
+    run_system_update,
 )
 
 
@@ -180,3 +186,104 @@ def test_parse_snap_upgradable_packages_extracts_names_and_versions():
         {"name": "core22", "current_version": None, "new_version": "20240301"},
         {"name": "lxd", "current_version": None, "new_version": "5.21"},
     ]
+
+
+# --- run_system_update: incremental output streaming ------------------------
+#
+# `run_system_update` reads stdout in chunks (rather than `conn.run()`'s
+# buffer-it-all-and-return convenience) so a caller-supplied `on_output` can
+# be told the output accumulated so far as it arrives — see
+# `app.tasks.jobs._run_machine_update`, which uses this to make the
+# update-run page show apt's output live. These fakes stand in for the
+# AsyncSSH connection/process without touching the network at all.
+
+
+class _FakeCompletedProcess:
+    def __init__(self, exit_status: int) -> None:
+        self.exit_status = exit_status
+
+
+class _FakeUpdateProcess:
+    def __init__(self, chunks: list[str], exit_status: int) -> None:
+        self._chunks = list(chunks)
+        self._exit_status = exit_status
+        self.stdout = self
+
+    async def read(self, n: int) -> str:
+        if self._chunks:
+            return self._chunks.pop(0)
+        return ""
+
+    async def wait(self) -> _FakeCompletedProcess:
+        return _FakeCompletedProcess(self._exit_status)
+
+    async def __aenter__(self) -> _FakeUpdateProcess:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakeUpdateConnection:
+    def __init__(self, process: _FakeUpdateProcess) -> None:
+        self._process = process
+
+    async def create_process(self, script: str, stderr: object = None) -> _FakeUpdateProcess:
+        return self._process
+
+    async def __aenter__(self) -> _FakeUpdateConnection:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+async def test_run_system_update_streams_output_as_it_arrives(monkeypatch):
+    process = _FakeUpdateProcess(["Reading package lists...\n", "0 upgraded.\n"], exit_status=0)
+    connection = _FakeUpdateConnection(process)
+
+    async def fake_open_connection(machine: object, secret: object, timeout_seconds: int) -> object:
+        return connection
+
+    monkeypatch.setattr(updates_module, "open_connection", fake_open_connection)
+
+    seen: list[str] = []
+
+    async def on_output(text: str) -> None:
+        seen.append(text)
+
+    result = await run_system_update(
+        cast(Machine, SimpleNamespace()),
+        None,
+        UpgradeStrategy.DIST_UPGRADE,
+        5,
+        5,
+        on_output=on_output,
+    )
+
+    assert result.exit_status == 0
+    assert result.output == "Reading package lists...\n0 upgraded.\n"
+    # Called once per chunk, each time with everything accumulated so far —
+    # not just the new bytes — since that's what a DB write of "output so
+    # far" needs.
+    assert seen == [
+        "Reading package lists...\n",
+        "Reading package lists...\n0 upgraded.\n",
+    ]
+
+
+async def test_run_system_update_works_without_an_on_output_callback(monkeypatch):
+    process = _FakeUpdateProcess(["ok\n"], exit_status=0)
+    connection = _FakeUpdateConnection(process)
+
+    async def fake_open_connection(machine: object, secret: object, timeout_seconds: int) -> object:
+        return connection
+
+    monkeypatch.setattr(updates_module, "open_connection", fake_open_connection)
+
+    result = await run_system_update(
+        cast(Machine, SimpleNamespace()), None, UpgradeStrategy.FULL_UPGRADE, 5, 5
+    )
+
+    assert result.exit_status == 0
+    assert result.output == "ok\n"

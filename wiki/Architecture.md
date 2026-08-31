@@ -63,6 +63,26 @@
   identical everywhere; a tab is left out entirely rather than shown
   disabled when the current user lacks the permission for it (e.g. Terminal
   without `action.terminal`).
+- A few fragments that a periodic Celery Beat sweep can change without any
+  request from the browser — the online/offline badge, the Facts panel, the
+  installed-packages summary, the update-availability panel — poll
+  themselves every 20-30s (`hx-trigger="every ...s"`) against a plain,
+  SSH-free "current state from the DB" GET route (`GET /machines/{id}/
+  status-panel`/`facts-panel`/`packages-summary-panel`/
+  `update-availability-panel` in `app/web/routes/machines.py`), so a
+  background refresh shows up on an already-open page without a manual
+  reload. Each poll target's *own* content lives in a plain inner partial
+  (e.g. `partials/_packages_summary_inner.html`) rather than the id'd
+  wrapper div itself — the id and `hx-trigger` stay on the wrapper (in
+  detail.html, or inside the outer div for update-availability), and the
+  poll response is swapped in as its `innerHTML`; returning the wrapper
+  itself in the poll response would nest a duplicate copy of it inside
+  itself on every tick. The update-run page's own poll
+  (`partials/update_run_status.html`) predates this and uses the opposite,
+  self-replacing (`outerHTML`) shape instead, because it also needs to
+  *stop* polling once the run reaches a terminal state — dropping its own
+  `hx-trigger` from the next response is how it does that, which only works
+  if the whole polling element is what gets replaced.
 
 ### Background tasks: Celery and Celery Beat
 
@@ -153,6 +173,21 @@ For that rebind to be visible, **every job body must reach the factory
 through the module** — `db_session.AsyncSessionLocal(...)`, never
 `from app.db.session import AsyncSessionLocal`. A name bound at import time
 keeps pointing at the parent's pool.
+
+> [!IMPORTANT]
+> That fresh per-child engine used the default `QueuePool` until v0.7.2 —
+> which was its own bug, of a similar "invisible in tests, real in
+> production" shape. Every task body is `asyncio.run(...)`ing its own
+> coroutine (see above), so each task gets a **brand new event loop**. A
+> real connection pool hands a later task, in the same forked child, a
+> connection that was opened on an *earlier* task's (by then closed) loop —
+> and asyncpg raises `RuntimeError("... attached to a different loop")` the
+> moment it's used. `worker_process_init` now builds this engine with
+> `poolclass=NullPool`: every checkout opens a fresh connection and every
+> checkin closes it, so a connection can never outlive the loop that
+> created it. This only applies to the Celery worker's engine — the FastAPI
+> web process has one long-lived event loop for its whole life and keeps a
+> real pool.
 
 ## 📂 Project structure
 

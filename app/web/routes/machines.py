@@ -813,6 +813,57 @@ async def machine_detail(
     return response
 
 
+# --- Self-polling fragments -------------------------------------------------
+#
+# The Overview/Updates tabs poll these every 20-30s (see the `hx-trigger`
+# attributes in detail.html/update_history.html and the templates below) so
+# a periodic background sweep (reachability, facts, packages, update checks
+# — all Celery Beat jobs the user never explicitly triggers) shows up on an
+# already-open page without a manual reload. Each one is a plain DB read, no
+# SSH round trip — cheap enough to poll on a timer, unlike the POST
+# "refresh now" endpoints above/below, which do make one.
+
+
+@router.get("/{machine_id}/status-panel")
+async def machine_status_panel(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    return templates.TemplateResponse(request, "partials/machine_status.html", {"machine": machine})
+
+
+@router.get("/{machine_id}/facts-panel")
+async def machine_facts_panel(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    csrf_token, _ = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/machine_facts.html",
+        {"machine": machine, "error": None, "csrf_token": csrf_token},
+    )
+
+
+@router.get("/{machine_id}/packages-summary-panel")
+async def machine_packages_summary_panel(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    return templates.TemplateResponse(
+        request,
+        "partials/_packages_summary_inner.html",
+        {
+            "machine": machine,
+            "package_counts": await _get_package_counts(machine_id, db),
+            "held_count": await _get_held_count(machine_id, db),
+        },
+    )
+
+
 @router.get("/{machine_id}/packages")
 async def machine_packages_panel(
     request: Request,
@@ -1438,6 +1489,22 @@ async def machine_update_history(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.get("/{machine_id}/update-availability-panel")
+async def machine_update_availability_panel(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """See the module-level comment above `machine_status_panel` — this is
+    the Updates tab's equivalent, polled by `partials/update_availability.html`."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    csrf_token, _ = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/_update_availability_inner.html",
+        {"machine": machine, "error": None, "csrf_token": csrf_token},
+    )
 
 
 @router.get("/{machine_id}/updates/{run_id}")

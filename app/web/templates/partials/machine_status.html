@@ -1,0 +1,17 @@
+<span
+  id="machine-status"
+  hx-get="/machines/{{ machine.id }}/status-panel"
+  hx-trigger="every 20s"
+  hx-swap="outerHTML"
+>
+  {% if machine.is_reachable is none %}
+    <span class="badge badge-warn">unknown</span>
+  {% elif machine.is_reachable %}
+    <span class="badge badge-ok">online</span>
+  {% else %}
+    <span class="badge badge-error">offline</span>
+  {% endif %}
+  {% if machine.last_ping_at %}
+    <span class="hint">(checked {{ machine.last_ping_at | local_time('%Y-%m-%d %H:%M %Z') }})</span>
+  {% endif %}
+</span>

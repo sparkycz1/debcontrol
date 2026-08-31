@@ -1,35 +1,25 @@
-{# Shared summary line + "open modal" trigger, rendered in two places:
-   - once, cheaply, on the machine detail page itself (no package rows
-     fetched — just the aggregate counts already computed for that page);
+{# Shared summary line + "open modal" trigger, rendered in three places:
+   - once on the machine detail page itself (no package rows fetched — just
+     the aggregate counts already computed for that page), self-polling
+     (poll=True) so a periodic background refresh of packages shows up
+     without a manual page reload;
    - again inside the lazily-loaded modal body (see machine_packages.html),
      as an out-of-band swap (oob=True), so a refresh/filter done inside the
-     modal keeps the counts behind it in sync without a full page reload. #}
-{% macro render(machine, package_counts, held_count, oob=False) %}
-<div id="packages-summary"{% if oob %} hx-swap-oob="true"{% endif %}>
-  <h2>Installed packages</h2>
-  {% if not machine.packages_updated_at %}
-    <p class="hint">
-      Not gathered yet — this happens automatically once the host key
-      fingerprint is confirmed above, and refreshes periodically after that
-      (and right after any update run on this machine).
-    </p>
-  {% else %}
-    <p class="hint">
-      {{ package_counts.total }} package{{ 's' if package_counts.total != 1 else '' }} installed
-      ({{ package_counts.apt }} apt, {{ package_counts.flatpak }} flatpak,
-      {{ package_counts.snap }} snap){% if held_count %}, {{ held_count }} held back{% endif %}
-      — last refreshed {{ machine.packages_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
-    </p>
+     modal keeps the counts behind it in sync without a full page reload;
+   - poll=True's own periodic GET (see GET /machines/{id}/packages-summary-panel)
+     re-renders partials/_packages_summary_inner.html directly, not this
+     macro — reusing this div (with its id and poll attributes) would nest
+     it inside itself on every tick. #}
+{% macro render(machine, package_counts, held_count, oob=False, poll=False) %}
+<div
+  id="packages-summary"
+  {% if oob %}hx-swap-oob="true"{% endif %}
+  {% if poll %}
+  hx-get="/machines/{{ machine.id }}/packages-summary-panel"
+  hx-trigger="every 20s"
+  hx-swap="innerHTML"
   {% endif %}
-  <button
-    type="button"
-    class="button"
-    popovertarget="packages-modal"
-    hx-get="/machines/{{ machine.id }}/packages"
-    hx-target="#packages-panel"
-    hx-swap="innerHTML"
-  >
-    Show installed packages
-  </button>
+>
+  {% include "partials/_packages_summary_inner.html" %}
 </div>
 {% endmacro %}

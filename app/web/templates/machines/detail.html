@@ -26,18 +26,7 @@
       {% endif %}
     </dd>
     <dt>Status</dt>
-    <dd>
-      {% if machine.is_reachable is none %}
-        <span class="badge badge-warn">unknown</span>
-      {% elif machine.is_reachable %}
-        <span class="badge badge-ok">online</span>
-      {% else %}
-        <span class="badge badge-error">offline</span>
-      {% endif %}
-      {% if machine.last_ping_at %}
-        <span class="hint">(checked {{ machine.last_ping_at | local_time('%Y-%m-%d %H:%M %Z') }})</span>
-      {% endif %}
-    </dd>
+    <dd>{% include "partials/machine_status.html" %}</dd>
     <dt>Notes</dt><dd>{{ machine.description or '—' }}</dd>
   </dl>
 
@@ -69,12 +58,18 @@
     {% endif %}
   </section>
 
-  <section class="panel" id="facts-panel">
+  <section
+    class="panel"
+    id="facts-panel"
+    hx-get="/machines/{{ machine.id }}/facts-panel"
+    hx-trigger="every 20s"
+    hx-swap="innerHTML"
+  >
     {% include "partials/machine_facts.html" %}
   </section>
 
   <section class="panel">
-    {{ render_packages_summary(machine, package_counts, held_count) }}
+    {{ render_packages_summary(machine, package_counts, held_count, poll=True) }}
   </section>
 
   {# Full package listing is fetched only when opened (hundreds of rows on a

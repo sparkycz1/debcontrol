@@ -33,9 +33,13 @@ that part rather than failing.
 
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TypedDict
+
+import asyncssh
 
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
@@ -102,19 +106,37 @@ async def run_system_update(
     strategy: UpgradeStrategy,
     connect_timeout_seconds: int,
     run_timeout_seconds: int,
+    *,
+    on_output: Callable[[str], Awaitable[None]] | None = None,
 ) -> UpdateResult:
     """Connect (strict pinned host-key verification, as always) and run the
     update sequence. `connect_timeout_seconds` only bounds establishing the
     connection; `run_timeout_seconds` bounds the whole apt sequence, which
     can legitimately take much longer.
+
+    Reads stdout incrementally (rather than `conn.run()`'s buffer-it-all-and-
+    return-at-the-end convenience) so `on_output`, if given, can be called
+    with the output accumulated *so far* as it arrives — this is what lets
+    the update-run page show apt's output live instead of only once the
+    whole thing has finished. See `app.tasks.jobs._run_machine_update`,
+    the only caller, for what it does with each call (a throttled DB write).
     """
     script = build_update_command(strategy)
+    chunks: list[str] = []
     async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
-        result = await conn.run(script, check=False, timeout=run_timeout_seconds)
+        async with await conn.create_process(script, stderr=asyncssh.STDOUT) as process:
+            async with asyncio.timeout(run_timeout_seconds):
+                while True:
+                    chunk = await process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    if on_output is not None:
+                        await on_output("".join(chunks))
+                completed = await process.wait()
 
-    stdout = result.stdout or ""
-    output = stdout if isinstance(stdout, str) else stdout.decode()
-    exit_status = result.exit_status if result.exit_status is not None else -1
+    output = "".join(chunks)
+    exit_status = completed.exit_status if completed.exit_status is not None else -1
     return UpdateResult(exit_status=exit_status, output=output)
 
 
