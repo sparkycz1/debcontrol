@@ -57,6 +57,17 @@
         name: curl
         state: present
 
+    - name: Ensure ncurses-term is installed (terminfo for the web Terminal tab)
+      # Without this, ncurses apps run over debcontrol's Terminal tab (htop,
+      # less, vim, ...) silently fall back to a monochrome/ASCII-only mode:
+      # the terminal negotiates TERM=xterm-256color, but a minimal Debian
+      # install's base terminfo database only ships plain "xterm" — no
+      # colors, no box-drawing, no 256-color support. ncurses-term adds the
+      # extended entries (xterm-256color included).
+      ansible.builtin.apt:
+        name: ncurses-term
+        state: present
+
     - name: Create the dedicated debcontrol user
       ansible.builtin.user:
         name: "{{ debcontrol_user }}"

@@ -62,6 +62,7 @@ from celery import Celery
 from celery.schedules import crontab
 from celery.signals import worker_process_init
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -186,9 +187,19 @@ def _init_worker_process(**kwargs: Any) -> None:
     # parent is pointing at sockets the parent (and every sibling) also
     # holds. `dispose()` is deliberately NOT called on the inherited engine
     # — that would close those shared sockets for everyone.
+    #
+    # `poolclass=NullPool` matters just as much as rebuilding it: every task
+    # below runs its own `asyncio.run(...)` (see app/tasks/jobs.py), which is
+    # a brand new event loop each time. A real connection pool would hand a
+    # later task a connection opened on an earlier task's (by then closed)
+    # loop, and asyncpg blows up with "attached to a different loop" the
+    # moment that connection is used — this bit real deployments as
+    # intermittent failures on update/refresh/test-connection tasks. NullPool
+    # opens a fresh connection per checkout and closes it on checkin, so a
+    # connection never outlives the event loop that created it.
     db_session.engine = create_async_engine(
         child_settings.database_url,
-        pool_pre_ping=True,
+        poolclass=NullPool,
         echo=False,
     )
     db_session.AsyncSessionLocal = async_sessionmaker(

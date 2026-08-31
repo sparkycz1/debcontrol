@@ -186,7 +186,7 @@ button, or a **scheduled task** using the "check_updates" action (see
 **Scheduling** in the nav). There's no separate history — whatever ran
 last is what's shown.
 
-## 🖧 Interactive terminal — nothing extra needed
+## 🖧 Interactive terminal
 
 **Machines → a machine → Terminal** (if your role has been granted the
 `action.terminal` permission) needs nothing beyond ordinary SSH access —
@@ -195,6 +195,21 @@ configured for that account. It doesn't need root, sudo, or any extra
 package: whatever the connecting account can do at an interactive SSH
 prompt is exactly what the browser terminal can do, since it's the same
 shell.
+
+**For colors and full-screen apps (htop, less, vim, ...) to render
+properly**, install `ncurses-term`:
+
+```sh
+sudo apt-get install -y ncurses-term
+```
+
+The browser terminal negotiates `TERM=xterm-256color`. A minimal Debian
+install's base terminfo database only ships plain `xterm`, with no colors
+and no box-drawing — ncurses apps silently fall back to a flat ASCII
+rendering (visible e.g. as `htop`'s meter bars drawn with `|` instead of
+colored blocks) rather than failing loudly, so this is easy to miss until
+you actually open something curses-based. The
+[Ansible playbook](Ansible-Onboarding.md) installs it automatically.
 
 ## Self-registration (optional, for future automation)
 
@@ -264,3 +279,5 @@ playbook automates — do it by hand, or run that instead.
 - [ ] *(optional)* passwordless sudo for `flatpak`/`snap` too, if either is
       installed and you want debcontrol to keep it updated
 - [ ] *(optional)* `curl` installed, if using self-registration
+- [ ] *(optional)* `ncurses-term` installed, for colors/full-screen apps in
+      the Terminal tab
