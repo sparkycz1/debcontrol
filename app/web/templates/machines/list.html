@@ -152,5 +152,20 @@
         </button>
       </div>
     </form>
+
+    {% if page > 1 or has_more %}
+      <div class="page-header-actions">
+        {% if page > 1 %}
+          <a class="button button-secondary" href="/machines?q={{ q | urlencode }}&page={{ page - 1 }}">
+            Previous
+          </a>
+        {% endif %}
+        {% if has_more %}
+          <a class="button button-secondary" href="/machines?q={{ q | urlencode }}&page={{ page + 1 }}">
+            Next
+          </a>
+        {% endif %}
+      </div>
+    {% endif %}
   {% endif %}
 {% endblock %}

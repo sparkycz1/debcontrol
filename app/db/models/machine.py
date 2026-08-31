@@ -69,7 +69,10 @@ class Machine(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Indexed: the machines list orders/searches by this, and every fleet-
+    # wide sweep filters on `is_active` (below) — both scans get expensive
+    # doing a full table scan once the fleet is in the hundreds/thousands.
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     ip_address: Mapped[str] = mapped_column(String(255), nullable=False)
     port: Mapped[int] = mapped_column(default=22, nullable=False)
     username: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -83,12 +86,12 @@ class Machine(Base):
     host_key_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     group_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("machine_groups.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("machine_groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
     group: Mapped[MachineGroup | None] = relationship(back_populates="machines")
 
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False, index=True)
 
     # --- Facts, discovered over SSH (see app.ssh.facts) ---
     discovered_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -113,6 +113,17 @@ celery_app.conf.update(
     # child's memory while the first runs would only make a restart lose
     # more work.
     worker_prefetch_multiplier=1,
+    # How long a task's result stays in Redis (the result backend) before
+    # Celery expires the key. Celery's own default is 1 day — generous for
+    # this app's actual usage: most of the fan-out sweep tasks below
+    # (refresh_machine_facts/packages, check_machine_updates, one per
+    # machine, every FACTS_REFRESH_INTERVAL_SECONDS) are pure fire-and-forget
+    # `.delay()` calls that nothing ever reads the result of; only a handful
+    # of web routes actually call `.get(timeout=...)` on one, and always
+    # within seconds of enqueueing it. At a fleet size in the hundreds/
+    # thousands, a full day's worth of these unread results sitting in Redis
+    # is pure waste — one hour is more than enough headroom.
+    result_expires=3600,
 )
 
 # --- Periodic work (Celery Beat) ---------------------------------------------
@@ -167,6 +178,10 @@ celery_app.conf.beat_schedule = {
     "purge-old-fleet-snapshots": {
         "task": "app.tasks.jobs.purge_old_fleet_snapshots",
         "schedule": crontab(hour=3, minute=5),
+    },
+    "purge-old-machine-update-runs": {
+        "task": "app.tasks.jobs.purge_old_machine_update_runs",
+        "schedule": crontab(hour=3, minute=10),
     },
 }
 

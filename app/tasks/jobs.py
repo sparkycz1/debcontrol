@@ -57,9 +57,6 @@ from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Cap how many machines are checked/refreshed at once so one slow/firewalled
-# host can't make a sweep over the whole fleet take forever.
-_REACHABILITY_CONCURRENCY = 20
 
 # Keep stored update output from growing unreasonably large for a very
 # chatty apt run — keep the tail, since that's where errors/summaries land.
@@ -239,7 +236,10 @@ async def _ping_all_machines() -> None:
         result = await session.execute(select(Machine).where(Machine.is_active))
         machines = list(result.scalars().all())
         if machines:
-            semaphore = asyncio.Semaphore(_REACHABILITY_CONCURRENCY)
+            # Configurable (REACHABILITY_CHECK_CONCURRENCY) — see that
+            # setting's own docstring for how this interacts with a large
+            # fleet and the sweep interval.
+            semaphore = asyncio.Semaphore(get_settings().reachability_check_concurrency)
 
             async def _check(machine: Machine) -> tuple[Machine, bool]:
                 async with semaphore:
@@ -806,3 +806,52 @@ async def _purge_old_fleet_snapshots() -> None:
 @celery_app.task(name="app.tasks.jobs.purge_old_fleet_snapshots")
 def purge_old_fleet_snapshots() -> None:
     asyncio.run(_purge_old_fleet_snapshots())
+
+
+_MACHINE_UPDATE_RUN_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def _purge_old_machine_update_runs() -> None:
+    """Delete `MachineUpdateRun` rows older than `AppSettings.
+    machine_update_run_retention_days` — same shape as
+    `_purge_old_fleet_snapshots` above, including being skipped entirely
+    when retention is unset (`None` = keep forever). Only the stored run
+    record/output is purged; the `machine.updates.run` audit log entry
+    recorded when the update was originally triggered is a separate table
+    with its own (also configurable) retention and is unaffected."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        retention_days = app_settings.machine_update_run_retention_days
+        if not retention_days:
+            return
+
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        count_result = await session.execute(
+            select(func.count())
+            .select_from(MachineUpdateRun)
+            .where(MachineUpdateRun.created_at < cutoff)
+        )
+        deleted_count = count_result.scalar_one()
+        if not deleted_count:
+            return
+
+        await session.execute(
+            delete(MachineUpdateRun).where(MachineUpdateRun.created_at < cutoff)
+        )
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_MACHINE_UPDATE_RUN_PURGE_ACTOR,
+            action="machine_update_runs.purge",
+            summary=(
+                f"Purged {deleted_count} update run record"
+                f"{'s' if deleted_count != 1 else ''} older than {retention_days} day(s)"
+            ),
+            details={"deleted_count": deleted_count, "retention_days": retention_days},
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.purge_old_machine_update_runs")
+def purge_old_machine_update_runs() -> None:
+    asyncio.run(_purge_old_machine_update_runs())

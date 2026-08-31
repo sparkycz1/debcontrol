@@ -63,3 +63,26 @@
       <button type="submit" class="button">Save</button>
     </form>
   </section>
+
+  <section class="panel">
+    <h2>Update run history</h2>
+    <p class="hint">
+      Each entry on a machine's Updates tab (the apt/flatpak/snap output from
+      one run) is stored in full — this only controls how long those stored
+      runs are kept, not whether updates themselves run. On a large fleet
+      with recurring scheduled updates (see <a href="/scheduling">Scheduling</a>)
+      this table can otherwise grow without bound. The fact that an update
+      was <em>triggered</em> stays in the <a href="/audit">audit log</a>
+      regardless of this setting — only the stored run record/output is
+      purged.
+    </p>
+    <form method="post" action="/settings/update-run-retention" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="machine_update_run_retention_days">Keep update run history for (days)</label>
+      <input type="number" id="machine_update_run_retention_days" name="retention_days" min="0" step="1"
+             placeholder="forever"
+             value="{{ app_settings.machine_update_run_retention_days if app_settings.machine_update_run_retention_days is not none else '' }}">
+      <p class="hint">Leave empty to keep every run forever. Defaults to 90 days.</p>
+      <button type="submit" class="button">Save</button>
+    </form>
+  </section>

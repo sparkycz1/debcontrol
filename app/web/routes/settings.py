@@ -202,6 +202,37 @@ async def update_dashboard_trends_retention(
     return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/update-run-retention", dependencies=[_manage, Depends(verify_csrf)])
+async def update_machine_update_run_retention(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    retention_days: str = Form(""),
+) -> Response:
+    """Same shape as `update_audit_retention`/`update_dashboard_trends_retention`
+    above, for the stored `MachineUpdateRun` rows (apt/flatpak/snap output
+    per run) — see `app.tasks.jobs.purge_old_machine_update_runs`."""
+    app_settings = await get_or_create_app_settings(db)
+    new_value, error = _parse_retention_days(retention_days)
+    if error:
+        return await _render_settings(request, db, [error], tab="security")
+
+    app_settings.machine_update_run_retention_days = new_value
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.machine_update_run_retention.update",
+        summary=(
+            f"Set update run history retention to {new_value} day(s)"
+            if new_value is not None
+            else "Set update run history retention to keep forever"
+        ),
+    )
+
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])
 async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     """Recompute the audit log's hash chain on demand — see

@@ -43,7 +43,7 @@
           <tr>
             <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
             <td>{{ group.description or '—' }}</td>
-            <td>{{ group.machines | length }}</td>
+            <td>{{ member_counts.get(group.id, 0) }}</td>
             <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
           </tr>
         {% endfor %}

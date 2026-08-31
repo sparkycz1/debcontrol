@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -36,6 +36,7 @@ from app.services.machine_actions import (
 )
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
+from app.web.routes.machines import _MACHINE_LIST_PAGE_SIZE
 from app.web.templating import templates
 
 router = APIRouter(
@@ -94,6 +95,21 @@ async def _all_visible_machines(db: AsyncSession, user: User) -> list[Machine]:
     return list(result.scalars().all())
 
 
+async def _get_group_member_counts(db: AsyncSession) -> dict[uuid.UUID, int]:
+    """One cheap aggregate query, not `selectinload(MachineGroup.machines)` —
+    the list page only ever needs *how many* machines are in each group, not
+    the machines themselves. At fleet sizes in the hundreds/thousands,
+    eagerly loading every machine row (with its facts/package-count JSON
+    columns) just to call `len()` on it turns one page view into loading the
+    entire `machines` table."""
+    result = await db.execute(
+        select(Machine.group_id, func.count())
+        .where(Machine.group_id.is_not(None))
+        .group_by(Machine.group_id)
+    )
+    return {group_id: count for group_id, count in result.all() if group_id is not None}
+
+
 @router.get("")
 async def list_groups(
     request: Request,
@@ -101,9 +117,7 @@ async def list_groups(
     current_user: User = Depends(get_current_user),
     q: str = "",
 ) -> Response:
-    query = (await groups_visible_to(db, current_user)).options(
-        selectinload(MachineGroup.machines)
-    )
+    query = await groups_visible_to(db, current_user)
     if q.strip():
         needle = f"%{q.strip()}%"
         query = query.where(
@@ -111,11 +125,17 @@ async def list_groups(
         )
     result = await db.execute(query.order_by(MachineGroup.name))
     groups = result.scalars().all()
+    member_counts = await _get_group_member_counts(db)
     all_machines_count = await count_visible_machines(db, current_user)
     return templates.TemplateResponse(
         request,
         "machine_groups/list.html",
-        {"groups": groups, "all_machines_count": all_machines_count or 0, "q": q},
+        {
+            "groups": groups,
+            "member_counts": member_counts,
+            "all_machines_count": all_machines_count or 0,
+            "q": q,
+        },
     )
 
 
@@ -223,6 +243,7 @@ async def all_machines_group(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     q: str = "",
+    page: int = 1,
 ) -> Response:
     """The "All machines" virtual group — every machine, always, automatically.
 
@@ -233,12 +254,23 @@ async def all_machines_group(
     always satisfies "always all machines" without anything to keep in sync.
     Registered before `/{group_id}` — `uuid.UUID` there won't match the
     literal "all" anyway, but route order is what actually decides it.
+
+    Paginated the same way `GET /machines` is — this is, after all, the same
+    "every machine" listing under a different URL, so it has the same
+    unbounded-page-size problem at fleet sizes in the hundreds/thousands.
     """
+    page = max(page, 1)
     query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
-    result = await db.execute(query.order_by(Machine.name))
-    machines = result.scalars().all()
+
+    offset = (page - 1) * _MACHINE_LIST_PAGE_SIZE
+    result = await db.execute(
+        query.order_by(Machine.name).offset(offset).limit(_MACHINE_LIST_PAGE_SIZE + 1)
+    )
+    machines = list(result.scalars().all())
+    has_more = len(machines) > _MACHINE_LIST_PAGE_SIZE
+    machines = machines[:_MACHINE_LIST_PAGE_SIZE]
 
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
@@ -247,6 +279,8 @@ async def all_machines_group(
         {
             "machines": machines,
             "q": q,
+            "page": page,
+            "has_more": has_more,
             "csrf_token": csrf_token,
             "power_skipped": request.query_params.get("power_skipped"),
         },

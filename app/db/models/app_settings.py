@@ -79,6 +79,23 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # Same idea again, for `MachineUpdateRun` rows (app.tasks.jobs.
+    # purge_old_machine_update_runs) — each one can hold up to ~200KB of apt
+    # output (see _MAX_STORED_OUTPUT_CHARS in app.tasks.jobs), and a fleet
+    # running recurring scheduled updates (see Scheduling) on hundreds/
+    # thousands of machines accumulates these forever with nothing else to
+    # bound the table. The actual audit-worthy fact — *that* an update was
+    # triggered, by whom — is the separate `machine.updates.run` audit log
+    # entry recorded at trigger time and unaffected by this; what gets
+    # purged here is only the stored run record and its raw output.
+    # Defaults to a bounded window (90 days) for the same reason
+    # dashboard_trends_retention_days does: this is operational/diagnostic
+    # data, not a compliance record, so there's no reason to accumulate it
+    # unboundedly by default. NULL still means "keep forever."
+    machine_update_run_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=90
+    )
+
     # --- AI assistant token limits (app.ai.usage) ---
     #
     # Global (fleet-wide, not per-user) ceilings on total tokens — input +

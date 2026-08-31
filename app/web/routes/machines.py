@@ -175,6 +175,14 @@ async def _get_packages(
 
 _UPDATE_HISTORY_PAGE_SIZE = 50
 
+# The machines list used to load every row unconditionally — fine at a
+# handful of machines, but at fleet sizes in the hundreds/thousands this
+# page was one unbounded `SELECT *` and a multi-thousand-row HTML response
+# on every visit. Same offset/limit-plus-one-extra-row convention as
+# `/audit` and the update-run history: fetch one row past the page size to
+# know whether a "Next" page exists, without a separate COUNT(*) query.
+_MACHINE_LIST_PAGE_SIZE = 100
+
 
 async def _get_update_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> MachineUpdateRun:
     run = await db.get(MachineUpdateRun, run_id)
@@ -189,12 +197,21 @@ async def list_machines(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     q: str = "",
+    page: int = 1,
 ) -> Response:
+    page = max(page, 1)
     query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
-    result = await db.execute(query.order_by(Machine.name))
-    machines = result.scalars().all()
+
+    offset = (page - 1) * _MACHINE_LIST_PAGE_SIZE
+    result = await db.execute(
+        query.order_by(Machine.name).offset(offset).limit(_MACHINE_LIST_PAGE_SIZE + 1)
+    )
+    machines = list(result.scalars().all())
+    has_more = len(machines) > _MACHINE_LIST_PAGE_SIZE
+    machines = machines[:_MACHINE_LIST_PAGE_SIZE]
+
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -203,6 +220,8 @@ async def list_machines(
             "machines": machines,
             "pending_machines": await _get_pending_machines(db),
             "q": q,
+            "page": page,
+            "has_more": has_more,
             "csrf_token": csrf_token,
             "bulk_error": request.query_params.get("bulk_error"),
             "power_skipped": request.query_params.get("power_skipped"),

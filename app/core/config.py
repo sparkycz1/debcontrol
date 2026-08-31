@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
     database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
 
+    # SQLAlchemy async engine pool sizing for the **web** process only — see
+    # app/db/session.py. (The Celery worker's own per-child engine uses
+    # NullPool instead, for a different reason entirely: see
+    # app/tasks/celery_app.py's `_init_worker_process`.) SQLAlchemy's own
+    # defaults (5/10) are conservative for a low-traffic single-admin
+    # deployment; a fleet in the hundreds/thousands with several admins each
+    # keeping machine/dashboard pages open (which self-poll every 20-30s,
+    # see wiki/Architecture.md) benefits from a larger pool. Postgres'
+    # `max_connections` (default 100) must comfortably exceed
+    # `db_pool_size + db_max_overflow` plus whatever the worker/beat/migrate
+    # services need at once — see wiki/Hardware-Requirements.md.
+    db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
+
     # --- Redis (Celery broker + result backend, and the login rate limiter) ---
     # Same pattern as Postgres above: `redis_url` is built from these parts
     # unless set explicitly.
@@ -65,6 +79,19 @@ class Settings(BaseSettings):
     # far more often.
     reachability_check_interval_seconds: int = Field(
         default=60, alias="REACHABILITY_CHECK_INTERVAL_SECONDS"
+    )
+
+    # How many machines the reachability sweep (app.tasks.jobs._ping_all_machines)
+    # checks concurrently — a semaphore, not a thread/process count, since
+    # each check is just an `asyncio` TCP connect attempt. The default (20)
+    # comfortably finishes one sweep of a few hundred machines well within
+    # the default 60s interval; a fleet in the thousands needs this raised
+    # (see wiki/Hardware-Requirements.md) so one sweep reliably finishes
+    # before the next one is due — Beat does not skip/coalesce a sweep that's
+    # still running when its next tick fires, so a sweep that consistently
+    # overruns the interval means overlapping sweeps piling up over time.
+    reachability_check_concurrency: int = Field(
+        default=20, alias="REACHABILITY_CHECK_CONCURRENCY"
     )
 
     # Bearer token machines must present when self-registering via POST /api/inform.
