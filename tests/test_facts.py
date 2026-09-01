@@ -17,8 +17,12 @@ def test_parse_facts_output_full_no_reboot_needed():
         "x86_64\n"
         "===CPU===\n"
         "4\n"
+        "===CPU_MODEL===\n"
+        "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz\n"
         "===RAM_KB===\n"
         "8058000\n"
+        "===RAM_SPEED===\n"
+        "2400\n"
         "===DISKS===\n"
         "sda 500107862016\n"
         "vda 21474836480\n"
@@ -41,7 +45,9 @@ def test_parse_facts_output_full_no_reboot_needed():
     assert facts["kernel_version"] == "6.1.0-13-amd64"
     assert facts["cpu_architecture"] == "x86_64"
     assert facts["cpu_cores"] == 4
+    assert facts["cpu_model"] == "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz"
     assert facts["ram_bytes"] == 8058000 * 1024
+    assert facts["ram_speed_mhz"] == 2400
     assert facts["disks"] == [
         {"name": "sda", "size_bytes": 500107862016},
         {"name": "vda", "size_bytes": 21474836480},
@@ -80,7 +86,9 @@ def test_parse_facts_output_reboot_required_when_kernel_differs():
         "===KERNEL_LATEST===\n6.1.0-18-amd64\n"
         "===ARCH===\nx86_64\n"
         "===CPU===\n4\n"
+        "===CPU_MODEL===\n"
         "===RAM_KB===\n8058000\n"
+        "===RAM_SPEED===\n"
         "===DISKS===\n"
         "===UPTIME===\n999\n"
         "===PROCESSES===\n120\n"
@@ -100,7 +108,8 @@ def test_parse_facts_output_reboot_unknown_without_kernel_latest():
     # produces nothing, so a real transcript never skips a section outright.
     raw = (
         "===HOSTNAME===\nweb1\n===OS===\n===KERNEL===\n6.1.0-13-amd64\n"
-        "===KERNEL_LATEST===\n===ARCH===\naarch64\n===CPU===\n===RAM_KB===\n"
+        "===KERNEL_LATEST===\n===ARCH===\naarch64\n===CPU===\n===CPU_MODEL===\n"
+        "===RAM_KB===\n===RAM_SPEED===\n"
         "===DISKS===\n===UPTIME===\n===PROCESSES===\n===FILESYSTEMS===\n===NETWORK===\n"
     )
 
@@ -151,7 +160,8 @@ def test_parse_facts_output_empty_string():
 def test_parse_facts_output_filesystems_ignores_malformed_lines():
     raw = (
         "===HOSTNAME===\nweb1\n===OS===\n===KERNEL===\n===KERNEL_LATEST===\n===ARCH===\n"
-        "===CPU===\n===RAM_KB===\n===DISKS===\n===UPTIME===\n===PROCESSES===\n"
+        "===CPU===\n===CPU_MODEL===\n===RAM_KB===\n===RAM_SPEED===\n"
+        "===DISKS===\n===UPTIME===\n===PROCESSES===\n"
         "===FILESYSTEMS===\n"
         "not enough fields\n"
         "/ 100 50 50 50%\n"

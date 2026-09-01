@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.12.0"
+version = "0.13.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -61,20 +61,25 @@ dependencies = [
     # without its optional Pillow/PNG extra, which isn't needed for that.
     "qrcode>=8.2",
     # --- AI assistant providers (app/ai/providers.py) ---
-    # Official SDKs for the two providers that have one, instead of this
-    # app hand-building and maintaining its own httpx requests against
-    # their documented wire format: each SDK's own request/response
-    # typing, retry/backoff behavior, and error types. `http_client=` on
-    # both is how tests (tests/test_ai_providers.py) still inject an
-    # `httpx.MockTransport` with no real network call, same as before this
-    # was httpx-only. Gemini has no equivalent decision to make here yet —
-    # it stays on a plain httpx request against its REST API, unchanged.
+    # Every provider here has an official Python SDK, and this app uses all
+    # four rather than hand-building and maintaining its own requests
+    # against their documented wire formats: each SDK's own request/
+    # response typing, retry/backoff behavior, and error types. See that
+    # module's own docstring for the (two, as it happens) underlying HTTP
+    # libraries these four build on, and how tests inject a mock transport
+    # of the matching one.
     "anthropic>=1.3.0",
-    # Also used for OpenRouter and any self-hosted "OpenAI-compatible"
-    # endpoint (litellm, vLLM, a corporate gateway) — all three speak this
-    # SDK's exact wire format, differing only in `base_url` and whether a
-    # key is required. See `OpenAICompatibleClient`.
+    # Also used for plain OpenAI and any self-hosted "OpenAI-compatible"
+    # endpoint (litellm, vLLM, a corporate gateway) — both speak this SDK's
+    # exact wire format, differing only in `base_url` and whether a key is
+    # required. See `OpenAICompatibleClient`. NOT used for OpenRouter
+    # (below) even though OpenRouter's API is also OpenAI-compatible — it
+    # has its own dedicated SDK, which is what this app uses for it instead.
     "openai>=3.6.0",
+    # OpenRouter's own SDK — see `OpenRouterClient`.
+    "openrouter>=0.10.8",
+    # Google's SDK for Gemini — see `GeminiClient`.
+    "google-genai>=2.21.0",
 ]
 
 [dependency-groups]

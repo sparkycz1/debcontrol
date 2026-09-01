@@ -99,7 +99,10 @@ class Machine(Base):
     kernel_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cpu_architecture: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cpu_cores: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cpu_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ram_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # None = couldn't tell (no dmidecode access) — see app.ssh.facts.FACTS_COMMAND.
+    ram_speed_mhz: Mapped[int | None] = mapped_column(Integer, nullable=True)
     disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # None = never determined either way (e.g. no dpkg/linux-image-* found).
     reboot_required: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -117,6 +120,19 @@ class Machine(Base):
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # --- Per-machine overrides of the global `.env` sweep cadences
+    # (`REACHABILITY_CHECK_INTERVAL_SECONDS`/`FACTS_REFRESH_INTERVAL_SECONDS`)
+    # — NULL means "use the global default". Both sweeps still tick at the
+    # global interval (Celery Beat's schedule is one fixed cadence, not
+    # per-machine); a machine with a *larger* effective interval than the
+    # global one is simply skipped on ticks that come too soon after its
+    # last check — see app.tasks.jobs._due_machines. A machine can't be
+    # checked *more* often than the global tick rate this way, only less.
+    reachability_check_interval_seconds: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    facts_refresh_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # --- Update availability: apt, flatpak, snap (requires root/sudo for
     # apt-get update; flatpak/snap listing is read-only — see app.ssh.updates) ---

@@ -21,7 +21,9 @@ _SECTION_MARKERS = (
     "KERNEL_LATEST",
     "ARCH",
     "CPU",
+    "CPU_MODEL",
     "RAM_KB",
+    "RAM_SPEED",
     "DISKS",
     "UPTIME",
     "PROCESSES",
@@ -41,7 +43,20 @@ FACTS_COMMAND = (
     "| sed -E 's/^linux-image-//' | grep -E '^[0-9]' | sort -V | tail -1; "
     "echo ===ARCH===; uname -m 2>/dev/null; "
     "echo ===CPU===; nproc 2>/dev/null; "
+    "echo ===CPU_MODEL===; "
+    "(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed -e 's/^ *//' "
+    "-e 's/ \\+/ /g'); "
     "echo ===RAM_KB===; awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null; "
+    # Memory clock speed isn't exposed anywhere a non-root user can read (no
+    # /proc//sys entry for it) — only `dmidecode` (SMBIOS type 17) has it,
+    # and that needs root. This only produces output when the machine's
+    # sudoers rule (see app.ssh.onboarding) actually grants passwordless
+    # dmidecode, or the account itself is root; otherwise RAM_SPEED stays
+    # empty and `ram_speed_mhz` is None, same "couldn't tell" convention as
+    # `reboot_required`.
+    "echo ===RAM_SPEED===; "
+    "(sudo -n dmidecode -t 17 2>/dev/null || dmidecode -t 17 2>/dev/null) "
+    "| awk '/^[[:space:]]*Speed:/ && $2 ~ /^[0-9]+$/ {print $2; exit}'; "
     "echo ===DISKS===; "
     "lsblk -b -d -n -o NAME,SIZE,TYPE 2>/dev/null | awk '$3==\"disk\"{print $1, $2}'; "
     "echo ===UPTIME===; awk '{print int($1)}' /proc/uptime 2>/dev/null; "
@@ -60,7 +75,11 @@ class MachineFacts(TypedDict):
     kernel_version: str | None
     cpu_architecture: str | None
     cpu_cores: int | None
+    cpu_model: str | None
     ram_bytes: int | None
+    # MHz, only when dmidecode was actually readable — see FACTS_COMMAND's
+    # RAM_SPEED comment. None means "couldn't tell", not "no RAM".
+    ram_speed_mhz: int | None
     disks: list[dict[str, Any]]
     # None means "couldn't tell" (e.g. dpkg unavailable), not "no reboot needed".
     reboot_required: bool | None
@@ -94,6 +113,10 @@ def parse_facts_output(raw: str) -> MachineFacts:
     ram_bytes: int | None = None
     if sections.get("RAM_KB", "").isdigit():
         ram_bytes = int(sections["RAM_KB"]) * 1024
+
+    ram_speed_mhz: int | None = None
+    if sections.get("RAM_SPEED", "").isdigit():
+        ram_speed_mhz = int(sections["RAM_SPEED"])
 
     disks: list[dict[str, Any]] = []
     for line in sections.get("DISKS", "").splitlines():
@@ -155,7 +178,9 @@ def parse_facts_output(raw: str) -> MachineFacts:
         kernel_version=kernel_version,
         cpu_architecture=sections.get("ARCH") or None,
         cpu_cores=cpu_cores,
+        cpu_model=sections.get("CPU_MODEL") or None,
         ram_bytes=ram_bytes,
+        ram_speed_mhz=ram_speed_mhz,
         disks=disks,
         reboot_required=reboot_required,
         uptime_seconds=uptime_seconds,

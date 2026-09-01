@@ -927,6 +927,7 @@ async def edit_machine_form(
             "groups": await _get_groups(db, current_user),
             "errors": [],
             "csrf_token": csrf_token,
+            "global_settings": get_settings(),
         },
     )
     if new_cookie:
@@ -996,6 +997,7 @@ async def run_onboarding_endpoint(
             "onboarding_error": error,
             "onboarding_output": output,
             "csrf_token": csrf_token,
+            "global_settings": get_settings(),
         },
     )
     if new_cookie:
@@ -1017,6 +1019,8 @@ async def update_machine(
     group_id: str = Form(""),
     description: str = Form(""),
     is_active: str = Form(""),
+    reachability_check_interval_seconds: str = Form(""),
+    facts_refresh_interval_seconds: str = Form(""),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
@@ -1033,6 +1037,16 @@ async def update_machine(
             description=description or None,
             # HTML only sends a checkbox field when it's checked.
             is_active=bool(is_active),
+            reachability_check_interval_seconds=(
+                int(reachability_check_interval_seconds)
+                if reachability_check_interval_seconds.strip()
+                else None
+            ),
+            facts_refresh_interval_seconds=(
+                int(facts_refresh_interval_seconds)
+                if facts_refresh_interval_seconds.strip()
+                else None
+            ),
         )
     except ValueError as exc:
         await log_event(
@@ -1057,6 +1071,7 @@ async def update_machine(
                 "groups": await _get_groups(db, current_user),
                 "errors": [str(exc)],
                 "csrf_token": csrf_token,
+                "global_settings": get_settings(),
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
@@ -1088,6 +1103,8 @@ async def update_machine(
     machine.group_id = payload.group_id
     machine.description = payload.description
     machine.is_active = payload.is_active
+    machine.reachability_check_interval_seconds = payload.reachability_check_interval_seconds
+    machine.facts_refresh_interval_seconds = payload.facts_refresh_interval_seconds
 
     if payload.auth_method == AuthMethod.PASSWORD:
         if payload.secret:
@@ -1104,7 +1121,9 @@ async def update_machine(
         machine.os_version = None
         machine.kernel_version = None
         machine.cpu_cores = None
+        machine.cpu_model = None
         machine.ram_bytes = None
+        machine.ram_speed_mhz = None
         machine.disks = None
         machine.facts_updated_at = None
 

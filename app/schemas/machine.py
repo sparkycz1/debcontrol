@@ -54,6 +54,11 @@ class MachineUpdate(BaseModel):
     group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
     is_active: bool = True
+    # Per-machine overrides of the global `.env` sweep cadences — `None`
+    # means "use the global default" (see `Machine.
+    # reachability_check_interval_seconds`/`facts_refresh_interval_seconds`).
+    reachability_check_interval_seconds: int | None = Field(default=None, ge=1)
+    facts_refresh_interval_seconds: int | None = Field(default=None, ge=1)
 
     @field_validator("ip_address")
     @classmethod

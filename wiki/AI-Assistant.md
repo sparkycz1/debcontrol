@@ -32,22 +32,26 @@ each one is a code-level client implementation in `app/ai/providers.py`:
 | `openrouter` | `openrouter.ai/api/v1` | same wire format as OpenAI; listing models needs no key, a chat turn does |
 | `openai_compatible` | your own base URL | anything speaking OpenAI's `/models` + `/chat/completions` (litellm, vLLM, a corporate gateway); **the base URL is required when this one is enabled** |
 
-Three of the five share one client class (`OpenAICompatibleClient`),
-instantiated with different base URLs. Anthropic and Gemini each have their
-own, since their request bodies, response shapes, and what has to be echoed
-back to continue a tool-calling conversation all differ.
+Two of the five share one client class (`OpenAICompatibleClient`) —
+plain OpenAI and any self-hosted "OpenAI-compatible" endpoint, since both
+genuinely speak the identical wire format. Anthropic, OpenRouter, and
+Gemini each have their own client class, since either their request
+bodies/response shapes differ (Anthropic, Gemini) or they have their own
+dedicated SDK worth using instead of the shared OpenAI-shaped one
+(OpenRouter).
 
-Anthropic and the three OpenAI-wire-format kinds use their **official
-SDKs** (`anthropic`, `openai`) — `OpenAICompatibleClient` wraps one
-`AsyncOpenAI` instance for OpenAI/OpenRouter/OpenAI-compatible, since all
-three speak that SDK's exact format. Gemini stays on a plain `httpx`
-request against its REST API — there's no vendor-SDK decision made for it
-here yet, it's simply unconverted. Timeouts either way: **15 seconds** for
+**Every one of the five uses an official Python SDK**: `anthropic`,
+`openai` (OpenAI and OpenAI-compatible), `openrouter` (OpenRouter's own —
+deliberately not the `openai` SDK, even though OpenRouter's API is itself
+OpenAI-compatible, so this app gets OpenRouter's own typed client instead
+of treating it as just another OpenAI-shaped endpoint), and `google-genai`
+(Gemini). Timeouts are the same across all of them: **15 seconds** for
 listing models, **90 seconds** for a chat turn. See
-`app/ai/providers.py`'s module docstring for the `httpx2` detail this
-carries (the two SDKs build on a distinct package from the plain `httpx`
-this app uses everywhere else, including for Gemini) and how tests still
-mock requests without it.
+`app/ai/providers.py`'s module docstring for which of two underlying HTTP
+libraries each SDK happens to build on (`anthropic`/`openai` use `httpx2`,
+a distinct package from the plain `httpx` this app uses everywhere else;
+`openrouter`/`google-genai` use plain `httpx`) and how tests mock requests
+without a real network call either way.
 
 ### Configuring one
 

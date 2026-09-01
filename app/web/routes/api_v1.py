@@ -117,6 +117,10 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "os_version": machine.os_version,
         "kernel_version": machine.kernel_version,
         "cpu_architecture": machine.cpu_architecture,
+        "cpu_model": machine.cpu_model,
+        "cpu_cores": machine.cpu_cores,
+        "ram_bytes": machine.ram_bytes,
+        "ram_speed_mhz": machine.ram_speed_mhz,
         "uptime_seconds": machine.uptime_seconds,
         "process_count": machine.process_count,
         "reboot_required": machine.reboot_required,
@@ -442,7 +446,9 @@ async def update_machine_api(
         machine.os_version = None
         machine.kernel_version = None
         machine.cpu_cores = None
+        machine.cpu_model = None
         machine.ram_bytes = None
+        machine.ram_speed_mhz = None
         machine.disks = None
         machine.facts_updated_at = None
 

@@ -16,10 +16,14 @@
     <dt>Hostname</dt><dd>{{ machine.discovered_hostname or '—' }}</dd>
     <dt>OS version</dt><dd>{{ machine.os_version or '—' }}</dd>
     <dt>Kernel</dt><dd>{{ machine.kernel_version or '—' }}</dd>
+    <dt>CPU</dt><dd>{{ machine.cpu_model or '—' }}</dd>
     <dt>CPU architecture</dt><dd>{{ machine.cpu_architecture or '—' }}</dd>
     <dt>CPU cores</dt><dd>{{ machine.cpu_cores if machine.cpu_cores is not none else '—' }}</dd>
     <dt>RAM</dt>
-    <dd>{{ '%.1f GB' % (machine.ram_bytes / 1073741824) if machine.ram_bytes else '—' }}</dd>
+    <dd>
+      {{ '%.1f GB' % (machine.ram_bytes / 1073741824) if machine.ram_bytes else '—' }}
+      {% if machine.ram_speed_mhz %}({{ machine.ram_speed_mhz }} MHz){% endif %}
+    </dd>
     <dt>Disks</dt>
     <dd>
       {% if machine.disks %}

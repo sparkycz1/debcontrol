@@ -71,7 +71,9 @@ the exact command:
 | Latest installed kernel (for reboot-required) | `dpkg --list 'linux-image-*'` | `dpkg` |
 | CPU architecture | `uname -m` | `coreutils` |
 | CPU cores | `nproc` | `coreutils` |
+| CPU model | `/proc/cpuinfo` (`model name`) | kernel |
 | RAM | `/proc/meminfo` via `awk` | kernel + `mawk` (Debian's default `awk`) |
+| RAM speed (MHz) | `dmidecode -t 17` | `dmidecode` — **needs root**, see below |
 | Disks | `lsblk` | `util-linux` |
 | Uptime | `/proc/uptime` via `awk` | kernel + `mawk` |
 | Process count | `ls /proc/[0-9]*` | `coreutils` (no `procps`/`ps` needed) |
@@ -81,11 +83,26 @@ the exact command:
 None of these need root — including "reboot required," which is worked
 out by comparing the running kernel (`uname -r`) against the newest
 `linux-image-*` package `dpkg` knows is installed; if they differ, a
-reboot would pick up the newer one. If a command is missing (e.g. a
-container-like minimal rootfs without `util-linux` or `iproute2`), that
-one fact is simply left empty/unknown rather than failing the whole
-refresh. Filesystem usage excludes pseudo-filesystems (`tmpfs`,
-`devtmpfs`, `squashfs`, `overlay`) — only real, sized mounts are shown.
+reboot would pick up the newer one — **except RAM speed**, which is the
+one fact that genuinely can't be read without root (there's no
+`/proc`/`/sys` entry for memory clock speed; only SMBIOS type 17 via
+`dmidecode` has it). debcontrol tries `sudo -n dmidecode -t 17` first,
+falling back to a plain `dmidecode -t 17` for a `root`-connected account,
+and simply leaves `ram_speed_mhz` unknown if neither works — this one fact
+is optional, not a reason to grant broader root access just for it. To
+enable it for a sudo-based account, add this alongside the sudoers rules
+in "System updates and power actions" below:
+
+```
+# /etc/sudoers.d/debcontrol
+debcontrol ALL=(root) NOPASSWD: /usr/sbin/dmidecode
+```
+
+If a command is missing (e.g. a container-like minimal rootfs without
+`util-linux` or `iproute2`), that one fact is simply left empty/unknown
+rather than failing the whole refresh. Filesystem usage excludes
+pseudo-filesystems (`tmpfs`, `devtmpfs`, `squashfs`, `overlay`) — only
+real, sized mounts are shown.
 
 ## 📦 Installed packages — also no agent, no root
 

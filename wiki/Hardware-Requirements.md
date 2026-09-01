@@ -86,6 +86,16 @@ tasks per hour ≈ 3 × machine_count × (3600 / FACTS_REFRESH_INTERVAL_SECONDS)
 worker capacity per hour ≈ (worker replicas × --concurrency) × (3600 / avg_task_seconds)
 ```
 
+A handful of noisy or low-priority machines don't have to share the fleet's
+global cadence: **Machine → Settings → Overwrite check intervals** lets one
+machine raise its own reachability/facts interval above the instance-wide
+default (never below the sweep's own tick rate — a machine can be checked
+*less* often than the fleet, never more often than Celery Beat's own tick).
+Useful for a machine that's expected to be offline for long stretches, or
+one you just don't need fresh facts on as often as everything else — it
+stops eating a sweep slot every tick without touching the `.env` default
+for the rest of the fleet.
+
 A typical facts/packages/update-check task (SSH connect + a handful of
 remote commands) takes on the order of 1-5 seconds against a healthy,
 nearby machine — call it 3s for planning. The bundled `worker` service

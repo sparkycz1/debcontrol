@@ -28,6 +28,7 @@ import logging
 import shlex
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -304,14 +305,51 @@ def run_machine_onboarding(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_run_machine_onboarding(machine_id))
 
 
+def _due_machines[M](
+    machines: list[M],
+    *,
+    last_checked_at: Callable[[M], datetime | None],
+    override_seconds: Callable[[M], int | None],
+    global_default_seconds: int,
+    now: datetime,
+) -> list[M]:
+    """Filters a sweep's candidate machines down to the ones actually due,
+    honoring each machine's own interval override (see `Machine.
+    reachability_check_interval_seconds`/`facts_refresh_interval_seconds`)
+    on top of the sweep's fixed Celery Beat tick rate. A machine never
+    checked yet is always due.
+
+    Generic over `_M` (rather than fixed to `Machine`) purely so
+    `tests/test_due_machines.py` can exercise the interval math against a
+    plain dataclass, no DB/ORM involved."""
+    due: list[M] = []
+    for machine in machines:
+        last = last_checked_at(machine)
+        if last is None:
+            due.append(machine)
+            continue
+        effective_seconds = override_seconds(machine) or global_default_seconds
+        if (now - last).total_seconds() >= effective_seconds:
+            due.append(machine)
+    return due
+
+
 async def _ping_all_machines() -> None:
     """Cheap reachability sweep (TCP connect only, no auth) for the status
     badge shown in the UI. Cadence is owned by Celery Beat
-    (`REACHABILITY_CHECK_INTERVAL_SECONDS`, see `app.tasks.celery_app`) —
-    this job just does the sweep and returns."""
+    (`REACHABILITY_CHECK_INTERVAL_SECONDS`, see `app.tasks.celery_app`), and
+    a machine may additionally raise its own interval (never lower it below
+    the tick rate) via `Machine.reachability_check_interval_seconds` — this
+    job does the sweep, minus whichever machines aren't due yet, and returns."""
     async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(select(Machine).where(Machine.is_active))
-        machines = list(result.scalars().all())
+        machines = _due_machines(
+            list(result.scalars().all()),
+            last_checked_at=lambda m: m.last_ping_at,
+            override_seconds=lambda m: m.reachability_check_interval_seconds,
+            global_default_seconds=get_settings().reachability_check_interval_seconds,
+            now=datetime.now(UTC),
+        )
         if machines:
             # Configurable (REACHABILITY_CHECK_CONCURRENCY) — see that
             # setting's own docstring for how this interacts with a large
@@ -363,7 +401,9 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.kernel_version = facts["kernel_version"]
         machine.cpu_architecture = facts["cpu_architecture"]
         machine.cpu_cores = facts["cpu_cores"]
+        machine.cpu_model = facts["cpu_model"]
         machine.ram_bytes = facts["ram_bytes"]
+        machine.ram_speed_mhz = facts["ram_speed_mhz"]
         machine.disks = facts["disks"]
         machine.reboot_required = facts["reboot_required"]
         machine.uptime_seconds = facts["uptime_seconds"]
@@ -384,7 +424,9 @@ def refresh_machine_facts(machine_id: str) -> dict[str, Any]:
 async def _refresh_all_machine_facts() -> None:
     """Periodic sweep scheduling a facts refresh for every machine with a
     pinned host key. Its cadence (`FACTS_REFRESH_INTERVAL_SECONDS`) is owned
-    by Celery Beat — see `app.tasks.celery_app`.
+    by Celery Beat — see `app.tasks.celery_app` — and a machine may raise
+    its own interval via `Machine.facts_refresh_interval_seconds` (see
+    `_due_machines`).
 
     This only *enqueues* per-machine tasks rather than awaiting them inline,
     so a slow or unreachable machine can't make this sweep itself run long
@@ -393,9 +435,16 @@ async def _refresh_all_machine_facts() -> None:
     """
     async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(
-            select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
+            select(Machine).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
         )
-        machine_ids = [row[0] for row in result.all()]
+        machines = _due_machines(
+            list(result.scalars().all()),
+            last_checked_at=lambda m: m.facts_updated_at,
+            override_seconds=lambda m: m.facts_refresh_interval_seconds,
+            global_default_seconds=get_settings().facts_refresh_interval_seconds,
+            now=datetime.now(UTC),
+        )
+        machine_ids = [m.id for m in machines]
 
     for machine_id in machine_ids:
         refresh_machine_facts.delay(str(machine_id))
