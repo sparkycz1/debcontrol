@@ -37,9 +37,17 @@ instantiated with different base URLs. Anthropic and Gemini each have their
 own, since their request bodies, response shapes, and what has to be echoed
 back to continue a tool-calling conversation all differ.
 
-No vendor SDK is used. Everything is plain `httpx` against the provider's
-own host, with explicit connect/read timeouts: **15 seconds** for listing
-models, **90 seconds** for a chat turn.
+Anthropic and the three OpenAI-wire-format kinds use their **official
+SDKs** (`anthropic`, `openai`) — `OpenAICompatibleClient` wraps one
+`AsyncOpenAI` instance for OpenAI/OpenRouter/OpenAI-compatible, since all
+three speak that SDK's exact format. Gemini stays on a plain `httpx`
+request against its REST API — there's no vendor-SDK decision made for it
+here yet, it's simply unconverted. Timeouts either way: **15 seconds** for
+listing models, **90 seconds** for a chat turn. See
+`app/ai/providers.py`'s module docstring for the `httpx2` detail this
+carries (the two SDKs build on a distinct package from the plain `httpx`
+this app uses everywhere else, including for Gemini) and how tests still
+mock requests without it.
 
 ### Configuring one
 

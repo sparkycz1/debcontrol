@@ -258,7 +258,7 @@ async def _run_turn(
 
 
 # A turn can make up to MAX_TOOL_ROUNDTRIPS (5) sequential provider calls,
-# each with its own 90s httpx read timeout (CHAT_TIMEOUT in
+# each with its own 90s timeout (CHAT_TIMEOUT_SECONDS in
 # app/ai/providers.py) — worst case, a genuinely slow model's turn takes
 # close to 450s. Both tasks below need a `time_limit` comfortably above
 # that, or Celery's own default (60s, see task_time_limit in

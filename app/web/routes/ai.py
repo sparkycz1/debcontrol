@@ -44,7 +44,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.base import AiProviderError
+from app.ai.base import AiProviderError, BaseAiClient
 from app.ai.config import get_or_create_ai_provider_configs, get_selectable_models
 from app.ai.providers import build_client
 from app.ai.tools import (
@@ -144,6 +144,27 @@ async def _render_conversation(
     )
 
 
+async def _send_user_message(
+    db: AsyncSession, conversation: AiConversation, client: BaseAiClient, text: str
+) -> None:
+    """Persists one human message and enqueues the turn that answers it —
+    shared by `post_message` (an existing conversation's compose box) and
+    `create_conversation` (the "New conversation" form's own message field,
+    which used to only *name* the conversation from this text and silently
+    throw the text itself away, never actually sending it — see that
+    route's own comment)."""
+    db.add(
+        AiMessage(
+            conversation_id=conversation.id,
+            role=AiMessageRole.USER,
+            content=text,
+            provider_native=[client.build_user_message(text)],
+        )
+    )
+    await db.commit()
+    ai_jobs.run_ai_turn.delay(str(conversation.id))
+
+
 async def _render_messages_panel(
     request: Request, db: AsyncSession, conversation: AiConversation
 ) -> Response:
@@ -205,9 +226,23 @@ async def create_conversation(
     """`provider_model` is a single `"<provider_id>:<model_id>"` select
     value rather than two fields, so the pair can never be mismatched by a
     hand-crafted form post — it's re-validated against the enabled
-    provider/model rows below regardless."""
+    provider/model rows below regardless.
+
+    `first_message`, despite the name, used to only *name* the new
+    conversation (`derive_title`) — the text itself was thrown away, and
+    the "New conversation" page told you as much ("you'll send the actual
+    message on the next page"). That's a real trap: typing an actual
+    question into a field labeled "What do you need?" and having it
+    silently vanish is not what anyone reading that label expects, and it
+    reads as "the assistant didn't respond" the same way the timeout bug
+    this same release fixed did. It's a real first message now, same as
+    typing it into an existing conversation's compose box.
+    """
+    text = first_message.strip()
     raw = provider_model.strip()
     provider_id_str, _, model_id = raw.partition(":")
+    if not text:
+        return RedirectResponse(url="/ai", status_code=status.HTTP_303_SEE_OTHER)
     try:
         provider_id = uuid.UUID(provider_id_str)
     except ValueError:
@@ -215,8 +250,8 @@ async def create_conversation(
 
     # Re-check that this provider+model really is enabled — never trust the
     # submitted pair just because the dropdown offered something.
-    allowed = await db.execute(
-        select(AiModel)
+    result = await db.execute(
+        select(AiModel, AiProviderConfig)
         .join(AiProviderConfig, AiProviderConfig.id == AiModel.provider_id)
         .where(
             AiModel.provider_id == provider_id,
@@ -225,21 +260,36 @@ async def create_conversation(
             AiProviderConfig.enabled,
         )
     )
-    if allowed.scalar_one_or_none() is None:
+    row = result.first()
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="That AI model isn't enabled for use.",
         )
+    _model, provider = row
+
+    try:
+        client = build_client(provider)
+    except AiProviderError:
+        # Same provider row `create_conversation` just confirmed is
+        # enabled — a config problem here is the operator's to fix on the
+        # Settings AI tab, not something to explain on this simpler form.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This provider isn't fully configured — check Settings.",
+        ) from None
 
     conversation = AiConversation(
         user_id=user.id,
-        title=derive_title(first_message),
+        title=derive_title(text),
         provider_id=provider_id,
         model_id=model_id,
     )
     db.add(conversation)
     await db.commit()
     await db.refresh(conversation)
+
+    await _send_user_message(db, conversation, client, text)
 
     await log_event(
         db,
@@ -296,7 +346,7 @@ async def post_message(
     the reply actually shows up. This used to block the whole request on
     `AsyncResult.get(timeout=90)`, which was two bugs stacked on each other:
     a turn can make up to 5 sequential provider calls at up to 90s each
-    (`MAX_TOOL_ROUNDTRIPS`/`CHAT_TIMEOUT` in `app/ai/tools.py`/`providers.py`)
+    (`MAX_TOOL_ROUNDTRIPS`/`CHAT_TIMEOUT_SECONDS` in `app/ai/tools.py`/`providers.py`)
     — comfortably longer than a 90s wait *or* the Celery task's own 60s
     default time limit, which could (and did) kill the task outright before
     either timeout ever fired, silently. Not waiting at all sidesteps both:
@@ -323,17 +373,7 @@ async def post_message(
     if conversation.title in ("", "New conversation"):
         conversation.title = derive_title(text)
 
-    db.add(
-        AiMessage(
-            conversation_id=conversation.id,
-            role=AiMessageRole.USER,
-            content=text,
-            provider_native=[client.build_user_message(text)],
-        )
-    )
-    await db.commit()
-
-    ai_jobs.run_ai_turn.delay(str(conversation.id))
+    await _send_user_message(db, conversation, client, text)
 
     return RedirectResponse(
         url=f"/ai/conversations/{conversation.id}", status_code=status.HTTP_303_SEE_OTHER

@@ -1,9 +1,17 @@
 """Provider client tests.
 
-Every provider call is served by an `httpx.MockTransport` — no test in this
-file (or anywhere else in the suite) may reach a real provider, both for the
+Every provider call is served by a mock transport — no test in this file
+(or anywhere else in the suite) may reach a real provider, both for the
 obvious reason and because these assertions are about the request this app
 *builds*, which a live API would only answer, never confirm.
+
+Two mock-transport flavors, matching `app.ai.providers`' own split:
+`_transport` (plain `httpx.MockTransport`) for `GeminiClient`, which still
+makes raw httpx calls; `_transport2` (`httpx2.MockTransport`) for
+`AnthropicClient`/`OpenAICompatibleClient`, which hand their SDK an
+`httpx2.AsyncClient` as `http_client=` — `anthropic`/`openai` build on
+`httpx2` (a distinct package from plain `httpx`) for their own HTTP layer,
+not something this app chose, just how those SDKs currently ship.
 """
 
 from __future__ import annotations
@@ -13,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
+import httpx2
 import pytest
 
 from app.ai.base import AiProviderError, ToolDefinition
@@ -47,18 +56,24 @@ def _transport(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Mock
     return httpx.MockTransport(handler)
 
 
+def _transport2(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> httpx2.MockTransport:
+    return httpx2.MockTransport(handler)
+
+
 # --- Anthropic ---------------------------------------------------------------
 
 
 async def test_anthropic_list_models_follows_pagination():
     seen_params = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen_params.append(dict(request.url.params))
         assert request.headers["x-api-key"] == "secret-key"
         assert request.headers["anthropic-version"] == "2023-06-01"
         if "after_id" not in request.url.params:
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "data": [{"id": "claude-a", "display_name": "Claude A"}],
@@ -66,11 +81,11 @@ async def test_anthropic_list_models_follows_pagination():
                     "last_id": "claude-a",
                 },
             )
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"data": [{"id": "claude-b"}], "has_more": False, "last_id": None}
         )
 
-    client = AnthropicClient("secret-key", transport=_transport(handler))
+    client = AnthropicClient("secret-key", transport=_transport2(handler))
     models = await client.list_models()
 
     assert [m.id for m in models] == ["claude-a", "claude-b"]
@@ -81,10 +96,10 @@ async def test_anthropic_list_models_follows_pagination():
 async def test_anthropic_send_text_response():
     captured: dict[str, Any] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["url"] = str(request.url)
         captured["body"] = json.loads(request.content)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "content": [{"type": "text", "text": "Hello there"}],
@@ -92,7 +107,7 @@ async def test_anthropic_send_text_response():
             },
         )
 
-    client = AnthropicClient("secret-key", transport=_transport(handler))
+    client = AnthropicClient("secret-key", transport=_transport2(handler))
     result = await client.send(
         [{"role": "user", "content": "hi"}], TOOLS, "claude-a", "SYSTEM"
     )
@@ -117,12 +132,12 @@ async def test_anthropic_send_tool_call_and_history_round_trip():
         {"type": "tool_use", "id": "tu_1", "name": "list_machines", "input": {"group_name": "web"}},
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, json={"content": blocks, "usage": {"input_tokens": 5, "output_tokens": 7}}
         )
 
-    client = AnthropicClient("secret-key", transport=_transport(handler))
+    client = AnthropicClient("secret-key", transport=_transport2(handler))
     result = await client.send([], TOOLS, "claude-a", "SYSTEM")
 
     assert len(result.tool_calls) == 1
@@ -140,10 +155,10 @@ async def test_anthropic_send_tool_call_and_history_round_trip():
 
 
 async def test_anthropic_http_error_becomes_provider_error_without_the_key():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, text='{"error": "invalid x-api-key"}')
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401, text='{"error": "invalid x-api-key"}')
 
-    client = AnthropicClient("super-secret-key", transport=_transport(handler))
+    client = AnthropicClient("super-secret-key", transport=_transport2(handler))
     with pytest.raises(AiProviderError) as excinfo:
         await client.list_models()
 
@@ -155,13 +170,16 @@ async def test_anthropic_http_error_becomes_provider_error_without_the_key():
 
 
 async def test_openai_list_models():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.headers["Authorization"] == "Bearer sk-test"
         assert str(request.url) == "https://api.openai.com/v1/models"
-        return httpx.Response(200, json={"data": [{"id": "gpt-x"}, {"id": "gpt-y"}]})
+        return httpx2.Response(200, json={"data": [{"id": "gpt-x"}, {"id": "gpt-y"}]})
 
     client = OpenAICompatibleClient(
-        "sk-test", "https://api.openai.com/v1", AiProviderKind.OPENAI, transport=_transport(handler)
+        "sk-test",
+        "https://api.openai.com/v1",
+        AiProviderKind.OPENAI,
+        transport=_transport2(handler),
     )
     assert [m.id for m in await client.list_models()] == ["gpt-x", "gpt-y"]
 
@@ -169,10 +187,10 @@ async def test_openai_list_models():
 async def test_openai_send_text_and_system_prompt_placement():
     captured: dict[str, Any] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["url"] = str(request.url)
         captured["body"] = json.loads(request.content)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "choices": [{"message": {"role": "assistant", "content": "done"}}],
@@ -181,7 +199,10 @@ async def test_openai_send_text_and_system_prompt_placement():
         )
 
     client = OpenAICompatibleClient(
-        "sk-test", "https://api.openai.com/v1", AiProviderKind.OPENAI, transport=_transport(handler)
+        "sk-test",
+        "https://api.openai.com/v1",
+        AiProviderKind.OPENAI,
+        transport=_transport2(handler),
     )
     result = await client.send([{"role": "user", "content": "hi"}], TOOLS, "gpt-x", "SYSTEM")
 
@@ -213,34 +234,39 @@ async def test_openai_send_tool_call_parses_json_arguments():
         ],
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": [{"message": message}], "usage": {}})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"choices": [{"message": message}], "usage": {}})
 
     client = OpenAICompatibleClient(
         None,
         "https://openrouter.ai/api/v1",
         AiProviderKind.OPENROUTER,
-        transport=_transport(handler),
+        transport=_transport2(handler),
     )
     result = await client.send([], TOOLS, "some/model", "SYSTEM")
 
     call = result.tool_calls[0]
     assert call.arguments == {"group_name": "web"}
     follow_up = client.build_tool_result_messages(result, [(call, "machine-a")])
-    assert follow_up[0] == message
+    # Not an exact `== message` anymore: the SDK's own `.model_dump(...,
+    # exclude_none=True)` drops `"content": None` entirely rather than
+    # keeping the explicit null the raw wire format used — functionally
+    # identical (both mean "no content") once replayed to the API, just no
+    # longer byte-for-byte the same dict this test used to build by hand.
+    assert follow_up[0] == {k: v for k, v in message.items() if v is not None}
     assert follow_up[1] == {"role": "tool", "tool_call_id": "call_1", "content": "machine-a"}
 
 
 async def test_openai_compatible_uses_the_configured_base_url():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert str(request.url) == "https://litellm.internal/v1/models"
-        return httpx.Response(200, json={"data": [{"id": "local-model"}]})
+        return httpx2.Response(200, json={"data": [{"id": "local-model"}]})
 
     client = OpenAICompatibleClient(
         None,
         "https://litellm.internal/v1/",
         AiProviderKind.OPENAI_COMPATIBLE,
-        transport=_transport(handler),
+        transport=_transport2(handler),
     )
     assert [m.id for m in await client.list_models()] == ["local-model"]
 

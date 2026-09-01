@@ -1,37 +1,45 @@
-"""HTTP clients for the five supported AI providers.
+"""Clients for the five supported AI providers.
 
-Three implementations cover five kinds, because OpenAI, OpenRouter, and any
-"OpenAI-compatible" endpoint all speak the same wire format — they differ
-only in base URL and key, so `OpenAICompatibleClient` is instantiated three
-ways rather than copied three times.
+**Anthropic and the three OpenAI-wire-format kinds (OpenAI, OpenRouter, any
+"OpenAI-compatible" endpoint) use their official SDKs** (`anthropic`,
+`openai`) rather than hand-built requests — each SDK's own request/response
+typing, retry/backoff behavior, and error types, instead of this app
+re-deriving them from documentation and keeping them in sync by hand as the
+APIs evolve. `OpenAICompatibleClient` still wraps one `AsyncOpenAI` instance
+for all three of those kinds, since they differ only in base URL and
+whether a key is required — one class, three configurations, same as before.
 
-Everything here is plain `httpx.AsyncClient` against the provider's own
-host. There is no vendor SDK involved, deliberately: the three request/
-response shapes are small, and pinning three separate SDKs (each with its
-own release cadence, its own transitive dependencies, and its own opinion
-about async) to get JSON we can build by hand would be a much larger
-dependency surface than this feature justifies. httpx is already a runtime
-dependency (see `pyproject.toml`).
+**Gemini stays on a plain `httpx.AsyncClient`** against its REST API —
+there's no official-SDK decision pending for it in this module yet, it's
+simply unconverted.
+
+Both `anthropic` and `openai` in the versions this app pins build on
+`httpx2` (a distinct package from the `httpx` this app uses everywhere
+else, including for Gemini below) for their own HTTP layer — not something
+this app chose, just a fact of depending on those SDKs as they currently
+ship. `http_client=httpx2.AsyncClient(transport=...)` is how a test
+(`tests/test_ai_providers.py`) still injects a `MockTransport` and reaches
+no real network, the same idea as the plain-httpx `transport=` this module
+used everywhere before, just spelled with the other package for these two
+clients specifically.
 
 **The API key never leaves this module.** It arrives decrypted from
-`app.core.security.decrypt_secret`, goes straight into an outbound request
-header (or, for Gemini, its documented `?key=` query parameter) to that
-provider's own host, and is never logged, never rendered, and never put
-into an exception message — `_raise_for_status` builds errors from the
-status code and a truncated response body only.
+`app.core.security.decrypt_secret`, goes straight into the SDK/request
+(or, for Gemini, its documented `?key=` query parameter), and is never
+logged, never rendered, and never put into an exception message — errors
+are built from the provider's own status code and message only, via
+`_wrap_provider_error` for the two SDK-based clients and `_raise_for_status`
+for Gemini's raw HTTP calls.
 
 Two explicit timeouts, not one blanket number: listing models is a quick
 admin action on the Settings page (15s), while a chat turn can legitimately
-involve a slow model producing a long answer (90s). Both set connect and
-read separately so a black-holed TCP connect fails fast rather than
-consuming the whole read budget.
+involve a slow model producing a long answer (90s).
 
-Wire formats were checked against each provider's current published
-documentation rather than written from memory — in particular Gemini's
-function-calling round trip (`tools[].functionDeclarations`, a `model` turn
-echoing the `functionCall` part, then a `user` turn carrying
-`functionResponse`) and Anthropic's models-list pagination
-(`has_more`/`last_id` driving an `after_id` query parameter).
+Wire formats (Gemini's own, and what's sent to/parsed from the two SDKs)
+were checked against each provider's current published documentation
+rather than written from memory — in particular Gemini's function-calling
+round trip (`tools[].functionDeclarations`, a `model` turn echoing the
+`functionCall` part, then a `user` turn carrying `functionResponse`).
 """
 
 from __future__ import annotations
@@ -41,7 +49,10 @@ import logging
 import uuid
 from typing import Any
 
+import anthropic
 import httpx
+import httpx2
+import openai
 
 from app.ai.base import (
     AiProviderError,
@@ -56,26 +67,48 @@ from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
-ANTHROPIC_VERSION = "2023-06-01"
+# No `/v1` suffix, unlike the OpenAI-family base URLs below — the
+# `anthropic` SDK's routes already include their own `/v1/...` prefix, so a
+# base URL that also ends in `/v1` doubles it (`/v1/v1/messages`).
+ANTHROPIC_API_BASE = "https://api.anthropic.com"
 OPENAI_API_BASE = "https://api.openai.com/v1"
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
-MODELS_TIMEOUT = httpx.Timeout(15.0, connect=15.0, read=15.0)
-CHAT_TIMEOUT = httpx.Timeout(90.0, connect=15.0, read=90.0)
+# Plain floats (total-time budgets), not `httpx.Timeout`/`httpx2.Timeout`
+# objects with separate connect/read phases — both SDKs accept either, and
+# a single number is enough here: what actually matters is "give up after
+# N seconds," not tuning the connect phase separately from the read phase.
+MODELS_TIMEOUT_SECONDS = 15.0
+CHAT_TIMEOUT_SECONDS = 90.0
+# Gemini's own raw httpx calls still want the old two-phase form.
+_GEMINI_MODELS_TIMEOUT = httpx.Timeout(MODELS_TIMEOUT_SECONDS, connect=15.0)
+_GEMINI_CHAT_TIMEOUT = httpx.Timeout(CHAT_TIMEOUT_SECONDS, connect=15.0)
 
 MAX_OUTPUT_TOKENS = 4096
 
 # Anthropic's list-models endpoint pages at 20 by default; ask for the
-# documented maximum and follow `has_more`/`last_id` rather than assuming
-# one page is the whole catalog.
+# documented maximum so a real catalog fits in as few pages as possible —
+# the SDK's own `AsyncPage` handles walking `has_more`/`last_id` beyond that.
 _ANTHROPIC_PAGE_LIMIT = 1000
-_ANTHROPIC_MAX_PAGES = 20
 
 # Enough of a failing response body to diagnose the problem, not enough to
 # dump a provider's entire error document into an audit-visible message.
 _ERROR_BODY_CHARS = 400
+
+
+def _wrap_provider_error(provider: str, exc: Exception) -> AiProviderError:
+    """Both `anthropic.AnthropicError` and `openai.OpenAIError` subclasses
+    carry `.status_code`/`.message` for an HTTP-level failure (missing on a
+    connection/timeout error, which is what the fallback branch is for) —
+    this builds the same "HTTP <code>: <body>" shape `_raise_for_status`
+    below builds for Gemini's own raw calls, so an operator sees a
+    consistent message regardless of which client hit the problem."""
+    status_code = getattr(exc, "status_code", None)
+    message = str(getattr(exc, "message", None) or exc)[:_ERROR_BODY_CHARS].strip()
+    if status_code is not None:
+        return AiProviderError(f"{provider} returned HTTP {status_code}: {message}")
+    return AiProviderError(f"{provider} request failed: {message}")
 
 
 def _raise_for_status(response: httpx.Response, provider: str) -> None:
@@ -96,7 +129,9 @@ def _parse_json(response: httpx.Response, provider: str) -> dict[str, Any]:
 
 
 class AnthropicClient(BaseAiClient):
-    """Anthropic Messages API (`/v1/messages`) and Models API (`/v1/models`)."""
+    """Anthropic's official SDK (`anthropic.AsyncAnthropic`) — the Messages
+    API (`.messages.create`) and Models API (`.models.list`, which handles
+    `has_more`/`last_id` pagination internally when iterated)."""
 
     kind_value = AiProviderKind.ANTHROPIC.value
 
@@ -105,46 +140,25 @@ class AnthropicClient(BaseAiClient):
         api_key: str,
         *,
         base_url: str = ANTHROPIC_API_BASE,
-        transport: httpx.AsyncBaseTransport | None = None,
+        transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
-        self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
-        self._transport = transport
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            "x-api-key": self._api_key,
-            "anthropic-version": ANTHROPIC_VERSION,
-            "content-type": "application/json",
-        }
+        http_client = httpx2.AsyncClient(transport=transport) if transport is not None else None
+        self._client = anthropic.AsyncAnthropic(
+            api_key=api_key, base_url=base_url, http_client=http_client
+        )
 
     async def list_models(self) -> list[ModelInfo]:
         models: list[ModelInfo] = []
-        params: dict[str, Any] = {"limit": _ANTHROPIC_PAGE_LIMIT}
-        async with httpx.AsyncClient(
-            timeout=MODELS_TIMEOUT, transport=self._transport
-        ) as client:
-            for _page in range(_ANTHROPIC_MAX_PAGES):
-                response = await client.get(
-                    f"{self._base_url}/models", headers=self._headers(), params=params
+        try:
+            page = await self._client.models.list(
+                limit=_ANTHROPIC_PAGE_LIMIT, timeout=MODELS_TIMEOUT_SECONDS
+            )
+            async for entry in page:
+                models.append(
+                    ModelInfo(id=entry.id, display_name=entry.display_name or None)
                 )
-                _raise_for_status(response, "Anthropic")
-                payload = _parse_json(response, "Anthropic")
-                for entry in payload.get("data") or []:
-                    if isinstance(entry, dict) and entry.get("id"):
-                        models.append(
-                            ModelInfo(
-                                id=str(entry["id"]),
-                                display_name=(
-                                    str(entry["display_name"])
-                                    if entry.get("display_name")
-                                    else None
-                                ),
-                            )
-                        )
-                if not payload.get("has_more") or not payload.get("last_id"):
-                    break
-                params = {"limit": _ANTHROPIC_PAGE_LIMIT, "after_id": payload["last_id"]}
+        except anthropic.AnthropicError as exc:
+            raise _wrap_provider_error("Anthropic", exc) from exc
         return models
 
     async def send(
@@ -154,14 +168,9 @@ class AnthropicClient(BaseAiClient):
         model: str,
         system_prompt: str,
     ) -> ChatTurnResult:
-        body: dict[str, Any] = {
-            "model": model,
-            "max_tokens": MAX_OUTPUT_TOKENS,
-            "system": system_prompt,
-            "messages": messages,
-        }
+        kwargs: dict[str, Any] = {}
         if tools:
-            body["tools"] = [
+            kwargs["tools"] = [
                 {
                     "name": tool.name,
                     "description": tool.description,
@@ -169,39 +178,44 @@ class AnthropicClient(BaseAiClient):
                 }
                 for tool in tools
             ]
-            body["tool_choice"] = {"type": "auto"}
+            kwargs["tool_choice"] = {"type": "auto"}
 
-        async with httpx.AsyncClient(timeout=CHAT_TIMEOUT, transport=self._transport) as client:
-            response = await client.post(
-                f"{self._base_url}/messages", headers=self._headers(), json=body
+        try:
+            response = await self._client.messages.create(
+                model=model,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                system=system_prompt,
+                messages=messages,
+                timeout=CHAT_TIMEOUT_SECONDS,
+                **kwargs,
             )
-        _raise_for_status(response, "Anthropic")
-        payload = _parse_json(response, "Anthropic")
+        except anthropic.AnthropicError as exc:
+            raise _wrap_provider_error("Anthropic", exc) from exc
 
-        blocks = payload.get("content") or []
-        texts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        for block in blocks:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "text" and block.get("text"):
-                texts.append(str(block["text"]))
-            elif block.get("type") == "tool_use":
-                arguments = block.get("input")
-                tool_calls.append(
-                    ToolCall(
-                        id=str(block.get("id") or uuid.uuid4()),
-                        name=str(block.get("name") or ""),
-                        arguments=arguments if isinstance(arguments, dict) else {},
-                    )
-                )
+        # `exclude_none=True`: the SDK's typed blocks carry several
+        # optional fields (e.g. `citations`, `toolset_name`) that are
+        # `None` here and were never part of the raw wire format this app
+        # used to build by hand — dropping them keeps `provider_native`
+        # (replayed verbatim next turn) the same minimal shape as before.
+        blocks = [
+            block.model_dump(mode="json", exclude_none=True) for block in response.content
+        ]
+        texts = [str(b["text"]) for b in blocks if b.get("type") == "text" and b.get("text")]
+        tool_calls = [
+            ToolCall(
+                id=str(b.get("id") or uuid.uuid4()),
+                name=str(b.get("name") or ""),
+                arguments=b["input"] if isinstance(b.get("input"), dict) else {},
+            )
+            for b in blocks
+            if b.get("type") == "tool_use"
+        ]
 
-        usage = payload.get("usage") or {}
         return ChatTurnResult(
             text="\n\n".join(texts) if texts else None,
             tool_calls=tool_calls,
-            input_tokens=int(usage.get("input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
+            input_tokens=response.usage.input_tokens if response.usage else 0,
+            output_tokens=response.usage.output_tokens if response.usage else 0,
             # The exact content-block array, echoed back verbatim next turn.
             raw_assistant_message={"role": "assistant", "content": blocks},
         )
@@ -225,15 +239,21 @@ class AnthropicClient(BaseAiClient):
 
 
 class OpenAICompatibleClient(BaseAiClient):
-    """The OpenAI `/chat/completions` + `/models` wire format.
+    """The OpenAI official SDK (`openai.AsyncOpenAI`) — `.chat.completions`
+    + `.models.list`.
 
     Used for three provider kinds — plain OpenAI, OpenRouter, and any
     self-hosted/proxied OpenAI-compatible endpoint (litellm, vLLM, a
     corporate gateway) — which differ only in base URL and whether a key is
-    required. OpenRouter's model listing needs no auth at all, but the key
-    is sent anyway when one is configured, since doing so is harmless and
-    keeps one code path.
+    required. `AsyncOpenAI` itself requires *some* string for `api_key`
+    (raises at construction otherwise, unlike the raw-httpx version of this
+    client, which could just omit the header) — OpenRouter's model listing
+    needs no real key at all, so a harmless placeholder stands in for one
+    when none is configured. A chat turn against a provider that actually
+    needs a real key still fails normally, with that provider's own 401.
     """
+
+    _NO_KEY_PLACEHOLDER = "unset"
 
     def __init__(
         self,
@@ -241,36 +261,27 @@ class OpenAICompatibleClient(BaseAiClient):
         base_url: str,
         kind: AiProviderKind,
         *,
-        transport: httpx.AsyncBaseTransport | None = None,
+        transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
-        self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
         self.kind_value = kind.value
         self._label = {
             AiProviderKind.OPENAI: "OpenAI",
             AiProviderKind.OPENROUTER: "OpenRouter",
             AiProviderKind.OPENAI_COMPATIBLE: "The OpenAI-compatible endpoint",
         }.get(kind, kind.value)
-        self._transport = transport
-
-    def _headers(self) -> dict[str, str]:
-        headers = {"content-type": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
-        return headers
+        http_client = httpx2.AsyncClient(transport=transport) if transport is not None else None
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key or self._NO_KEY_PLACEHOLDER,
+            base_url=base_url,
+            http_client=http_client,
+        )
 
     async def list_models(self) -> list[ModelInfo]:
-        async with httpx.AsyncClient(
-            timeout=MODELS_TIMEOUT, transport=self._transport
-        ) as client:
-            response = await client.get(f"{self._base_url}/models", headers=self._headers())
-        _raise_for_status(response, self._label)
-        payload = _parse_json(response, self._label)
-        return [
-            ModelInfo(id=str(entry["id"]))
-            for entry in (payload.get("data") or [])
-            if isinstance(entry, dict) and entry.get("id")
-        ]
+        try:
+            page = await self._client.models.list(timeout=MODELS_TIMEOUT_SECONDS)
+            return [ModelInfo(id=entry.id) async for entry in page]
+        except openai.OpenAIError as exc:
+            raise _wrap_provider_error(self._label, exc) from exc
 
     async def send(
         self,
@@ -279,12 +290,9 @@ class OpenAICompatibleClient(BaseAiClient):
         model: str,
         system_prompt: str,
     ) -> ChatTurnResult:
-        body: dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "system", "content": system_prompt}, *messages],
-        }
+        kwargs: dict[str, Any] = {}
         if tools:
-            body["tools"] = [
+            kwargs["tools"] = [
                 {
                     "type": "function",
                     "function": {
@@ -295,26 +303,29 @@ class OpenAICompatibleClient(BaseAiClient):
                 }
                 for tool in tools
             ]
-            body["tool_choice"] = "auto"
+            kwargs["tool_choice"] = "auto"
 
-        async with httpx.AsyncClient(timeout=CHAT_TIMEOUT, transport=self._transport) as client:
-            response = await client.post(
-                f"{self._base_url}/chat/completions", headers=self._headers(), json=body
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system_prompt}, *messages],
+                timeout=CHAT_TIMEOUT_SECONDS,
+                **kwargs,
             )
-        _raise_for_status(response, self._label)
-        payload = _parse_json(response, self._label)
+        except openai.OpenAIError as exc:
+            raise _wrap_provider_error(self._label, exc) from exc
 
-        choices = payload.get("choices") or []
-        message: dict[str, Any] = {}
-        if choices and isinstance(choices[0], dict):
-            raw_message = choices[0].get("message")
-            if isinstance(raw_message, dict):
-                message = raw_message
+        choice = response.choices[0] if response.choices else None
+        # `exclude_none=True`: drops fields like `refusal`/`audio` that are
+        # `None` here and weren't part of the raw wire format this client
+        # used to build by hand — keeps `provider_native` (replayed verbatim
+        # next turn) the same minimal shape as before.
+        message: dict[str, Any] = (
+            choice.message.model_dump(mode="json", exclude_none=True) if choice else {}
+        )
 
         tool_calls: list[ToolCall] = []
         for entry in message.get("tool_calls") or []:
-            if not isinstance(entry, dict):
-                continue
             function = entry.get("function") or {}
             raw_arguments = function.get("arguments")
             try:
@@ -334,13 +345,13 @@ class OpenAICompatibleClient(BaseAiClient):
                 )
             )
 
-        usage = payload.get("usage") or {}
+        usage = response.usage
         content = message.get("content")
         return ChatTurnResult(
             text=str(content) if content else None,
             tool_calls=tool_calls,
-            input_tokens=int(usage.get("prompt_tokens") or 0),
-            output_tokens=int(usage.get("completion_tokens") or 0),
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
             raw_assistant_message=message,
         )
 
@@ -390,7 +401,7 @@ class GeminiClient(BaseAiClient):
 
     async def list_models(self) -> list[ModelInfo]:
         async with httpx.AsyncClient(
-            timeout=MODELS_TIMEOUT, transport=self._transport
+            timeout=_GEMINI_MODELS_TIMEOUT, transport=self._transport
         ) as client:
             response = await client.get(
                 f"{self._base_url}/models", params={"key": self._api_key}
@@ -431,7 +442,9 @@ class GeminiClient(BaseAiClient):
         if tools:
             body["tools"] = [{"functionDeclarations": [_gemini_declaration(t) for t in tools]}]
 
-        async with httpx.AsyncClient(timeout=CHAT_TIMEOUT, transport=self._transport) as client:
+        async with httpx.AsyncClient(
+            timeout=_GEMINI_CHAT_TIMEOUT, transport=self._transport
+        ) as client:
             response = await client.post(
                 f"{self._base_url}/models/{model}:generateContent",
                 params={"key": self._api_key},
@@ -535,39 +548,38 @@ def decrypted_api_key(config: AiProviderConfig) -> str | None:
         ) from exc
 
 
-def build_client(
-    config: AiProviderConfig, *, transport: httpx.AsyncBaseTransport | None = None
-) -> BaseAiClient:
+def build_client(config: AiProviderConfig) -> BaseAiClient:
     """Construct the right client for a provider row. Raises
-    `AiProviderError` if the row isn't usable (missing key or base URL)."""
+    `AiProviderError` if the row isn't usable (missing key or base URL).
+
+    No `transport=` passthrough here (an earlier version had one, never
+    actually used by any caller) — `AnthropicClient`/`OpenAICompatibleClient`
+    and `GeminiClient` now want different transport types (`httpx2` vs.
+    plain `httpx`, see the module docstring), so tests construct the client
+    class they need directly instead of going through this factory.
+    """
     api_key = decrypted_api_key(config)
 
     if config.kind == AiProviderKind.ANTHROPIC:
         if not api_key:
             raise AiProviderError("No Anthropic API key is configured.")
-        return AnthropicClient(api_key, transport=transport)
+        return AnthropicClient(api_key)
 
     if config.kind == AiProviderKind.GEMINI:
         if not api_key:
             raise AiProviderError("No Gemini API key is configured.")
-        return GeminiClient(api_key, transport=transport)
+        return GeminiClient(api_key)
 
     if config.kind == AiProviderKind.OPENAI:
         if not api_key:
             raise AiProviderError("No OpenAI API key is configured.")
-        return OpenAICompatibleClient(
-            api_key, OPENAI_API_BASE, AiProviderKind.OPENAI, transport=transport
-        )
+        return OpenAICompatibleClient(api_key, OPENAI_API_BASE, AiProviderKind.OPENAI)
 
     if config.kind == AiProviderKind.OPENROUTER:
         # Listing models needs no key; a chat turn does. Not enforced here,
         # so an admin can still fetch the catalog before pasting a key.
-        return OpenAICompatibleClient(
-            api_key, OPENROUTER_API_BASE, AiProviderKind.OPENROUTER, transport=transport
-        )
+        return OpenAICompatibleClient(api_key, OPENROUTER_API_BASE, AiProviderKind.OPENROUTER)
 
     if not config.base_url:
         raise AiProviderError("This OpenAI-compatible provider has no base URL configured.")
-    return OpenAICompatibleClient(
-        api_key, config.base_url, AiProviderKind.OPENAI_COMPATIBLE, transport=transport
-    )
+    return OpenAICompatibleClient(api_key, config.base_url, AiProviderKind.OPENAI_COMPATIBLE)
