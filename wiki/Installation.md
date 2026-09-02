@@ -39,7 +39,7 @@ and fills in every secret with a freshly generated random value
    and no otherwise (your browser needs to reach it directly with no
    reverse proxy in front yet).
 4. **The facts-refresh and reachability-check intervals**, in seconds
-   (defaults 3600 and 60).
+   (defaults 600 and 60).
 5. **The Administrator account's password** — leave it empty and one is
    generated and printed once at the end.
 6. **The host port** to publish the app on (default 8080).
@@ -81,7 +81,7 @@ Also set `TZ` (IANA name, e.g. `Europe/Prague` — defaults to UTC) and, if
 you want the bundled Caddy reverse proxy, `DOMAIN` and `ACME_EMAIL`.
 `FACTS_REFRESH_INTERVAL_SECONDS`, `REACHABILITY_CHECK_INTERVAL_SECONDS`,
 and `APP_PORT` all have working defaults and only need changing if you
-want something other than 3600s/60s/8080.
+want something other than 600s/60s/8080.
 
 The app validates configuration at startup and **refuses to start** if any
 secret still looks like a placeholder from `.env.example`.
@@ -103,7 +103,7 @@ running `scripts/setup.py`.
 | `REDIS_URL` | app | Optional — set to fully override the built Redis URL. Redis serves as Celery's broker and result backend, and backs the login rate limiter. |
 | `SSH_DATA_DIR` | app | Reserved data directory inside the container. |
 | `SSH_CONNECT_TIMEOUT` | app | SSH connection timeout, in seconds. |
-| `FACTS_REFRESH_INTERVAL_SECONDS` | beat | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 3600. |
+| `FACTS_REFRESH_INTERVAL_SECONDS` | beat | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 600 (10 minutes). |
 | `REACHABILITY_CHECK_INTERVAL_SECONDS` | beat | How often (seconds) the online/offline status badge's TCP-only reachability sweep runs per machine. Default 60. |
 | `UPDATE_TIMEOUT_SECONDS` | worker | Max time (seconds) for one machine's full update/upgrade/autoremove/autoclean run. Default 1800. |
 | `INFORM_TOKEN` | app | Bearer token required by `POST /api/inform` (self-registration). |

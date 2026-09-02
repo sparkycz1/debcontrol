@@ -23,17 +23,17 @@ working at once, needs the knobs below actually turned.
 
 Rough sizing for the whole stack (all services combined) at a few fleet
 sizes, assuming default sweep intervals (facts/packages/services/update-
-check every hour, monitoring every 2 minutes, reachability every minute)
-and a handful of concurrent admins. Treat these as a starting point, not a
-guarantee — the "how to compute this yourself" section below explains
-where the numbers come from so you can adjust for your own
+check every 10 minutes, monitoring every 2 minutes, reachability every
+minute) and a handful of concurrent admins. Treat these as a starting
+point, not a guarantee — the "how to compute this yourself" section below
+explains where the numbers come from so you can adjust for your own
 intervals/usage.
 
 | Fleet size | vCPU | RAM | Postgres storage (retention windows below) | Notes |
 |---|---|---|---|---|
 | Up to 100 | 2 | 4 GB | 1–2 GB | Defaults are fine everywhere. |
-| 100–500 | 4 | 8 GB | 5–8 GB | Raise `DB_POOL_SIZE`/`DB_MAX_OVERFLOW`; defaults elsewhere still OK. |
-| 500–1,500 | 4–8 | 8–16 GB | 15–22 GB | Raise `REACHABILITY_CHECK_CONCURRENCY`; consider a second `worker` replica; raise Postgres `max_connections`. |
+| 100–500 | 4 | 8 GB | 5–8 GB | Raise `DB_POOL_SIZE`/`DB_MAX_OVERFLOW`; raise `FACTS_REFRESH_INTERVAL_SECONDS` (e.g. back to the old 3600s default) or scale `worker` out — the default 600s cadence outruns one worker replica's headroom past roughly 200 machines (see below). |
+| 500–1,500 | 4–8 | 8–16 GB | 15–22 GB | All of the above, plus: raise `REACHABILITY_CHECK_CONCURRENCY`; raise Postgres `max_connections`. |
 | 1,500–5,000+ | 8–16 | 16–32 GB | 50–70 GB+ | All of the above, plus: dedicated Postgres tuning (below), multiple `worker` replicas, and a closer look at monitoring/update-run retention (below) — monitoring history is the dominant contributor to storage at this scale. |
 
 "Postgres storage" above assumes the default 90-day retention on
@@ -80,8 +80,9 @@ safety margin → `concurrency ≥ 2000 × 10 / (60 × 2) ≈ 167`. Round up and
 `refresh_all_machine_facts`, `refresh_all_machine_packages`,
 `refresh_all_machine_services`, and `check_all_machine_updates` each
 enqueue one Celery task **per machine**, every
-`FACTS_REFRESH_INTERVAL_SECONDS` (default 3600s) — four SSH round trips per
-machine per interval, fanned out rather than awaited inline (see
+`FACTS_REFRESH_INTERVAL_SECONDS` (default 600s, 10 minutes) — four SSH
+round trips per machine per interval, fanned out rather than awaited inline
+(see
 [Architecture](Architecture.md#background-tasks-celery-and-celery-beat)),
 so one slow/unreachable machine never holds up the rest. `monitor_all_
 machines` is the same idea on its own, much shorter cadence
@@ -111,9 +112,13 @@ A typical facts/packages/update-check task (SSH connect + a handful of
 remote commands) takes on the order of 1-5 seconds against a healthy,
 nearby machine — call it 3s for planning. The bundled `worker` service
 defaults to one replica at `--concurrency=10`, i.e. roughly 12,000 tasks/
-hour of headroom at that estimate — comfortable up to about 1,300 machines
-at the default hourly interval before the sweep can't finish an hour's
-worth of work inside that hour.
+hour of headroom at that estimate. At the default cadences (`54 ×
+machine_count` tasks/hour — the formula above with 600s facts and 120s
+monitoring plugged in) that's comfortable up to roughly 200 machines
+before the sweeps can't finish inside their own interval; lengthen
+`FACTS_REFRESH_INTERVAL_SECONDS` for a larger fleet before reaching for
+more worker capacity, since facts/packages/services/update-checks changing
+every 10 minutes is rarely necessary at scale.
 
 Past that, scale **out** (more `worker` replicas — safe, see the comment on
 that service in `docker-compose.yml`) or **up** (`--concurrency=N` per
@@ -216,7 +221,7 @@ and has its own independent retention setting.
   `refresh_all_machine_*` task still running when the next one for the
   same job fires) — raise `REACHABILITY_CHECK_CONCURRENCY` or scale
   `worker` per the formulas above.
-- **A machine's Facts/Updates panel lags noticeably behind "every hour"**
+- **A machine's Facts/Updates panel lags noticeably behind the configured interval**
   — the fan-out sweep can't keep up with `FACTS_REFRESH_INTERVAL_SECONDS`;
   scale `worker` out or up, or lengthen the interval.
 - **Pages feel sluggish with nothing failing outright** — check Postgres'
