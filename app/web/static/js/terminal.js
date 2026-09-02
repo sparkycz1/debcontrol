@@ -6,17 +6,22 @@
 // machines/terminal.html), and this is loaded as its own external file,
 // same convention as htmx/confirm.js/bulk-select.js.
 //
-// Clipboard: xterm.js's own hidden-textarea handling already covers plain
-// Ctrl+V/Cmd+V paste in most browsers, but that's brittle (loses focus
-// easily, differs across browsers) — this adds explicit, reliable paths on
-// top of it via the Clipboard API: Ctrl/Cmd+Shift+C copies the current
-// selection, Ctrl/Cmd+Shift+V pastes, and right-click does whichever makes
-// sense (copy if there's a selection, otherwise paste) — the same
-// convention PuTTY/most native terminals use. `navigator.clipboard` needs a
-// secure context (HTTPS, or localhost) and, for reading, a user gesture —
-// both are true here (a keypress or click is exactly a user gesture) except
-// when the app is reached over plain HTTP through a misconfigured reverse
-// proxy, which fails visibly (a status-bar message) rather than silently.
+// Clipboard: copying is Ctrl/Cmd+C *when there's a selection* (falls
+// through to the shell as a normal SIGINT otherwise, same as any terminal)
+// or Ctrl/Cmd+Shift+C unconditionally, both via `navigator.clipboard.
+// writeText` — well-supported everywhere. Pasting is deliberately left to
+// the browser's own native paste (a real Ctrl+V/Cmd+V, or "Paste" from the
+// right-click menu) wherever possible, rather than this app's own
+// `clipboard.readText()`: that API needs a user-gesture-scoped permission
+// that not every browser grants the same way (Firefox disables it outright
+// by default), where native paste needs nothing extra — xterm.js's own
+// hidden textarea already turns a real paste event into terminal input.
+// Right-click only intercepts the browser's context menu when there's a
+// selection to copy; otherwise it's left alone so its native "Paste" still
+// works. Ctrl/Cmd+Shift+V is a best-effort `readText()` paste on top of
+// that, for browsers where it works — `navigator.clipboard.readText` being
+// entirely absent (Firefox) degrades to a status-bar hint pointing at
+// native paste instead of a silent no-op.
 (function () {
   "use strict";
 
@@ -132,8 +137,8 @@
   }
 
   function pasteFromClipboard() {
-    if (!navigator.clipboard) {
-      setStatus("Couldn't paste — clipboard access needs HTTPS (or localhost).");
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      setStatus("Use Ctrl+V (or right-click → Paste) — this browser doesn't allow reading the clipboard programmatically.");
       return;
     }
     navigator.clipboard
@@ -142,30 +147,30 @@
         if (text) term.paste(text);
       })
       .catch(() => {
-        setStatus("Couldn't paste — grant this page clipboard access and try again.");
+        setStatus("Couldn't read the clipboard — use Ctrl+V instead.");
       });
   }
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    const combo = (event.ctrlKey || event.metaKey) && event.shiftKey;
-    if (combo && event.key.toLowerCase() === "c") {
+    const key = event.key.toLowerCase();
+    const modified = event.ctrlKey || event.metaKey;
+    if (modified && key === "c" && (event.shiftKey || term.hasSelection())) {
       if (copySelection()) return false; // handled — don't also send Ctrl+C to the shell
     }
-    if (combo && event.key.toLowerCase() === "v") {
+    if (modified && event.shiftKey && key === "v") {
       pasteFromClipboard();
       return false;
     }
-    return true;
+    return true; // includes plain Ctrl+V — left to xterm.js's own native paste handling
   });
 
-  // Right-click: copy the selection if there is one, otherwise paste —
-  // same convention PuTTY and most native terminal emulators use. Always
-  // suppresses the browser's own context menu, which has nothing useful
-  // to offer over a canvas-rendered terminal anyway.
+  // Right-click only handles the copy side — only intercepted (and the
+  // browser's own context menu suppressed) when there's a selection to
+  // copy; otherwise the native menu is left alone so its own "Paste" still
+  // works everywhere, no clipboard-read permission needed for it.
   container.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    if (!copySelection()) pasteFromClipboard();
+    if (copySelection()) event.preventDefault();
   });
 
   // --- Resize ------------------------------------------------------------

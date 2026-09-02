@@ -26,3 +26,20 @@ def test_badge_for_none_is_the_fallback():
 
 def test_badge_for_unknown_distro_is_the_fallback():
     assert badge_for("some-obscure-distro") == FALLBACK_BADGE
+
+
+def test_debian_family_shares_the_swirl_glyph():
+    debian = badge_for("debian")
+    kali = badge_for("kali")
+    assert debian.glyph and debian.glyph == kali.glyph
+    assert debian.color != kali.color  # same glyph, each its own brand color
+
+
+def test_fallback_badge_has_a_glyph_not_just_initials():
+    assert FALLBACK_BADGE.glyph != ""
+
+
+def test_long_tail_distro_falls_back_to_initials_only():
+    fedora = badge_for("fedora")
+    assert fedora.glyph == ""
+    assert fedora.initials == "Fe"

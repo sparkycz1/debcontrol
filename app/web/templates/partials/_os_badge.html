@@ -1,15 +1,20 @@
-{# Small colored initials badge for a machine's OS — see app/web/os_logos.py
-   for why this is initials-in-a-circle rather than each distribution's own
-   trademarked logo artwork. `os_id` is `machine.os_id` (None before facts
-   have ever been gathered, in which case this renders the generic "Li"
-   fallback badge — same as an unrecognized os_id). #}
+{# Small colored badge for a machine's OS — see app/web/os_logos.py for
+   why this is a hand-drawn glyph (or, for the long tail, plain initials)
+   rather than each distribution's own trademarked logo artwork. `os_id`
+   is `machine.os_id` (None before facts have ever been gathered, in which
+   case this renders the generic penguin fallback badge — same as an
+   unrecognized os_id). #}
 {% macro render(os_id, size=20) %}
   {% set badge = os_id | os_badge %}
   <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" role="img"
        aria-label="{{ badge.label }}" style="vertical-align: middle; flex: none;">
     <title>{{ badge.label }}</title>
     <circle cx="10" cy="10" r="10" fill="{{ badge.color }}"></circle>
-    <text x="10" y="13.5" text-anchor="middle" font-size="8" font-weight="600"
-          font-family="'SFMono-Regular', Consolas, monospace" fill="#ffffff">{{ badge.initials }}</text>
+    {% if badge.glyph %}
+      {{ badge.glyph | safe }}
+    {% else %}
+      <text x="10" y="13.5" text-anchor="middle" font-size="8" font-weight="600"
+            font-family="'SFMono-Regular', Consolas, monospace" fill="#ffffff">{{ badge.initials }}</text>
+    {% endif %}
   </svg>
 {% endmacro %}

@@ -26,9 +26,13 @@ async def _add_monitoring_sample(
                 machine_id=machine_id,
                 sampled_at=datetime.now(UTC) - timedelta(minutes=1),
                 cpu_percent=12.5,
+                load1=0.5,
+                load5=0.4,
+                load15=0.3,
                 ram_used_bytes=500_000_000,
                 ram_total_bytes=1_000_000_000,
-                disks=[{"mount": "/", "use_percent": 40}],
+                network_io=[{"iface": "eth0", "rx_bytes": 1000, "tx_bytes": 500}],
+                disk_io=[{"device": "sda", "read_bytes": 2000, "write_bytes": 1000}],
                 failed_services_count=1,
             )
         )
@@ -77,9 +81,13 @@ async def test_monitoring_tab_renders_graphs_once_samples_exist(client, db_sessi
     # MachineService rows, only a monitoring sample).
     assert "No data in this range." not in response.text
     assert "<h2>CPU</h2>" in response.text
+    assert "<h2>Load average</h2>" in response.text
     assert "<h2>RAM</h2>" in response.text
-    assert "<h2>Disk usage</h2>" in response.text
+    assert "<h2>Network throughput</h2>" in response.text
+    assert "<h2>Disk I/O</h2>" in response.text
     assert "12.5" in response.text
+    assert "eth0" in response.text
+    assert "sda" in response.text
 
 
 async def test_monitoring_tab_time_range_selector_accepts_a_bad_value(

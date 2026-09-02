@@ -13,9 +13,11 @@ def _sample(
     minutes_ago: int,
     *,
     cpu: float | None = 10.0,
+    load1: float | None = 0.5,
     ram_used: int | None = 500,
     ram_total: int | None = 1000,
-    disks: list[dict[str, object]] | None = None,
+    network_io: list[dict[str, object]] | None = None,
+    disk_io: list[dict[str, object]] | None = None,
     failed: int | None = 0,
 ) -> MachineMonitoringSample:
     return MachineMonitoringSample(
@@ -23,9 +25,13 @@ def _sample(
         machine_id=_MACHINE_ID,
         sampled_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
         cpu_percent=cpu,
+        load1=load1,
+        load5=load1,
+        load15=load1,
         ram_used_bytes=ram_used,
         ram_total_bytes=ram_total,
-        disks=disks if disks is not None else [{"mount": "/", "use_percent": 40}],
+        network_io=network_io if network_io is not None else [],
+        disk_io=disk_io if disk_io is not None else [],
         failed_services_count=failed,
     )
 
@@ -42,6 +48,8 @@ def test_build_monitoring_history_empty():
     assert history.cpu_percent == []
     assert history.latest_sampled_at is None
     assert history.latest_cpu_percent is None
+    assert history.network_rate_by_iface == {}
+    assert history.disk_rate_by_device == {}
 
 
 def test_build_monitoring_history_no_downsampling_needed():
@@ -54,6 +62,7 @@ def test_build_monitoring_history_no_downsampling_needed():
     assert history.cpu_percent == [0.0, 1.0, 2.0, 3.0, 4.0]
     assert history.ram_percent == [50.0] * 5
     assert history.latest_cpu_percent == 4.0
+    assert history.latest_load1 == 0.5
 
 
 def test_build_monitoring_history_ram_percent_none_when_total_unknown():
@@ -62,20 +71,6 @@ def test_build_monitoring_history_ram_percent_none_when_total_unknown():
     history = build_monitoring_history(samples, "1h")
 
     assert history.ram_percent == [None]
-
-
-def test_build_monitoring_history_downsamples_and_averages():
-    # 10 samples, target far below 10 forces bucketing — cpu 0..9, bucket
-    # size 2 (ceil(10/9) style math isn't relevant here; just confirm
-    # averaging happens and the series shrinks).
-    samples = [_sample(10 - i, cpu=float(i)) for i in range(10)]
-
-    history = build_monitoring_history(samples, "1h")
-
-    # Well under the real _TARGET_POINTS (150), so this particular series
-    # still isn't bucketed — this test's real point is downsampling logic
-    # itself, exercised directly below via a much larger series.
-    assert len(history.cpu_percent) == 10
 
 
 def test_build_monitoring_history_downsamples_a_large_series():
@@ -87,25 +82,106 @@ def test_build_monitoring_history_downsamples_a_large_series():
     assert 1 < len(history.cpu_percent) <= 150
 
 
-def test_build_monitoring_history_disk_series_tracks_multiple_mounts():
+def test_network_rate_computed_from_consecutive_cumulative_samples():
+    now = datetime.now(UTC)
     samples = [
-        _sample(2, disks=[{"mount": "/", "use_percent": 10}]),
-        _sample(1, disks=[{"mount": "/", "use_percent": 20}, {"mount": "/boot", "use_percent": 5}]),
-        _sample(0, disks=[{"mount": "/", "use_percent": 30}, {"mount": "/boot", "use_percent": 6}]),
+        MachineMonitoringSample(
+            id=uuid.uuid4(),
+            machine_id=_MACHINE_ID,
+            sampled_at=now - timedelta(seconds=120),
+            network_io=[{"iface": "eth0", "rx_bytes": 1000, "tx_bytes": 500}],
+            disk_io=[],
+        ),
+        MachineMonitoringSample(
+            id=uuid.uuid4(),
+            machine_id=_MACHINE_ID,
+            sampled_at=now,
+            network_io=[{"iface": "eth0", "rx_bytes": 1000 + 1200, "tx_bytes": 500 + 600}],
+            disk_io=[],
+        ),
     ]
 
     history = build_monitoring_history(samples, "1h")
 
-    assert history.disk_percent_by_mount["/"] == [10, 20, 30]
-    # "/boot" only appears from the second sample onward.
-    assert history.disk_percent_by_mount["/boot"] == [None, 5, 6]
-    assert history.latest_disks == [
-        {"mount": "/", "use_percent": 30},
-        {"mount": "/boot", "use_percent": 6},
+    # First point has no prior sample to diff against.
+    assert history.network_rate_by_iface["eth0"][0] is None
+    # (1200 + 600) bytes over 120 seconds = 15 bytes/sec combined.
+    assert history.network_rate_by_iface["eth0"][1] == 15.0
+    assert history.latest_network_io["eth0"] == {
+        "iface": "eth0",
+        "rx_bytes": 2200,
+        "tx_bytes": 1100,
+    }
+
+
+def test_network_rate_gap_on_counter_reset():
+    now = datetime.now(UTC)
+    samples = [
+        MachineMonitoringSample(
+            id=uuid.uuid4(),
+            machine_id=_MACHINE_ID,
+            sampled_at=now - timedelta(seconds=120),
+            network_io=[{"iface": "eth0", "rx_bytes": 5000, "tx_bytes": 5000}],
+            disk_io=[],
+        ),
+        MachineMonitoringSample(
+            id=uuid.uuid4(),
+            machine_id=_MACHINE_ID,
+            sampled_at=now,
+            # Counter went backwards — e.g. the machine rebooted.
+            network_io=[{"iface": "eth0", "rx_bytes": 100, "tx_bytes": 100}],
+            disk_io=[],
+        ),
     ]
 
+    history = build_monitoring_history(samples, "1h")
 
-def test_build_monitoring_history_latest_failed_services_count():
+    assert history.network_rate_by_iface["eth0"] == [None, None]
+
+
+def test_disk_rate_tracks_multiple_devices():
+    now = datetime.now(UTC)
+    samples = [
+        MachineMonitoringSample(
+            id=uuid.uuid4(),
+            machine_id=_MACHINE_ID,
+            sampled_at=now - timedelta(seconds=60),
+            network_io=[],
+            disk_io=[{"device": "sda", "read_bytes": 1000, "write_bytes": 0}],
+        ),
+        MachineMonitoringSample(
+            id=uuid.uuid4(),
+            machine_id=_MACHINE_ID,
+            sampled_at=now,
+            network_io=[],
+            disk_io=[
+                {"device": "sda", "read_bytes": 1600, "write_bytes": 0},
+                {"device": "nvme0n1", "read_bytes": 200, "write_bytes": 100},
+            ],
+        ),
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.disk_rate_by_device["sda"] == [None, 10.0]  # 600 bytes / 60s
+    # "nvme0n1" only appears in the second sample — first point is None too.
+    assert history.disk_rate_by_device["nvme0n1"] == [None, None]
+
+
+def test_bucket_timestamps_align_with_bucketed_values():
+    samples = [_sample(1000 - i, cpu=float(i % 100)) for i in range(1000)]
+
+    history = build_monitoring_history(samples, "90d")
+
+    assert len(history.bucket_timestamps) == len(history.cpu_percent)
+    # Oldest-first, strictly increasing.
+    assert all(
+        a < b
+        for a, b in zip(history.bucket_timestamps, history.bucket_timestamps[1:], strict=False)
+    )
+
+
+def test_latest_failed_services_count():
     samples = [_sample(1, failed=None), _sample(0, failed=3)]
 
     history = build_monitoring_history(samples, "1h")

@@ -7,11 +7,14 @@ def test_parse_monitoring_output_full():
     raw = (
         "===CPU===\n"
         "23.1\n"
+        "===LOAD===\n"
+        "0.52 0.58 0.59\n"
         "===RAM_KB===\n"
         "16332828 6456285\n"
-        "===DISKS===\n"
-        "/ 45%\n"
-        "/boot 12%\n"
+        "===NET===\n"
+        "eth0 987654321 123456789\n"
+        "===DISKIO===\n"
+        "sda 102400000 76800000\n"
         "===FAILED_SERVICES===\n"
         "2\n"
     )
@@ -19,31 +22,44 @@ def test_parse_monitoring_output_full():
     sample = parse_monitoring_output(raw)
 
     assert sample["cpu_percent"] == 23.1
+    assert (sample["load1"], sample["load5"], sample["load15"]) == (0.52, 0.58, 0.59)
     assert sample["ram_total_bytes"] == 16332828 * 1024
     assert sample["ram_used_bytes"] == 6456285 * 1024
-    assert sample["disks"] == [
-        {"mount": "/", "use_percent": 45},
-        {"mount": "/boot", "use_percent": 12},
+    assert sample["network_io"] == [
+        {"iface": "eth0", "rx_bytes": 987654321, "tx_bytes": 123456789}
+    ]
+    assert sample["disk_io"] == [
+        {"device": "sda", "read_bytes": 102400000, "write_bytes": 76800000}
     ]
     assert sample["failed_services_count"] == 2
 
 
-def test_parse_monitoring_output_mount_with_spaces():
-    raw = "===CPU===\n===RAM_KB===\n===DISKS===\n/mnt/my data 7%\n===FAILED_SERVICES===\n"
+def test_parse_monitoring_output_multiple_interfaces_and_disks():
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n"
+        "===NET===\n"
+        "eth0 100 200\n"
+        "wg0 300 400\n"
+        "===DISKIO===\n"
+        "sda 1000 2000\n"
+        "nvme0n1 3000 4000\n"
+        "===FAILED_SERVICES===\n"
+    )
 
     sample = parse_monitoring_output(raw)
 
-    assert sample["disks"] == [{"mount": "/mnt/my data", "use_percent": 7}]
+    assert [n["iface"] for n in sample["network_io"]] == ["eth0", "wg0"]
+    assert [d["device"] for d in sample["disk_io"]] == ["sda", "nvme0n1"]
 
 
 def test_parse_monitoring_output_handles_missing_sections():
-    # E.g. no systemd (failed-services count), or a dropped connection.
-    sample = parse_monitoring_output("===CPU===\n===RAM_KB===\n")
+    sample = parse_monitoring_output("===CPU===\n===LOAD===\n===RAM_KB===\n")
 
     assert sample["cpu_percent"] is None
+    assert sample["load1"] is None
     assert sample["ram_used_bytes"] is None
-    assert sample["ram_total_bytes"] is None
-    assert sample["disks"] == []
+    assert sample["network_io"] == []
+    assert sample["disk_io"] == []
     assert sample["failed_services_count"] is None
 
 
@@ -51,14 +67,16 @@ def test_parse_monitoring_output_empty_string():
     sample = parse_monitoring_output("")
 
     assert sample["cpu_percent"] is None
-    assert sample["disks"] == []
+    assert sample["load1"] is None
+    assert sample["network_io"] == []
+    assert sample["disk_io"] == []
     assert sample["failed_services_count"] is None
 
 
 def test_parse_monitoring_output_zero_failed_services_is_not_none():
     # "0" must parse as the integer 0 (genuinely no failed services), not
     # be confused with "couldn't tell" (None).
-    raw = "===CPU===\n===RAM_KB===\n===DISKS===\n===FAILED_SERVICES===\n0\n"
+    raw = "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n===FAILED_SERVICES===\n0\n"
 
     sample = parse_monitoring_output(raw)
 

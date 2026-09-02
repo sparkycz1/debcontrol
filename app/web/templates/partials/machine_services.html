@@ -1,7 +1,7 @@
 {% from "partials/_services_summary.html" import render as render_services_summary %}
 {{ render_services_summary(machine, service_counts, oob=True) }}
 
-<div id="services-panel">
+<div id="services-panel" class="modal-body">
   {% if error %}
     <div class="alert alert-error">
       <p>Could not refresh services: {{ error }}</p>

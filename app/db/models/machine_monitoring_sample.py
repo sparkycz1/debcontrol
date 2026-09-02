@@ -1,5 +1,5 @@
-"""One CPU/RAM/disk-usage sample for a managed machine, taken on the
-Monitoring tab's own cadence (`MONITORING_INTERVAL_SECONDS`, see
+"""One CPU/load/RAM/network/disk-I/O sample for a managed machine, taken
+on the Monitoring tab's own cadence (`MONITORING_INTERVAL_SECONDS`, see
 `app.ssh.monitoring` and `app.tasks.jobs._sample_machine_monitoring`).
 
 Unlike `MachinePackage`/`MachineService`, this genuinely is a history, not
@@ -44,17 +44,29 @@ class MachineMonitoringSample(Base):
 
     # 0-100, None if it couldn't be computed (e.g. /proc/stat unreadable).
     cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 1/5/15-minute load averages (`/proc/loadavg`) — a count of
+    # runnable+uninterruptible processes, not a percentage; can exceed a
+    # machine's own `cpu_cores`, unlike cpu_percent.
+    load1: Mapped[float | None] = mapped_column(Float, nullable=True)
+    load5: Mapped[float | None] = mapped_column(Float, nullable=True)
+    load15: Mapped[float | None] = mapped_column(Float, nullable=True)
     ram_used_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Stored per-sample (not just read off `Machine.ram_bytes`) so a sample
     # row stays meaningful on its own even if RAM changes (or hasn't been
     # gathered by a facts refresh yet at all).
     ram_total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    # Each a lightweight {"mount": ..., "use_percent": ...} dict — deliberately
-    # not the fuller {mount, size_bytes, used_bytes, avail_bytes} shape
-    # `Machine.filesystems`/facts use, to keep a row taken every couple of
-    # minutes small. The current absolute sizes are still available from the
-    # facts panel; this is for the *trend*.
-    disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Each {"iface": ..., "rx_bytes": ..., "tx_bytes": ...} — cumulative
+    # counters since boot (loopback excluded), one entry per interface
+    # found. The Monitoring tab's graphs compute a rate (bytes/sec) from
+    # the delta between consecutive samples — see
+    # app.services.monitoring_history.
+    network_io: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Each {"device": ..., "read_bytes": ..., "write_bytes": ...} —
+    # cumulative counters since boot, one entry per whole disk found. Disk
+    # *usage* (how full a filesystem is) lives on `Machine.filesystems`
+    # (the Overview tab's Facts panel) instead — this is throughput, a
+    # different question with a different natural cadence.
+    disk_io: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # None = couldn't tell (no `systemctl` — see app.ssh.monitoring), not
     # "zero failed services".
     failed_services_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

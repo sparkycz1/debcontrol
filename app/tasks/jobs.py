@@ -756,9 +756,13 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
                 machine_id=machine.id,
                 sampled_at=now,
                 cpu_percent=sample["cpu_percent"],
+                load1=sample["load1"],
+                load5=sample["load5"],
+                load15=sample["load15"],
                 ram_used_bytes=sample["ram_used_bytes"],
                 ram_total_bytes=sample["ram_total_bytes"],
-                disks=sample["disks"],
+                network_io=sample["network_io"],
+                disk_io=sample["disk_io"],
                 failed_services_count=sample["failed_services_count"],
             )
         )

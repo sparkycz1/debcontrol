@@ -3,12 +3,14 @@ imported from routers without a circular dependency)."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from app.core.config import get_settings
 from app.web.os_logos import badge_for
@@ -69,3 +71,34 @@ def format_uptime(seconds: int | None) -> str:
 templates.env.filters["format_uptime"] = format_uptime
 
 templates.env.filters["os_badge"] = badge_for
+
+
+def iso_list(timestamps: list[datetime]) -> list[str]:
+    """`[t.isoformat() for t in timestamps]` — Jinja's `map` filter can read
+    an attribute but not call a method, so this is the plain way to turn a
+    list of datetimes into JS-parseable strings for `tojson` below (used by
+    the Monitoring tab's hover-chart data attributes)."""
+    return [t.isoformat() for t in timestamps]
+
+
+templates.env.filters["iso_list"] = iso_list
+
+
+def tojson_filter(value: object) -> Markup:
+    """A minimal `tojson`, since plain `jinja2.Environment` (unlike Flask's)
+    doesn't ship one. Escapes the characters that would otherwise break out
+    of an HTML attribute or a `<script>` block — same character set Flask's
+    own `tojson` escapes — so the result is safe to drop straight into a
+    single- or double-quoted attribute, e.g. `data-series='{{ x | tojson }}'`.
+    """
+    raw = json.dumps(value, default=str)
+    escaped = (
+        raw.replace("&", "\\u0026")
+        .replace("'", "\\u0027")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
+    return Markup(escaped)  # noqa: S704 - hand-escaped above, not raw interpolation
+
+
+templates.env.filters["tojson"] = tojson_filter

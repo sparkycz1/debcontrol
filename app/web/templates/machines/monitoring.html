@@ -1,9 +1,15 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 {% from "partials/_services_summary.html" import render as render_services_summary %}
-{% from "macros/charts.html" import percent_sparkline %}
+{% from "macros/charts.html" import trend_chart %}
 
 {% block title %}Monitoring — {{ machine.name }} — debcontrol{% endblock %}
+
+{# Rotating palette for series that don't have one fixed color (Load
+   average's 1/5/15m lines, one line per network interface or disk) — kept
+   here rather than per-metric so every chart on the page draws from the
+   same set and stays visually consistent. #}
+{% set palette = ['#5b8fff', '#46bf8a', '#e0ab4a', '#f0685f', '#a970ff', '#38bdf8', '#f472b6', '#facc15'] %}
 
 {% block content %}
   <div class="page-header">
@@ -42,10 +48,12 @@
       </div>
     {% endif %}
 
+    <p class="hint">Hover (or touch-drag) any chart below to see the value at a point in time.</p>
+
     <section class="panel">
       <h2>CPU</h2>
       {% if history.cpu_percent %}
-        {{ percent_sparkline(history.cpu_percent, '#5b8fff') }}
+        {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_percent}], history.bucket_timestamps, fixed_max=100, unit='%') }}
         <p class="hint">
           Current: {{ '%.1f' % history.latest_cpu_percent if history.latest_cpu_percent is not none else '—' }}%
         </p>
@@ -55,9 +63,31 @@
     </section>
 
     <section class="panel">
+      <h2>Load average</h2>
+      {% if history.load1 %}
+        {{ trend_chart([
+          {'label': '1 min', 'color': palette[0], 'points': history.load1},
+          {'label': '5 min', 'color': palette[1], 'points': history.load5},
+          {'label': '15 min', 'color': palette[2], 'points': history.load15},
+        ], history.bucket_timestamps) }}
+        <p class="hint">
+          Current:
+          {% if history.latest_load1 is not none %}
+            {{ '%.2f' % history.latest_load1 }} / {{ '%.2f' % history.latest_load5 }} / {{ '%.2f' % history.latest_load15 }}
+            (1 / 5 / 15 min — a count of runnable processes, not a percentage; can exceed the machine's core count)
+          {% else %}
+            —
+          {% endif %}
+        </p>
+      {% else %}
+        <p class="hint">No data in this range.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
       <h2>RAM</h2>
       {% if history.ram_percent %}
-        {{ percent_sparkline(history.ram_percent, '#5b8fff') }}
+        {{ trend_chart([{'label': 'RAM', 'color': palette[0], 'points': history.ram_percent}], history.bucket_timestamps, fixed_max=100, unit='%') }}
         <p class="hint">
           Current:
           {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
@@ -74,15 +104,42 @@
     </section>
 
     <section class="panel">
-      <h2>Disk usage</h2>
-      {% if history.disk_percent_by_mount %}
-        {% for mount, series in history.disk_percent_by_mount.items() %}
-          {% set current = (history.latest_disks | selectattr('mount', 'equalto', mount) | first) %}
-          <h3><code>{{ mount }}</code> — {{ current.use_percent if current else '—' }}%</h3>
-          {{ percent_sparkline(series, '#5b8fff', height=60) }}
+      <h2>Network throughput</h2>
+      {% if history.network_rate_by_iface %}
+        {% for iface, series in history.network_rate_by_iface.items() %}
+          {% set current = history.latest_network_io.get(iface) %}
+          <h3><code>{{ iface }}</code></h3>
+          {{ trend_chart([{'label': iface, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, bytes_rate=True) }}
+          <p class="hint">
+            {% if current %}
+              rx {{ '%.1f GB' % (current.rx_bytes / 1073741824) }} / tx {{ '%.1f GB' % (current.tx_bytes / 1073741824) }} total since boot
+            {% else %}
+              —
+            {% endif %}
+          </p>
         {% endfor %}
       {% else %}
-        <p class="hint">No data in this range.</p>
+        <p class="hint">No network interfaces found.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Disk I/O</h2>
+      {% if history.disk_rate_by_device %}
+        {% for device, series in history.disk_rate_by_device.items() %}
+          {% set current = history.latest_disk_io.get(device) %}
+          <h3><code>{{ device }}</code></h3>
+          {{ trend_chart([{'label': device, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, bytes_rate=True) }}
+          <p class="hint">
+            {% if current %}
+              read {{ '%.1f GB' % (current.read_bytes / 1073741824) }} / write {{ '%.1f GB' % (current.write_bytes / 1073741824) }} total since boot
+            {% else %}
+              —
+            {% endif %}
+          </p>
+        {% endfor %}
+      {% else %}
+        <p class="hint">No disks found.</p>
       {% endif %}
     </section>
 
@@ -109,9 +166,13 @@
           &times;
         </button>
       </div>
-      <div id="services-panel">
+      <div id="services-panel" class="modal-body">
         <p class="hint">Loading…</p>
       </div>
     </div>
   </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/monitoring-chart.js" defer></script>
 {% endblock %}

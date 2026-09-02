@@ -74,3 +74,85 @@
     {% endfor %}
   </svg>
 {% endmacro %}
+
+{# The Monitoring tab's interactive chart: one or more series sharing the
+   same X axis (a timestamp per point — see
+   app.services.monitoring_history._bucket_timestamps), with a scrubbable
+   hover readout wired up by static/js/monitoring-chart.js (which finds
+   every `[data-chart]` element and does the rest — this macro only emits
+   markup + data attributes, no inline `<script>`, to keep the CSP simple).
+
+   `series` is a list of `{label, color, values}` dicts, `values` all the
+   same length as `timestamps` and each may contain `None` (a gap, drawn as
+   a polyline break rather than a fake dip to 0 — see `percent_sparkline`
+   above for why). `fixed_max` pins the Y axis to `[0, fixed_max]` (used for
+   percent series); left as `none`, the axis auto-scales to the tightest
+   range that fits every series (used for load average / throughput, which
+   have no natural ceiling). `unit` is a display-only suffix the hover
+   tooltip appends after each formatted number (e.g. " B/s"); pass
+   `bytes_rate=True` instead for throughput series, so the JS formats them
+   as KB/s-MB/s rather than a raw byte count. #}
+{% macro trend_chart(series, timestamps, width=560, height=140, pad=14, fixed_max=none, unit='', bytes_rate=False) %}
+  {% set n = timestamps | length %}
+  {% set step = ((width - 2 * pad) / (n - 1)) if n > 1 else 0 %}
+  {% if fixed_max is not none %}
+    {% set vmin = 0 %}
+    {% set vmax = fixed_max %}
+  {% else %}
+    {% set all_values = [] %}
+    {% for s in series %}
+      {% for v in s.points %}
+        {% if v is not none %}{% set _ = all_values.append(v) %}{% endif %}
+      {% endfor %}
+    {% endfor %}
+    {% set vmin = 0 %}
+    {% set vmax = (all_values | max) if all_values else 1 %}
+  {% endif %}
+  {% set vrange = (vmax - vmin) if vmax != vmin else 1 %}
+  <div class="trend-chart-wrap" data-chart
+       data-unit="{{ unit }}" data-bytes-rate="{{ 'true' if bytes_rate else 'false' }}"
+       data-timestamps='{{ timestamps | iso_list | tojson }}'
+       data-series='{{ series | map(attribute="points") | list | tojson }}'
+       data-labels='{{ series | map(attribute="label") | list | tojson }}'>
+    <svg viewBox="0 0 {{ width }} {{ height }}" width="100%" height="{{ height }}"
+         preserveAspectRatio="none" role="img" aria-label="Interactive trend chart"
+         class="trend-chart-svg">
+      {% for s in series %}
+        {% set segments = [] %}
+        {% set current = [] %}
+        {% for v in s.points %}
+          {% if v is none %}
+            {% if current %}
+              {% set _ = segments.append(current | join(' ')) %}
+              {% set current = [] %}
+            {% endif %}
+          {% else %}
+            {% set x = pad + loop.index0 * step %}
+            {% set y = height - pad - (([[v, vmin] | max, vmax] | min) - vmin) / vrange * (height - 2 * pad) %}
+            {% set _ = current.append((x | round(1) | string) ~ "," ~ (y | round(1) | string)) %}
+          {% endif %}
+        {% endfor %}
+        {% if current %}{% set _ = segments.append(current | join(' ')) %}{% endif %}
+        {% for segment in segments %}
+          <polyline fill="none" stroke="{{ s.color }}" stroke-width="2"
+                    stroke-linejoin="round" stroke-linecap="round"
+                    points="{{ segment }}"></polyline>
+        {% endfor %}
+      {% endfor %}
+      <line class="trend-chart-cursor" x1="0" y1="0" x2="0" y2="{{ height }}" hidden></line>
+    </svg>
+    <div class="trend-chart-tooltip" hidden></div>
+    {% if series | length > 1 %}
+      <div class="trend-chart-legend">
+        {% for s in series %}
+          <span class="trend-chart-legend-item">
+            <svg class="trend-chart-swatch" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+              <rect width="10" height="10" rx="2" fill="{{ s.color }}"></rect>
+            </svg>
+            {{ s.label }}
+          </span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+{% endmacro %}

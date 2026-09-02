@@ -1,13 +1,17 @@
-"""Gather one CPU/RAM/disk-usage sample from a managed machine — the
+"""Gather one CPU/RAM/network/disk-I/O sample from a managed machine — the
 Monitoring tab's trend graphs. Read-only, no root needed for any of it
 (same convention as `app.ssh.facts`).
 
 Deliberately its own, much lighter, round trip than `app.ssh.facts` — this
 runs on a much shorter cadence (`MONITORING_INTERVAL_SECONDS`, 2 minutes by
-default, vs. facts' 1 hour), so it only gathers what a frequent sample
-actually needs: CPU/RAM/disk usage right now, plus a cheap *count* of
-failed systemd services (the full unit list is `app.ssh.services`, on the
-facts cadence instead — see that module's own docstring for why).
+default, vs. facts' default 10 minutes), so it only gathers what a
+frequent sample actually needs: CPU/load/RAM/network/disk-I/O right now,
+plus a cheap *count* of failed systemd services (the full unit list is
+`app.ssh.services`, on the facts cadence instead — see that module's own
+docstring for why). Disk *usage* percent (how full a filesystem is) is
+deliberately not gathered here — that changes slowly and already has its
+own home on the Overview tab's Facts panel (`app.ssh.facts`); this module
+is about what's changing *right now* (throughput, load), not capacity.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from typing import Any, TypedDict
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
 
-_SECTION_MARKERS = ("CPU", "RAM_KB", "DISKS", "FAILED_SERVICES")
+_SECTION_MARKERS = ("CPU", "LOAD", "RAM_KB", "NET", "DISKIO", "FAILED_SERVICES")
 
 # CPU percent needs two samples of /proc/stat a moment apart — computed
 # entirely in the one round trip (a 1-second `sleep`) rather than as two
@@ -26,6 +30,21 @@ _SECTION_MARKERS = ("CPU", "RAM_KB", "DISKS", "FAILED_SERVICES")
 # second longer than a plain connect. POSIX `read` (works in `sh`/`dash`,
 # Debian's default `/bin/sh`) splits the line into the named fields;
 # `awk` does the float-safe percentage math `sh` arithmetic can't.
+#
+# NET: `/proc/net/dev`'s own column layout — `face: rx_bytes rx_packets
+# rx_errs rx_drop rx_fifo rx_frame rx_compressed rx_multicast tx_bytes
+# ...` (checked against the kernel's own documented format, not assumed).
+# `lo` is skipped — loopback traffic isn't "network" for monitoring
+# purposes. Cumulative counters since boot, same shape a Prometheus-style
+# collector would report — the *rate* (bytes/sec) is computed later from
+# consecutive samples (`app.services.monitoring_history`), not here.
+#
+# DISKIO: `/proc/diskstats`'s `sectors_read`/`sectors_written` columns
+# (fields 6 and 10; 512-byte sectors, the kernel's own fixed unit
+# regardless of the device's real block size) filtered down to whole
+# disks only (via `lsblk -d`, the same tool `app.ssh.facts` already uses
+# for this) — a partition's numbers would otherwise double-count against
+# its parent disk's.
 MONITORING_COMMAND = (
     "echo ===CPU===; "
     "{ read -r _ u1 n1 s1 i1 w1 irq1 sirq1 _ < /proc/stat; "
@@ -41,13 +60,20 @@ MONITORING_COMMAND = (
     "if (td > 0) printf \"%.1f\\n\", (td-idled)*100/td; "
     "}'; "
     "} 2>/dev/null; "
+    "echo ===LOAD===; "
+    "awk '{print $1, $2, $3}' /proc/loadavg 2>/dev/null; "
     "echo ===RAM_KB===; "
     "awk '/MemTotal/ {total=$2} /MemAvailable/ {avail=$2} "
     "END { if (total > 0) printf \"%d %d\\n\", total, total-avail }' "
     "/proc/meminfo 2>/dev/null; "
-    "echo ===DISKS===; "
-    "df -B1 --output=target,pcent -x tmpfs -x devtmpfs -x squashfs -x overlay "
-    "2>/dev/null | tail -n +2; "
+    "echo ===NET===; "
+    "awk 'NR>2 {gsub(\":\", \"\", $1); if ($1 != \"lo\") print $1, $2, $10}' "
+    "/proc/net/dev 2>/dev/null; "
+    "echo ===DISKIO===; "
+    "disks=\"$(lsblk -d -n -o NAME 2>/dev/null)\"; "
+    "awk -v disks=\"$disks\" 'BEGIN { n = split(disks, arr, \" \"); "
+    "for (i = 1; i <= n; i++) want[arr[i]] = 1 } "
+    "$3 in want { print $3, $6*512, $10*512 }' /proc/diskstats 2>/dev/null; "
     "echo ===FAILED_SERVICES===; "
     "if command -v systemctl >/dev/null 2>&1; then "
     "systemctl --failed --plain --no-legend --no-pager 2>/dev/null | wc -l; "
@@ -57,9 +83,20 @@ MONITORING_COMMAND = (
 
 class MonitoringSample(TypedDict):
     cpu_percent: float | None
+    # 1/5/15-minute load averages (`/proc/loadavg`) — a count of
+    # runnable+uninterruptible processes, not a percentage; can exceed
+    # `cpu_cores` under real contention, unlike cpu_percent.
+    load1: float | None
+    load5: float | None
+    load15: float | None
     ram_used_bytes: int | None
     ram_total_bytes: int | None
-    disks: list[dict[str, Any]]
+    # Each {"iface": ..., "rx_bytes": ..., "tx_bytes": ...} — cumulative
+    # counters since boot, one entry per non-loopback interface found.
+    network_io: list[dict[str, Any]]
+    # Each {"device": ..., "read_bytes": ..., "write_bytes": ...} —
+    # cumulative counters since boot, one entry per whole disk found.
+    disk_io: list[dict[str, Any]]
     # None = couldn't tell (no systemd), not "zero failed".
     failed_services_count: int | None
 
@@ -74,6 +111,10 @@ def _split_sections(raw: str) -> dict[str, str]:
 _FLOAT_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 
+def _parse_float(value: str) -> float | None:
+    return float(value) if _FLOAT_RE.match(value) else None
+
+
 def parse_monitoring_output(raw: str) -> MonitoringSample:
     """Parse `MONITORING_COMMAND`'s output. Pure function, no I/O — kept
     separate from `gather_monitoring_sample` so it can be unit-tested
@@ -81,10 +122,12 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
     parse_facts_output`."""
     sections = _split_sections(raw)
 
-    cpu_percent: float | None = None
-    cpu_line = sections.get("CPU", "")
-    if _FLOAT_RE.match(cpu_line):
-        cpu_percent = float(cpu_line)
+    cpu_percent = _parse_float(sections.get("CPU", ""))
+
+    load1 = load5 = load15 = None
+    load_fields = sections.get("LOAD", "").split()
+    if len(load_fields) == 3:
+        load1, load5, load15 = (_parse_float(f) for f in load_fields)
 
     ram_used_bytes: int | None = None
     ram_total_bytes: int | None = None
@@ -94,15 +137,21 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
         ram_total_bytes = total_kb * 1024
         ram_used_bytes = used_kb * 1024
 
-    disks: list[dict[str, Any]] = []
-    for line in sections.get("DISKS", "").splitlines():
+    network_io: list[dict[str, Any]] = []
+    for line in sections.get("NET", "").splitlines():
         fields = line.split()
-        if len(fields) < 2:
-            continue
-        pcent = fields[-1]
-        mount = " ".join(fields[:-1])
-        if pcent.rstrip("%").isdigit():
-            disks.append({"mount": mount, "use_percent": int(pcent.rstrip("%"))})
+        if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
+            network_io.append(
+                {"iface": fields[0], "rx_bytes": int(fields[1]), "tx_bytes": int(fields[2])}
+            )
+
+    disk_io: list[dict[str, Any]] = []
+    for line in sections.get("DISKIO", "").splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
+            disk_io.append(
+                {"device": fields[0], "read_bytes": int(fields[1]), "write_bytes": int(fields[2])}
+            )
 
     failed_services_count: int | None = None
     failed_line = sections.get("FAILED_SERVICES", "")
@@ -111,9 +160,13 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
 
     return MonitoringSample(
         cpu_percent=cpu_percent,
+        load1=load1,
+        load5=load5,
+        load15=load15,
         ram_used_bytes=ram_used_bytes,
         ram_total_bytes=ram_total_bytes,
-        disks=disks,
+        network_io=network_io,
+        disk_io=disk_io,
         failed_services_count=failed_services_count,
     )
 
@@ -121,11 +174,11 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
 async def gather_monitoring_sample(
     machine: Machine, secret: str | None, timeout_seconds: int
 ) -> MonitoringSample:
-    """Connect to a machine and take one CPU/RAM/disk/failed-services
-    sample. Requires a pinned host key. `timeout_seconds` should comfortably
-    exceed the `sleep 1` baked into `MONITORING_COMMAND` — the same
-    `ssh_connect_timeout` every other SSH round trip in this app uses is
-    already well above 1 second."""
+    """Connect to a machine and take one CPU/load/RAM/network/disk-I/O/
+    failed-services sample. Requires a pinned host key. `timeout_seconds`
+    should comfortably exceed the `sleep 1` baked into `MONITORING_COMMAND`
+    — the same `ssh_connect_timeout` every other SSH round trip in this
+    app uses is already well above 1 second."""
     async with await open_connection(machine, secret, timeout_seconds) as conn:
         result = await conn.run(MONITORING_COMMAND, check=False, timeout=timeout_seconds)
 
