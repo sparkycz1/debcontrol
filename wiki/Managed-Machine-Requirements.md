@@ -246,6 +246,28 @@ The [Ansible playbook](Ansible-Onboarding.md) (and the web UI's
 equivalent, **Run initial setup** — see that same page) installs it
 automatically, best-effort.
 
+## 📜 Logs
+
+**Machines → a machine → Logs** — gated behind the same `action.terminal`
+permission as the interactive terminal above (see that permission's own
+docstring in `app/db/models/role.py` for why: reading journal/log content
+is a materially different trust level than a plain fact, even though it
+needs no root, and this app doesn't grant it any capability the terminal
+didn't already have).
+
+- **The systemd journal** (the default view) needs no root — `journalctl`
+  is readable by any account in the `systemd-journal`/`adm` group, which
+  covers the default `debconrol` onboarding account and most distributions'
+  default interactive-user setup. If the connecting account genuinely can't
+  read the journal, the tab reports that plainly rather than silently
+  showing nothing.
+- **Viewing a specific file** is restricted to a configurable allowlist of
+  path prefixes (`LOG_FILE_ALLOWED_PATHS`, default `/var/log,/var/lib/
+  docker/containers`) — a scope guardrail in the app's own UI, not a
+  permission the connecting SSH account needs; whatever that account can
+  already read via `tail`/`grep` at a shell prompt is what this can show,
+  same "no new capability beyond the terminal" reasoning as above.
+
 ## Self-registration (optional, for future automation)
 
 A machine can announce itself to debcontrol during first boot /

@@ -660,6 +660,11 @@ pre {
 
 pre code { background: none; padding: 0; }
 
+/* The Logs tab's journal/file output — can run to thousands of lines
+   (up to MAX_LINE_LIMIT), so it scrolls in place rather than growing the
+   whole page. */
+.log-output { max-height: 32rem; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+
 details {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);

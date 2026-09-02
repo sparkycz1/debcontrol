@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}Logs — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  {% if error %}
+    <div class="alert alert-error">
+      <p>{{ error }}</p>
+    </div>
+  {% endif %}
+
+  <form method="get" action="/machines/{{ machine.id }}/logs" class="search-form">
+    <input type="search" name="search" value="{{ search }}" placeholder="Search...">
+    <input type="number" name="lines" value="{{ lines }}" min="1" max="5000" title="Lines" style="width: 6em">
+    {% if not path %}
+      <input type="text" name="since" value="{{ since }}" placeholder="Since (e.g. -1h, yesterday)">
+      <input type="text" name="until" value="{{ until }}" placeholder="Until">
+    {% endif %}
+    <input type="hidden" name="path" value="{{ path }}">
+    <button type="submit" class="button">
+      {{ 'View file' if path else 'View journal' }}
+    </button>
+    {% if path %}
+      <a class="button button-secondary" href="/machines/{{ machine.id }}/logs">Back to journal</a>
+    {% endif %}
+  </form>
+
+  <details class="form-advanced">
+    <summary>View a specific file instead</summary>
+    <p class="hint">
+      Restricted to: {% for prefix in allowed_paths %}<code>{{ prefix }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+      (configurable via <code>LOG_FILE_ALLOWED_PATHS</code>).
+    </p>
+    <form method="get" action="/machines/{{ machine.id }}/logs" class="search-form">
+      <input type="text" name="path" placeholder="/var/log/nginx/access.log" value="{{ path }}" style="min-width: 24em">
+      <input type="hidden" name="lines" value="{{ lines }}">
+      <button type="submit" class="button">Open</button>
+    </form>
+  </details>
+
+  {% if output is not none %}
+    <pre class="log-output">{{ output if output else '(no output)' }}</pre>
+  {% endif %}
+{% endblock %}

@@ -52,6 +52,7 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.identity import get_or_create_identity
+from app.ssh.logs import LogAccessError, view_file, view_journal
 from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
@@ -160,6 +161,90 @@ async def _run_remote_ssh_command(machine_id: str, command: str) -> dict[str, An
 )
 def run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
     return asyncio.run(_run_remote_ssh_command(machine_id, command))
+
+
+async def _view_machine_journal(
+    machine_id: str, *, lines: int, search: str, since: str, until: str
+) -> dict[str, Any]:
+    """The Logs tab's default view — no persistence, a fresh read-only SSH
+    round trip every time (see `app.ssh.logs`'s module docstring for the
+    permission-tier reasoning)."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            output = await view_journal(
+                machine,
+                secret,
+                settings.ssh_connect_timeout,
+                lines=lines,
+                search=search,
+                since=since,
+                until=until,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("view_machine_journal failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "output": output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.view_machine_journal",
+    time_limit=get_settings().ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+)
+def view_machine_journal(
+    machine_id: str, *, lines: int, search: str, since: str, until: str
+) -> dict[str, Any]:
+    return asyncio.run(
+        _view_machine_journal(machine_id, lines=lines, search=search, since=since, until=until)
+    )
+
+
+async def _view_machine_log_file(
+    machine_id: str, *, path: str, lines: int, search: str
+) -> dict[str, Any]:
+    """The Logs tab's "view a file" mode — restricted to `LOG_FILE_ALLOWED_
+    PATHS`, checked inside `view_file` itself (never reaches the machine at
+    all for a disallowed path)."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            output = await view_file(
+                machine, secret, settings.ssh_connect_timeout, path=path, lines=lines, search=search
+            )
+        except LogAccessError as exc:
+            return {"ok": False, "error": str(exc)}
+        except SSHConnectionError as exc:
+            logger.warning("view_machine_log_file failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "output": output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.view_machine_log_file",
+    time_limit=get_settings().ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+)
+def view_machine_log_file(machine_id: str, *, path: str, lines: int, search: str) -> dict[str, Any]:
+    return asyncio.run(_view_machine_log_file(machine_id, path=path, lines=lines, search=search))
 
 
 async def _push_pending_ssh_key(machine_id: str) -> dict[str, Any]:

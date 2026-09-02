@@ -52,6 +52,7 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
@@ -1873,6 +1874,102 @@ async def terminal_page(
             "active_tab": "terminal",
         },
     )
+
+
+@router.get("/{machine_id}/logs", dependencies=[_terminal])
+async def machine_logs(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    path: str = "",
+    lines: int = ssh_logs.DEFAULT_LINE_LIMIT,
+    search: str = "",
+    since: str = "",
+    until: str = "",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The Logs tab — journal by default, or one allowed file when `path`
+    is given. A live SSH round trip on every load/filter change, same
+    "gated behind `action.terminal`, not `machine.view`" reasoning
+    `app.ssh.logs`'s module docstring lays out; see that module for the
+    command-building and path-restriction logic itself. Audited (which
+    machine, journal-vs-file, search term) the same way "Refresh packages
+    now"/"Test connection" are — not the returned log content itself,
+    which is never stored anywhere in this app."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    output: str | None = None
+    error: str | None = None
+    if not machine.host_key_fingerprint:
+        error = "Confirm the server's key fingerprint on the Overview tab first."
+    else:
+        clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
+        try:
+            if path.strip():
+                async_result = tasks.view_machine_log_file.delay(
+                    str(machine.id), path=path.strip(), lines=clamped_lines, search=search
+                )
+            else:
+                async_result = tasks.view_machine_journal.delay(
+                    str(machine.id),
+                    lines=clamped_lines,
+                    search=search,
+                    since=since,
+                    until=until,
+                )
+            result = await asyncio.to_thread(
+                async_result.get, timeout=settings.ssh_connect_timeout + 15
+            )
+            if isinstance(result, dict):
+                if result.get("ok"):
+                    output = str(result.get("output") or "")
+                else:
+                    error = str(result.get("error") or "Unknown error.")
+        except CeleryTimeoutError:
+            error = "The command did not finish in time."
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            error = str(exc)
+
+        await log_event(
+            db,
+            request=request,
+            action="machine.logs.view",
+            summary=(
+                f'Viewed log file "{path.strip()}" on "{machine.name}"'
+                if path.strip()
+                else f'Viewed journal on "{machine.name}"'
+            ),
+            outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details={"search": search} if search.strip() else None,
+        )
+
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/logs.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "logs",
+            "csrf_token": csrf_token,
+            "output": output,
+            "error": error,
+            "path": path,
+            "lines": lines,
+            "search": search,
+            "since": since,
+            "until": until,
+            "default_lines": ssh_logs.DEFAULT_LINE_LIMIT,
+            "allowed_paths": settings.log_file_allowed_path_list,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
 
 
 @router.get("/{machine_id}/power")

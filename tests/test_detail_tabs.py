@@ -43,6 +43,7 @@ async def test_machine_pages_all_show_the_same_tabs(client, db_session_factory):
         "monitoring": f"/machines/{machine_id}/monitoring",
         "updates": f"/machines/{machine_id}/updates",
         "terminal": f"/machines/{machine_id}/terminal",
+        "logs": f"/machines/{machine_id}/logs",
         "power": f"/machines/{machine_id}/power",
         "settings": f"/machines/{machine_id}/edit",
     }
