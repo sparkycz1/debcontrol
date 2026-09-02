@@ -86,3 +86,23 @@
       <button type="submit" class="button">Save</button>
     </form>
   </section>
+
+  <section class="panel">
+    <h2>Monitoring history</h2>
+    <p class="hint">
+      A CPU/RAM/disk-usage sample is stored for every machine on the
+      Monitoring tab's own cadence (<code>MONITORING_INTERVAL_SECONDS</code>,
+      2 minutes by default) — this only controls how long those samples are
+      kept, not how often they're taken. A single machine can override this
+      instance-wide default on its own Settings tab.
+    </p>
+    <form method="post" action="/settings/monitoring-retention" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="monitoring_history_retention_days">Keep monitoring history for (days)</label>
+      <input type="number" id="monitoring_history_retention_days" name="retention_days" min="0" step="1"
+             placeholder="forever"
+             value="{{ app_settings.monitoring_history_retention_days if app_settings.monitoring_history_retention_days is not none else '' }}">
+      <p class="hint">Leave empty to keep every sample forever. Defaults to 90 days.</p>
+      <button type="submit" class="button">Save</button>
+    </form>
+  </section>

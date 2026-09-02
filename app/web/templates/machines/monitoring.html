@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+{% from "partials/_services_summary.html" import render as render_services_summary %}
+{% from "macros/charts.html" import percent_sparkline %}
+
+{% block title %}Monitoring — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  {% if not machine.monitoring_updated_at %}
+    <section class="panel">
+      <p class="hint">
+        Not gathered yet — this happens automatically once the host key
+        fingerprint is confirmed on the Overview tab, and refreshes
+        periodically after that (every {{ machine.monitoring_interval_seconds or 'the instance default' }}
+        {{ 'seconds' if machine.monitoring_interval_seconds }}).
+      </p>
+    </section>
+  {% else %}
+    <form method="get" action="/machines/{{ machine.id }}/monitoring" class="search-form">
+      <select name="range_key" onchange="this.form.submit()">
+        {% for key, label, _delta in time_ranges %}
+          <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="button">Apply</button></noscript>
+    </form>
+
+    {% if history.truncated %}
+      <div class="alert alert-warn">
+        <p>
+          This machine has more samples in this window than can be shown at
+          once — the graphs below cover the most recent
+          {{ history.sample_count }} samples rather than the full range.
+          Pick a shorter range, or shorten the retention window in Settings.
+        </p>
+      </div>
+    {% endif %}
+
+    <section class="panel">
+      <h2>CPU</h2>
+      {% if history.cpu_percent %}
+        {{ percent_sparkline(history.cpu_percent, '#5b8fff') }}
+        <p class="hint">
+          Current: {{ '%.1f' % history.latest_cpu_percent if history.latest_cpu_percent is not none else '—' }}%
+        </p>
+      {% else %}
+        <p class="hint">No data in this range.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>RAM</h2>
+      {% if history.ram_percent %}
+        {{ percent_sparkline(history.ram_percent, '#5b8fff') }}
+        <p class="hint">
+          Current:
+          {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
+            {{ '%.1f GB' % (history.latest_ram_used_bytes / 1073741824) }} /
+            {{ '%.1f GB' % (history.latest_ram_total_bytes / 1073741824) }}
+            ({{ '%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100) }}%)
+          {% else %}
+            —
+          {% endif %}
+        </p>
+      {% else %}
+        <p class="hint">No data in this range.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Disk usage</h2>
+      {% if history.disk_percent_by_mount %}
+        {% for mount, series in history.disk_percent_by_mount.items() %}
+          {% set current = (history.latest_disks | selectattr('mount', 'equalto', mount) | first) %}
+          <h3><code>{{ mount }}</code> — {{ current.use_percent if current else '—' }}%</h3>
+          {{ percent_sparkline(series, '#5b8fff', height=60) }}
+        {% endfor %}
+      {% else %}
+        <p class="hint">No data in this range.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      {{ render_services_summary(machine, service_counts, poll=True) }}
+    </section>
+
+    <p class="hint">
+      Last sample {{ machine.monitoring_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
+    </p>
+  {% endif %}
+
+  <div id="services-modal" popover class="modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">Services — {{ machine.name }}</h2>
+        <button
+          type="button"
+          class="modal-close"
+          popovertarget="services-modal"
+          popovertargetaction="hide"
+          aria-label="Close"
+        >
+          &times;
+        </button>
+      </div>
+      <div id="services-panel">
+        <p class="hint">Loading…</p>
+      </div>
+    </div>
+  </div>
+{% endblock %}

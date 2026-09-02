@@ -22,24 +22,27 @@ working at once, needs the knobs below actually turned.
 ## 📊 Quick reference
 
 Rough sizing for the whole stack (all services combined) at a few fleet
-sizes, assuming default sweep intervals (facts/packages/update-check every
-hour, reachability every minute) and a handful of concurrent admins. Treat
-these as a starting point, not a guarantee — the "how to compute this
-yourself" section below explains where the numbers come from so you can
-adjust for your own intervals/usage.
+sizes, assuming default sweep intervals (facts/packages/services/update-
+check every hour, monitoring every 2 minutes, reachability every minute)
+and a handful of concurrent admins. Treat these as a starting point, not a
+guarantee — the "how to compute this yourself" section below explains
+where the numbers come from so you can adjust for your own
+intervals/usage.
 
-| Fleet size | vCPU | RAM | Postgres storage (1 year) | Notes |
+| Fleet size | vCPU | RAM | Postgres storage (retention windows below) | Notes |
 |---|---|---|---|---|
-| Up to 100 | 2 | 4 GB | \< 1 GB | Defaults are fine everywhere. |
-| 100–500 | 4 | 8 GB | 1–3 GB | Raise `DB_POOL_SIZE`/`DB_MAX_OVERFLOW`; defaults elsewhere still OK. |
-| 500–1,500 | 4–8 | 8–16 GB | 3–8 GB | Raise `REACHABILITY_CHECK_CONCURRENCY`; consider a second `worker` replica; raise Postgres `max_connections`. |
-| 1,500–5,000+ | 8–16 | 16–32 GB | 8–25 GB+ | All of the above, plus: dedicated Postgres tuning (below), multiple `worker` replicas, and a closer look at update-run retention (below) if updates run often. |
+| Up to 100 | 2 | 4 GB | 1–2 GB | Defaults are fine everywhere. |
+| 100–500 | 4 | 8 GB | 5–8 GB | Raise `DB_POOL_SIZE`/`DB_MAX_OVERFLOW`; defaults elsewhere still OK. |
+| 500–1,500 | 4–8 | 8–16 GB | 15–22 GB | Raise `REACHABILITY_CHECK_CONCURRENCY`; consider a second `worker` replica; raise Postgres `max_connections`. |
+| 1,500–5,000+ | 8–16 | 16–32 GB | 50–70 GB+ | All of the above, plus: dedicated Postgres tuning (below), multiple `worker` replicas, and a closer look at monitoring/update-run retention (below) — monitoring history is the dominant contributor to storage at this scale. |
 
-"Postgres storage" above assumes the default 90-day retention on dashboard
-trends and update-run history and no retention cap on the audit log (the
-audit log's own growth depends on admin/API activity, not fleet size, and
-is bounded by `Settings → Security → Audit log`'s own retention setting if
-you set one).
+"Postgres storage" above assumes the default 90-day retention on
+monitoring history, dashboard trends, and update-run history, and no
+retention cap on the audit log (the audit log's own growth depends on
+admin/API activity, not fleet size, and is bounded by `Settings →
+Security → Audit log`'s own retention setting if you set one). Monitoring
+history (see "Disk growth" below) is by far the largest of these at any
+real fleet size — shorten its retention first if storage is tight.
 
 ## 🧮 How to compute this yourself
 
@@ -74,15 +77,23 @@ safety margin → `concurrency ≥ 2000 × 10 / (60 × 2) ≈ 167`. Round up and
 
 ### 2. Worker throughput must keep up with the fan-out sweeps
 
-`refresh_all_machine_facts`, `refresh_all_machine_packages`, and
-`check_all_machine_updates` each enqueue one Celery task **per machine**,
-every `FACTS_REFRESH_INTERVAL_SECONDS` (default 3600s) — three SSH round
-trips per machine per interval, fanned out rather than awaited inline (see
+`refresh_all_machine_facts`, `refresh_all_machine_packages`,
+`refresh_all_machine_services`, and `check_all_machine_updates` each
+enqueue one Celery task **per machine**, every
+`FACTS_REFRESH_INTERVAL_SECONDS` (default 3600s) — four SSH round trips per
+machine per interval, fanned out rather than awaited inline (see
 [Architecture](Architecture.md#background-tasks-celery-and-celery-beat)),
-so one slow/unreachable machine never holds up the rest.
+so one slow/unreachable machine never holds up the rest. `monitor_all_
+machines` is the same idea on its own, much shorter cadence
+(`MONITORING_INTERVAL_SECONDS`, default 120s) — a fifth, lighter round
+trip (see that task's own `MONITORING_COMMAND`, a `sleep 1` plus a few
+cheap reads, versus facts/packages' several commands) that, because it
+ticks so much more often, is usually the *larger* contributor to total
+worker load at fleet scale even though each individual task is cheaper.
 
 ```
-tasks per hour ≈ 3 × machine_count × (3600 / FACTS_REFRESH_INTERVAL_SECONDS)
+tasks per hour ≈ 4 × machine_count × (3600 / FACTS_REFRESH_INTERVAL_SECONDS)
+                + machine_count × (3600 / MONITORING_INTERVAL_SECONDS)
 worker capacity per hour ≈ (worker replicas × --concurrency) × (3600 / avg_task_seconds)
 ```
 
@@ -178,6 +189,20 @@ regardless of fleet size.
   2.6 GB at 1,000 machines, 13 GB at 5,000. Real output is usually far
   smaller than the 200KB cap, but plan for the cap if you can't predict how
   chatty a given fleet's apt runs will be.
+
+- **`machine_monitoring_samples`** — the Monitoring tab's CPU/RAM/disk
+  history, unlike the two above genuinely a history (one row appended per
+  machine per `MONITORING_INTERVAL_SECONDS` tick, 2 minutes by default —
+  ~720 rows/machine/day), not a replaced snapshot. At ~150 bytes/row this
+  is the fastest-growing table by far without its retention setting
+  (`Settings → Security → Monitoring history`, defaults to 90 days, also
+  overridable per machine): `machine_count × 720/day × 150 bytes × retention_days`
+  — roughly 1 GB/day per 10,000 machines at the default settings, so 90
+  GB at the 90-day default retention. Shorten the interval's *retention*
+  (not the sample interval itself, which trades off against how fine-
+  grained the trend graphs are) first if this table is the one growing
+  fastest for you; `machine_services` (a replaced snapshot, refreshed on
+  the facts cadence like `machine_packages`) stays small by comparison.
 
 The audit log is hash-chained and append-only by design (tampering breaks
 the chain from that point on — see

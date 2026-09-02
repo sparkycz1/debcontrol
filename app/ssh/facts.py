@@ -17,6 +17,7 @@ from app.ssh.client import open_connection
 _SECTION_MARKERS = (
     "HOSTNAME",
     "OS",
+    "OS_ID",
     "KERNEL",
     "KERNEL_LATEST",
     "ARCH",
@@ -37,6 +38,15 @@ FACTS_COMMAND = (
     "echo ===HOSTNAME===; hostname 2>/dev/null; "
     "echo ===OS===; "
     "(grep -m1 '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"'); "
+    # `ID=` (e.g. "debian", "ubuntu", "linuxmint") rather than PRETTY_NAME
+    # above — machine-readable, meant to be matched against a logo lookup
+    # table (app.web.os_logos), not read by a human. Proxmox VE is Debian
+    # underneath and doesn't override /etc/os-release at all (`ID=debian`
+    # there too) — its own marker is `/etc/pve` (the cluster filesystem
+    # mount) or the `pveversion` command, checked first and given priority.
+    "echo ===OS_ID===; "
+    "if [ -d /etc/pve ] || command -v pveversion >/dev/null 2>&1; then echo proxmox; "
+    "else (grep -m1 '^ID=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"'); fi; "
     "echo ===KERNEL===; uname -r 2>/dev/null; "
     "echo ===KERNEL_LATEST===; "
     "dpkg --list 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' "
@@ -72,6 +82,7 @@ FACTS_COMMAND = (
 class MachineFacts(TypedDict):
     hostname: str | None
     os_version: str | None
+    os_id: str | None
     kernel_version: str | None
     cpu_architecture: str | None
     cpu_cores: int | None
@@ -175,6 +186,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
     return MachineFacts(
         hostname=sections.get("HOSTNAME") or None,
         os_version=sections.get("OS") or None,
+        os_id=(sections.get("OS_ID") or "").lower() or None,
         kernel_version=kernel_version,
         cpu_architecture=sections.get("ARCH") or None,
         cpu_cores=cpu_cores,

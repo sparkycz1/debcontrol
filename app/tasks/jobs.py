@@ -41,7 +41,9 @@ from app.db import session as db_session
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
+from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.services.fleet_stats import compute_fleet_stats
 from app.ssh.client import test_connection
@@ -50,10 +52,12 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.identity import get_or_create_identity
+from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
+from app.ssh.services import gather_services
 from app.ssh.updates import check_updates, preview_update, run_system_update
 from app.tasks.celery_app import celery_app
 
@@ -398,6 +402,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
 
         machine.discovered_hostname = facts["hostname"]
         machine.os_version = facts["os_version"]
+        machine.os_id = facts["os_id"]
         machine.kernel_version = facts["kernel_version"]
         machine.cpu_architecture = facts["cpu_architecture"]
         machine.cpu_cores = facts["cpu_cores"]
@@ -519,6 +524,212 @@ async def _refresh_all_machine_packages() -> None:
 
     for machine_id in machine_ids:
         refresh_machine_packages.delay(str(machine_id))
+
+
+async def _refresh_machine_services(machine_id: str) -> dict[str, Any]:
+    """Connect to one machine and refresh its systemd service-unit
+    snapshot. Requires a pinned host key — machines without one are
+    skipped. Same delete-then-bulk-insert replace as
+    `_refresh_machine_packages`, and the same reasoning: a snapshot of
+    "what's running right now," not a history of state changes."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            services = await gather_services(machine, secret, settings.ssh_connect_timeout)
+        except SSHConnectionError as exc:
+            logger.warning("refresh_machine_services failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        await session.execute(
+            delete(MachineService).where(MachineService.machine_id == machine.id)
+        )
+        session.add_all(
+            MachineService(
+                machine_id=machine.id,
+                unit=entry["unit"][:255],
+                load_state=entry["load_state"][:32],
+                active_state=entry["active_state"][:32],
+                sub_state=entry["sub_state"][:32],
+                description=entry["description"][:500],
+            )
+            for entry in services
+        )
+        machine.services_updated_at = datetime.now(UTC)
+        await session.commit()
+
+        return {"ok": True, "service_count": len(services)}
+
+
+@celery_app.task(name="app.tasks.jobs.refresh_machine_services")
+def refresh_machine_services(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_refresh_machine_services(machine_id))
+
+
+async def _refresh_all_machine_services() -> None:
+    """Periodic sweep scheduling a service-list refresh for every machine
+    with a pinned host key — same fan-out pattern and cadence
+    (`FACTS_REFRESH_INTERVAL_SECONDS`) as `_refresh_all_machine_packages`."""
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
+        )
+        machine_ids = [row[0] for row in result.all()]
+
+    for machine_id in machine_ids:
+        refresh_machine_services.delay(str(machine_id))
+
+
+async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
+    """Connect to one machine and take one CPU/RAM/disk/failed-services
+    sample for the Monitoring tab. Requires a pinned host key — machines
+    without one are skipped. Unlike facts/packages/services, this *appends*
+    a new row rather than replacing a snapshot — it's a history, purged
+    separately by `purge_old_monitoring_samples`."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            sample = await gather_monitoring_sample(
+                machine, secret, settings.ssh_connect_timeout
+            )
+        except SSHConnectionError as exc:
+            logger.warning("sample_machine_monitoring failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        now = datetime.now(UTC)
+        session.add(
+            MachineMonitoringSample(
+                machine_id=machine.id,
+                sampled_at=now,
+                cpu_percent=sample["cpu_percent"],
+                ram_used_bytes=sample["ram_used_bytes"],
+                ram_total_bytes=sample["ram_total_bytes"],
+                disks=sample["disks"],
+                failed_services_count=sample["failed_services_count"],
+            )
+        )
+        machine.monitoring_updated_at = now
+        await session.commit()
+
+        return {"ok": True}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.sample_machine_monitoring",
+    # The `sleep 1` baked into MONITORING_COMMAND plus normal SSH connect
+    # overhead — comfortably under a minute even for a slow/distant host.
+    time_limit=get_settings().ssh_connect_timeout + 30,
+)
+def sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_sample_machine_monitoring(machine_id))
+
+
+async def _monitor_all_machines() -> None:
+    """Periodic sweep scheduling a monitoring sample for every machine with
+    a pinned host key, minus whichever aren't due yet under their own
+    `Machine.monitoring_interval_seconds` override (see `_due_machines`) —
+    same fan-out-only pattern as the other sweeps, cadence owned by Celery
+    Beat (`MONITORING_INTERVAL_SECONDS`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
+        )
+        machines = _due_machines(
+            list(result.scalars().all()),
+            last_checked_at=lambda m: m.monitoring_updated_at,
+            override_seconds=lambda m: m.monitoring_interval_seconds,
+            global_default_seconds=get_settings().monitoring_interval_seconds,
+            now=datetime.now(UTC),
+        )
+        machine_ids = [m.id for m in machines]
+
+    for machine_id in machine_ids:
+        sample_machine_monitoring.delay(str(machine_id))
+
+
+@celery_app.task(name="app.tasks.jobs.monitor_all_machines")
+def monitor_all_machines() -> None:
+    asyncio.run(_monitor_all_machines())
+
+
+_MONITORING_SAMPLE_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def _purge_old_monitoring_samples() -> None:
+    """Delete `MachineMonitoringSample` rows older than each machine's
+    effective retention — `Machine.monitoring_history_retention_days` if
+    set, else `AppSettings.monitoring_history_retention_days` (`None` on
+    both = keep that machine's samples forever). One `DELETE` per machine
+    rather than a single global cutoff (unlike `_purge_old_machine_update_
+    runs`) since retention can differ per machine — acceptable for a
+    once-a-day job; see wiki/Hardware-Requirements.md if this ever needs to
+    scale further."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        default_retention_days = app_settings.monitoring_history_retention_days
+
+        result = await session.execute(
+            select(Machine.id, Machine.monitoring_history_retention_days)
+        )
+        rows = result.all()
+
+        now = datetime.now(UTC)
+        total_deleted = 0
+        for machine_id, override_days in rows:
+            retention_days = override_days or default_retention_days
+            if not retention_days:
+                continue
+            cutoff = now - timedelta(days=retention_days)
+            due_filter = (
+                MachineMonitoringSample.machine_id == machine_id,
+                MachineMonitoringSample.sampled_at < cutoff,
+            )
+            count_result = await session.execute(
+                select(func.count()).select_from(MachineMonitoringSample).where(*due_filter)
+            )
+            machine_deleted = count_result.scalar_one()
+            if not machine_deleted:
+                continue
+            await session.execute(delete(MachineMonitoringSample).where(*due_filter))
+            total_deleted += machine_deleted
+
+        if not total_deleted:
+            return
+
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_MONITORING_SAMPLE_PURGE_ACTOR,
+            action="monitoring_samples.purge",
+            summary=(
+                f"Purged {total_deleted} monitoring sample"
+                f"{'s' if total_deleted != 1 else ''} past their machine's retention window"
+            ),
+            details={"deleted_count": total_deleted},
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.purge_old_monitoring_samples")
+def purge_old_monitoring_samples() -> None:
+    asyncio.run(_purge_old_monitoring_samples())
 
 
 @celery_app.task(name="app.tasks.jobs.refresh_all_machine_packages")

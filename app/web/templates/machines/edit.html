@@ -94,6 +94,24 @@
         name="facts_refresh_interval_seconds" min="1"
         placeholder="default: {{ global_settings.facts_refresh_interval_seconds }}"
         value="{{ machine.facts_refresh_interval_seconds or '' }}">
+
+      <label for="monitoring_interval_seconds">Monitoring sample interval (seconds)</label>
+      <input type="number" id="monitoring_interval_seconds"
+        name="monitoring_interval_seconds" min="1"
+        placeholder="default: {{ global_settings.monitoring_interval_seconds }}"
+        value="{{ machine.monitoring_interval_seconds or '' }}">
+
+      <label for="monitoring_history_retention_days">Monitoring history retention (days)</label>
+      <input type="number" id="monitoring_history_retention_days"
+        name="monitoring_history_retention_days" min="1"
+        placeholder="default: {{ app_settings.monitoring_history_retention_days or 'keep forever' }}"
+        value="{{ machine.monitoring_history_retention_days or '' }}">
+      <p class="hint">
+        This one isn't a sweep interval — it just picks how long <em>this
+        machine's</em> samples are kept before the daily retention purge
+        deletes them, overriding the instance-wide default set in
+        <a href="/settings">Settings</a>.
+      </p>
     </details>
 
     <button type="submit" class="button">Save</button>

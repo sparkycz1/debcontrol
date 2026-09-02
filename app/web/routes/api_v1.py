@@ -444,6 +444,7 @@ async def update_machine_api(
         machine.host_key_fingerprint = None
         machine.discovered_hostname = None
         machine.os_version = None
+        machine.os_id = None
         machine.kernel_version = None
         machine.cpu_cores = None
         machine.cpu_model = None

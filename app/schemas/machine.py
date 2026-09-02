@@ -59,6 +59,8 @@ class MachineUpdate(BaseModel):
     # reachability_check_interval_seconds`/`facts_refresh_interval_seconds`).
     reachability_check_interval_seconds: int | None = Field(default=None, ge=1)
     facts_refresh_interval_seconds: int | None = Field(default=None, ge=1)
+    monitoring_interval_seconds: int | None = Field(default=None, ge=1)
+    monitoring_history_retention_days: int | None = Field(default=None, ge=1)
 
     @field_validator("ip_address")
     @classmethod

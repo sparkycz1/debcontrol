@@ -1,0 +1,18 @@
+{# Shared summary line + "open modal" trigger — same three-caller pattern
+   as _packages_summary.html: once (poll=True) on the Monitoring tab
+   itself, once as an out-of-band swap (oob=True) inside the lazily-loaded
+   modal body, and rendered directly (neither flag) by this section's own
+   poll endpoint. #}
+{% macro render(machine, service_counts, oob=False, poll=False) %}
+<div
+  id="services-summary"
+  {% if oob %}hx-swap-oob="true"{% endif %}
+  {% if poll %}
+  hx-get="/machines/{{ machine.id }}/services-summary-panel"
+  hx-trigger="every 20s"
+  hx-swap="innerHTML"
+  {% endif %}
+>
+  {% include "partials/_services_summary_inner.html" %}
+</div>
+{% endmacro %}

@@ -155,6 +155,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.check_all_machine_updates",
         "schedule": timedelta(seconds=settings.facts_refresh_interval_seconds),
     },
+    "refresh-all-machine-services": {
+        "task": "app.tasks.jobs.refresh_all_machine_services",
+        "schedule": timedelta(seconds=settings.facts_refresh_interval_seconds),
+    },
+    "monitor-all-machines": {
+        "task": "app.tasks.jobs.monitor_all_machines",
+        "schedule": timedelta(seconds=settings.monitoring_interval_seconds),
+    },
     # Cron expressions are minute-grained anyway, so a fixed per-minute tick
     # (rather than a configurable interval) is the natural fit for the
     # scheduler.
@@ -182,6 +190,10 @@ celery_app.conf.beat_schedule = {
     "purge-old-machine-update-runs": {
         "task": "app.tasks.jobs.purge_old_machine_update_runs",
         "schedule": crontab(hour=3, minute=10),
+    },
+    "purge-old-monitoring-samples": {
+        "task": "app.tasks.jobs.purge_old_monitoring_samples",
+        "schedule": crontab(hour=3, minute=15),
     },
 }
 

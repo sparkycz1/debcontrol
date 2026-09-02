@@ -103,6 +103,12 @@ class Machine(Base):
     ram_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # None = couldn't tell (no dmidecode access) — see app.ssh.facts.FACTS_COMMAND.
     ram_speed_mhz: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # `/etc/os-release`'s `ID=` field (e.g. "debian", "ubuntu", "linuxmint",
+    # "proxmox", "fedora") — deliberately separate from `os_version` (that
+    # one's `PRETTY_NAME=`, meant to be read by a human, not matched against
+    # a logo lookup table). Used only to pick which OS logo to show next to
+    # the machine's name — see app.web.os_logos.
+    os_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # None = never determined either way (e.g. no dpkg/linux-image-* found).
     reboot_required: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -133,6 +139,21 @@ class Machine(Base):
         Integer, nullable=True
     )
     facts_refresh_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Same idea, for `MONITORING_INTERVAL_SECONDS` (see app.ssh.monitoring).
+    monitoring_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Overrides `AppSettings.monitoring_history_retention_days` (the
+    # *global* default, editable in Settings — NOT a `.env` value, unlike
+    # the interval above; see that column's own docstring) for just this
+    # machine. NULL means "use the global setting".
+    monitoring_history_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+
+    # --- Monitoring tab: CPU/RAM/disk-usage samples (app.db.models.
+    # machine_monitoring_sample.MachineMonitoringSample) and the systemd
+    # service snapshot (app.db.models.machine_service.MachineService) ---
+    monitoring_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    services_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Update availability: apt, flatpak, snap (requires root/sudo for
     # apt-get update; flatpak/snap listing is read-only — see app.ssh.updates) ---

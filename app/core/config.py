@@ -81,6 +81,19 @@ class Settings(BaseSettings):
         default=60, alias="REACHABILITY_CHECK_INTERVAL_SECONDS"
     )
 
+    # How often (seconds) the Monitoring tab's CPU/RAM/disk-usage sample (and
+    # the cheap "how many systemd services are failed" count shown there) is
+    # taken for every machine — a real SSH round trip (unlike the plain TCP
+    # reachability check above), but much lighter than a full facts refresh.
+    # Its own cadence, deliberately between the other two: frequent enough
+    # for a useful trend graph, not so frequent it dominates worker capacity
+    # at fleet scale (see wiki/Hardware-Requirements.md). A machine can raise
+    # its own interval via `Machine.monitoring_interval_seconds` — see
+    # `app.tasks.jobs._due_machines`, the same mechanism
+    # `reachability_check_interval_seconds`/`facts_refresh_interval_seconds`
+    # already use.
+    monitoring_interval_seconds: int = Field(default=120, alias="MONITORING_INTERVAL_SECONDS")
+
     # How many machines the reachability sweep (app.tasks.jobs._ping_all_machines)
     # checks concurrently — a semaphore, not a thread/process count, since
     # each check is just an `asyncio` TCP connect attempt. The default (20)
@@ -102,6 +115,18 @@ class Settings(BaseSettings):
     # time given to that whole sequence, distinct from `ssh_connect_timeout`
     # (which only bounds establishing the connection itself).
     update_timeout_seconds: int = Field(default=1800, alias="UPDATE_TIMEOUT_SECONDS")
+
+    # Comma-separated absolute path prefixes the Logs tab's "view an
+    # arbitrary file" feature is allowed to read from a managed machine
+    # (app.ssh.logs.is_path_allowed) — a UX/scope guardrail for an admin who
+    # already has `action.terminal` (who could read the same file directly
+    # in the terminal anyway), not a hard security boundary against that
+    # account itself. Default covers the journal's usual on-disk location
+    # plus the conventional log directory; add more (e.g. an app's own log
+    # dir outside /var/log) as needed.
+    log_file_allowed_paths: str = Field(
+        default="/var/log,/var/lib/docker/containers", alias="LOG_FILE_ALLOWED_PATHS"
+    )
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -151,6 +176,18 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
+
+    @property
+    def log_file_allowed_path_list(self) -> list[str]:
+        """`log_file_allowed_paths` split and cleaned up — empty entries
+        (e.g. a trailing comma) dropped, no trailing slash (so a prefix
+        check via `str.startswith` doesn't require the caller to normalize
+        first)."""
+        return [
+            part.strip().rstrip("/")
+            for part in self.log_file_allowed_paths.split(",")
+            if part.strip()
+        ]
 
 
 @lru_cache

@@ -1,0 +1,32 @@
+{# Split out of _services_summary.html so both the macro (initial render,
+   oob refresh from inside the modal) and GET /machines/{id}/services-summary-panel
+   (this section's own periodic poll) can render the same content without
+   the poll response re-nesting the wrapping #services-summary div inside
+   itself — same convention as _packages_summary_inner.html. #}
+<h2>Services</h2>
+{% if not machine.services_updated_at %}
+  <p class="hint">
+    Not gathered yet — this happens automatically once the host key
+    fingerprint is confirmed above, and refreshes periodically after that.
+  </p>
+{% else %}
+  <p class="hint">
+    {{ service_counts.total }} service{{ 's' if service_counts.total != 1 else '' }} found
+    {% if service_counts.failed %}
+      <span class="badge badge-error">{{ service_counts.failed }} failed</span>
+    {% else %}
+      <span class="badge badge-ok">none failed</span>
+    {% endif %}
+    — last refreshed {{ machine.services_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
+  </p>
+{% endif %}
+<button
+  type="button"
+  class="button"
+  popovertarget="services-modal"
+  hx-get="/machines/{{ machine.id }}/services"
+  hx-target="#services-panel"
+  hx-swap="innerHTML"
+>
+  Show services
+</button>

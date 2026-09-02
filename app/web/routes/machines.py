@@ -22,13 +22,16 @@ from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
+from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
@@ -36,6 +39,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
+from app.services import monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     groups_visible_to,
@@ -88,10 +92,14 @@ def _machine_tabs(machine: Machine, user: User) -> list[tuple[str, str, str]]:
     base = f"/machines/{machine.id}"
     tabs = [
         ("overview", "Overview", base),
+        ("monitoring", "Monitoring", f"{base}/monitoring"),
         ("updates", "Updates", f"{base}/updates"),
     ]
     if user.has_permission(Permission.ACTION_TERMINAL):
         tabs.append(("terminal", "Terminal", f"{base}/terminal"))
+        # Logs shares Terminal's permission gate rather than plain
+        # `machine.view` — see the "Logs" route's own docstring for why.
+        tabs.append(("logs", "Logs", f"{base}/logs"))
     tabs.append(("power", "Power", f"{base}/power"))
     tabs.append(("settings", "Settings", f"{base}/edit"))
     return tabs
@@ -170,6 +178,35 @@ async def _get_packages(
     if held_only:
         query = query.where(MachinePackage.held.is_(True))
     result = await db.execute(query.order_by(MachinePackage.source, MachinePackage.name))
+    return list(result.scalars().all())
+
+
+async def _get_service_counts(machine_id: uuid.UUID, db: AsyncSession) -> dict[str, int]:
+    result = await db.execute(
+        select(func.count())
+        .select_from(MachineService)
+        .where(MachineService.machine_id == machine_id)
+    )
+    total = result.scalar_one()
+    failed_result = await db.execute(
+        select(func.count())
+        .select_from(MachineService)
+        .where(
+            MachineService.machine_id == machine_id, MachineService.active_state == "failed"
+        )
+    )
+    return {"total": total, "failed": failed_result.scalar_one()}
+
+
+async def _get_services(
+    machine_id: uuid.UUID, db: AsyncSession, *, svc_q: str, svc_state: str
+) -> list[MachineService]:
+    query = select(MachineService).where(MachineService.machine_id == machine_id)
+    if svc_q.strip():
+        query = query.where(MachineService.unit.ilike(f"%{svc_q.strip()}%"))
+    if svc_state:
+        query = query.where(MachineService.active_state == svc_state)
+    result = await db.execute(query.order_by(MachineService.unit))
     return list(result.scalars().all())
 
 
@@ -820,6 +857,59 @@ async def machine_detail(
     return response
 
 
+@router.get("/{machine_id}/monitoring")
+async def machine_monitoring(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """CPU/RAM/disk-usage trend graphs (see `app.services.monitoring_history`
+    for the downsampling) plus the services summary/modal trigger.
+    `range_key` is one of `monitoring_history.TIME_RANGES`'s keys — an
+    unrecognized value quietly falls back to the default rather than
+    erroring, same tolerance `status_filter` on the Updates tab already has
+    for a bad query param."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+
+    valid_range_keys = {key for key, _label, _delta in monitoring_history.TIME_RANGES}
+    if range_key not in valid_range_keys:
+        range_key = monitoring_history.DEFAULT_TIME_RANGE
+
+    since = datetime.now(UTC) - monitoring_history.time_range_delta(range_key)
+    result = await db.execute(
+        select(MachineMonitoringSample)
+        .where(
+            MachineMonitoringSample.machine_id == machine_id,
+            MachineMonitoringSample.sampled_at >= since,
+        )
+        .order_by(MachineMonitoringSample.sampled_at)
+        .limit(monitoring_history.MAX_RAW_SAMPLES)
+    )
+    samples = list(result.scalars().all())
+    history = monitoring_history.build_monitoring_history(samples, range_key)
+
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/monitoring.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "monitoring",
+            "csrf_token": csrf_token,
+            "history": history,
+            "time_ranges": monitoring_history.TIME_RANGES,
+            "range_key": range_key,
+            "service_counts": await _get_service_counts(machine_id, db),
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
 # --- Self-polling fragments -------------------------------------------------
 #
 # The Overview/Updates tabs poll these every 20-30s (see the `hx-trigger`
@@ -909,6 +999,49 @@ async def machine_packages_panel(
     return response
 
 
+@router.get("/{machine_id}/services-summary-panel")
+async def machine_services_summary_panel(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    return templates.TemplateResponse(
+        request,
+        "partials/_services_summary_inner.html",
+        {"machine": machine, "service_counts": await _get_service_counts(machine_id, db)},
+    )
+
+
+@router.get("/{machine_id}/services")
+async def machine_services_panel(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    svc_q: str = "",
+    svc_state: str = "",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The modal body for "Show services" on the Monitoring tab — same
+    lazily-loaded-on-open pattern as `machine_packages_panel`."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "partials/machine_services.html",
+        {
+            "machine": machine,
+            "csrf_token": csrf_token,
+            "services": await _get_services(machine_id, db, svc_q=svc_q, svc_state=svc_state),
+            "service_counts": await _get_service_counts(machine_id, db),
+            "svc_q": svc_q,
+            "svc_state": svc_state,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
 @router.get("/{machine_id}/edit")
 async def edit_machine_form(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
@@ -928,6 +1061,7 @@ async def edit_machine_form(
             "errors": [],
             "csrf_token": csrf_token,
             "global_settings": get_settings(),
+            "app_settings": await get_or_create_app_settings(db),
         },
     )
     if new_cookie:
@@ -998,6 +1132,7 @@ async def run_onboarding_endpoint(
             "onboarding_output": output,
             "csrf_token": csrf_token,
             "global_settings": get_settings(),
+            "app_settings": await get_or_create_app_settings(db),
         },
     )
     if new_cookie:
@@ -1021,6 +1156,8 @@ async def update_machine(
     is_active: str = Form(""),
     reachability_check_interval_seconds: str = Form(""),
     facts_refresh_interval_seconds: str = Form(""),
+    monitoring_interval_seconds: str = Form(""),
+    monitoring_history_retention_days: str = Form(""),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
@@ -1045,6 +1182,14 @@ async def update_machine(
             facts_refresh_interval_seconds=(
                 int(facts_refresh_interval_seconds)
                 if facts_refresh_interval_seconds.strip()
+                else None
+            ),
+            monitoring_interval_seconds=(
+                int(monitoring_interval_seconds) if monitoring_interval_seconds.strip() else None
+            ),
+            monitoring_history_retention_days=(
+                int(monitoring_history_retention_days)
+                if monitoring_history_retention_days.strip()
                 else None
             ),
         )
@@ -1072,6 +1217,7 @@ async def update_machine(
                 "errors": [str(exc)],
                 "csrf_token": csrf_token,
                 "global_settings": get_settings(),
+                "app_settings": await get_or_create_app_settings(db),
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
@@ -1105,6 +1251,8 @@ async def update_machine(
     machine.is_active = payload.is_active
     machine.reachability_check_interval_seconds = payload.reachability_check_interval_seconds
     machine.facts_refresh_interval_seconds = payload.facts_refresh_interval_seconds
+    machine.monitoring_interval_seconds = payload.monitoring_interval_seconds
+    machine.monitoring_history_retention_days = payload.monitoring_history_retention_days
 
     if payload.auth_method == AuthMethod.PASSWORD:
         if payload.secret:
@@ -1119,6 +1267,7 @@ async def update_machine(
         machine.host_key_fingerprint = None
         machine.discovered_hostname = None
         machine.os_version = None
+        machine.os_id = None
         machine.kernel_version = None
         machine.cpu_cores = None
         machine.cpu_model = None
@@ -1368,6 +1517,62 @@ async def refresh_packages_endpoint(
             "pkg_q": pkg_q,
             "pkg_source": pkg_source,
             "held_only": held_only,
+        },
+    )
+
+
+@router.post("/{machine_id}/refresh-services", dependencies=[_manage, Depends(verify_csrf)])
+async def refresh_services_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    svc_q: str = Form(""),
+    svc_state: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    async_result = tasks.refresh_machine_services.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 15
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    if error is None:
+        machine = await _get_machine_or_404(machine_id, db, current_user)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.services.refresh",
+        summary=f'Refreshed services for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
+    csrf_token, _ = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/machine_services.html",
+        {
+            "machine": machine,
+            "error": error,
+            "csrf_token": csrf_token,
+            "services": await _get_services(machine_id, db, svc_q=svc_q, svc_state=svc_state),
+            "service_counts": await _get_service_counts(machine_id, db),
+            "svc_q": svc_q,
+            "svc_state": svc_state,
         },
     )
 

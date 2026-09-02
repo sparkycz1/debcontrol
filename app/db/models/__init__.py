@@ -9,7 +9,9 @@ from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission, Role, RolePermission
@@ -38,7 +40,9 @@ __all__ = [
     "FleetSnapshot",
     "Machine",
     "MachineGroup",
+    "MachineMonitoringSample",
     "MachinePackage",
+    "MachineService",
     "MachineUpdateRun",
     "PendingActionStatus",
     "PendingMachine",

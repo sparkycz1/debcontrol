@@ -96,6 +96,19 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # Same idea again, for `MachineMonitoringSample` rows (app.tasks.jobs.
+    # purge_old_monitoring_samples) — a row is taken every
+    # `MONITORING_INTERVAL_SECONDS` (2 minutes by default) for every
+    # machine, so this is the one retention setting most likely to matter
+    # for table size at fleet scale (see wiki/Hardware-Requirements.md).
+    # Defaults to a bounded window (90 days) for the same "operational
+    # trend data, not a compliance record" reasoning as the two above. NULL
+    # still means "keep forever." Overridable per machine — see
+    # `Machine.monitoring_history_retention_days`.
+    monitoring_history_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=90
+    )
+
     # --- AI assistant token limits (app.ai.usage) ---
     #
     # Global (fleet-wide, not per-user) ceilings on total tokens — input +

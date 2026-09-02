@@ -1,0 +1,87 @@
+{% from "partials/_services_summary.html" import render as render_services_summary %}
+{{ render_services_summary(machine, service_counts, oob=True) }}
+
+<div id="services-panel">
+  {% if error %}
+    <div class="alert alert-error">
+      <p>Could not refresh services: {{ error }}</p>
+    </div>
+  {% endif %}
+
+  {% if not machine.services_updated_at %}
+    <p class="hint">
+      Not gathered yet — this happens automatically once the host key
+      fingerprint is confirmed above, and refreshes periodically after that.
+    </p>
+  {% else %}
+    <form
+      hx-get="/machines/{{ machine.id }}/services"
+      hx-target="#services-panel"
+      hx-swap="outerHTML"
+      class="search-form"
+      id="service-filters"
+    >
+      <input type="search" name="svc_q" value="{{ svc_q }}" placeholder="Search services by unit name...">
+      <select name="svc_state">
+        <option value="" {% if not svc_state %}selected{% endif %}>Any state</option>
+        <option value="active" {% if svc_state == 'active' %}selected{% endif %}>active</option>
+        <option value="failed" {% if svc_state == 'failed' %}selected{% endif %}>failed</option>
+        <option value="inactive" {% if svc_state == 'inactive' %}selected{% endif %}>inactive</option>
+      </select>
+      <button type="submit" class="button">Filter</button>
+      {% if svc_q or svc_state %}
+        <a
+          class="button button-secondary"
+          href="#"
+          hx-get="/machines/{{ machine.id }}/services"
+          hx-target="#services-panel"
+          hx-swap="outerHTML"
+        >
+          Clear
+        </a>
+      {% endif %}
+    </form>
+
+    {% if services %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Unit</th>
+            <th>State</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for svc in services %}
+            <tr>
+              <td><code>{{ svc.unit }}</code></td>
+              <td>
+                <span class="badge {{ 'badge-error' if svc.active_state == 'failed' else ('badge-ok' if svc.active_state == 'active' else 'badge-warn') }}">
+                  {{ svc.active_state }}{% if svc.sub_state and svc.sub_state != svc.active_state %} ({{ svc.sub_state }}){% endif %}
+                </span>
+              </td>
+              <td>{{ svc.description }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No services match this filter.</p>
+    {% endif %}
+  {% endif %}
+
+  <button
+    class="button"
+    hx-post="/machines/{{ machine.id }}/refresh-services"
+    hx-include="#service-filters"
+    hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+    hx-target="#services-panel"
+    hx-swap="outerHTML"
+    {% if not machine.host_key_fingerprint %}disabled{% endif %}
+  >
+    Refresh services now
+  </button>
+  {% if not machine.host_key_fingerprint %}
+    <p class="hint">Confirm the server's key fingerprint above first.</p>
+  {% endif %}
+</div>

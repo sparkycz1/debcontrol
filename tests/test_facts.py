@@ -9,6 +9,8 @@ def test_parse_facts_output_full_no_reboot_needed():
         "web1\n"
         "===OS===\n"
         "Debian GNU/Linux 12 (bookworm)\n"
+        "===OS_ID===\n"
+        "debian\n"
         "===KERNEL===\n"
         "6.1.0-13-amd64\n"
         "===KERNEL_LATEST===\n"
@@ -42,6 +44,7 @@ def test_parse_facts_output_full_no_reboot_needed():
 
     assert facts["hostname"] == "web1"
     assert facts["os_version"] == "Debian GNU/Linux 12 (bookworm)"
+    assert facts["os_id"] == "debian"
     assert facts["kernel_version"] == "6.1.0-13-amd64"
     assert facts["cpu_architecture"] == "x86_64"
     assert facts["cpu_cores"] == 4
@@ -82,6 +85,7 @@ def test_parse_facts_output_reboot_required_when_kernel_differs():
     raw = (
         "===HOSTNAME===\nweb1\n"
         "===OS===\nDebian GNU/Linux 12 (bookworm)\n"
+        "===OS_ID===\ndebian\n"
         "===KERNEL===\n6.1.0-13-amd64\n"
         "===KERNEL_LATEST===\n6.1.0-18-amd64\n"
         "===ARCH===\nx86_64\n"
@@ -107,7 +111,7 @@ def test_parse_facts_output_reboot_unknown_without_kernel_latest():
     # Every `echo ===X===` marker always runs even when the command after it
     # produces nothing, so a real transcript never skips a section outright.
     raw = (
-        "===HOSTNAME===\nweb1\n===OS===\n===KERNEL===\n6.1.0-13-amd64\n"
+        "===HOSTNAME===\nweb1\n===OS===\n===OS_ID===\n===KERNEL===\n6.1.0-13-amd64\n"
         "===KERNEL_LATEST===\n===ARCH===\naarch64\n===CPU===\n===CPU_MODEL===\n"
         "===RAM_KB===\n===RAM_SPEED===\n"
         "===DISKS===\n===UPTIME===\n===PROCESSES===\n===FILESYSTEMS===\n===NETWORK===\n"
@@ -126,7 +130,7 @@ def test_parse_facts_output_reboot_unknown_without_kernel_latest():
 
 def test_parse_facts_output_handles_missing_sections():
     # E.g. a connection that drops mid-way, or commands that aren't present.
-    raw = "===HOSTNAME===\nweb1\n===OS===\n"
+    raw = "===HOSTNAME===\nweb1\n===OS===\n===OS_ID===\n"
 
     facts = parse_facts_output(raw)
 
@@ -159,7 +163,7 @@ def test_parse_facts_output_empty_string():
 
 def test_parse_facts_output_filesystems_ignores_malformed_lines():
     raw = (
-        "===HOSTNAME===\nweb1\n===OS===\n===KERNEL===\n===KERNEL_LATEST===\n===ARCH===\n"
+        "===HOSTNAME===\nweb1\n===OS===\n===OS_ID===\n===KERNEL===\n===KERNEL_LATEST===\n===ARCH===\n"
         "===CPU===\n===CPU_MODEL===\n===RAM_KB===\n===RAM_SPEED===\n"
         "===DISKS===\n===UPTIME===\n===PROCESSES===\n"
         "===FILESYSTEMS===\n"

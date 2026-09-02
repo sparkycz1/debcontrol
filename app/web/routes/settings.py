@@ -233,6 +233,39 @@ async def update_machine_update_run_retention(
     return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/monitoring-retention", dependencies=[_manage, Depends(verify_csrf)])
+async def update_monitoring_retention(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    retention_days: str = Form(""),
+) -> Response:
+    """Same shape as `update_audit_retention`/`update_dashboard_trends_retention`
+    above, for `MachineMonitoringSample` rows — see `app.tasks.jobs.
+    purge_old_monitoring_samples`. This is the *instance-wide* default; a
+    machine can override it (see `Machine.monitoring_history_retention_days`
+    on that machine's own Settings tab)."""
+    app_settings = await get_or_create_app_settings(db)
+    new_value, error = _parse_retention_days(retention_days)
+    if error:
+        return await _render_settings(request, db, [error], tab="security")
+
+    app_settings.monitoring_history_retention_days = new_value
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.monitoring_retention.update",
+        summary=(
+            f"Set monitoring history retention to {new_value} day(s)"
+            if new_value is not None
+            else "Set monitoring history retention to keep forever"
+        ),
+    )
+
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])
 async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     """Recompute the audit log's hash chain on demand — see
