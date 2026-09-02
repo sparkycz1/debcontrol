@@ -9,9 +9,10 @@ What it does, in order: copies `.env.example` to `.env`, fills in every
 secret (`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`,
 `REDIS_PASSWORD`, `INFORM_TOKEN`) with freshly generated random values,
 asks a handful of questions (timezone, whether to use the bundled Caddy
-reverse proxy and its domain/email if so, the two background-check
-intervals, the Administrator account's password — or auto-generates one —
-and the host port to publish), writes `.env`, brings the stack up with
+reverse proxy and its domain/email if so, whether the app's own port
+should only accept local connections, the two background-check intervals,
+the Administrator account's password — or auto-generates one — and the
+host port to publish), writes `.env`, brings the stack up with
 `docker compose`, waits for the app to become healthy, and creates the
 first Administrator account.
 
@@ -249,6 +250,25 @@ def main() -> None:
         email = _prompt_required("Email address for Let's Encrypt account/expiry notices")
         lines = _set_env_line(lines, "DOMAIN", domain)
         lines = _set_env_line(lines, "ACME_EMAIL", email)
+
+    print()
+    # Bundled Caddy reaches `web` over the compose network regardless of
+    # this — it never needs the published host port at all — so anyone
+    # using it almost always wants the app port itself restricted to this
+    # host only. Someone with no reverse proxy at all still needs it
+    # reachable from wherever their browser is, so the default flips the
+    # other way for them.
+    localhost_only = _prompt_yes_no(
+        "Only allow local connections to the app's own port (recommended if "
+        "a reverse proxy — bundled Caddy or your own — is the only thing "
+        "that should reach it directly)?",
+        default=use_caddy,
+    )
+    lines = _set_env_line(
+        lines,
+        "APP_BIND_ADDRESS",
+        "127.0.0.1" if localhost_only else "0.0.0.0",  # noqa: S104 - explicit user choice, not a default
+    )
 
     print()
     facts_interval = _prompt("Facts refresh interval, in seconds", default="3600")

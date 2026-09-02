@@ -59,8 +59,9 @@ docker compose up -d --build
 ```
 
 The app listens on `APP_PORT` (default `8080`, plain HTTP, all interfaces
-— meant to sit behind a TLS-terminating reverse proxy; firewall it off or
-bind it to `127.0.0.1` in `docker-compose.yml` if you don't want that).
+by default — meant to sit behind a TLS-terminating reverse proxy; set
+`APP_BIND_ADDRESS=127.0.0.1` in `.env` — no `docker-compose.yml` edit
+needed — or firewall the port off if you don't want that).
 Point your own nginx/Traefik/Caddy at it — see the reverse-proxy guides in
 the wiki: [nginx](wiki/Reverse-Proxy-Nginx.md) ·
 [Traefik](wiki/Reverse-Proxy-Traefik.md) ·
@@ -79,8 +80,8 @@ docker compose exec web python scripts/create_admin.py --username admin
 
 > [!WARNING]
 > The app speaks **plain HTTP only**. Always put TLS termination in front
-> of it, and firewall its port off (or bind it to `127.0.0.1`) if you don't
-> want it reachable directly.
+> of it, and firewall its port off (or set `APP_BIND_ADDRESS=127.0.0.1` in
+> `.env`) if you don't want it reachable directly.
 
 See [wiki/Installation.md](wiki/Installation.md) for the full walkthrough
 (environment variables, LDAP/OIDC setup, account recovery if you ever get

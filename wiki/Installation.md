@@ -32,26 +32,37 @@ and fills in every secret with a freshly generated random value
    UI. Defaults to UTC.
 2. **Whether to use the bundled Caddy** reverse proxy for automatic HTTPS
    — if yes, the domain name and an email address for Let's Encrypt.
-3. **The facts-refresh and reachability-check intervals**, in seconds
+3. **Whether the app's own port should only accept local connections**
+   (`APP_BIND_ADDRESS=127.0.0.1`) — defaults to yes if you chose Caddy
+   above (it reaches the app over the internal compose network either
+   way, so there's rarely a reason to also expose the app's own port),
+   and no otherwise (your browser needs to reach it directly with no
+   reverse proxy in front yet).
+4. **The facts-refresh and reachability-check intervals**, in seconds
    (defaults 3600 and 60).
-4. **The Administrator account's password** — leave it empty and one is
+5. **The Administrator account's password** — leave it empty and one is
    generated and printed once at the end.
-5. **The host port** to publish the app on (default 8080).
+6. **The host port** to publish the app on (default 8080).
 
 It then writes `.env`, runs `docker compose up -d --build` (adding
 `docker-compose.caddy.yml` too if Caddy was chosen), waits for the app to
 report healthy, and creates the `admin` account with the password from
-step 4. The final output prints the URL, username, and password (if one
+step 5. The final output prints the URL, username, and password (if one
 was generated) — save that password now, it's shown once.
 
-Re-running it on an existing `.env` asks before overwriting it. If you say
-yes, it also runs `docker compose down -v` for you before starting the
-stack back up — a fresh `POSTGRES_PASSWORD` means nothing if the old
-`pg_data` volume is still around with the *previous* password baked into
-it (Postgres only ever applies that variable while initializing an empty
-data directory), so replacing `.env`'s secrets and keeping the old volume
-would otherwise leave every container failing to connect with "password
-authentication failed" the moment `migrate` runs.
+Re-running it on an existing `.env` asks before overwriting it:
+- **Yes** — regenerates every secret and asks every question above again,
+  then also runs `docker compose down -v` before starting the stack back
+  up. A fresh `POSTGRES_PASSWORD` means nothing if the old `pg_data`
+  volume is still around with the *previous* password baked into it
+  (Postgres only ever applies that variable while initializing an empty
+  data directory), so replacing `.env`'s secrets and keeping the old
+  volume would otherwise leave every container failing to connect with
+  "password authentication failed" the moment `migrate` runs.
+- **No** — tops `.env` up instead (adds whatever `.env.example` variables
+  it's missing, touching nothing already there — see "Updating" below)
+  and just starts the stack against the existing file, no secrets
+  regenerated and no new admin account created.
 
 ## 🔧 Option B — manual setup
 
