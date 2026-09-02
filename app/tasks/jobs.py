@@ -816,7 +816,7 @@ async def _purge_old_monitoring_samples() -> None:
     both = keep that machine's samples forever). One `DELETE` per machine
     rather than a single global cutoff (unlike `_purge_old_machine_update_
     runs`) since retention can differ per machine — acceptable for a
-    once-a-day job; see wiki/Hardware-Requirements.md if this ever needs to
+    once-a-day job; see wiki/Host-Requirements.md if this ever needs to
     scale further."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)

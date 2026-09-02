@@ -1,10 +1,13 @@
-# 🖥️ Managed machine requirements
+# 🖥️ Machine requirements
 
-What a machine needs — network-wise, account-wise, and package-wise — to
-be added to and managed by debcontrol. Short version: a stock Debian
-install already satisfies almost all of this. Doing all of it by hand is
-the point of this page; see [Ansible Onboarding](Ansible-Onboarding.md)
-for a playbook that does it for you.
+What a **managed machine** — the Debian/Ubuntu machines debcontrol
+connects to over SSH, not debcontrol's own host — needs network-wise,
+account-wise, and package-wise to be added and managed. Short version: a
+stock Debian install already satisfies almost all of this. Doing all of it
+by hand is the point of this page; see
+[Ansible Onboarding](Ansible-Onboarding.md) for a playbook that does it
+for you. For debcontrol's own host requirements, see
+[Host Requirements](Host-Requirements.md).
 
 ## 🌐 Network
 

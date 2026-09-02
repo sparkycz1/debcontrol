@@ -7,7 +7,11 @@ There are two ways to use Caddy with debcontrol:
   run a reverse proxy on this host.
 - **Standalone**: you already run your own Caddy instance (for other
   sites, or because you prefer managing it outside this repo). Point it at
-  debcontrol's `127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`).
+  debcontrol's `127.0.0.1:8080` (or whatever `APP_PORT` you set in
+  `.env`). Once this is working, consider also setting
+  `APP_BIND_ADDRESS=127.0.0.1` in debcontrol's own `.env` (no
+  `docker-compose.yml` edit needed) so the app is only reachable through
+  this proxy, never directly on its own port.
 
 ## 📦 Option A — the bundled Caddy
 

@@ -23,7 +23,7 @@ that already had machine groups (i.e. all of them). The model annotation
 (`index=True` on `Machine.group_id`) is correct and stays; only the
 redundant `create_index` call here was ever wrong.
 
-See app/db/models/machine.py and wiki/Hardware-Requirements.md.
+See app/db/models/machine.py and wiki/Host-Requirements.md.
 """
 
 from __future__ import annotations

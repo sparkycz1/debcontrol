@@ -100,7 +100,7 @@ class AppSettings(Base):
     # purge_old_monitoring_samples) — a row is taken every
     # `MONITORING_INTERVAL_SECONDS` (2 minutes by default) for every
     # machine, so this is the one retention setting most likely to matter
-    # for table size at fleet scale (see wiki/Hardware-Requirements.md).
+    # for table size at fleet scale (see wiki/Host-Requirements.md).
     # Defaults to a bounded window (90 days) for the same "operational
     # trend data, not a compliance record" reasoning as the two above. NULL
     # still means "keep forever." Overridable per machine — see

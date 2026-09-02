@@ -88,16 +88,17 @@ services:
     ports:
       # Host port is configurable via APP_PORT in .env (default 8080); the
       # container always listens on 8080 internally. Published on all
-      # interfaces, and plain HTTP — this app is meant to sit behind a
-      # TLS-terminating reverse proxy (the bundled `caddy` service from
+      # interfaces by default (APP_BIND_ADDRESS, default 0.0.0.0), and
+      # plain HTTP — this app is meant to sit behind a TLS-terminating
+      # reverse proxy (the bundled `caddy` service from
       # docker-compose.caddy.yml, or your own; see the wiki), but nothing
       # here restricts direct access to loopback. If you don't want this
-      # port reachable from outside this host, block it at the firewall
-      # (or bind to "127.0.0.1:${APP_PORT:-8080}:8080" instead) —
-      # debcontrol itself no longer does that for you. A reverse proxy
-      # running as its own container should join this compose project's
-      # network instead of going through the published port at all.
-      - "${APP_PORT:-8080}:8080"
+      # port reachable from outside this host, set
+      # APP_BIND_ADDRESS=127.0.0.1 in .env (no compose edit needed) or
+      # block the port at the firewall instead. A reverse proxy running as
+      # its own container should join this compose project's network
+      # instead of going through the published port at all.
+      - "${APP_BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8080}:8080"
     volumes:
       - ssh_data:/app/data
     depends_on:

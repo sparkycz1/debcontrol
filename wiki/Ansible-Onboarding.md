@@ -1,6 +1,6 @@
 # 🤖 Ansible onboarding
 
-Everything in [Managed Machine Requirements](Managed-Machine-Requirements.md)
+Everything in [Machine Requirements](Machine-Requirements.md)
 done by hand, in one playbook run: installs/enables `sshd`, creates a
 dedicated non-root user with debcontrol's SSH public key, grants that user
 passwordless sudo scoped to exactly what debcontrol needs, and
@@ -30,7 +30,7 @@ It's safe to re-run — every task is idempotent (Ansible's
 
 **It never creates a manageable machine by itself.** The playbook's last
 step is the same `POST /api/inform` self-registration described in
-[Managed Machine Requirements](Managed-Machine-Requirements.md#self-registration-optional-for-future-automation) —
+[Machine Requirements](Machine-Requirements.md#self-registration-optional-for-future-automation) —
 it only creates a *pending* entry. Approving it (pinning the host key
 fingerprint, confirming it's really the machine you meant) is still a
 separate, deliberate step a human does in the **Machines** tab. See

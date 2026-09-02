@@ -37,9 +37,9 @@ enabled, and it lives in its own separate git repository
 - [Home](Home.md) — overview and table of contents
 - [Installation](Installation.md) — Docker quick start, with or without Caddy
 - [Architecture](Architecture.md) — stack choices and security model
-- [Hardware Requirements](Hardware-Requirements.md) — sizing debcontrol's own host(s) for a fleet from dozens to thousands of machines
+- [Host Requirements](Host-Requirements.md) — sizing debcontrol's own host(s) for a fleet from dozens to thousands of machines
 - [SSH Host Key Verification](SSH-Host-Key-Verification.md) — the fingerprint-pinning flow, explained
-- [Managed Machine Requirements](Managed-Machine-Requirements.md) — what a Debian machine needs to be managed
+- [Machine Requirements](Machine-Requirements.md) — what a Debian machine needs to be managed
 - [Ansible Onboarding](Ansible-Onboarding.md) — a playbook that does that automatically and self-registers the machine
 - [AI Assistant](AI-Assistant.md) — the chat assistant, its providers, and the confirm-before-execute rule
 - [Reverse Proxy: Caddy](Reverse-Proxy-Caddy.md) — using the bundled Caddy service

@@ -11,7 +11,7 @@ Ansible from their own machine, run here instead directly over SSH (see
 3. Grant it passwordless sudo, scoped to exactly what debcontrol needs
    (`apt-get`, `shutdown`, and `flatpak`/`snap` if either is present) —
    the exact sudoers line documented in
-   wiki/Managed-Machine-Requirements.md.
+   wiki/Machine-Requirements.md.
 4. Best-effort install `ncurses-term`, so the web Terminal tab gets colors
    and box-drawing (see that same wiki page) without a separate manual
    step. Its failure (no network, offline apt cache) must never fail

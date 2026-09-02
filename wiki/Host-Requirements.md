@@ -1,9 +1,9 @@
-# 🖥️ Hardware requirements & scaling to a large fleet
+# 🖥️ Host requirements & scaling to a large fleet
 
-This page is about **debcontrol's own host(s)** — the machines running the
-Docker Compose stack (web, worker, beat, Postgres, Redis) — not the
+This page is about **debcontrol's own host(s)** — the machine(s) running
+the Docker Compose stack (web, worker, beat, Postgres, Redis) — not the
 Debian/Ubuntu machines it manages. For those, see
-[Managed Machine Requirements](Managed-Machine-Requirements.md).
+[Machine Requirements](Machine-Requirements.md).
 
 Two different things drive resource needs here, and they scale
 independently:

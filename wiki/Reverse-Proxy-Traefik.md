@@ -3,7 +3,10 @@
 Use this if you already run Traefik on the host where debcontrol's
 `docker compose up -d --build` (the base file, without
 `docker-compose.caddy.yml`) is running, exposing the app on
-`127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`).
+`127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`). Once this is
+working, consider also setting `APP_BIND_ADDRESS=127.0.0.1` in
+debcontrol's own `.env` (no `docker-compose.yml` edit needed) so the app
+is only reachable through this proxy, never directly on its own port.
 
 Two ways to wire Traefik up to a service: a static **file provider** entry
 pointing at an address, or **Docker labels** read via Traefik's Docker

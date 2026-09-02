@@ -1,7 +1,7 @@
 """List installed packages on a managed machine — apt (dpkg), plus flatpak
 and snap when either is present. Read-only, no root needed for any of it.
 
-See the wiki page "Managed Machine Requirements" for exactly which tools
+See the wiki page "Machine Requirements" for exactly which tools
 are used and why none of them need elevated privileges.
 """
 

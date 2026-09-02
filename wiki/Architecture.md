@@ -667,7 +667,7 @@ everywhere "SSH key" is the chosen auth method. The private half never
 touches disk in plaintext — it's decrypted in memory only for the duration
 of a connection. The public half is shown on **Settings**; appending it to
 a machine's `~/.ssh/authorized_keys` is a manual step (see
-[Managed Machine Requirements](Managed-Machine-Requirements.md)).
+[Machine Requirements](Machine-Requirements.md)).
 Per-machine passwords remain available as a fallback, marked in the UI as
 not recommended.
 
@@ -689,7 +689,7 @@ every machine has the new line, "Activate" swaps it in
 `POST /api/inform` lets a machine announce itself (IP, hostname, basic
 facts it can read locally) using a shared bearer token (`INFORM_TOKEN`) —
 meant for a first-boot/cloud-init script, see
-[Managed Machine Requirements](Managed-Machine-Requirements.md). It only
+[Machine Requirements](Machine-Requirements.md). It only
 ever creates a `PendingMachine` row for a human to look at; it grants no
 access and establishes no trust. Turning a pending entry into a real
 `Machine` still goes through the ordinary add-machine form and the
@@ -720,7 +720,7 @@ group / "All machines") needs root on the target and can run long:
 - **`sudo -n` throughout**, never a bare `apt-get`. Non-interactive, so a
   machine without passwordless sudo fails immediately with a clear error
   instead of hanging on a password prompt. See
-  [Managed Machine Requirements](Managed-Machine-Requirements.md) for the
+  [Machine Requirements](Machine-Requirements.md) for the
   sudoers line this expects.
 - **Every run is a row.** `MachineUpdateRun` persists
   status/output/error/timestamps in Postgres (Celery's Redis result backend
@@ -847,7 +847,7 @@ The check-side commands are genuine, side-effect-free dry runs:
 Applying updates is different: `flatpak update -y --noninteractive` and
 `snap refresh` both run via `sudo -n`, same as apt. This is opt-in — the
 sudoers example in
-[Managed Machine Requirements](Managed-Machine-Requirements.md) shows the
+[Machine Requirements](Machine-Requirements.md) shows the
 two extra `NOPASSWD` lines as optional — and without them only the
 flatpak/snap steps fail (visible in the run's stored output); the apt part
 is unaffected, since the three steps are `;`-chained.
@@ -1289,7 +1289,7 @@ proxy, or bind `docker-compose.yml`'s `web.ports` entry to
   local-time display only; it never touches how a schedule fires.
 - No scheduled "power on" to pair with scheduled shutdown — the app has no
   way to power on a machine that's off (see
-  [Managed Machine Requirements](Managed-Machine-Requirements.md)).
+  [Machine Requirements](Machine-Requirements.md)).
 - Rotating the app's SSH identity, and configuring LDAP/OIDC/syslog, stay
   web-UI-only over the REST API; everything else the web UI can do has an
   API equivalent.

@@ -18,7 +18,7 @@ updates, without installing or upgrading anything.
 
 apt requires root — either the machine's configured username *is* root, or
 (recommended) it has passwordless sudo for `apt-get` specifically. See the
-wiki page "Managed Machine Requirements" for a sudoers example. `sudo -n`
+wiki page "Machine Requirements" for a sudoers example. `sudo -n`
 (non-interactive) is used throughout: if sudo would need a password, the
 command fails immediately with a clear error instead of hanging forever
 waiting for input that can never arrive over a non-interactive SSH exec.

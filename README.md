@@ -10,7 +10,7 @@
 A web application for managing Debian machines over SSH. Officially
 supported: Debian and its derivatives (e.g. Ubuntu), for as long as each
 is supported by its own upstream — see the wiki:
-[Managed Machine Requirements](wiki/Managed-Machine-Requirements.md#os).
+[Machine Requirements](wiki/Machine-Requirements.md#os).
 Every page requires a login; access is controlled by custom roles (RBAC)
 an admin defines, and accounts can authenticate locally, against LDAP, or
 via OIDC SSO, with optional (or role-required) TOTP two-factor. Everything

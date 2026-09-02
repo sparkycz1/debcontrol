@@ -4,7 +4,7 @@ debcontrol connects to managed machines using one SSH keypair that belongs
 to the application itself, rather than a separate key per machine.
 Distributing the *public* half to machines (appending it to
 `~/.ssh/authorized_keys`) is a manual step for an operator today — see the
-wiki page "Managed Machine Requirements".
+wiki page "Machine Requirements".
 
 The private key is generated once, on first use, and stored encrypted
 (`app.core.security.encrypt_secret`) — never in plaintext, never on disk.

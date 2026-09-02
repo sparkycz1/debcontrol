@@ -99,6 +99,7 @@ running `scripts/setup.py`.
 | `LOG_LEVEL` | app | Python logging level. |
 | `TZ` | db, redis, app, worker, beat, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container's own clock, **and used by the app to display every timestamp in the UI** (audit log, "last refreshed"/"last run" times, etc.) in that timezone instead of UTC. Data is always stored as UTC regardless of this, and Scheduling's cron expressions are always interpreted as UTC regardless of this too. Defaults to UTC if unset. |
 | `APP_PORT` | web | Host port the app is published on. Default 8080. |
+| `APP_BIND_ADDRESS` | web | Host interface the port above is published on. Default `0.0.0.0` (every interface); set to `127.0.0.1` to only allow local connections, no `docker-compose.yml` edit needed. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
@@ -120,11 +121,12 @@ docker compose up -d --build
 
 This starts Postgres, Redis, runs migrations once (`migrate` service), then
 starts `web`, `worker`, and `beat`. The app listens on `APP_PORT` (default
-8080) — plain HTTP, published on all interfaces (block it at the firewall,
-or bind `docker-compose.yml`'s `web.ports` to
-`127.0.0.1:${APP_PORT}:8080`, if you don't want it reachable directly). If
-you have your own nginx/Traefik/Caddy already running on this host, point
-it at `127.0.0.1:${APP_PORT}`; see: [nginx](Reverse-Proxy-Nginx.md),
+8080) — plain HTTP, published on every interface by default
+(`APP_BIND_ADDRESS=0.0.0.0`). Set `APP_BIND_ADDRESS=127.0.0.1` in `.env` if
+you don't want it reachable directly (no `docker-compose.yml` edit
+needed), or block the port at the firewall instead. If you have your own
+nginx/Traefik/Caddy already running on this host, point it at
+`127.0.0.1:${APP_PORT}`; see: [nginx](Reverse-Proxy-Nginx.md),
 [Traefik](Reverse-Proxy-Traefik.md), [Caddy](Reverse-Proxy-Caddy.md).
 
 > [!IMPORTANT]

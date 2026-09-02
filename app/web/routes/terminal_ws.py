@@ -94,7 +94,7 @@ TERMINAL_SESSION_MAX_SECONDS = 2 * 60 * 60  # 2 hours
 # onboarding (`app.ssh.onboarding.build_onboarding_command`) installs
 # `ncurses-term` automatically, best-effort, precisely so this default
 # works out of the box on a machine onboarded through this app — see
-# wiki/Managed-Machine-Requirements.md for installing it by hand on one
+# wiki/Machine-Requirements.md for installing it by hand on one
 # that wasn't.
 _TERM_TYPE = "xterm-256color"
 _DEFAULT_TERM_SIZE = (80, 24)

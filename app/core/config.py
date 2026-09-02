@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # see wiki/Architecture.md) benefits from a larger pool. Postgres'
     # `max_connections` (default 100) must comfortably exceed
     # `db_pool_size + db_max_overflow` plus whatever the worker/beat/migrate
-    # services need at once — see wiki/Hardware-Requirements.md.
+    # services need at once — see wiki/Host-Requirements.md.
     db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
 
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # reachability check above), but much lighter than a full facts refresh.
     # Its own cadence, deliberately between the other two: frequent enough
     # for a useful trend graph, not so frequent it dominates worker capacity
-    # at fleet scale (see wiki/Hardware-Requirements.md). A machine can raise
+    # at fleet scale (see wiki/Host-Requirements.md). A machine can raise
     # its own interval via `Machine.monitoring_interval_seconds` — see
     # `app.tasks.jobs._due_machines`, the same mechanism
     # `reachability_check_interval_seconds`/`facts_refresh_interval_seconds`
@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     # each check is just an `asyncio` TCP connect attempt. The default (20)
     # comfortably finishes one sweep of a few hundred machines well within
     # the default 60s interval; a fleet in the thousands needs this raised
-    # (see wiki/Hardware-Requirements.md) so one sweep reliably finishes
+    # (see wiki/Host-Requirements.md) so one sweep reliably finishes
     # before the next one is due — Beat does not skip/coalesce a sweep that's
     # still running when its next tick fires, so a sweep that consistently
     # overruns the interval means overlapping sweeps piling up over time.

@@ -3,7 +3,7 @@
 Deliberately uses only tools present on a stock Debian install (coreutils,
 util-linux, dpkg, base-files, iproute2) — no agent, no extra packages
 required on the target, and nothing here needs root. See the wiki page
-"Managed Machine Requirements".
+"Machine Requirements".
 """
 
 from __future__ import annotations

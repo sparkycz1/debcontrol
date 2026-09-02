@@ -29,16 +29,16 @@ flowchart LR
   without the bundled Caddy reverse proxy, environment variables reference.
 - **[Architecture](Architecture.md)** — technology choices, project
   structure, and the security decisions made from day one.
-- **[Hardware Requirements](Hardware-Requirements.md)** — sizing
+- **[Host Requirements](Host-Requirements.md)** — sizing
   debcontrol's own host(s) for a fleet from dozens to thousands of
   machines, and the tuning knobs (worker concurrency, DB pool size,
   reachability-sweep concurrency, retention policies) that come with it.
 - **[SSH Host Key Verification](SSH-Host-Key-Verification.md)** — how
   debcontrol pins SSH host keys and why it never "trusts on first use".
-- **[Managed Machine Requirements](Managed-Machine-Requirements.md)** —
+- **[Machine Requirements](Machine-Requirements.md)** —
   what a Debian machine needs (network, account, packages) to be added.
 - **[Ansible Onboarding](Ansible-Onboarding.md)** — a playbook that does
-  everything in Managed Machine Requirements for you, then self-registers
+  everything in Machine Requirements for you, then self-registers
   the machine as pending.
 - **[AI Assistant](AI-Assistant.md)** — the chat assistant: the five
   supported providers, the global token limits, the permission model, and
