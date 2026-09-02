@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi.templating import Jinja2Templates
 
 from app.core.config import get_settings
+from app.web.os_logos import badge_for
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -66,3 +67,5 @@ def format_uptime(seconds: int | None) -> str:
 
 
 templates.env.filters["format_uptime"] = format_uptime
+
+templates.env.filters["os_badge"] = badge_for

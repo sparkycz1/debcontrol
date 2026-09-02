@@ -155,6 +155,17 @@ class Machine(Base):
     monitoring_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
     services_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # --- Post-onboarding readiness check (see app.ssh.readiness) ---
+    # `readiness_missing`: human-readable descriptions of whatever the last
+    # check found not set up (ncurses-term, scoped sudo for apt/shutdown/
+    # dmidecode/flatpak+snap) — an empty list means everything checked was
+    # fine, `None` means never checked. Re-run automatically right after
+    # the host key is confirmed and right after "Run initial setup"
+    # completes; otherwise on demand ("Re-check" button) — not on any
+    # periodic sweep, this is an onboarding-time nudge, not a monitor.
+    readiness_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    readiness_missing: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
     # --- Update availability: apt, flatpak, snap (requires root/sudo for
     # apt-get update; flatpak/snap listing is read-only — see app.ssh.updates) ---
     upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

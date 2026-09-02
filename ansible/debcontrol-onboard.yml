@@ -81,11 +81,11 @@
         key: "{{ debcontrol_ssh_public_key }}"
         state: present
 
-    - name: Grant passwordless sudo for apt-get and shutdown
+    - name: Grant passwordless sudo for apt-get, shutdown, and dmidecode
       ansible.builtin.copy:
         dest: "/etc/sudoers.d/{{ debcontrol_user }}"
         content: |
-          {{ debcontrol_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown
+          {{ debcontrol_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
         owner: root
         group: root
         mode: "0440"

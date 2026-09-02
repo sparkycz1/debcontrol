@@ -1,15 +1,57 @@
 {% extends "base.html" %}
 {% from "partials/_packages_summary.html" import render as render_packages_summary %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
+{% from "partials/_os_badge.html" import render as render_os_badge %}
 
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>{{ machine.name }}</h1>
+    <h1>{{ render_os_badge(machine.os_id, size=28) }} {{ machine.name }}</h1>
   </div>
 
   {{ render_tabnav(tabs, active_tab) }}
+
+  {% if machine.readiness_missing %}
+    <div class="alert alert-warn">
+      <p>
+        This machine is missing:
+        {% for item in machine.readiness_missing %}{{ item }}{% if not loop.last %}; {% endif %}{% endfor %}.
+      </p>
+      {% if machine.auth_method.value == 'password' %}
+        <p class="hint">
+          <a href="/machines/{{ machine.id }}/edit">Run initial setup</a> on the
+          Settings tab to fix this.
+        </p>
+      {% else %}
+        <details>
+          <summary>Fix it (needs a one-time root/sudo login)</summary>
+          <p class="hint">
+            This machine already uses debcontrol's own SSH key for everyday
+            use — fixing the items above needs a root-equivalent login just
+            this once, the same as the original setup did. Nothing is
+            stored afterward; on success this machine goes right back to
+            using its own SSH key.
+          </p>
+          <form method="post" action="/machines/{{ machine.id }}/run-onboarding-with-credential"
+                class="form" autocomplete="off"
+                data-confirm="Temporarily connect as this account to fix what's missing, then switch back to debcontrol's own SSH key?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="readiness_username">Username</label>
+            <input type="text" id="readiness_username" name="username" value="root" required>
+            <label for="readiness_password">Password</label>
+            <input type="password" id="readiness_password" name="password" required>
+            <button type="submit" class="button">Run initial setup</button>
+          </form>
+        </details>
+      {% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/recheck-readiness"
+            class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-secondary">Re-check</button>
+      </form>
+    </div>
+  {% endif %}
 
   <dl class="detail-list">
     <dt>IP address</dt><dd>{{ machine.ip_address }}</dd>
@@ -17,6 +59,8 @@
     <dt>User</dt><dd>{{ machine.username }}</dd>
     <dt>Auth method</dt>
     <dd>{{ 'SSH key' if machine.auth_method.value == 'ssh_key' else 'Password' }}</dd>
+    <dt>Operating system</dt>
+    <dd>{{ machine.os_version or '—' }}</dd>
     <dt>Group</dt>
     <dd>
       {% if machine.group %}

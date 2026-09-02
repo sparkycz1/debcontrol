@@ -89,9 +89,15 @@ one fact that genuinely can't be read without root (there's no
 `dmidecode` has it). debcontrol tries `sudo -n dmidecode -t 17` first,
 falling back to a plain `dmidecode -t 17` for a `root`-connected account,
 and simply leaves `ram_speed_mhz` unknown if neither works — this one fact
-is optional, not a reason to grant broader root access just for it. To
-enable it for a sudo-based account, add this alongside the sudoers rules
-in "System updates and power actions" below:
+is optional, not a reason to grant broader root access just for it.
+**Machines onboarded through this app (either onboarding path) already
+have this** — the sudoers rule below is bundled into the same
+`/etc/sudoers.d/debcontrol` file "System updates and power actions" below
+describes, not a separate step. Add it by hand only for a machine that was
+onboarded before this was added, or one set up outside either onboarding
+path entirely — the app's own **Machines → a machine → Overview** page
+flags this (and anything else missing) with a banner and an in-app fix, so
+reaching for a manual `visudo` is rarely necessary:
 
 ```
 # /etc/sudoers.d/debcontrol
@@ -153,7 +159,7 @@ requirement:
   scoped to just what's needed:
   ```
   # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
-  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
   # Add these two only if flatpak/snap are installed and you want debcontrol
   # to keep them updated too:
   debcontrol ALL=(root) NOPASSWD: /usr/bin/flatpak, /usr/bin/snap
@@ -213,38 +219,42 @@ package: whatever the connecting account can do at an interactive SSH
 prompt is exactly what the browser terminal can do, since it's the same
 shell.
 
-**Colors and box-drawing (htop, less, vim, ...) work out of the box** on
-any Debian/Ubuntu install, no extra package needed:
+**Full 256-color output, colors, and box-drawing (htop, less, vim, ...)**:
 
-- The browser terminal negotiates `TERM=xterm` — deliberately not
-  `xterm-256color`, whose terminfo entry ships in `ncurses-term`, an
-  *extra* package a minimal install doesn't have by default (only the base
-  `ncurses-base` entries — `xterm`, `vt100`, `screen`, `linux`, ... — are
-  guaranteed present). Requesting a `TERM` the remote can't look up
-  doesn't fail loudly; ncurses silently falls back to a near-blank
-  capability set instead, which is what a flat monochrome/ASCII-only
-  `htop` actually is. Plain `xterm` is virtually always present and still
-  gets real ANSI colors.
-- It also requests `LANG`/`LC_ALL=C.UTF-8` for the session, so ncurses
-  apps draw meters/borders with proper Unicode block/box-drawing
-  characters instead of falling back to plain ASCII (`|` instead of a
-  colored block) — a minimal, non-interactively-provisioned server
-  commonly defaults its login shell to the POSIX/"C" locale otherwise.
-  This is a best-effort SSH environment request: it works as long as
-  sshd's `AcceptEnv`/`SetEnv` allows `LANG`/`LC_*`, which is Debian/
-  Ubuntu's own sshd_config default.
+- The browser terminal (xterm.js) can render the full 256-color palette,
+  so it negotiates `TERM=xterm-256color` — which needs the terminfo entry
+  `ncurses-term` ships, an *extra* package a minimal install doesn't have
+  by default (only the base `ncurses-base` entries — `xterm`, `vt100`,
+  `screen`, `linux`, ... — are guaranteed present). Requesting a `TERM`
+  the remote can't look up doesn't fail loudly; ncurses silently falls
+  back to a near-blank capability set instead, which is what a flat
+  monochrome/ASCII-only `htop` actually is. **This app's own onboarding**
+  (both the [Ansible playbook](Ansible-Onboarding.md) and the web UI's
+  **Run initial setup**) **installs `ncurses-term` automatically,
+  best-effort** — a machine onboarded through this app gets full color
+  out of the box; one that wasn't needs it installed by hand:
+  ```sh
+  sudo apt-get install -y ncurses-term
+  ```
+  Its absence isn't a hard failure either way — colors/box-drawing just
+  degrade to a flatter rendering, same as any terminal asking for a
+  terminfo entry the remote doesn't have.
+- The session also requests `LANG`/`LC_ALL=C.UTF-8`, so ncurses apps draw
+  meters/borders with proper Unicode block/box-drawing characters instead
+  of falling back to plain ASCII (`|` instead of a colored block) — a
+  minimal, non-interactively-provisioned server commonly defaults its
+  login shell to the POSIX/"C" locale otherwise. This is a best-effort SSH
+  environment request: it works as long as sshd's `AcceptEnv`/`SetEnv`
+  allows `LANG`/`LC_*`, which is Debian/Ubuntu's own sshd_config default.
 
-Installing `ncurses-term` is optional and only buys 256-color *depth*
-specifically (the browser terminal doesn't request `xterm-256color`, so
-this isn't required for the colors/box-drawing above):
-
-```sh
-sudo apt-get install -y ncurses-term
-```
-
-The [Ansible playbook](Ansible-Onboarding.md) (and the web UI's
-equivalent, **Run initial setup** — see that same page) installs it
-automatically, best-effort.
+**Copy/paste** works both directions via the system clipboard —
+Ctrl/Cmd+Shift+C copies the current selection, Ctrl/Cmd+Shift+V pastes,
+and right-click does whichever makes sense (copies if there's a selection,
+otherwise pastes), the same convention PuTTY and most native terminal
+emulators use. This needs nothing on the managed machine's side — it's
+entirely a browser-side (Clipboard API) feature, which in turn needs a
+secure context: the debcontrol web UI itself reached over HTTPS (or
+`localhost`) — see the reverse-proxy wiki pages if it currently isn't.
 
 ## 📜 Logs
 

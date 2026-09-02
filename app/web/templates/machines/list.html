@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_os_badge.html" import render as render_os_badge %}
 
 {% block title %}Machines — debcontrol{% endblock %}
 
@@ -101,7 +102,10 @@
           {% for machine in machines %}
             <tr>
               <td><input type="checkbox" name="machine_ids" value="{{ machine.id }}"></td>
-              <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
+              <td>
+                {{ render_os_badge(machine.os_id) }}
+                <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>
+              </td>
               <td>{{ machine.ip_address }}</td>
               <td>{{ machine.discovered_hostname or '—' }}</td>
               <td>

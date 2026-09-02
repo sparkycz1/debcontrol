@@ -199,7 +199,12 @@ async def test_run_onboarding_endpoint_dispatches_the_task(
         f"/machines/{machine_id}/run-onboarding", data={"csrf_token": csrf_token}
     )
     assert response.status_code == 200
-    assert celery_calls.names == ["app.tasks.jobs.run_machine_onboarding"]
+    # Success also triggers a readiness re-check — see
+    # app.web.routes.machines.run_onboarding_endpoint.
+    assert celery_calls.names == [
+        "app.tasks.jobs.run_machine_onboarding",
+        "app.tasks.jobs.check_machine_readiness",
+    ]
     assert celery_calls[0][1] == (str(machine_id),)
     # celery_calls' default stub result is {"ok": True, "output": "fake"} —
     # the endpoint should render that as a success, without needing the

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import re
@@ -1117,6 +1118,12 @@ async def run_onboarding_endpoint(
         details={"error": error} if error else None,
     )
 
+    if error is None:
+        # Confirm the setup actually took (ncurses-term, the sudoers
+        # scope) rather than assuming success — fire-and-forget, the
+        # banner on the Overview tab picks up the result on next load.
+        tasks.check_machine_readiness.delay(str(machine.id))
+
     machine = await _get_machine_or_404(machine_id, db, current_user)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
@@ -1139,6 +1146,112 @@ async def run_onboarding_endpoint(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post("/{machine_id}/recheck-readiness", dependencies=[_manage, Depends(verify_csrf)])
+async def recheck_readiness_endpoint(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The readiness banner's "Re-check" button — blocks on one SSH round
+    trip, same "Test connection"-style pattern as the other on-demand
+    checks on this page."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    async_result = tasks.check_machine_readiness.delay(str(machine.id))
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(async_result.get, timeout=settings.ssh_connect_timeout + 15)
+
+    redirect_url = f"/machines/{machine.id}"
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=status.HTTP_200_OK, headers={"HX-Redirect": redirect_url})
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post(
+    "/{machine_id}/run-onboarding-with-credential", dependencies=[_manage, Depends(verify_csrf)]
+)
+async def run_onboarding_with_credential_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    username: str = Form(...),
+    password: str = Form(...),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The readiness banner's "Fix it" flow for a machine that's *already*
+    onboarded (SSH_KEY auth, as the app's own "debcontrol" identity) but
+    missing something outside that identity's own sudo scope (e.g.
+    `dmidecode`, added as a requirement after this machine was first
+    onboarded) — `run_machine_onboarding` needs a root-equivalent login to
+    (re-)grant that, and the app no longer has one stored for an
+    already-onboarded machine.
+
+    Reuses the exact same task a fresh, never-onboarded machine's "Run
+    initial setup" button does (`run_machine_onboarding`), by temporarily
+    putting this machine into the same shape a password-auth machine is
+    already in — `auth_method=PASSWORD` + the submitted one-time
+    credential — so the task's own existing logic (connect, run the
+    script, and on success switch back to `debcontrol`/SSH_KEY/no stored
+    secret) handles the rest unchanged. **On failure, this endpoint itself
+    restores the machine's previous username/auth method** rather than
+    leaving a real root password sitting in `secret_encrypted` on a
+    machine this app otherwise treats as SSH_KEY-only — the task's own
+    success-path revert never gets a chance to run when the script fails.
+    """
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    previous_username = machine.username
+    previous_auth_method = machine.auth_method
+    machine.username = username.strip()
+    machine.auth_method = AuthMethod.PASSWORD
+    machine.secret_encrypted = encrypt_secret(password)
+    await db.commit()
+
+    async_result = tasks.run_machine_onboarding.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 120
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The setup script did not finish in time. Reload this page shortly."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    if error is not None:
+        # The task never reached its own success-path revert — restore
+        # this machine to what it was before this one-time attempt rather
+        # than leaving it on password auth with a real credential stored.
+        machine = await _get_machine_or_404(machine_id, db, current_user)
+        machine.username = previous_username
+        machine.auth_method = previous_auth_method
+        machine.secret_encrypted = None
+        await db.commit()
+    else:
+        tasks.check_machine_readiness.delay(str(machine.id))
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.onboarding.run_with_credential",
+        summary=f'Ran initial setup (one-time credential) on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    redirect_url = f"/machines/{machine.id}"
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=status.HTTP_200_OK, headers={"HX-Redirect": redirect_url})
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{machine_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
@@ -1359,6 +1472,11 @@ async def trust_host_key(
     # Now that the machine can be safely connected to, kick off an initial
     # facts gathering pass in the background — don't block the redirect on it.
     tasks.refresh_machine_facts.delay(str(machine.id))
+    # Same idea for the readiness check — surfaces a banner on the Overview
+    # tab if this machine (freshly onboarded through this app, or hand-
+    # configured) is actually missing something this app's other features
+    # depend on (see app.ssh.readiness).
+    tasks.check_machine_readiness.delay(str(machine.id))
 
     redirect_url = f"/machines/{machine.id}"
     # The fingerprint-confirmation form only ever renders inside an htmx fragment —

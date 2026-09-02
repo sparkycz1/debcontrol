@@ -64,7 +64,8 @@ def build_onboarding_command(public_key: str) -> str:
         f'chmod 600 "$home/.ssh/authorized_keys"; '
         f'chown {user}:{user} "$home/.ssh/authorized_keys"; '
         f"cat > /etc/sudoers.d/{user} <<'DEBCONTROL_SUDOERS_APT'\n"
-        f"{user} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown\n"
+        f"{user} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, "
+        "/usr/sbin/dmidecode\n"
         "DEBCONTROL_SUDOERS_APT\n"
         f"chmod 440 /etc/sudoers.d/{user}; "
         f"visudo -cf /etc/sudoers.d/{user}; "

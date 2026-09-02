@@ -58,6 +58,8 @@ from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_o
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
+from app.ssh.readiness import check_machine_readiness as run_readiness_probes
+from app.ssh.readiness import missing_requirements
 from app.ssh.services import gather_services
 from app.ssh.updates import check_updates, preview_update, run_system_update
 from app.tasks.celery_app import celery_app
@@ -392,6 +394,46 @@ async def _run_machine_onboarding(machine_id: str) -> dict[str, Any]:
 )
 def run_machine_onboarding(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_run_machine_onboarding(machine_id))
+
+
+async def _check_machine_readiness(machine_id: str) -> dict[str, Any]:
+    """Runs `app.ssh.readiness`'s probes against one machine and stores the
+    result on it (`Machine.readiness_checked_at`/`readiness_missing`) —
+    not returned for its own sake to a caller blocking on this task's
+    result the way most other tasks here are; every caller either fires
+    this and forgets it (right after a host key is confirmed) or reloads
+    the machine from the DB afterward (the "Re-check" button, the
+    onboarding-with-credential route)."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            result = await run_readiness_probes(machine, secret, settings.ssh_connect_timeout)
+        except SSHConnectionError as exc:
+            logger.warning("check_machine_readiness failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        machine.readiness_missing = missing_requirements(result)
+        machine.readiness_checked_at = datetime.now(UTC)
+        await session.commit()
+
+        return {"ok": True, "missing": machine.readiness_missing}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.check_machine_readiness",
+    time_limit=get_settings().ssh_connect_timeout + 30,
+)
+def check_machine_readiness(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_check_machine_readiness(machine_id))
 
 
 def _due_machines[M](

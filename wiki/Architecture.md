@@ -55,14 +55,16 @@
 - `.alert`'s icon is CSS `::before` content positioned *absolutely* inside
   reserved left padding, not a flex sibling, so an alert holding several
   `<p>` tags (one per validation error) still stacks them.
-- A machine's or group's own pages (Overview, Updates, Terminal, Power,
-  Settings) share a sub-navigation row (`partials/_tabnav.html`) below the
-  page header — plain links to real pages, no JS tabs. Each route builds its
-  own `tabs`/`active_tab` context (`_machine_tabs`/`_group_tabs` in
-  `app/web/routes/machines.py`/`machine_groups.py`) so the set and order is
-  identical everywhere; a tab is left out entirely rather than shown
-  disabled when the current user lacks the permission for it (e.g. Terminal
-  without `action.terminal`).
+- A machine's or group's own pages (Overview, Monitoring, Updates,
+  Terminal, Logs, Power, Settings — Logs and Terminal are machine-only,
+  gated behind `action.terminal`) share a sub-navigation row
+  (`partials/_tabnav.html`) below the page header — plain links to real
+  pages, no JS tabs. Each route builds its own `tabs`/`active_tab` context
+  (`_machine_tabs`/`_group_tabs` in `app/web/routes/machines.py`/
+  `machine_groups.py`) so the set and order is identical everywhere; a tab
+  is left out entirely rather than shown disabled when the current user
+  lacks the permission for it (e.g. Terminal/Logs without
+  `action.terminal`).
 - Settings uses the same `_tabnav.html` macro, but with one twist: there's
   only ever the single `GET /settings` route, not one per tab, since every
   POST handler on the page (nine sections' worth of forms) has to redirect
@@ -844,6 +846,63 @@ finishing, success or failure.
 
 `held` (`apt-mark showhold`) is a per-row boolean on `MachinePackage`
 rather than a separate list. flatpak/snap rows are always `held=False`.
+
+### Systemd service snapshot
+
+**Machines → a machine → Monitoring → Show services** — `MachineService`,
+one row per `systemctl list-units --type=service --all` unit
+(`app/ssh/services.py`), the same snapshot/replace pattern and cadence as
+`MachinePackage` above (`refresh_all_machine_services`, on
+`FACTS_REFRESH_INTERVAL_SECONDS`) — a full unit listing doesn't need to be
+any fresher than facts/packages do. No root needed: listing unit state is
+allowed for any account under systemd's default polkit policy.
+
+### Monitoring: CPU/RAM/disk history
+
+**Machines → a machine → Monitoring** — unlike every table above, this one
+(`MachineMonitoringSample`) genuinely is a history, not a replaced
+snapshot: one row appended per machine per `MONITORING_INTERVAL_SECONDS`
+tick (`app/tasks/jobs.monitor_all_machines` → `sample_machine_monitoring`,
+`app/ssh/monitoring.py`), purged per-machine by
+`purge_old_monitoring_samples` against `AppSettings.
+monitoring_history_retention_days` (or a per-machine override). CPU
+percent needs two `/proc/stat` reads a second apart, computed inside the
+one SSH round trip (`sleep 1`) rather than as two round trips. The
+Monitoring tab's graphs (`app/services/monitoring_history.py`) downsample
+a time range's raw rows to a target point count in Python — positional
+bucket-averaging, not time-aligned buckets, since neither Postgres nor the
+SQLite test backend gets a time-series extension for this — rendered as
+the same dependency-free inline SVG sparkline the Dashboard's trend charts
+use (`macros/charts.html`).
+
+### Logs: no storage, gated behind `action.terminal`
+
+**Machines → a machine → Logs** (`app/ssh/logs.py`) is a live SSH round
+trip on every view — the journal (`journalctl`, with search/`--since`/
+`--until`) by default, or one file under a configurable path allowlist
+(`LOG_FILE_ALLOWED_PATHS`). Nothing is stored: only that a view happened
+is audit-logged, never the content. Gated behind `action.terminal` rather
+than the plain `machine.view` every read-only tab above uses — reading
+log content is a materially different trust level than a fact, even
+though it needs no root, and an admin who can already open the terminal
+could read any of this directly anyway.
+
+### Post-onboarding readiness check
+
+**Machines → a machine → Overview** shows a banner if
+`app.ssh.readiness`'s probes (ncurses-term installed; scoped `sudo -n` for
+apt/shutdown/dmidecode/flatpak+snap — everything `app.ssh.onboarding`
+sets up) found something missing — re-run automatically right after a
+host key is confirmed and right after "Run initial setup" completes, or
+on demand ("Re-check"). For a machine *already* on the app's own SSH-key
+identity (so there's no root credential stored anymore to fix a gap with),
+the banner's "Fix it" form collects a one-time root/sudo login, uses it to
+temporarily put the machine back into the exact shape a never-onboarded
+machine is in (`auth_method=PASSWORD` + that credential), and reuses
+`run_machine_onboarding` unchanged — on failure, the endpoint itself
+restores the machine's previous auth state rather than leaving a real
+password sitting in `secret_encrypted`, since the task's own
+success-path revert never runs when the script fails.
 
 ### Fleet-wide package search
 
