@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduleTargetType
 from app.scheduling.actions import (
     ActionRunResult,
+    ScheduledActionParam,
     ScheduledActionSpec,
     all_actions,
     get_action,
@@ -91,6 +93,23 @@ def test_system_update_action_has_strategy_param():
     assert action is not None
     param_keys = {p.key for p in action.params}
     assert param_keys == {"strategy"}
+
+
+def test_run_command_action_is_registered_and_gated():
+    register_builtin_actions()
+
+    action = get_action("run_command")
+    assert action is not None
+    assert action.destructive is True
+    assert action.extra_permission == Permission.ACTION_TERMINAL
+    assert [p.key for p in action.params] == ["command"]
+    assert action.params[0].param_type == "text"
+
+
+def test_scheduled_action_param_defaults_to_select_with_no_choices():
+    param = ScheduledActionParam(key="x", label="X", default="")
+    assert param.param_type == "select"
+    assert param.choices == []
 
 
 def test_register_action_rejects_duplicate_key():

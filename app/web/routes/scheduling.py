@@ -77,10 +77,31 @@ async def _get_groups(db: AsyncSession, user: User) -> list[MachineGroup]:
 
 
 async def _form_context(
-    db: AsyncSession, user: User, form: dict[str, str], errors: list[str]
+    db: AsyncSession,
+    user: User,
+    form: dict[str, str],
+    errors: list[str],
+    *,
+    keep_action: str | None = None,
 ) -> dict[str, object]:
+    # An action requiring a permission this user doesn't have (e.g.
+    # `run_command` without `action.terminal`) isn't offered at all —
+    # `_action_permission_error` is still the actual enforcement (this is
+    # presentation only, same split `allow_all_machines` below already
+    # follows for the target dropdown). Exception: a task already using
+    # that action (`keep_action`, only set when editing) stays listed even
+    # if this viewer can't grant it themselves — otherwise saving the edit
+    # form unchanged would silently swap it to whatever action happens to
+    # be first in the list.
+    visible_actions = [
+        action
+        for action in all_actions()
+        if action.extra_permission is None
+        or user.has_permission(action.extra_permission)
+        or action.key == keep_action
+    ]
     return {
-        "actions": all_actions(),
+        "actions": visible_actions,
         "machines": await _get_machines(db, user),
         "groups": await _get_groups(db, user),
         # The form hides "All machines" for a restricted account; the POST
@@ -108,6 +129,25 @@ _OUT_OF_SCOPE_TARGET_ERROR = (
     "isn't available. Pick one of your own groups or a machine in them "
     '("All machines" is never available to a restricted account).'
 )
+
+
+def _action_permission_error(action_key: str, user: User) -> str | None:
+    """`None` if `user` may create/edit a task for `action_key` (either it
+    has no extra requirement beyond `scheduling.manage`, already enforced
+    by this router's own dependency, or the user also has it) — an error
+    message otherwise. See `ScheduledActionSpec.extra_permission`'s own
+    docstring for why `run_command` needs this on top of the plain
+    `scheduling.manage` every other action is satisfied by."""
+    action = get_action(action_key)
+    if action is None or action.extra_permission is None:
+        return None
+    if user.has_permission(action.extra_permission):
+        return None
+    return (
+        f'The "{action.label}" action also needs the '
+        f'"{action.extra_permission.value}" permission, which your account '
+        "doesn't have."
+    )
 
 
 @router.get("")
@@ -139,6 +179,7 @@ async def list_scheduled_tasks(
         "scheduling/list.html",
         {
             "tasks": tasks,
+            "action_labels": {action.key: action.label for action in all_actions()},
             "csrf_token": csrf_token,
             # One-time notice after "Run now" — not persisted, just echoed
             # back from the query string.
@@ -202,6 +243,11 @@ async def create_scheduled_task(
         payload.target_group_id,
     ):
         errors.append(_OUT_OF_SCOPE_TARGET_ERROR)
+
+    if payload is not None:
+        permission_error = _action_permission_error(payload.action, current_user)
+        if permission_error:
+            errors.append(permission_error)
 
     if errors or payload is None:
         task_name = raw_form.get("name", "")
@@ -270,7 +316,7 @@ async def edit_scheduled_task_form(
         "is_enabled": "on" if task.is_enabled else "",
         **{f"param_{k}": v for k, v in (task.action_params or {}).items()},
     }
-    context = await _form_context(db, current_user, form, [])
+    context = await _form_context(db, current_user, form, [], keep_action=task.action)
     context["csrf_token"] = csrf_token
     context["task"] = task
     response = templates.TemplateResponse(request, "scheduling/edit.html", context)
@@ -315,6 +361,11 @@ async def update_scheduled_task(
     ):
         errors.append(_OUT_OF_SCOPE_TARGET_ERROR)
 
+    if payload is not None:
+        permission_error = _action_permission_error(payload.action, current_user)
+        if permission_error:
+            errors.append(permission_error)
+
     if errors or payload is None:
         await log_event(
             db,
@@ -327,7 +378,9 @@ async def update_scheduled_task(
             target_label=task.name,
         )
         csrf_token, new_cookie = get_or_create_csrf_token(request)
-        context = await _form_context(db, current_user, raw_form, errors)
+        context = await _form_context(
+            db, current_user, raw_form, errors, keep_action=task.action
+        )
         context["csrf_token"] = csrf_token
         context["task"] = task
         response = templates.TemplateResponse(

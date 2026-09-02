@@ -57,13 +57,19 @@
       <label for="param_{{ param.key }}">
         {{ param.label }} <span class="hint">(only used for "{{ action.label }}")</span>
       </label>
-      <select id="param_{{ param.key }}" name="param_{{ param.key }}">
-        {% for value, label in param.choices %}
-          <option value="{{ value }}" {% if form.get('param_' ~ param.key, param.default) == value %}selected{% endif %}>
-            {{ label }}
-          </option>
-        {% endfor %}
-      </select>
+      {% if param.param_type == 'text' %}
+        <input type="text" id="param_{{ param.key }}" name="param_{{ param.key }}"
+               value="{{ form.get('param_' ~ param.key, param.default) }}"
+               {% if param.placeholder %}placeholder="{{ param.placeholder }}"{% endif %}>
+      {% else %}
+        <select id="param_{{ param.key }}" name="param_{{ param.key }}">
+          {% for value, label in param.choices %}
+            <option value="{{ value }}" {% if form.get('param_' ~ param.key, param.default) == value %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      {% endif %}
     {% endfor %}
   {% endfor %}
 

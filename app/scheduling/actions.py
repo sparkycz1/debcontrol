@@ -11,10 +11,14 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.machine import Machine
+
+if TYPE_CHECKING:
+    from app.db.models.role import Permission
 
 
 @dataclass(frozen=True)
@@ -27,13 +31,18 @@ class ActionRunResult:
 
 @dataclass(frozen=True)
 class ScheduledActionParam:
-    """One configurable option for an action, rendered as a `<select>` in
-    the scheduling form (e.g. upgrade strategy for `system_update`)."""
+    """One configurable option for an action, rendered in the scheduling
+    form as either a `<select>` (`param_type="select"`, e.g. upgrade
+    strategy for `system_update`) or a free-text `<input>`
+    (`param_type="text"`, e.g. the command string for `run_command`).
+    `choices` is only meaningful (and required) for `"select"`."""
 
     key: str
     label: str
-    choices: list[tuple[str, str]]  # (value, display label)
     default: str
+    param_type: Literal["select", "text"] = "select"
+    choices: list[tuple[str, str]] = field(default_factory=list)  # (value, display label)
+    placeholder: str = ""
 
 
 # (db session, target machines, the action's stored params) -> what happened.
@@ -51,6 +60,13 @@ class ScheduledActionSpec:
     params: list[ScheduledActionParam] = field(default_factory=list)
     # Shown as a caution in the schedule form for actions with no undo.
     destructive: bool = False
+    # An action a user needs more than plain `scheduling.manage` to create
+    # or edit a task for — e.g. `run_command` also requires
+    # `action.terminal`, the same permission gate manually running an
+    # arbitrary command already needs everywhere else in this app (the
+    # interactive terminal, the AI assistant's `run_ssh_command` tool).
+    # Checked in `app.web.routes.scheduling`, not enforced here.
+    extra_permission: Permission | None = None
 
 
 _REGISTRY: dict[str, ScheduledActionSpec] = {}

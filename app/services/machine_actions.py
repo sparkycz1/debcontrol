@@ -20,7 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
 from app.ssh.power import PowerAction
-from app.tasks.jobs import check_machine_updates, run_machine_update, send_machine_power_command
+from app.tasks.jobs import (
+    check_machine_updates,
+    run_machine_update,
+    run_remote_ssh_command,
+    send_machine_power_command,
+)
 
 
 async def trigger_updates(
@@ -62,4 +67,21 @@ async def send_power_to_machines(machines: list[Machine], action: PowerAction) -
     eligible = [m for m in machines if m.host_key_fingerprint]
     for machine in eligible:
         send_machine_power_command.delay(str(machine.id), action.value)
+    return len(machines) - len(eligible)
+
+
+async def run_custom_command_on_machines(machines: list[Machine], command: str) -> int:
+    """Enqueue a `run_remote_ssh_command` task for every eligible (pinned)
+    machine — the same task the AI assistant's `run_ssh_command` tool uses
+    after its own human-confirmation step. There's no result page here
+    (unlike an update run): each task's outcome only lands in that task's
+    own Celery result backend entry, same "fire and don't track" shape as
+    `trigger_check_updates`/`send_power_to_machines`. Returns skipped
+    count. **Callers must independently gate creating/editing a
+    `run_command` scheduled task behind `action.terminal`** — this
+    function itself performs no authorization, same trust boundary
+    `run_remote_ssh_command` itself documents."""
+    eligible = [m for m in machines if m.host_key_fingerprint]
+    for machine in eligible:
+        run_remote_ssh_command.delay(str(machine.id), command)
     return len(machines) - len(eligible)

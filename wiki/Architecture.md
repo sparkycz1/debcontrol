@@ -21,6 +21,39 @@
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
 
+```mermaid
+flowchart LR
+    Browser["Browser<br/>htmx, no SPA build"]
+    Web["web<br/>FastAPI"]
+    DB[("PostgreSQL")]
+    Redis[("Redis<br/>broker + result backend")]
+    Worker["worker<br/>Celery"]
+    Beat["beat<br/>Celery Beat scheduler"]
+    Machines[["Managed machines<br/>SSH"]]
+
+    Browser <-->|HTTP / WebSocket| Web
+    Web <--> DB
+    Web -->|enqueue| Redis
+    Redis --> Worker
+    Beat -->|periodic sweeps| Redis
+    Worker <--> DB
+    Worker -->|AsyncSSH| Machines
+```
+
+One request/reply web tier, one Celery worker pool, one Beat scheduler —
+see [Background tasks](#background-tasks-celery-and-celery-beat) for what
+Beat actually schedules and why `web` never talks to a managed machine
+directly (only `worker` does).
+
+**On this page:** [Stack](#-stack) · [Server-rendered UI](#server-rendered--htmx-not-a-spa)
+· [Background tasks](#background-tasks-celery-and-celery-beat) ·
+[Project structure](#-project-structure) ·
+[Auth & RBAC](#authentication--rbac) ·
+[Security model](#-security-model) (host key pinning, secrets at rest,
+system updates, facts/packages/services, monitoring, logs, readiness
+check, terminal, scheduling, audit log, CSRF/headers) ·
+[Deliberately out of scope](#deliberately-out-of-scope)
+
 ### Dependency version notes
 
 - **`redis-py` carries no upper pin** in `pyproject.toml` — just a lower

@@ -15,6 +15,14 @@ and the host port to publish), writes `.env`, brings the stack up with
 `docker compose`, waits for the app to become healthy, and creates the
 first Administrator account.
 
+If `.env` already exists, declining to overwrite it doesn't abort anymore
+— this tops it up instead (`scripts/env_sync.py`: adds whatever
+`.env.example` variables this deployment's `.env` predates, touching
+nothing already there) and just starts the stack against the existing
+file, no secrets regenerated and no new admin account created. Useful for
+re-running this script after `git pull` on a deployment that was never
+switched to `scripts/upgrade.sh`.
+
 Pure standard library — no dependency on this project's own virtualenv, so
 it runs with a bare system `python3` before anything has been installed.
 See wiki/Installation.md for what this does step by step, and for the
@@ -34,6 +42,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.env_sync import sync_env  # noqa: E402 - needs the sys.path insert above
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = REPO_ROOT / ".env"
@@ -131,6 +142,62 @@ def _git_commit() -> str:
         return "unknown"
 
 
+def _read_env_value(path: Path, key: str) -> str | None:
+    """The value of an uncommented `KEY=value` line in an existing `.env`,
+    or `None` if it's absent or commented out — used only by the "keep my
+    existing .env" path below to figure out `APP_PORT`/whether Caddy is
+    configured without re-prompting for values already sitting in the file."""
+    if not path.exists():
+        return None
+    pattern = re.compile(rf"^{re.escape(key)}=(.*)$")
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _sync_and_start(docker_path: str) -> None:
+    """The path taken when an existing `.env` is kept rather than
+    regenerated: top it up with whatever `.env.example` variables it's
+    missing (scripts/env_sync.py — never touches a line already there),
+    then just bring the stack up against it, same as `upgrade.sh` would.
+    No secrets are generated, no questions asked, and no admin account is
+    (re-)created — this assumes a working deployment already exists and
+    the operator just re-ran this script."""
+    print("==> Checking .env against .env.example for anything new...")
+    added = sync_env(ENV_PATH, ENV_EXAMPLE_PATH)
+    if added:
+        print(f"    Added: {', '.join(added)} (review the values before relying on this deploy).")
+    else:
+        print("    Nothing to add — .env already has every .env.example variable.")
+
+    use_caddy = _read_env_value(ENV_PATH, "DOMAIN") is not None
+    port = _read_env_value(ENV_PATH, "APP_PORT") or "8080"
+    compose_files = ["-f", "docker-compose.yml"]
+    if use_caddy:
+        compose_files += ["-f", "docker-compose.caddy.yml"]
+
+    print("==> Building and starting the stack (this can take a few minutes)...")
+    build_env = {**os.environ, "GIT_COMMIT": _git_commit()}
+    subprocess.run(  # noqa: S603 - fixed args plus this run's own choices, no user input
+        [docker_path, "compose", *compose_files, "up", "-d", "--build"],
+        cwd=REPO_ROOT,
+        env=build_env,
+        check=True,
+    )
+
+    print("==> Waiting for the app to become healthy...")
+    if not _wait_until_healthy(port):
+        print(
+            "warning: the app didn't report healthy within "
+            f"{_HEALTH_TIMEOUT_SECONDS}s — check 'docker compose logs -f web'.",
+            file=sys.stderr,
+        )
+    else:
+        print("\ndebcontrol is running — .env was kept as-is (plus anything just added above).")
+
+
 def _wait_until_healthy(port: str) -> bool:
     deadline = time.monotonic() + _HEALTH_TIMEOUT_SECONDS
     url = f"http://localhost:{port}/healthz"
@@ -152,10 +219,12 @@ def main() -> None:
 
     env_existed = ENV_PATH.exists()
     if env_existed and not _prompt_yes_no(
-        ".env already exists. Overwrite it with a freshly configured one?", default=False
+        ".env already exists. Overwrite it with a freshly configured one? "
+        "(no just tops it up with any new .env.example variables and starts the stack)",
+        default=False,
     ):
-        print("Aborted — .env left untouched.")
-        raise SystemExit(1)
+        _sync_and_start(docker_path)
+        return
 
     lines = ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines()
 

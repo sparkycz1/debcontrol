@@ -112,15 +112,25 @@ def test_machine_connection(machine_id: str) -> dict[str, Any]:
 async def _run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
     """Run one arbitrary command on one machine and return its exit status
     and output — the execution half of the AI assistant's
-    `run_ssh_command` tool (`app.ai.tools`).
+    `run_ssh_command` tool (`app.ai.tools`), and of the `run_command`
+    scheduled action (`app.scheduling.builtin_actions`, via
+    `app.services.machine_actions.run_custom_command_on_machines`).
 
     **This task performs no authorization of its own, and must never be
-    enqueued from anywhere that hasn't done it.** Its only call site is the
-    confirm route in `app.web.routes.ai`, which re-checks
-    `Permission.ACTION_TERMINAL` on the confirming user immediately before
-    enqueueing, after that user has seen the literal command string. That is
-    the same trust boundary the interactive terminal has: reaching this
-    point means a human with terminal rights asked for this exact command.
+    enqueued from anywhere that hasn't done it.** Two call sites, two
+    different points in time where that authorization happens:
+    - The confirm route in `app.web.routes.ai`, which re-checks
+      `Permission.ACTION_TERMINAL` on the confirming user immediately
+      before enqueueing, after that user has seen the literal command
+      string — the same trust boundary the interactive terminal has:
+      reaching this point means a human with terminal rights asked for
+      this exact command, right now.
+    - A `run_command` scheduled task, authorized once at creation/edit
+      time (`app.web.routes.scheduling` requires `action.terminal` in
+      addition to `scheduling.manage` for that one action) rather than at
+      every fire — the same "authorized when set up, then runs
+      unattended" shape `reboot`/`shutdown`/`system_update` scheduled
+      actions already have.
     """
     settings = get_settings()
 

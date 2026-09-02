@@ -11,16 +11,19 @@
 #      git checkout at all (a downloaded tarball can't be `git pull`ed).
 #   2. `git fetch` + `git pull --ff-only` on the current branch — fails
 #      loudly instead of creating a merge commit or silently diverging.
-#   3. Detects whether the bundled Caddy reverse proxy is currently running
+#   3. Adds whatever `.env.example` variables the newly-pulled version
+#      introduced but this deployment's `.env` predates (scripts/env_sync.py
+#      — only ever appends what's missing, never touches an existing line).
+#   4. Detects whether the bundled Caddy reverse proxy is currently running
 #      and rebuilds/restarts with the same compose file combination, so it
 #      doesn't get silently dropped.
-#   4. `docker compose build` (stamped with GIT_COMMIT so the Settings page
+#   5. `docker compose build` (stamped with GIT_COMMIT so the Settings page
 #      can show exactly which commit is running — see app/core/version.py)
 #      then `docker compose up -d` — the `migrate` service runs
 #      automatically as part of the `web`/`worker` dependency chain (see
 #      docker-compose.yml) and must complete successfully before either of
 #      them starts. There's no separate "run migrations" step.
-#   5. Prints `docker compose ps` so you can see everything came back up.
+#   6. Prints `docker compose ps` so you can see everything came back up.
 #
 # Postgres/Redis/Caddy images are pinned to exact versions in
 # docker-compose.yml and are NOT touched by this script — bumping those is
@@ -57,6 +60,19 @@ if [ -z "$(git log "HEAD..origin/${branch}" --oneline)" ]; then
 else
   echo "==> Pulling..."
   git pull --ff-only origin "$branch"
+fi
+
+# A newer release can add variables to .env.example that this deployment's
+# existing .env predates (a new background-check interval, a new feature's
+# own setting, ...) — scripts/env_sync.py only ever appends what's missing,
+# never touches a line already there, so this is safe to run on every
+# upgrade unconditionally, whether or not this pull actually changed
+# .env.example.
+if command -v python3 >/dev/null 2>&1; then
+  echo "==> Checking .env against .env.example for anything new..."
+  python3 scripts/env_sync.py
+else
+  echo "==> Skipping .env sync — no python3 on PATH. Diff .env.example by hand if unsure." >&2
 fi
 
 compose_files=(-f docker-compose.yml)

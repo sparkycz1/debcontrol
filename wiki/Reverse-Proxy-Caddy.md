@@ -9,7 +9,7 @@ There are two ways to use Caddy with debcontrol:
   sites, or because you prefer managing it outside this repo). Point it at
   debcontrol's `127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`).
 
-## Option A — the bundled Caddy
+## 📦 Option A — the bundled Caddy
 
 ### Requirements
 
@@ -88,7 +88,7 @@ openssl s_client -connect your-domain.example.com:443 -tls1_3 </dev/null
   will mint its own local CA and self-signed certs); browsers/clients will
   need to trust that internal CA manually.
 
-## Option B — your own standalone Caddy instance
+## 🔧 Option B — your own standalone Caddy instance
 
 If you run Caddy separately (not via this repo's compose files), add a
 site block pointing at wherever debcontrol's `web` service is reachable

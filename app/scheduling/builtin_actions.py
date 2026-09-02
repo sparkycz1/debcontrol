@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
+from app.db.models.role import Permission
 from app.scheduling.actions import (
     ActionRunResult,
     ScheduledActionParam,
@@ -28,6 +29,7 @@ from app.scheduling.actions import (
     register_action,
 )
 from app.services.machine_actions import (
+    run_custom_command_on_machines,
     send_power_to_machines,
     trigger_check_updates,
     trigger_updates,
@@ -61,6 +63,16 @@ async def _run_shutdown(
     db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
     skipped = await send_power_to_machines(machines, PowerAction.SHUTDOWN)
+    return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_custom_command(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    command = params.get("command", "").strip()
+    if not command:
+        return ActionRunResult(attempted=0, skipped=len(machines))
+    skipped = await run_custom_command_on_machines(machines, command)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
@@ -117,5 +129,33 @@ def register_builtin_actions() -> None:
             ),
             run=_run_shutdown,
             destructive=True,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="run_command",
+            label="Run command",
+            description=(
+                "Runs a shell command on each targeted machine, as that machine's "
+                "own configured SSH user — the account needs whatever permission "
+                "the command itself requires (e.g. its own sudo rule for a "
+                "privileged command); nothing extra is granted for this."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="command",
+                    label="Command",
+                    default="",
+                    param_type="text",
+                    placeholder="apt-get clean",
+                )
+            ],
+            run=_run_custom_command,
+            destructive=True,
+            # Creating/editing a task with this action needs the same
+            # permission running an ad-hoc command manually already needs
+            # everywhere else in this app (the interactive terminal, the AI
+            # assistant's confirm step) — see app.web.routes.scheduling.
+            extra_permission=Permission.ACTION_TERMINAL,
         )
     )

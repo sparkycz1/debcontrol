@@ -206,12 +206,20 @@ reachable without a session.
 
 Does the whole thing: refuses to run with uncommitted local changes or
 outside a git checkout, `git fetch`/`git pull --ff-only` on the current
-branch (fails loudly rather than merging or silently diverging), detects
-whether the bundled Caddy is currently running and includes
+branch (fails loudly rather than merging or silently diverging), tops up
+`.env` with whatever new variables the pulled version's `.env.example`
+added that this deployment's `.env` predates (`scripts/env_sync.py` —
+never touches a line already there, only ever appends what's missing),
+detects whether the bundled Caddy is currently running and includes
 `docker-compose.caddy.yml` automatically if so, then `docker compose build`
 + `docker compose up -d` and prints `docker compose ps` at the end. Safe to
 run again if something looks off partway through — every step it takes is
 already idempotent.
+
+`scripts/setup.py` does the same `.env` top-up if you run it again on a
+deployment that already has one and answer "no" to overwriting it — useful
+if you'd rather re-run the interactive installer than switch to
+`upgrade.sh`.
 
 Equivalent by hand, if you'd rather see each step yourself:
 

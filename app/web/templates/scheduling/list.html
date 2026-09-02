@@ -39,7 +39,7 @@
                 Group: {{ task.target_group.name if task.target_group else '(deleted)' }}
               {% endif %}
             </td>
-            <td>{{ task.action }}</td>
+            <td>{{ action_labels.get(task.action, task.action) }}</td>
             <td><code>{{ task.cron_expression }}</code></td>
             <td>
               {% if task.is_enabled and task.next_run_at %}
@@ -88,7 +88,6 @@
   {% else %}
     <div class="empty-state">
       <p>No scheduled tasks yet.</p>
-      <a class="button" href="/scheduling/new">Create your first schedule</a>
     </div>
   {% endif %}
 {% endblock %}

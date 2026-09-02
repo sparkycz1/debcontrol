@@ -822,7 +822,7 @@ async def test_create_and_list_scheduled_task_for_all_machines(client):
     listing = await client.get("/scheduling")
     assert "nightly check" in listing.text
     assert "All machines" in listing.text
-    assert "check_updates" in listing.text
+    assert "Check for updates" in listing.text  # human label, not the raw "check_updates" key
     assert "0 3 * * *" in listing.text
     assert "badge-ok" in listing.text  # enabled
 

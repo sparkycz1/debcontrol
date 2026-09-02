@@ -10,7 +10,7 @@ pointing at an address, or **Docker labels** read via Traefik's Docker
 provider. The file provider is simpler when debcontrol and Traefik aren't
 in the same Compose project (the default here).
 
-## Static config (`traefik.yml`)
+## ⚙️ Static config (`traefik.yml`)
 
 ```yaml
 entryPoints:
@@ -42,7 +42,7 @@ providers:
 `http3: {}` enables HTTP/3 on the `websecure` entrypoint (Traefik still
 needs `443/udp` published/open for QUIC to actually work).
 
-## TLS options: restrict to TLS 1.3 only (`dynamic/tls.yml`)
+## 🔐 TLS options: restrict to TLS 1.3 only (`dynamic/tls.yml`)
 
 ```yaml
 tls:
@@ -52,7 +52,7 @@ tls:
       maxVersion: VersionTLS13
 ```
 
-## Route to debcontrol (`dynamic/debcontrol.yml`)
+## 🔀 Route to debcontrol (`dynamic/debcontrol.yml`)
 
 ```yaml
 http:
@@ -91,7 +91,7 @@ is the Traefik *container*, not the host — either run Traefik with
 (commonly `172.17.0.1`, verify with `ip addr show docker0`) instead of
 `127.0.0.1` in the service URL above.
 
-## Alternative: Docker label-based discovery
+## 🏷️ Alternative: Docker label-based discovery
 
 If you'd rather use Traefik's Docker provider (labels on the `web`
 container) instead of the file provider above, `web` and Traefik need to
@@ -114,7 +114,7 @@ is a meaningfully larger trust boundary than the file-provider approach
 above — only do this if you already accept that trade-off for your other
 services.
 
-## Verifying
+## 🔎 Verifying
 
 ```bash
 curl -sIv https://your-domain.example.com/healthz 2>&1 | grep -Ei 'HTTP/|strict-transport|server:'
