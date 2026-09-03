@@ -1131,6 +1131,31 @@ Included in machine/group configuration export and import
 (`app.services.machine_config`) — structural data like `description`, not
 a credential, so it needs no special exclusion.
 
+### Saved machine-list views: a personal bookmark, not shared config
+
+**Machines** → "Save this view", shown once `q` and/or `tag` is set —
+names the current filter (`app.db.models.saved_machine_view.
+SavedMachineView`) so it can be replayed later as a link, without
+retyping it. Per-account, not fleet-wide: a saved view is a personal
+shortcut the same way a browser bookmark is, so it needs nothing beyond
+the `machine.view` permission already required to reach the machine list,
+and one account can never see or delete another's (`app.services.
+saved_views.delete_saved_view` scopes every lookup to `user_id`).
+
+`query_string` is never accepted verbatim from the client — `build_query_string`
+only ever encodes the fixed, known parameter set (`q`, `tag`, in that
+order) a client actually submitted values for, so a saved view can't
+accidentally capture an arbitrary/future querystring, and two views built
+from the same filters always produce the same stored string. A `UNIQUE
+(user_id, name)` constraint is the actual duplicate-name guard;
+`create_saved_view` just turns the resulting `IntegrityError` into
+`DuplicateViewNameError` so callers can catch it by type.
+
+Also reachable via the REST API — `GET`/`POST /api/v1/account/saved-views`,
+`DELETE /api/v1/account/saved-views/{id}` (`api_v1_account.py`) — same
+self-service, no-special-permission convention as the per-user locale
+endpoints next to it.
+
 ### Bulk actions from the machine list
 
 **Machines** list checkboxes (system update, check-updates,

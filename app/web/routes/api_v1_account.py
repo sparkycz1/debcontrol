@@ -2,28 +2,38 @@
 API-token equivalent of `/account/...` in `app/web/routes/auth.py`.
 
 Needs only a valid API token, no particular `Permission` — same as the web
-routes it mirrors: a locale (or a display name) is data about a specific
-account, not something an admin's role-permission matrix gates. Currently
-just the UI language (`app.i18n`); other self-service actions
-(display name, password, TOTP, sessions, API tokens themselves) stay
-web-UI-only for now — see `api_v1.py`'s module docstring for the reasoning
-that applies to those (mostly: a token creating/managing tokens, or
-resetting the very password it might be authenticated by proxy of, is
-circular or session-bound in a way this doesn't have a clean answer for
-yet).
+routes it mirrors: a locale, a saved machine-list view, or a display name
+is data about a specific account, not something an admin's role-permission
+matrix gates. Covers the UI language (`app.i18n`) and saved machine-list
+views (`app.services.saved_views`); other self-service actions (display
+name, password, TOTP, sessions, API tokens themselves) stay web-UI-only
+for now — see `api_v1.py`'s module docstring for the reasoning that
+applies to those (mostly: a token creating/managing tokens, or resetting
+the very password it might be authenticated by proxy of, is circular or
+session-bound in a way this doesn't have a clean answer for yet).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.auth.dependencies import get_api_token_user
+from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.user import User
 from app.db.session import get_db
 from app.i18n import Locale, available_locales, get_locale
+from app.services.saved_views import (
+    DuplicateViewNameError,
+    build_query_string,
+    create_saved_view,
+    delete_saved_view,
+    list_saved_views,
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -82,3 +92,79 @@ async def update_own_locale_api(
         target_label=account.username,
     )
     return {"locale": resolved.code}
+
+
+def _saved_view_to_dict(view: SavedMachineView) -> dict[str, object]:
+    return {
+        "id": str(view.id),
+        "name": view.name,
+        "query_string": view.query_string,
+        "created_at": view.created_at.isoformat(),
+    }
+
+
+@router.get("/account/saved-views")
+async def list_saved_views_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """The API equivalent of the machine list's "Saved views" chips — see
+    `app.services.saved_views`. Per-account: this only ever lists the
+    token owner's own."""
+    views = await list_saved_views(db, user.id)
+    return [_saved_view_to_dict(v) for v in views]
+
+
+class _SavedViewCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    # Deliberately structured filters, not an arbitrary querystring — see
+    # app.db.models.saved_machine_view's module docstring.
+    q: str = ""
+    tag: str = ""
+
+
+@router.post("/account/saved-views", status_code=status.HTTP_201_CREATED)
+async def create_saved_view_api(
+    request: Request,
+    payload: _SavedViewCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    query_string = build_query_string({"q": payload.q, "tag": payload.tag})
+    try:
+        view = await create_saved_view(db, user.id, payload.name, query_string)
+    except DuplicateViewNameError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'A saved view named "{payload.name}" already exists.',
+        ) from None
+    await log_event(
+        db,
+        request=request,
+        action="user.saved_view.create",
+        summary=f'"{user.username}" saved a machine-list view ("{view.name}")',
+        target_type="saved_machine_view",
+        target_id=view.id,
+        target_label=view.name,
+    )
+    return _saved_view_to_dict(view)
+
+
+@router.delete("/account/saved-views/{view_id}")
+async def delete_saved_view_api(
+    request: Request,
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    deleted = await delete_saved_view(db, user.id, view_id)
+    if deleted:
+        await log_event(
+            db,
+            request=request,
+            action="user.saved_view.delete",
+            summary=f'"{user.username}" deleted a saved machine-list view',
+            target_type="saved_machine_view",
+            target_id=view_id,
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

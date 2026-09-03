@@ -61,7 +61,37 @@
     </section>
   {% endif %}
 
+  {% if saved_views %}
+    <div class="saved-views">
+      {% for view in saved_views %}
+        <span class="saved-view-chip">
+          <a href="/machines?{{ view.query_string }}">{{ view.name }}</a>
+          <form method="post" action="/machines/views/{{ view.id }}/delete" class="inline-form"
+                data-confirm="Delete the saved view &quot;{{ view.name }}&quot;?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="link-button" aria-label="Delete saved view {{ view.name }}">&times;</button>
+          </form>
+        </span>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% include "partials/machine_search_form.html" %}
+
+  {% if q or tag %}
+    <form method="post" action="/machines/views" class="inline-form stack-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="q" value="{{ q }}">
+      <input type="hidden" name="tag" value="{{ tag }}">
+      <input type="text" name="name" class="saved-view-name-input"
+             placeholder="Name this view…" maxlength="100" required>
+      <button type="submit" class="button button-secondary">Save this view</button>
+    </form>
+  {% endif %}
+
+  {% if request.query_params.get('view_error') == 'duplicate_name' %}
+    <div class="alert alert-error"><p>You already have a saved view with that name.</p></div>
+  {% endif %}
 
   {% if bulk_error %}
     <div class="alert alert-error"><p>{{ bulk_error }}</p></div>

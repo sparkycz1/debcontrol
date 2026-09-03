@@ -55,6 +55,13 @@ from app.services.machine_actions import (
 )
 from app.services.machine_config import export_machine_config, import_machine_config
 from app.services.machine_tags import parse_tag_names_from_text, set_machine_tags
+from app.services.saved_views import (
+    DuplicateViewNameError,
+    build_query_string,
+    create_saved_view,
+    delete_saved_view,
+    list_saved_views,
+)
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
@@ -275,6 +282,7 @@ async def list_machines(
             "machines": machines,
             "pending_machines": await _get_pending_machines(db),
             "all_tags": await _get_all_tags(db),
+            "saved_views": await list_saved_views(db, current_user.id),
             "q": q,
             "tag": tag,
             "page": page,
@@ -287,6 +295,44 @@ async def list_machines(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post("/views", dependencies=[Depends(verify_csrf)])
+async def save_machine_view(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    name: str = Form(...),
+    q: str = Form(""),
+    tag: str = Form(""),
+) -> Response:
+    """"Save this view" on the machine list — captures only the known
+    filter fields (never an arbitrary querystring, see
+    `app.services.saved_views`), so a saved view always replays as exactly
+    the same filtered `GET /machines` request."""
+    query_string = build_query_string({"q": q, "tag": tag})
+    if not name.strip():
+        return RedirectResponse(
+            url=f"/machines?{query_string}", status_code=status.HTTP_303_SEE_OTHER
+        )
+    try:
+        await create_saved_view(db, current_user.id, name, query_string)
+    except DuplicateViewNameError:
+        return RedirectResponse(
+            url=f"/machines?{query_string}&view_error=duplicate_name",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url=f"/machines?{query_string}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/views/{view_id}/delete", dependencies=[Depends(verify_csrf)])
+async def delete_machine_view(
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    await delete_saved_view(db, current_user.id, view_id)
+    return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/new")

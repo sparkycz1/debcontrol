@@ -24,6 +24,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     PendingMachine,
     Role,
     RolePermission,
+    SavedMachineView,
     ScheduledTask,
     SSHIdentity,
     Tag,
