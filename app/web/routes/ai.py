@@ -65,10 +65,12 @@ from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStat
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig
 from app.db.models.audit_log import AuditOutcome
-from app.db.models.machine_update_run import UpgradeStrategy
+from app.db.models.machine import Machine
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
+from app.services.access_scope import machines_visible_to
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -215,41 +217,21 @@ async def list_conversations(
     )
 
 
-@router.post("/conversations", dependencies=[Depends(verify_csrf)])
-async def create_conversation(
+async def _start_conversation(
     request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    provider_model: str = Form(""),
-    first_message: str = Form(""),
+    db: AsyncSession,
+    user: User,
+    *,
+    provider_id: uuid.UUID,
+    model_id: str,
+    text: str,
+    audit_summary: str,
 ) -> Response:
-    """`provider_model` is a single `"<provider_id>:<model_id>"` select
-    value rather than two fields, so the pair can never be mismatched by a
-    hand-crafted form post — it's re-validated against the enabled
-    provider/model rows below regardless.
-
-    `first_message`, despite the name, used to only *name* the new
-    conversation (`derive_title`) — the text itself was thrown away, and
-    the "New conversation" page told you as much ("you'll send the actual
-    message on the next page"). That's a real trap: typing an actual
-    question into a field labeled "What do you need?" and having it
-    silently vanish is not what anyone reading that label expects, and it
-    reads as "the assistant didn't respond" the same way the timeout bug
-    this same release fixed did. It's a real first message now, same as
-    typing it into an existing conversation's compose box.
-    """
-    text = first_message.strip()
-    raw = provider_model.strip()
-    provider_id_str, _, model_id = raw.partition(":")
-    if not text:
-        return RedirectResponse(url="/ai", status_code=status.HTTP_303_SEE_OTHER)
-    try:
-        provider_id = uuid.UUID(provider_id_str)
-    except ValueError:
-        return RedirectResponse(url="/ai", status_code=status.HTTP_303_SEE_OTHER)
-
+    """Shared by `create_conversation` (the "New conversation" form) and
+    `explain_with_ai` (the "Ask AI why" button) — everything past "we have
+    a validated provider/model and the first message's text."""
     # Re-check that this provider+model really is enabled — never trust the
-    # submitted pair just because the dropdown offered something.
+    # caller just because a dropdown (or a machine's own state) offered it.
     result = await db.execute(
         select(AiModel, AiProviderConfig)
         .join(AiProviderConfig, AiProviderConfig.id == AiModel.provider_id)
@@ -271,9 +253,9 @@ async def create_conversation(
     try:
         client = build_client(provider)
     except AiProviderError:
-        # Same provider row `create_conversation` just confirmed is
-        # enabled — a config problem here is the operator's to fix on the
-        # Settings AI tab, not something to explain on this simpler form.
+        # Same provider row just confirmed enabled above — a config problem
+        # here is the operator's to fix on the Settings AI tab, not
+        # something to explain on this simpler form.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This provider isn't fully configured — check Settings.",
@@ -295,7 +277,7 @@ async def create_conversation(
         db,
         request=request,
         action="ai.conversation.create",
-        summary=f'Started an AI conversation ("{conversation.title}")',
+        summary=audit_summary,
         target_type="ai_conversation",
         target_id=conversation.id,
         target_label=conversation.title,
@@ -304,6 +286,175 @@ async def create_conversation(
 
     return RedirectResponse(
         url=f"/ai/conversations/{conversation.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/conversations", dependencies=[Depends(verify_csrf)])
+async def create_conversation(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    provider_model: str = Form(""),
+    first_message: str = Form(""),
+) -> Response:
+    """`provider_model` is a single `"<provider_id>:<model_id>"` select
+    value rather than two fields, so the pair can never be mismatched by a
+    hand-crafted form post — it's re-validated against the enabled
+    provider/model rows in `_start_conversation` regardless.
+
+    `first_message`, despite the name, used to only *name* the new
+    conversation (`derive_title`) — the text itself was thrown away, and
+    the "New conversation" page told you as much ("you'll send the actual
+    message on the next page"). That's a real trap: typing an actual
+    question into a field labeled "What do you need?" and having it
+    silently vanish is not what anyone reading that label expects, and it
+    reads as "the assistant didn't respond" the same way the timeout bug
+    this same release fixed did. It's a real first message now, same as
+    typing it into an existing conversation's compose box.
+    """
+    text = first_message.strip()
+    raw = provider_model.strip()
+    provider_id_str, _, model_id = raw.partition(":")
+    if not text:
+        return RedirectResponse(url="/ai", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        provider_id = uuid.UUID(provider_id_str)
+    except ValueError:
+        return RedirectResponse(url="/ai", status_code=status.HTTP_303_SEE_OTHER)
+
+    return await _start_conversation(
+        request,
+        db,
+        user,
+        provider_id=provider_id,
+        model_id=model_id,
+        text=text,
+        audit_summary=f'Started an AI conversation ("{derive_title(text)}")',
+    )
+
+
+# How much of a stored command/update-run output to hand the assistant —
+# comfortably enough to diagnose most failures without burning an
+# unreasonable number of input tokens on a 200,000-char stored run (see
+# `app.tasks.jobs._MAX_STORED_OUTPUT_CHARS`). The *tail* is kept, same
+# reasoning as that constant: an apt failure's actual error is almost
+# always in the last few dozen lines, not the top of a long, chatty run.
+_EXPLAIN_OUTPUT_CHARS = 6000
+
+
+def _tail(text: str, limit: int = _EXPLAIN_OUTPUT_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return "[... earlier output truncated ...]\n" + text[-limit:]
+
+
+async def _get_explain_machine(db: AsyncSession, user: User, machine_id: uuid.UUID) -> Machine:
+    """Scoped exactly like every other machine lookup in this app — a
+    machine outside this account's group access reads as missing, never
+    forbidden. The "Ask AI why" button only ever appears on a page that
+    already passed this same check, but the route re-checks independently
+    since a form post is untrusted input regardless of what rendered it."""
+    result = await db.execute(
+        (await machines_visible_to(db, user)).where(Machine.id == machine_id)
+    )
+    machine = result.scalar_one_or_none()
+    if machine is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
+    return machine
+
+
+async def _build_explain_prompt(
+    db: AsyncSession, user: User, kind: str, machine_id: uuid.UUID, run_id: uuid.UUID | None
+) -> tuple[str, str]:
+    """Returns `(prompt_text, audit_summary)` for the "Ask AI why" button,
+    or raises `HTTPException` if there's nothing to explain (an unknown
+    run, or a readiness check that isn't actually missing anything —
+    both would only happen via a hand-crafted request, not the button
+    itself, which never renders in either case)."""
+    machine = await _get_explain_machine(db, user, machine_id)
+
+    if kind == "update_run":
+        if run_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing run_id.")
+        run = await db.get(MachineUpdateRun, run_id)
+        if run is None or run.machine_id != machine.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found."
+            )
+        if run.status != UpdateRunStatus.FAILED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="This update run didn't fail."
+            )
+        prompt = (
+            f'The system update on machine "{machine.name}" failed '
+            f"(strategy: {run.strategy.value}).\n"
+        )
+        if run.error:
+            prompt += f"Error: {run.error}\n"
+        if run.output:
+            prompt += f"Output (apt/flatpak/snap, most recent lines last):\n{_tail(run.output)}\n"
+        prompt += (
+            "\nWhy did this most likely fail, and what should I check or fix on the "
+            "machine before trying again?"
+        )
+        return prompt, f'Asked the AI assistant why the update run on "{machine.name}" failed'
+
+    if kind == "readiness":
+        missing = machine.readiness_missing or []
+        if not missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This machine's readiness check found nothing missing.",
+            )
+        prompt = (
+            f'The post-onboarding readiness check on machine "{machine.name}" found the '
+            "following missing:\n" + "\n".join(f"- {item}" for item in missing) + "\n\n"
+            "What do these mean in practice, and how do I fix each one on this machine?"
+        )
+        return prompt, f'Asked the AI assistant about "{machine.name}"\'s readiness check'
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown context.")
+
+
+@router.post("/explain", dependencies=[Depends(verify_csrf)])
+async def explain_with_ai(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    kind: str = Form(...),
+    machine_id: uuid.UUID = Form(...),
+    run_id: uuid.UUID | None = Form(None),
+) -> Response:
+    """The "Ask AI why" button on a failed update run (`partials/
+    update_run_status.html`) and a machine's readiness banner
+    (`machines/detail.html`) — starts a brand-new conversation whose first
+    message is the relevant failure/finding, pre-filled server-side so
+    there's nothing for the user to type or copy-paste. Picks whichever
+    model is first in `get_selectable_models` (same one the "New
+    conversation" form lists first) rather than asking the user to choose
+    again — this is meant to be one click, not a detour through a form."""
+    prompt, audit_summary = await _build_explain_prompt(db, user, kind, machine_id, run_id)
+
+    selectable = await get_selectable_models(db)
+    if not selectable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No AI model is enabled yet — enable one on Settings first.",
+        )
+    provider, model = selectable[0]
+
+    locale = getattr(request.state, "locale", None)
+    if locale is not None and locale.code != "en":
+        prompt += f"\n\n(Please answer in {locale.label}.)"
+
+    return await _start_conversation(
+        request,
+        db,
+        user,
+        provider_id=provider.id,
+        model_id=model.model_id,
+        text=prompt,
+        audit_summary=audit_summary,
     )
 
 

@@ -227,6 +227,33 @@ The chat text itself is not copied into the audit log. The audit trail
 records what was *done* — see
 [Architecture → Audit log](Architecture.md#-audit-log-who-what-outcome-when).
 
+## 🩺 "Ask AI why"
+
+A one-click shortcut into the assistant from two places that already show
+a problem:
+
+- **A failed update run** (`Machines → a machine → Updates → a run`) —
+  the button only appears once the run's status is `failed`.
+- **The readiness banner** (`Machines → a machine → Overview`) — only
+  appears while `readiness_missing` is non-empty.
+
+Clicking it (`POST /ai/explain`) starts a brand-new conversation whose
+first message is built server-side from that failure or finding — the
+run's strategy/error/output (the last ~6000 characters, tail-truncated,
+same reasoning as `app.tasks.jobs._MAX_STORED_OUTPUT_CHARS`) or the
+readiness banner's missing-items list — so there's nothing to type or
+copy-paste. It picks whichever model is first in the same list the "New
+conversation" form offers, rather than making you choose again, and asks
+the model to answer in your own UI language if it isn't English (see
+[Per-user UI language](Architecture.md#per-user-ui-language-i18n)).
+
+Scoped exactly like every other machine view: the machine (and, for a
+run, that the run actually belongs to it) is re-checked against your
+account's machine-group access on the server side, regardless of whether
+the button was even visible to you. From there it's an ordinary
+conversation — the assistant can still look things up and propose actions,
+gated by the same permissions as always.
+
 ## 🚫 Deliberately out of scope
 
 - **No REST API surface.** There is no `/api/v1/ai*`, at all — same as SSH

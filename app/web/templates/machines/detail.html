@@ -50,6 +50,14 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="button button-secondary">Re-check</button>
       </form>
+      {% if request.state.user.has_permission('ai.access') %}
+        <form method="post" action="/ai/explain" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="kind" value="readiness">
+          <input type="hidden" name="machine_id" value="{{ machine.id }}">
+          <button type="submit" class="button button-secondary">Ask AI why</button>
+        </form>
+      {% endif %}
     </div>
   {% endif %}
 

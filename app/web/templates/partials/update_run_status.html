@@ -36,4 +36,14 @@
   {% elif run.status.value in ('pending', 'running') %}
     <p class="hint">Waiting for output — this refreshes automatically.</p>
   {% endif %}
+
+  {% if run.status.value == 'failed' and request.state.user.has_permission('ai.access') %}
+    <form method="post" action="/ai/explain" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+      <input type="hidden" name="kind" value="update_run">
+      <input type="hidden" name="machine_id" value="{{ run.machine_id }}">
+      <input type="hidden" name="run_id" value="{{ run.id }}">
+      <button type="submit" class="button button-secondary">Ask AI why</button>
+    </form>
+  {% endif %}
 </div>
