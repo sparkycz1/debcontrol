@@ -530,8 +530,9 @@ enable/disable/run-now), users and roles (full CRUD), the audit log
 (list/filter/export), and a read-only slice of Settings. Split across
 router modules under `app/web/routes/` (`api_v1.py` for
 machines/groups/bulk, `api_v1_scheduling.py`, `api_v1_users.py`,
-`api_v1_roles.py`, `api_v1_audit.py`, `api_v1_settings.py`), all mounted
-under `/api/v1` in `app.main`.
+`api_v1_roles.py`, `api_v1_audit.py`, `api_v1_settings.py`,
+`api_v1_dashboard.py` for the Dashboard's trend-snapshot history), all
+mounted under `/api/v1` in `app.main`.
 
 - **Same permission, every time.** Every route uses
   `require_api_permission(...)` with the exact `Permission` its web
@@ -682,7 +683,10 @@ activating, either by hand or via **"Push pending key to all machines"**
 active* credential and appends the pending public key, idempotently.
 Password-auth machines aren't touched — they don't use this key. Once
 every machine has the new line, "Activate" swaps it in
-(`activate_pending_identity`).
+(`activate_pending_identity`). Before activating, a pending key can also be
+thrown away with **"Discard pending key"** (`discard_pending_identity`) —
+useful if the push didn't reach every machine and you'd rather start over
+than half-activate.
 
 ### Self-registration is not the same as trust
 
@@ -808,7 +812,13 @@ surface the available version.
 
 All in one `FACTS_COMMAND` round trip (`app/ssh/facts.py`), using the same
 `echo ===MARKER===`-per-section convention — no extra SSH connection, no
-privilege requirement, and chosen for portability over a minimal image:
+privilege requirement, and chosen for portability over a minimal image.
+Besides the periodic sweep (`FACTS_REFRESH_INTERVAL_SECONDS`), Overview's
+**Refresh now** button (`POST /machines/{id}/refresh-facts`, `machine.manage`)
+runs the same job synchronously and waits for the result inline
+(`asyncio.to_thread(async_result.get, timeout=...)`) instead of returning
+immediately and relying on the next poll — the packages and services
+snapshots below each have their own equivalent button:
 
 - **CPU architecture**: `uname -m`.
 - **Uptime**: `/proc/uptime`'s first field via `awk`, floored to whole
@@ -890,7 +900,7 @@ one row per `systemctl list-units --type=service --all` unit
 any fresher than facts/packages do. No root needed: listing unit state is
 allowed for any account under systemd's default polkit policy.
 
-### Monitoring: CPU/RAM/disk history
+### Monitoring: CPU, RAM, load average, network and disk throughput
 
 **Machines → a machine → Monitoring** — unlike every table above, this one
 (`MachineMonitoringSample`) genuinely is a history, not a replaced
@@ -900,13 +910,24 @@ tick (`app/tasks/jobs.monitor_all_machines` → `sample_machine_monitoring`,
 `purge_old_monitoring_samples` against `AppSettings.
 monitoring_history_retention_days` (or a per-machine override). CPU
 percent needs two `/proc/stat` reads a second apart, computed inside the
-one SSH round trip (`sleep 1`) rather than as two round trips. The
-Monitoring tab's graphs (`app/services/monitoring_history.py`) downsample
-a time range's raw rows to a target point count in Python — positional
-bucket-averaging, not time-aligned buckets, since neither Postgres nor the
-SQLite test backend gets a time-series extension for this — rendered as
-the same dependency-free inline SVG sparkline the Dashboard's trend charts
-use (`macros/charts.html`).
+one SSH round trip (`sleep 1`) rather than as two round trips. Each sample
+also carries the 1/5/15-minute load average, and cumulative counters for
+every network interface and block device (`network_io`/`disk_io`, JSON
+columns of per-name byte counters) — the Monitoring tab diffs consecutive
+samples to turn those counters into a bytes/sec rate
+(`app/services/monitoring_history.py`), auto-enumerating whichever
+interfaces/devices a machine actually reports rather than assuming fixed
+names. Disk *usage* (not I/O) stays out of this tab — it's already on
+Overview's facts panel, sampled far less often, so repeating it here would
+just be noise. The Monitoring tab's graphs downsample a time range's raw
+rows to a target point count in Python — positional bucket-averaging, not
+time-aligned buckets, since neither Postgres nor the SQLite test backend
+gets a time-series extension for this — rendered by `macros/charts.html`'s
+`trend_chart` macro as an interactive, dependency-free inline SVG: hovering
+or dragging (`static/js/monitoring-chart.js`) scrubs a cursor across the
+chart and shows the exact value and timestamp under the pointer, unlike
+the plain, non-interactive `percent_sparkline` the Dashboard's trend charts
+still use.
 
 ### Logs: no storage, gated behind `action.terminal`
 
