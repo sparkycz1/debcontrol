@@ -17,7 +17,7 @@
   {% if poll %}
   hx-get="/machines/{{ machine.id }}/packages-summary-panel"
   hx-trigger="every 60s, live-packages from:body"
-  hx-swap="innerHTML"
+  hx-swap="innerHTML settle:600ms"
   {% endif %}
 >
   {% include "partials/_packages_summary_inner.html" %}

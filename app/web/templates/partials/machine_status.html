@@ -2,7 +2,7 @@
   id="machine-status"
   hx-get="/machines/{{ machine.id }}/status-panel"
   hx-trigger="every 60s, live-status from:body"
-  hx-swap="outerHTML"
+  hx-swap="outerHTML settle:600ms"
 >
   {% if machine.is_reachable is none %}
     <span class="badge badge-warn">unknown</span>

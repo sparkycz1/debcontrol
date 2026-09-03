@@ -390,11 +390,11 @@ p { margin: 0 0 var(--space-3); }
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast),
-    transform var(--transition-fast);
+    transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.button:hover { background: var(--color-accent-hover); }
-.button:active { transform: translateY(1px); }
+.button:hover { background: var(--color-accent-hover); box-shadow: var(--shadow-sm); }
+.button:active { transform: translateY(1px); box-shadow: none; }
 
 .button-secondary {
   background: transparent;
@@ -589,6 +589,7 @@ p { margin: 0 0 var(--space-3); }
   padding: var(--space-5);
   margin-bottom: var(--space-5);
   background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .panel h2 { margin-top: 0; }
@@ -952,4 +953,64 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
 .trend-chart-swatch {
   flex: none;
   border-radius: 2px;
+}
+
+/* --- Live-feel: htmx busy/update feedback ---
+   Two small, global cues that make a request-driven page (this whole app)
+   read as responsive rather than static: a spinner on whatever triggered a
+   request, for as long as it's in flight, and a brief highlight flash on
+   content a poll or a live-updates.js push (see app/services/
+   live_updates.py) just swapped in — otherwise a background refresh is
+   silent and easy to miss entirely, which was the literal complaint this
+   was written for ("I click something and then wait, with nothing telling
+   me it's working"). Global, not per-element: htmx adds `.htmx-request` to
+   the triggering element and `.htmx-settling` to freshly swapped content
+   automatically, with no `hx-indicator` needed anywhere. */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* A button mid-request: dim it, swap the cursor, and grow a small spinner
+   after its label — reserved space (min-width via padding) so nothing
+   reflows when the spinner appears/disappears. */
+.button.htmx-request {
+  opacity: 0.75;
+  cursor: progress;
+  pointer-events: none;
+}
+.button.htmx-request::after {
+  content: "";
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 600ms linear infinite;
+}
+.button-secondary.htmx-request::after {
+  border-color: var(--color-border-strong);
+  border-top-color: var(--color-text);
+}
+
+/* Anything else that triggers a request directly (a link, a bare icon
+   button) just dims slightly — a spinner glyph would misalign against
+   arbitrary inline content. */
+a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
+
+@media (prefers-reduced-motion: reduce) {
+  .button.htmx-request::after { animation: none; }
+}
+
+/* Freshly swapped-in content flashes from a faint accent tint back to
+   transparent. `.htmx-settling` is only present for one animation frame by
+   default — every polling/live-push panel's own `hx-swap` adds a
+   `settle:600ms` modifier (see e.g. partials/machine_status.html) so this
+   animation has time to actually play instead of being cut off instantly. */
+@keyframes flash-update {
+  from { background-color: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+  to { background-color: transparent; }
+}
+.htmx-settling { animation: flash-update 900ms ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .htmx-settling { animation: none; }
 }

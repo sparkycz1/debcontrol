@@ -107,7 +107,7 @@
     id="facts-panel"
     hx-get="/machines/{{ machine.id }}/facts-panel"
     hx-trigger="every 60s, live-facts from:body"
-    hx-swap="innerHTML"
+    hx-swap="innerHTML settle:600ms"
   >
     {% include "partials/machine_facts.html" %}
   </section>
