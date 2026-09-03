@@ -9,7 +9,7 @@
   {% if oob %}hx-swap-oob="true"{% endif %}
   {% if poll %}
   hx-get="/machines/{{ machine.id }}/services-summary-panel"
-  hx-trigger="every 20s"
+  hx-trigger="every 60s, live-services from:body"
   hx-swap="innerHTML"
   {% endif %}
 >

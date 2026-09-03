@@ -1,7 +1,7 @@
 <div
   id="update-availability"
   hx-get="/machines/{{ machine.id }}/update-availability-panel"
-  hx-trigger="every 30s"
+  hx-trigger="every 60s, live-updates from:body"
   hx-swap="innerHTML"
 >
   {% include "partials/_update_availability_inner.html" %}

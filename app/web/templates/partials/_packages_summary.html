@@ -16,7 +16,7 @@
   {% if oob %}hx-swap-oob="true"{% endif %}
   {% if poll %}
   hx-get="/machines/{{ machine.id }}/packages-summary-panel"
-  hx-trigger="every 20s"
+  hx-trigger="every 60s, live-packages from:body"
   hx-swap="innerHTML"
   {% endif %}
 >

@@ -46,6 +46,14 @@ from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.services.fleet_stats import compute_fleet_stats
+from app.services.live_updates import (
+    KIND_FACTS,
+    KIND_PACKAGES,
+    KIND_SERVICES,
+    KIND_STATUS,
+    KIND_UPDATES,
+    publish_machine_event,
+)
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
@@ -509,6 +517,8 @@ async def _ping_all_machines() -> None:
                 machine.is_reachable = reachable
                 machine.last_ping_at = now
             await session.commit()
+            for machine, _reachable in results:
+                await publish_machine_event(str(machine.id), KIND_STATUS)
 
 
 @celery_app.task(name="app.tasks.jobs.ping_all_machines")
@@ -554,6 +564,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.network_interfaces = facts["network_interfaces"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
+        await publish_machine_event(machine_id, KIND_FACTS)
 
         return {"ok": True}
 
@@ -636,6 +647,7 @@ async def _refresh_machine_packages(machine_id: str) -> dict[str, Any]:
         )
         machine.packages_updated_at = datetime.now(UTC)
         await session.commit()
+        await publish_machine_event(machine_id, KIND_PACKAGES)
 
         return {"ok": True, "package_count": len(packages)}
 
@@ -702,6 +714,7 @@ async def _refresh_machine_services(machine_id: str) -> dict[str, Any]:
         )
         machine.services_updated_at = datetime.now(UTC)
         await session.commit()
+        await publish_machine_event(machine_id, KIND_SERVICES)
 
         return {"ok": True, "service_count": len(services)}
 
@@ -1010,6 +1023,7 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
             machine.security_upgradable_count = result.security_upgradable_count
             machine.apt_upgradable_packages = [dict(p) for p in result.apt_upgradable_packages]
             await session.commit()
+            await publish_machine_event(machine_id, KIND_UPDATES)
             return {"ok": True}
 
         # `apt-get update` itself failed (commonly: no passwordless sudo
@@ -1020,6 +1034,7 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
         machine.security_upgradable_count = None
         machine.apt_upgradable_packages = None
         await session.commit()
+        await publish_machine_event(machine_id, KIND_UPDATES)
         error = f"apt-get update exited with status {result.exit_status}."
         logger.warning("check_machine_updates failed for %s: %s", machine.name, error)
         return {"ok": False, "error": error}

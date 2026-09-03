@@ -6,7 +6,7 @@
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
-  <div class="page-header">
+  <div class="page-header" data-live-machine-id="{{ machine.id }}">
     <h1>{{ render_os_badge(machine.os_id, size=28) }} {{ machine.name }}</h1>
   </div>
 
@@ -106,7 +106,7 @@
     class="panel"
     id="facts-panel"
     hx-get="/machines/{{ machine.id }}/facts-panel"
-    hx-trigger="every 20s"
+    hx-trigger="every 60s, live-facts from:body"
     hx-swap="innerHTML"
   >
     {% include "partials/machine_facts.html" %}
@@ -158,4 +158,8 @@
     {% endif %}
     <div id="test-result"></div>
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/live-updates.js" defer></script>
 {% endblock %}

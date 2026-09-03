@@ -953,6 +953,46 @@ log content is a materially different trust level than a fact, even
 though it needs no root, and an admin who can already open the terminal
 could read any of this directly anyway.
 
+### Live updates: a WebSocket doorbell, not a data feed
+
+The Overview, Monitoring, and Updates tabs' status/facts/packages/
+services/update-availability panels used to be pure htmx polling —
+`hx-trigger="every 20s"` (or 30s), meaning up to that long a wait after a
+background job finished before an open tab showed it. Each of those panels
+now also carries `live-<kind> from:body` in its `hx-trigger` (e.g.
+`live-facts from:body`), and the polling interval itself was stretched to
+60s, now just a fallback for a missed push:
+
+- **`app/services/live_updates.py`** — `publish_machine_event(machine_id,
+  kind)` publishes `{"kind": "..."}` to a per-machine Redis pub/sub channel
+  (`debcontrol:live:machine:<id>`). Called from `app/tasks/jobs.py` right
+  after the commit that makes a change visible — reachability sweeps
+  (`status`), facts/package/service refreshes (`facts`/`packages`/
+  `services`), and update-availability checks (`updates`). Best-effort:
+  a publish failure is logged and swallowed, never allowed to fail the job
+  itself — a missed push just means that panel's fallback poll catches up
+  a little later.
+- **`app/web/routes/live_ws.py`** — `GET /machines/{id}/live/ws` (WebSocket),
+  one per machine, subscribes to that machine's channel and relays every
+  message to the browser verbatim. Pure relay: no DB or SSH access happens
+  in this handler at all, so a slow/unreachable machine can never block it.
+  Auth follows the same hand-rolled session-cookie + permission pattern
+  `terminal_ws.py` uses (`app.auth.middleware` never runs for WebSocket
+  requests) — gated behind `MACHINE_VIEW`, not `MACHINE_MANAGE`, since the
+  message it relays is only ever a `kind` string naming which
+  already-permission-checked htmx panel to re-fetch, never machine data
+  itself.
+- **`app/web/static/js/live-updates.js`** — opens that socket on any page
+  with a `[data-live-machine-id]` element, and turns each `{"kind": "..."}`
+  message into a plain `live-<kind>` event dispatched on `document.body`,
+  which is what the panels' `hx-trigger` listens for. Reconnects with
+  exponential backoff (capped at 30s) on any drop.
+
+This is deliberately a doorbell, not a data channel: the push carries no
+machine data, so there's nothing for a stale/duplicate message to get
+wrong, and every actual fetch still goes through the exact same
+permission/scope-checked htmx endpoint its poll always used.
+
 ### Post-onboarding readiness check
 
 **Machines → a machine → Overview** shows a banner if

@@ -4,7 +4,7 @@
 {% block title %}Updates — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
-  <div class="page-header">
+  <div class="page-header" data-live-machine-id="{{ machine.id }}">
     <h1>{{ machine.name }}</h1>
   </div>
 
@@ -109,4 +109,8 @@
       <p>No update runs {% if status_filter %}match this filter{% else %}yet{% endif %}.</p>
     </div>
   {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/live-updates.js" defer></script>
 {% endblock %}

@@ -1,9 +1,13 @@
 """The Overview/Updates tabs' self-polling fragments — a periodic background
 sweep (reachability, facts, packages, update checks; see Celery Beat in
 app/tasks/celery_app.py) writes to the DB without any request from an open
-browser tab, so the fragment those tabs show has to re-fetch itself on a
-timer rather than only ever refreshing on an explicit button click. See the
-module comment above `machine_status_panel` in app/web/routes/machines.py.
+browser tab, so the fragment those tabs show has to re-fetch itself rather
+than only ever refreshing on an explicit button click. Since
+app/services/live_updates.py, the primary trigger for that is a WebSocket
+push (app/web/static/js/live-updates.js) the moment the relevant job
+finishes; the `hx-trigger="every ...s"` interval asserted here is only the
+fallback for a missed push, not the main mechanism anymore. See the module
+comment above `machine_status_panel` in app/web/routes/machines.py.
 """
 
 from __future__ import annotations
@@ -20,7 +24,10 @@ async def test_detail_page_facts_panel_polls_itself(client, db_session_factory):
     response = await client.get(f"/machines/{machine_id}")
     assert response.status_code == 200
     assert f'hx-get="/machines/{machine_id}/facts-panel"' in response.text
-    assert 'hx-trigger="every 20s"' in response.text
+    # Still polls (as a fallback for a missed push — see app/web/static/
+    # js/live-updates.js), just on a longer interval now that a WebSocket
+    # push normally triggers the re-fetch within about a second.
+    assert 'hx-trigger="every 60s, live-facts from:body"' in response.text
 
 
 async def test_facts_panel_endpoint_returns_current_facts(client, db_session_factory):
@@ -87,7 +94,7 @@ async def test_update_availability_polls_and_its_panel_endpoint_matches(
 
     updates_page = await client.get(f"/machines/{machine_id}/updates")
     assert f'hx-get="/machines/{machine_id}/update-availability-panel"' in updates_page.text
-    assert 'hx-trigger="every 30s"' in updates_page.text
+    assert 'hx-trigger="every 60s, live-updates from:body"' in updates_page.text
 
     panel = await client.get(f"/machines/{machine_id}/update-availability-panel")
     assert panel.status_code == 200

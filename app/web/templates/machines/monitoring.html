@@ -12,7 +12,7 @@
 {% set palette = ['#5b8fff', '#46bf8a', '#e0ab4a', '#f0685f', '#a970ff', '#38bdf8', '#f472b6', '#facc15'] %}
 
 {% block content %}
-  <div class="page-header">
+  <div class="page-header" data-live-machine-id="{{ machine.id }}">
     <h1>{{ machine.name }}</h1>
   </div>
 
@@ -175,4 +175,5 @@
 
 {% block extra_scripts %}
   <script src="/static/js/monitoring-chart.js" defer></script>
+  <script src="/static/js/live-updates.js" defer></script>
 {% endblock %}

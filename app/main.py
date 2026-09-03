@@ -34,6 +34,7 @@ from app.web.routes import (
     auth,
     dashboard,
     inform,
+    live_ws,
     machine_groups,
     machines,
     roles,
@@ -230,6 +231,9 @@ def create_app() -> FastAPI:
     # `app.auth.middleware`, so this router does its own auth entirely
     # inside the handler. See terminal_ws.py's module docstring.
     app.include_router(terminal_ws.router)
+    # Same no-HTTP-dependency reasoning as terminal_ws.router above — see
+    # live_ws.py's own module docstring for what this one relays.
+    app.include_router(live_ws.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:

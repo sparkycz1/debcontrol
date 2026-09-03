@@ -1,7 +1,7 @@
 <span
   id="machine-status"
   hx-get="/machines/{{ machine.id }}/status-panel"
-  hx-trigger="every 20s"
+  hx-trigger="every 60s, live-status from:body"
   hx-swap="outerHTML"
 >
   {% if machine.is_reachable is none %}
