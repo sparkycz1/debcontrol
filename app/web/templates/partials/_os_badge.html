@@ -1,13 +1,12 @@
-{# Small colored badge for a machine's OS — see app/web/os_logos.py for
-   why this is a hand-drawn glyph (or, for the long tail, plain initials)
-   rather than each distribution's own trademarked logo artwork. `os_id`
-   is `machine.os_id` (None before facts have ever been gathered, in which
-   case this renders the generic penguin fallback badge — same as an
-   unrecognized os_id). #}
+{# Small colored badge for a machine's OS, drawing each distribution's real
+   logo mark — see app/web/os_logos.py for where that artwork comes from
+   (or, for the long tail, plain initials). `os_id` is `machine.os_id`
+   (None before facts have ever been gathered, in which case this renders
+   the generic Tux fallback badge — same as an unrecognized os_id). #}
 {% macro render(os_id, size=20) %}
   {% set badge = os_id | os_badge %}
   <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" role="img"
-       aria-label="{{ badge.label }}" style="vertical-align: middle; flex: none;">
+       aria-label="{{ badge.label }}" class="os-badge">
     <title>{{ badge.label }}</title>
     <circle cx="10" cy="10" r="10" fill="{{ badge.color }}"></circle>
     {% if badge.glyph %}

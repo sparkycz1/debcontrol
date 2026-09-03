@@ -28,18 +28,27 @@ def test_badge_for_unknown_distro_is_the_fallback():
     assert badge_for("some-obscure-distro") == FALLBACK_BADGE
 
 
-def test_debian_family_shares_the_swirl_glyph():
+def test_debian_and_kali_have_their_own_distinct_logo_marks():
     debian = badge_for("debian")
     kali = badge_for("kali")
-    assert debian.glyph and debian.glyph == kali.glyph
-    assert debian.color != kali.color  # same glyph, each its own brand color
+    assert debian.glyph and kali.glyph
+    assert debian.glyph != kali.glyph  # each distro draws its own real mark
+    assert debian.color != kali.color
 
 
 def test_fallback_badge_has_a_glyph_not_just_initials():
     assert FALLBACK_BADGE.glyph != ""
 
 
-def test_long_tail_distro_falls_back_to_initials_only():
+def test_distro_with_a_real_logo_mark_uses_it_not_initials():
     fedora = badge_for("fedora")
-    assert fedora.glyph == ""
+    assert fedora.glyph != ""
     assert fedora.initials == "Fe"
+
+
+def test_distro_with_no_upstream_mark_falls_back_to_initials_only():
+    # Devuan and KDE neon have no Simple Icons entry of their own (see
+    # app/web/os_logos.py) — initials-only, same as an unknown distro.
+    devuan = badge_for("devuan")
+    assert devuan.glyph == ""
+    assert devuan.initials == "De"

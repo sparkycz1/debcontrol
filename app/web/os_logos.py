@@ -2,87 +2,72 @@
 `Machine.os_id` (from `/etc/os-release`'s `ID=`, or the special-cased
 `"proxmox"` — see `app.ssh.facts`'s `FACTS_COMMAND`).
 
-Hand-drawn glyphs (plain SVG shapes — circles, arcs, polygons), each
-evoking its distribution's real mark (Debian's swirl, Ubuntu's circle of
-friends, Mint's shield, Arch's peaked "A", Raspberry Pi's berry cluster)
-rather than an exact reproduction of the official artwork file — this
-repo has no licensed copy of those to vendor (and no way to fetch one at
-build time), so redrawing the shape by hand from scratch, in the same
-brand color, is what's actually achievable here. Covers the distributions
-this app's users are most likely to actually run (Debian/Ubuntu-family
-first, since that's what this app targets, plus Proxmox VE and the other
-common general-purpose distros) — falling back to initials-only for the
-long tail, and a generic penguin glyph for anything else entirely, so
-every machine gets *some* badge rather than a blank space or a broken
-image. Drop an actual official SVG per distribution into
-`app/web/static/img/os/` and wire it into `_BADGES` below instead, if
-you'd rather use the real artwork than this module's approximations.
+Each badge draws a distribution's *real* mark — not a hand-drawn
+approximation — from the icon artwork shipped in
+`app/web/static/img/os/*.svg`. Those files are pulled as-is from Simple
+Icons (https://simpleicons.org, MIT-licensed at the repo level; the
+project's FAQ addresses redistributing marks this way for identification
+purposes: https://github.com/simple-icons/simple-icons#legal-side-notes).
+Each SVG is a single monochrome `<path>` on a 24x24 grid — this module
+extracts that path, recolors it white, and scales/centers it inside the
+20x20 badge circle already drawn by `partials/_os_badge.html`. The mark
+itself (and each project's name) remains that project's own trademark;
+using it here is nominative use — identifying whose OS a machine runs,
+not implying endorsement.
+
+Covers the distributions this app's users are most likely to actually run
+(Debian/Ubuntu-family first, since that's what this app targets, plus
+Proxmox VE and the other common general-purpose distros) — falling back
+to initials-only for the long tail (including the handful with no Simple
+Icons entry of their own, e.g. Devuan, KDE neon), and a generic Tux badge
+for anything else entirely, so every machine gets *some* badge rather
+than a blank space or a broken image.
+
+To add a distribution: drop `<slug>.svg` (a Simple Icons file, or any
+single-path 24x24 SVG) into `app/web/static/img/os/`, then add an entry
+to `_BADGES` below via `_badge(..., icon="<slug>.svg")`.
 
 Rendered by `partials/_os_badge.html` (an inline `<svg>`, matching this
 app's "no external icon fonts/images, CSP-safe" convention elsewhere —
-see `macros/charts.html`'s own docstring for the same reasoning). `glyph`
-is raw SVG markup placed inside a 20x20 viewBox circle already drawn by
-that macro — trusted, hand-written content from this module only, never
-derived from anything a machine reports, so the macro's `| safe` on it
-carries no injection risk.
+see `macros/charts.html`'s own docstring for the same reasoning). The
+`<g>` returned by `glyph` is placed inside a 20x20 viewBox circle already
+drawn by that macro — built here from files this module controls, never
+from anything a machine reports, so the macro's `| safe` on it carries no
+injection risk.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
-# --- Reusable glyphs -----------------------------------------------------
-# Each assumes a 20x20 viewBox with the badge's own circle already drawn
-# (center 10,10 radius 10) and draws in white (`#fff`) on top of it.
+_ICON_DIR = Path(__file__).resolve().parent / "static" / "img" / "os"
 
-_GLYPH_SWIRL = (
-    '<path d="M14 6.5A5 5 0 1 0 14 13.5" stroke="#fff" stroke-width="1.4" '
-    'fill="none" stroke-linecap="round"/>'
-    '<path d="M12 8.5A2.6 2.6 0 1 0 12 11.5" stroke="#fff" stroke-width="1.2" '
-    'fill="none" stroke-linecap="round"/>'
-)  # Debian and its close derivatives — a simple two-turn spiral, evoking
-# the swirl without reproducing it.
+# Simple Icons ships each mark as a single <path> on a 0 0 24 24 grid with
+# no fill set (so it renders black by default). This scales that 24x24
+# path down and centers it inside the badge's 20x20 circle, leaving a
+# small margin, and recolors it white to sit on the badge's brand-color
+# background.
+_ICON_SCALE = 14 / 24
+_ICON_OFFSET = (20 - 24 * _ICON_SCALE) / 2
 
-_GLYPH_ORBIT = (
-    '<circle cx="10" cy="10" r="5.5" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.55"/>'
-    '<circle cx="10" cy="4.7" r="1.7" fill="#fff"/>'
-    '<circle cx="14.8" cy="12.6" r="1.7" fill="#fff"/>'
-    '<circle cx="5.2" cy="12.6" r="1.7" fill="#fff"/>'
-)  # Ubuntu — three dots in orbit.
+_PATH_D_RE = re.compile(r'<path[^>]*\sd="([^"]+)"')
 
-_GLYPH_SHIELD = (
-    '<rect x="5.5" y="5" width="9" height="9" rx="1.5" '
-    'fill="none" stroke="#fff" stroke-width="1.3"/>'
-    '<circle cx="10" cy="9.5" r="1.6" fill="#fff"/>'
-    '<path d="M8 11.5v1.3a2 2 0 0 0 4 0v-1.3" fill="none" stroke="#fff" stroke-width="1.3"/>'
-)  # Linux Mint — a rounded square outline (the shield the wordmark sits in).
 
-_GLYPH_DIAMOND = (
-    '<polygon points="10,4 16,10 10,16 4,10" fill="none" stroke="#fff" stroke-width="1.4"/>'
-    '<circle cx="10" cy="10" r="2" fill="#fff"/>'
-)  # Proxmox VE — a diamond outline with a core dot (virtualization/cluster).
-
-_GLYPH_PEAK = '<polygon points="10,4.5 16,15.5 4,15.5" fill="#fff"/>'
-# Arch Linux — a simple upward peak (its logo is a stylized peaked "A").
-
-_GLYPH_BERRY = (
-    '<circle cx="10" cy="5.5" r="1.6" fill="#fff"/>'
-    '<circle cx="6.7" cy="8.5" r="1.6" fill="#fff"/>'
-    '<circle cx="13.3" cy="8.5" r="1.6" fill="#fff"/>'
-    '<circle cx="8.3" cy="12.2" r="1.6" fill="#fff"/>'
-    '<circle cx="11.7" cy="12.2" r="1.6" fill="#fff"/>'
-)  # Raspberry Pi OS — a small cluster of "berries".
-
-_GLYPH_PENGUIN = (
-    '<ellipse cx="10" cy="12.5" rx="4" ry="5" fill="#fff"/>'
-    '<circle cx="10" cy="6" r="3" fill="#fff"/>'
-    '<ellipse cx="10" cy="13" rx="2" ry="3.4" fill="#6b7280"/>'
-    '<circle cx="8.8" cy="5.3" r="0.5" fill="#374151"/>'
-    '<circle cx="11.2" cy="5.3" r="0.5" fill="#374151"/>'
-    '<polygon points="9.3,7 10.7,7 10,8.3" fill="#e0ab4a"/>'
-)  # Generic fallback — a plain, original penguin silhouette (not a
-# reproduction of Tux's specific character design), the same generic
-# mascot association "Linux" already carries.
+@lru_cache
+def _load_icon_glyph(filename: str) -> str:
+    """Read one `<path>` out of `app/web/static/img/os/<filename>` and
+    return it as ready-to-inline `<g>` markup (see module docstring)."""
+    svg = (_ICON_DIR / filename).read_text(encoding="utf-8")
+    match = _PATH_D_RE.search(svg)
+    if match is None:
+        raise ValueError(f"no <path d=...> found in app/web/static/img/os/{filename}")
+    return (
+        f'<g fill="#fff" transform="translate({_ICON_OFFSET:.3f},{_ICON_OFFSET:.3f}) '
+        f'scale({_ICON_SCALE:.4f})"><path d="{match.group(1)}"/></g>'
+    )
 
 
 @dataclass(frozen=True)
@@ -90,47 +75,54 @@ class OsBadge:
     label: str  # Full display name, used as the badge's tooltip/alt text.
     color: str  # Background color — each distribution's own brand color
     # where there is a well-known one, otherwise a neutral pick.
-    initials: str = ""  # Shown when there's no hand-drawn `glyph`.
+    initials: str = ""  # Shown when there's no `icon` artwork for this OS.
     glyph: str = ""  # Raw inner SVG markup (see module docstring); empty
-    # means "fall back to `initials`" — set by `_finish` below.
+    # means "fall back to `initials`" — set by `_badge` below.
 
 
-def _badge(label: str, color: str, *, initials: str = "", glyph: str = "") -> OsBadge:
-    return OsBadge(label=label, color=color, initials=initials or label[:2], glyph=glyph)
+def _badge(label: str, color: str, *, initials: str = "", icon: str = "") -> OsBadge:
+    return OsBadge(
+        label=label,
+        color=color,
+        initials=initials or label[:2],
+        glyph=_load_icon_glyph(icon) if icon else "",
+    )
 
 
 _BADGES: dict[str, OsBadge] = {
-    # --- Debian and its derivatives — the swirl glyph, each in its own color ---
-    "debian": _badge("Debian", "#a80030", glyph=_GLYPH_SWIRL),
-    "kali": _badge("Kali Linux", "#557c94", glyph=_GLYPH_SWIRL),
-    "devuan": _badge("Devuan", "#3f51b5", glyph=_GLYPH_SWIRL),
-    "mx": _badge("MX Linux", "#3d3d3d", glyph=_GLYPH_SWIRL),
-    "deepin": _badge("Deepin", "#0050ff", glyph=_GLYPH_SWIRL),
-    # --- Ubuntu and its derivatives — the orbit glyph ---
-    "ubuntu": _badge("Ubuntu", "#e95420", glyph=_GLYPH_ORBIT),
-    "pop": _badge("Pop!_OS", "#48b9c7", glyph=_GLYPH_ORBIT),
-    "elementary": _badge("elementary OS", "#64baff", glyph=_GLYPH_ORBIT),
-    "zorin": _badge("Zorin OS", "#0cc1f3", glyph=_GLYPH_ORBIT),
-    "neon": _badge("KDE neon", "#1d99f3", glyph=_GLYPH_ORBIT),
-    "linuxmint": _badge("Linux Mint", "#87cf3e", glyph=_GLYPH_SHIELD),
-    "proxmox": _badge("Proxmox VE", "#e57000", glyph=_GLYPH_DIAMOND),
-    "arch": _badge("Arch Linux", "#1793d1", glyph=_GLYPH_PEAK),
-    "manjaro": _badge("Manjaro", "#35bf5c", glyph=_GLYPH_PEAK),
-    "raspbian": _badge("Raspberry Pi OS", "#c51a4a", glyph=_GLYPH_BERRY),
-    # --- Everything else this app is likely to see, initials-only ---
-    "fedora": _badge("Fedora", "#294172"),
-    "rhel": _badge("RHEL", "#ee0000"),
-    "centos": _badge("CentOS", "#932279"),
-    "rocky": _badge("Rocky Linux", "#10b981"),
-    "almalinux": _badge("AlmaLinux", "#0057b8"),
-    "opensuse": _badge("openSUSE", "#73ba25"),
-    "opensuse-leap": _badge("openSUSE Leap", "#73ba25"),
-    "opensuse-tumbleweed": _badge("openSUSE Tumbleweed", "#73ba25"),
+    # --- Debian and its derivatives ---
+    "debian": _badge("Debian", "#a80030", icon="debian.svg"),
+    "kali": _badge("Kali Linux", "#557c94", icon="kali.svg"),
+    "devuan": _badge("Devuan", "#3f51b5"),  # no Simple Icons mark — initials
+    "mx": _badge("MX Linux", "#3d3d3d", icon="mx.svg"),
+    "deepin": _badge("Deepin", "#0050ff", icon="deepin.svg"),
+    # --- Ubuntu and its derivatives ---
+    "ubuntu": _badge("Ubuntu", "#e95420", icon="ubuntu.svg"),
+    "pop": _badge("Pop!_OS", "#48b9c7", icon="pop.svg"),
+    "elementary": _badge("elementary OS", "#64baff", icon="elementary.svg"),
+    "zorin": _badge("Zorin OS", "#0cc1f3", icon="zorin.svg"),
+    "neon": _badge("KDE neon", "#1d99f3"),  # no Simple Icons mark — initials
+    "linuxmint": _badge("Linux Mint", "#87cf3e", icon="linuxmint.svg"),
+    "proxmox": _badge("Proxmox VE", "#e57000", icon="proxmox.svg"),
+    "arch": _badge("Arch Linux", "#1793d1", icon="arch.svg"),
+    "manjaro": _badge("Manjaro", "#35bf5c", icon="manjaro.svg"),
+    # Raspberry Pi OS has no mark of its own in Simple Icons — the
+    # Raspberry Pi Foundation's own logo is the closest real mark available.
+    "raspbian": _badge("Raspberry Pi OS", "#c51a4a", icon="raspbian.svg"),
+    # --- Everything else this app is likely to see ---
+    "fedora": _badge("Fedora", "#294172", icon="fedora.svg"),
+    "rhel": _badge("RHEL", "#ee0000", icon="rhel.svg"),
+    "centos": _badge("CentOS", "#932279", icon="centos.svg"),
+    "rocky": _badge("Rocky Linux", "#10b981", icon="rocky.svg"),
+    "almalinux": _badge("AlmaLinux", "#0057b8", icon="almalinux.svg"),
+    "opensuse": _badge("openSUSE", "#73ba25", icon="opensuse.svg"),
+    "opensuse-leap": _badge("openSUSE Leap", "#73ba25", icon="opensuse.svg"),
+    "opensuse-tumbleweed": _badge("openSUSE Tumbleweed", "#73ba25", icon="opensuse.svg"),
 }
 
 # Anything else Linux-based (or unrecognized) — still a badge, not a blank
-# space or a broken image.
-FALLBACK_BADGE = _badge("Linux", "#6b7280", initials="Li", glyph=_GLYPH_PENGUIN)
+# space or a broken image. Simple Icons' generic "Linux" mark is Tux.
+FALLBACK_BADGE = _badge("Linux", "#6b7280", initials="Li", icon="linux.svg")
 
 
 def badge_for(os_id: str | None) -> OsBadge:

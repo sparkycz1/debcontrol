@@ -884,6 +884,13 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   .chat-typing span { animation: none; opacity: 0.8; }
 }
 
+/* --- OS badges (partials/_os_badge.html) --- */
+
+.os-badge {
+  vertical-align: middle;
+  flex: none;
+}
+
 /* --- Terminal --- */
 
 .terminal-shell {
