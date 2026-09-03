@@ -122,3 +122,73 @@ history around v0.19.0/v0.19.1).
 - **Model discovery for Alembic** happens via explicit imports in
   `app/db/models/__init__.py` and `alembic/env.py` — a new model module
   not imported there is invisible to `--autogenerate`.
+- **UI strings go through `t()`, not literal English in a template.**
+  `{{ t(request, "area.key") }}` (`app/web/templating.py`, backed by
+  `app/i18n/`) resolves per-account — see [Per-user UI language](wiki/Architecture.md#per-user-ui-language-i18n).
+  Not every page is converted yet; a page that already uses `t()` should
+  stay consistent, and any new key needs an entry in **every** file under
+  `app/i18n/locales/`, not just `en.json` (see the checklist below).
+
+## Checklist for every change
+
+Before considering a change finished, not just "the code works":
+
+1. **REST API parity.** If this adds or changes something reachable from
+   the web UI, check whether the equivalent `api_v1_*.py` router needs the
+   same capability — this app's stated goal is that the API mirrors the
+   web UI (see `api_v1.py`'s module docstring for the narrow, deliberate
+   exceptions). Don't add a web-only feature silently; if it's staying
+   web-only, say why, the same way the existing exceptions are documented.
+2. **Wiki parity.** Update the relevant `wiki/*.md` page(s) in the same
+   change — `wiki/Home.md`'s feature table, `wiki/Architecture.md` for
+   *why*/how it works, `wiki/Development.md` if it adds a new pattern
+   worth a recipe. Code and docs drifting apart is treated as a bug here,
+   not a nice-to-have (see git history — a dedicated audit pass exists
+   specifically because this had already happened).
+3. **i18n parity.** Any new or changed user-facing string goes through
+   `t(request, "...")` and gets a key in `app/i18n/locales/en.json` *and*
+   every other locale file already shipping (`cs.json` today) — not just
+   the one you're thinking in. A key with no translation in a given locale
+   is acceptable (it falls back to English) only when that whole locale is
+   still catching up, not as a way to skip translating a key you just
+   added everywhere else.
+4. **Upgrade safety.** Assume a real instance is already running this app
+   in production with existing data and is about to `git pull` +
+   `docker compose up -d --build` straight onto whatever you just wrote —
+   never something spun up fresh. A new column is nullable or has a safe
+   server default (see the `User.locale` migration for the pattern); a
+   renamed/removed route, permission, config key, or task name breaks
+   someone silently unless it's kept working (redirected, aliased,
+   deprecated-with-warning) or the change is flagged loudly as breaking.
+   Every existing feature must keep working after the change, not just the
+   new one.
+5. **Security.** This is admin tooling with SSH access to real machines —
+   CSRF on every mutating web route, the exact matching `Permission` on
+   both the web and API side, secrets only ever `encrypt_secret`/stored
+   hashed, no new inline script/style (CSP), no new trust boundary crossed
+   without the same scrutiny `wiki/Architecture.md`'s security model
+   section already applies elsewhere.
+6. **Current, not legacy, tech.** Match what's already here (Python 3.14,
+   SQLAlchemy 2.0 async, Pydantic v2, FastAPI, htmx 2.x) — don't introduce
+   an older pattern (sync SQLAlchemy, Pydantic v1 style, a jQuery-era JS
+   habit) because it's more familiar; if a genuinely better modern option
+   exists for a *new* piece of work, prefer it over copying an older
+   pattern just for consistency's sake.
+7. **Scale.** This runs against fleets from a handful of machines to a
+   few thousand (see [Host Requirements](wiki/Host-Requirements.md)'s
+   capacity-planning math) — a new per-machine fan-out belongs in the
+   already-established "enqueue one Celery task per machine, never await
+   them inline" pattern (`app/tasks/jobs.py`), and a new query should
+   scale with an index, not a full-table scan, as the fleet grows.
+8. **Tag and release.** Once `APP_VERSION`/`pyproject.toml` are bumped and
+   the change is committed and pushed, tag it (`git tag vX.Y.Z` + `git push
+   --tags`) and cut a GitHub release (`gh release create vX.Y.Z`) — a
+   version bump that never becomes a tag/release is invisible to
+   `scripts/upgrade.sh` and to anyone reading the Releases page to see
+   what changed. Don't batch several version bumps into one eventual tag;
+   each `APP_VERSION` that lands on `main` gets its own.
+
+None of this means doing every possible thing for every tiny change —
+it means actually checking each of these against what you just did,
+the same way you'd check the test/lint/mypy gate, and either handling it
+or explicitly deciding (and saying) it doesn't apply this time.

@@ -9,10 +9,13 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from fastapi import Request
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
 from app.core.config import get_settings
+from app.i18n import get_locale
+from app.i18n import translate as _translate
 from app.web.os_logos import badge_for
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -102,3 +105,20 @@ def tojson_filter(value: object) -> Markup:
 
 
 templates.env.filters["tojson"] = tojson_filter
+
+
+def t(request: Request, key: str, **kwargs: object) -> str:
+    """`{{ t(request, "nav.dashboard") }}` — the current request's language
+    (`request.state.locale`, set by `app.auth.middleware` on every request,
+    public or not) applied to `key`. See `app.i18n`'s module docstring for
+    the lookup/fallback rules and the file format a new language file
+    needs. `getattr(..., None)` rather than a direct attribute read: a
+    handful of error-page renders (e.g. a raised `HTTPException` before the
+    middleware runs, or a test hitting a route through a bare ASGI call)
+    have no `request.state.locale` at all, and this should degrade to
+    English then, not throw."""
+    locale = getattr(request.state, "locale", None) or get_locale(None)
+    return _translate(locale, key, **kwargs)
+
+
+templates.env.globals["t"] = t

@@ -519,6 +519,62 @@ matrix, and unchecked by default for new accounts. It is checked twice:
 Only a `user.manage` admin can set the checkbox, from the Users
 "add"/"edit" forms.
 
+### Per-user UI language (i18n)
+
+Each account has its own UI language (**My account → Language**), self-
+service, defaulting to English for every account that's never chosen one
+(`User.locale` is nullable — `NULL` means "use the default," not a
+specific stored code — see that column's own docstring in
+`app/db/models/user.py`). `app.i18n` is deliberately not `gettext`/Babel:
+a flat JSON file per locale is the lowest-friction format for a
+contributor with no Python tooling to send a translation for, and this
+app has no other i18n need (dates already render in `Settings.tz`, not
+per-locale — see `app.web.templating.local_time`).
+
+**Adding a language needs no code change** — drop a new
+`app/i18n/locales/<code>.json` file:
+
+```json
+{
+  "meta": { "code": "xx", "label": "Native name" },
+  "strings": { "nav.dashboard": "...", "...": "..." }
+}
+```
+
+`meta.code` must match the filename stem (checked at load — a mismatch
+gets the whole file skipped, logged, rather than silently registering
+under the wrong code). It doesn't need every key translated: `translate()`
+falls back key-by-key to English, then to the literal key itself, so a
+partial translation degrades to readable English rather than a blank
+string or a crash. New locale files are picked up on the next process
+restart (each web/worker/beat process parses its own copy once, at first
+use, the same as `app.web.os_logos`'s icon files) — no migration, no
+Settings toggle, nothing DB-side to enable one.
+
+Wired in three places:
+
+- `app.auth.middleware` sets `request.state.locale` on *every* request,
+  public or not — the default for an anonymous page (login, TOTP
+  challenge), the account's own choice once a session resolves.
+- `app.web.templating`'s Jinja global `t(request, "some.key", **kwargs)`
+  looks that up — `{{ t(request, "nav.dashboard") }}`. `**kwargs` are
+  `str.format`-substituted into the result for a templated string like
+  `"Switch to {theme} theme"`.
+- `app/web/routes/auth.py`'s `POST /account/locale` (web) and
+  `app/web/routes/api_v1_account.py`'s `POST /api/v1/account/locale` /
+  `GET /api/v1/locales` (REST) let an account change its own choice
+  either way — an unrecognized code is silently treated as "use the
+  default" rather than rejected, the same fallback `get_locale` itself
+  applies everywhere else.
+
+**Coverage today** is the site-wide chrome (header/nav/footer), the login
+page, and the Account page — not yet every page in the app, which would be
+a large, ongoing translation effort rather than an infrastructure one.
+Every other page's strings are still plain English in the template source;
+translating one is exactly "wrap the string in `t(request, "new.key")`,
+add that key to every `locales/*.json` file" — see [Development](Development.md)
+for the checklist.
+
 ### The REST API: read and write, mirroring the web UI
 
 `/api/v1/...` covers essentially everything doable from the web UI:
@@ -529,13 +585,15 @@ run-onboarding/recheck-readiness/logs, the pending-machines review queue),
 machine groups (create/update/delete, membership, group- and "All
 machines"-scoped actions), the ad-hoc bulk actions from the machine list,
 scheduling (full CRUD plus enable/disable/run-now), users and roles (full
-CRUD), the audit log (list/filter/export), and a read-only slice of
-Settings. Split across
+CRUD), the audit log (list/filter/export), a read-only slice of
+Settings, and self-service account settings (currently just UI language —
+see [Per-user UI language](#per-user-ui-language-i18n)). Split across
 router modules under `app/web/routes/` (`api_v1.py` for
 machines/groups/bulk, `api_v1_scheduling.py`, `api_v1_users.py`,
 `api_v1_roles.py`, `api_v1_audit.py`, `api_v1_settings.py`,
-`api_v1_dashboard.py` for the Dashboard's trend-snapshot history), all
-mounted under `/api/v1` in `app.main`.
+`api_v1_dashboard.py` for the Dashboard's trend-snapshot history,
+`api_v1_account.py` for self-service account settings), all mounted under
+`/api/v1` in `app.main`.
 
 - **Same permission, every time.** Every route uses
   `require_api_permission(...)` with the exact `Permission` its web

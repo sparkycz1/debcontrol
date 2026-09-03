@@ -81,6 +81,15 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # This account's own UI language, self-service (My account → Language) —
+    # a locale *code* (e.g. "en", "cs"), not a display name, matching
+    # whatever `app.i18n.available_locales()` currently offers. `None` means
+    # "use the default" (English) rather than duplicating that default here:
+    # a locale file removed after being selected reads the exact same way as
+    # never having chosen one, instead of silently keying off a stale/missing
+    # code. See app/i18n/__init__.py.
+    locale: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     auth_provider: Mapped[AuthProvider] = mapped_column(
         pg_enum(AuthProvider, name="auth_provider"), nullable=False
     )

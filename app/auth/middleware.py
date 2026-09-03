@@ -5,7 +5,7 @@ ordering for why it has to be registered *before* the security-headers
 middleware (so CSP etc. still land on a redirect-to-login response, not
 just on responses that reached a real route).
 
-Two things happen on every request, public or not:
+Three things happen on every request, public or not:
 
 1. A CSRF token is ensured (`app.core.csrf`) and stashed on
    `request.state.csrf_token` — this lets `base.html` (and the login pages)
@@ -13,7 +13,11 @@ Two things happen on every request, public or not:
    `get_or_create_csrf_token`/`set_csrf_cookie` dance just for that. Routes
    that already do that dance themselves (most of the pre-existing ones)
    are unaffected — they just read back the same cookie this already set.
-2. Everything *not* on the public allowlist below requires a valid session
+2. `request.state.locale` is set to the default (English) — overwritten
+   below with the session's own account's chosen language, if any — so
+   every template can call `t(request, "some.key")` unconditionally,
+   logged in or not. See `app.i18n`'s module docstring.
+3. Everything *not* on the public allowlist below requires a valid session
    (`app.auth.sessions`); `request.state.user`/`request.state.session` are
    set from it for the rest of the request. A missing/expired/revoked
    session redirects to `/login?next=<path>`.
@@ -37,6 +41,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie
 from app.db.models.user import AuthProvider, User
+from app.i18n import get_locale
 
 # Reachable with no session at all. Exact paths, plus two prefixes below.
 _PUBLIC_PATHS = frozenset(
@@ -119,6 +124,11 @@ async def require_auth(
 ) -> Response:
     csrf_token, new_csrf_cookie = get_or_create_csrf_token(request)
     request.state.csrf_token = csrf_token
+    # Default for every request, including the login page and every other
+    # public/anonymous one — there's no account yet to have a preference.
+    # Overwritten below once a session resolves to one that has chosen a
+    # non-default language. See app.i18n's module docstring.
+    request.state.locale = get_locale(None)
 
     if not _is_public(request.url.path):
         session = None
@@ -141,6 +151,7 @@ async def require_auth(
 
         request.state.user = session.user
         request.state.session = session
+        request.state.locale = get_locale(session.user.locale)
 
         if _totp_enrollment_required(session.user) and request.url.path not in (
             _TOTP_ENROLL_ALLOWLIST

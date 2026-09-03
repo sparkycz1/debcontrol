@@ -230,6 +230,39 @@ module docstring for the full parameter list (`outcome`, `target_type`/
   audit calls inside `app/tasks/jobs.py`'s periodic sweep functions
   themselves.
 
+## 🌐 Adding or extending a UI language
+
+See [Architecture](Architecture.md#per-user-ui-language-i18n) for the full
+design. Two separate things:
+
+**Adding a new language** — no code change:
+
+1. Copy `app/i18n/locales/en.json` to `app/i18n/locales/<code>.json`
+   (`<code>` is a short locale code, e.g. `de`, `fr`, `pt-br`).
+2. Set `meta.code` to that same code and `meta.label` to the language's
+   own native name (`"Deutsch"`, not `"German"`) — shown as-is in the
+   picker.
+3. Translate as many `strings` values as you can; an untranslated key
+   falls back to English automatically, so a partial file is still useful.
+4. Restart the app (`docker compose restart web worker beat`, or a normal
+   redeploy) — locale files are parsed once per process at first use.
+
+**Translating an existing string, or adding a new translatable one:**
+
+1. Wrap it in the template with the Jinja global:
+   `{{ t(request, "area.key") }}` (`request` is always in scope in a
+   Jinja2Templates render). For a string with a variable part, use a
+   `{placeholder}` and pass it as a kwarg:
+   `{{ t(request, "area.greeting", name=user.display_name) }}` against a
+   string like `"Hello, {name}!"`.
+2. Add `"area.key": "..."` to `app/i18n/locales/en.json` — this is the
+   fallback every other locale reads through, so it must exist there.
+3. Add the same key, translated, to every other locale file you can — or
+   leave it out of the ones you can't; see the fallback behavior above.
+4. Keep the `area.` prefix consistent with what's already there (`nav.*`,
+   `account.*`, `common.*` for a string reused across areas) so a
+   translator working from `en.json` alone can tell what a key is for.
+
 ## 📐 Project conventions
 
 - All code, comments, docstrings, commit messages, and documentation are

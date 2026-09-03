@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}My account — debcontrol{% endblock %}
+{% block title %}{{ t(request, "account.title") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>My account</h1>
+  <h1>{{ t(request, "account.title") }}</h1>
 
   {% if errors %}
     <div class="alert alert-error">
@@ -31,18 +31,33 @@
   {% endif %}
 
   <section class="panel">
-    <h2>Profile</h2>
+    <h2>{{ t(request, "account.profile.heading") }}</h2>
     <dl class="detail-list">
-      <dt>Username</dt><dd>{{ user.username }}</dd>
-      <dt>Role</dt><dd>{{ user.role.name }}</dd>
-      <dt>Login method</dt><dd>{{ user.auth_provider.value }}</dd>
+      <dt>{{ t(request, "account.profile.username") }}</dt><dd>{{ user.username }}</dd>
+      <dt>{{ t(request, "account.profile.role") }}</dt><dd>{{ user.role.name }}</dd>
+      <dt>{{ t(request, "account.profile.login_method") }}</dt><dd>{{ user.auth_provider.value }}</dd>
     </dl>
     <form method="post" action="/account/display-name" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="display_name">Display name</label>
+      <label for="display_name">{{ t(request, "account.profile.display_name") }}</label>
       <input type="text" id="display_name" name="display_name" maxlength="255"
              value="{{ user.display_name or '' }}" placeholder="{{ user.username }}">
-      <button type="submit" class="button">Save</button>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "account.language.heading") }}</h2>
+    <form method="post" action="/account/locale" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="locale">{{ t(request, "account.language.label") }}</label>
+      <select id="locale" name="locale">
+        {% for locale in available_locales %}
+          <option value="{{ locale.code }}" {% if (user.locale or 'en') == locale.code %}selected{% endif %}>{{ locale.label }}</option>
+        {% endfor %}
+      </select>
+      <p class="hint">{{ t(request, "account.language.help") }}</p>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>
 

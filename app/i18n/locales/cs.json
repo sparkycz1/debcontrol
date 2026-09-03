@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "code": "cs",
+    "label": "Čeština"
+  },
+  "strings": {
+    "nav.skip_to_content": "Přeskočit na obsah",
+    "nav.toggle_navigation": "Zobrazit/skrýt navigaci",
+    "nav.dashboard": "Přehled",
+    "nav.machines": "Zařízení",
+    "nav.machine_groups": "Skupiny zařízení",
+    "nav.scheduling": "Plánování",
+    "nav.ai": "AI",
+    "nav.audit": "Audit",
+    "nav.users": "Uživatelé",
+    "nav.roles": "Role",
+    "nav.settings": "Nastavení",
+    "nav.api_docs": "Dokumentace API",
+    "nav.log_out": "Odhlásit se",
+    "nav.switch_theme": "Přepnout na {theme} téma",
+
+    "theme.dark": "tmavé",
+    "theme.light": "světlé",
+
+    "common.save": "Uložit",
+    "common.cancel": "Zrušit",
+
+    "footer.tagline": "debcontrol — správa Debian zařízení přes SSH",
+
+    "login.username": "Uživatelské jméno",
+    "login.password": "Heslo",
+    "login.submit": "Přihlásit se",
+    "login.oidc_button": "Přihlásit se přes OIDC",
+
+    "account.title": "Můj účet",
+    "account.profile.heading": "Profil",
+    "account.profile.username": "Uživatelské jméno",
+    "account.profile.role": "Role",
+    "account.profile.login_method": "Způsob přihlášení",
+    "account.profile.display_name": "Zobrazované jméno",
+    "account.language.heading": "Jazyk",
+    "account.language.label": "Jazyk rozhraní",
+    "account.language.help": "Ovlivňuje jen tvůj vlastní účet — ostatní si zachovají svou vlastní volbu (nebo výchozí angličtinu)."
+  }
+}

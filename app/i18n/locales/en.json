@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "code": "en",
+    "label": "English"
+  },
+  "strings": {
+    "nav.skip_to_content": "Skip to content",
+    "nav.toggle_navigation": "Toggle navigation",
+    "nav.dashboard": "Dashboard",
+    "nav.machines": "Machines",
+    "nav.machine_groups": "Machine groups",
+    "nav.scheduling": "Scheduling",
+    "nav.ai": "AI",
+    "nav.audit": "Audit",
+    "nav.users": "Users",
+    "nav.roles": "Roles",
+    "nav.settings": "Settings",
+    "nav.api_docs": "API docs",
+    "nav.log_out": "Log out",
+    "nav.switch_theme": "Switch to {theme} theme",
+
+    "theme.dark": "dark",
+    "theme.light": "light",
+
+    "common.save": "Save",
+    "common.cancel": "Cancel",
+
+    "footer.tagline": "debcontrol — manage Debian machines over SSH",
+
+    "login.username": "Username",
+    "login.password": "Password",
+    "login.submit": "Log in",
+    "login.oidc_button": "Log in with OIDC",
+
+    "account.title": "My account",
+    "account.profile.heading": "Profile",
+    "account.profile.username": "Username",
+    "account.profile.role": "Role",
+    "account.profile.login_method": "Login method",
+    "account.profile.display_name": "Display name",
+    "account.language.heading": "Language",
+    "account.language.label": "UI language",
+    "account.language.help": "Only affects your own account — everyone else keeps their own choice (or the default, English)."
+  }
+}

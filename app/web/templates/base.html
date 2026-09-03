@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="{{ 'light' if request.cookies.get('theme') == 'light' else 'dark' }}">
+<html lang="{{ request.state.locale.code }}" data-theme="{{ 'light' if request.cookies.get('theme') == 'light' else 'dark' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,55 +9,56 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body>
-  <a class="skip-link" href="#main-content">Skip to content</a>
+  <a class="skip-link" href="#main-content">{{ t(request, "nav.skip_to_content") }}</a>
   <header class="site-header">
     <a class="brand" href="/dashboard"><span class="brand-mark" aria-hidden="true"></span> debcontrol</a>
     <input type="checkbox" id="nav-toggle" class="nav-toggle">
-    <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle navigation">☰</label>
+    <label for="nav-toggle" class="nav-toggle-label" aria-label="{{ t(request, 'nav.toggle_navigation') }}">☰</label>
     {% set current_user = request.state.user %}
     {% set current_path = request.url.path %}
     <nav>
-      <a href="/dashboard" {% if current_path == '/dashboard' %}class="active" aria-current="page"{% endif %}>Dashboard</a>
+      <a href="/dashboard" {% if current_path == '/dashboard' %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.dashboard") }}</a>
       {% if current_user.has_permission('machine.view') %}
-        <a href="/machines" {% if current_path.startswith('/machines') %}class="active" aria-current="page"{% endif %}>Machines</a>
+        <a href="/machines" {% if current_path.startswith('/machines') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.machines") }}</a>
       {% endif %}
       {% if current_user.has_permission('group.view') %}
-        <a href="/machine-groups" {% if current_path.startswith('/machine-groups') %}class="active" aria-current="page"{% endif %}>Machine groups</a>
+        <a href="/machine-groups" {% if current_path.startswith('/machine-groups') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.machine_groups") }}</a>
       {% endif %}
       {% if current_user.has_permission('scheduling.view') %}
-        <a href="/scheduling" {% if current_path.startswith('/scheduling') %}class="active" aria-current="page"{% endif %}>Scheduling</a>
+        <a href="/scheduling" {% if current_path.startswith('/scheduling') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.scheduling") }}</a>
       {% endif %}
       {% if current_user.has_permission('ai.access') %}
-        <a href="/ai" {% if current_path.startswith('/ai') %}class="active" aria-current="page"{% endif %}>AI</a>
+        <a href="/ai" {% if current_path.startswith('/ai') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.ai") }}</a>
       {% endif %}
       {% if current_user.has_permission('audit.view') %}
-        <a href="/audit" {% if current_path.startswith('/audit') %}class="active" aria-current="page"{% endif %}>Audit</a>
+        <a href="/audit" {% if current_path.startswith('/audit') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.audit") }}</a>
       {% endif %}
       {% if current_user.has_permission('user.manage') %}
-        <a href="/users" {% if current_path.startswith('/users') %}class="active" aria-current="page"{% endif %}>Users</a>
-        <a href="/roles" {% if current_path.startswith('/roles') %}class="active" aria-current="page"{% endif %}>Roles</a>
+        <a href="/users" {% if current_path.startswith('/users') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.users") }}</a>
+        <a href="/roles" {% if current_path.startswith('/roles') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.roles") }}</a>
       {% endif %}
       {% if current_user.has_permission('settings.view') %}
-        <a href="/settings" {% if current_path.startswith('/settings') %}class="active" aria-current="page"{% endif %}>Settings</a>
+        <a href="/settings" {% if current_path.startswith('/settings') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.settings") }}</a>
       {% endif %}
-      <a href="/api" {% if current_path == '/api' %}class="active" aria-current="page"{% endif %}>API docs</a>
+      <a href="/api" {% if current_path == '/api' %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.api_docs") }}</a>
     </nav>
     <div class="site-header-user">
       {% set current_theme = 'light' if request.cookies.get('theme') == 'light' else 'dark' %}
+      {% set next_theme_label = t(request, 'theme.dark' if current_theme == 'light' else 'theme.light') %}
       <form method="post" action="/theme" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
         <input type="hidden" name="next" value="{{ request.url.path }}">
         <input type="hidden" name="theme" value="{{ 'dark' if current_theme == 'light' else 'light' }}">
         <button type="submit" class="link-button theme-toggle"
-                title="Switch to {{ 'dark' if current_theme == 'light' else 'light' }} theme"
-                aria-label="Switch to {{ 'dark' if current_theme == 'light' else 'light' }} theme">
+                title="{{ t(request, 'nav.switch_theme', theme=next_theme_label) }}"
+                aria-label="{{ t(request, 'nav.switch_theme', theme=next_theme_label) }}">
           {{ '☀️' if current_theme == 'light' else '🌙' }}
         </button>
       </form>
       <a href="/account">{{ current_user.display_name or current_user.username }}</a>
       <form method="post" action="/logout" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
-        <button type="submit" class="link-button">Log out</button>
+        <button type="submit" class="link-button">{{ t(request, "nav.log_out") }}</button>
       </form>
     </div>
   </header>
@@ -67,7 +68,7 @@
   </main>
 
   <footer class="site-footer">
-    <p>debcontrol — manage Debian machines over SSH</p>
+    <p>{{ t(request, "footer.tagline") }}</p>
   </footer>
 
   <script src="/static/js/htmx.min.js" defer></script>

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ request.state.locale.code }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Log in — debcontrol</title>
+  <title>{{ t(request, "login.submit") }} — debcontrol</title>
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="auth-body">
@@ -20,16 +20,16 @@
       <form method="post" action="/login" class="form" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="next" value="{{ next }}">
-        <label for="username">Username</label>
+        <label for="username">{{ t(request, "login.username") }}</label>
         <input type="text" id="username" name="username" value="{{ form.username or '' }}"
                autocomplete="username" autofocus required>
-        <label for="password">Password</label>
+        <label for="password">{{ t(request, "login.password") }}</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required>
-        <button type="submit" class="button">Log in</button>
+        <button type="submit" class="button">{{ t(request, "login.submit") }}</button>
       </form>
 
       {% if app_settings.oidc_enabled %}
-        <a href="/auth/oidc/login" class="button button-secondary stack-gap">Log in with OIDC</a>
+        <a href="/auth/oidc/login" class="button button-secondary stack-gap">{{ t(request, "login.oidc_button") }}</a>
       {% endif %}
     </div>
   </main>

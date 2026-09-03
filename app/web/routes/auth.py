@@ -59,6 +59,7 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
+from app.i18n import available_locales, get_locale
 from app.schemas.user import MIN_PASSWORD_LENGTH
 from app.web.templating import templates
 
@@ -479,6 +480,7 @@ async def _render_account(
         "unused_recovery_codes": unused_recovery_codes,
         "min_password_length": MIN_PASSWORD_LENGTH,
         "api_tokens": list(tokens_result.scalars().all()),
+        "available_locales": available_locales(),
         **extra,
     }
     return templates.TemplateResponse(request, "auth/account.html", context)
@@ -512,6 +514,36 @@ async def update_display_name(
         request=request,
         action="user.account.update",
         summary=f'"{user.username}" updated their display name',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/account/locale", dependencies=[Depends(verify_csrf)])
+async def update_locale(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    locale: str = Form(...),
+) -> Response:
+    """Self-service UI language — see `app.i18n`'s module docstring for how
+    a locale file becomes a picker option. An unknown code (a stale form
+    from before a locale file was removed, or a tampered request) is
+    silently treated as "use the default" rather than rejected — the same
+    "never worse than doing nothing" fallback `get_locale` itself uses,
+    so there's no separate error path to test here."""
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    resolved = get_locale(locale)
+    user.locale = resolved.code
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="user.account.update",
+        summary=f'"{user.username}" changed their language to "{resolved.label}"',
         target_type="user",
         target_id=user.id,
         target_label=user.username,
