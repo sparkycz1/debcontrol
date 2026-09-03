@@ -106,6 +106,57 @@
     </section>
   {% endif %}
 
+  {% if user.auth_provider.value != 'oidc' %}
+    <section class="panel">
+      <h2>Passkeys</h2>
+      <p class="hint">
+        A hardware security key, or your device's own biometrics/PIN, as a
+        second factor alongside (or in place of) TOTP — see
+        <a href="https://passkeys.dev/" target="_blank" rel="noopener">passkeys.dev</a>
+        if you're not sure what this is.
+      </p>
+
+      {% if just_registered_webauthn %}
+        <div class="alert alert-ok"><p>Passkey registered.</p></div>
+      {% endif %}
+
+      {% if webauthn_credentials %}
+        <table class="data-table">
+          <thead>
+            <tr><th>Name</th><th>Type</th><th>Added</th><th>Last used</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for credential in webauthn_credentials %}
+            <tr>
+              <td>{{ credential.name }}</td>
+              <td>{{ 'Synced (multi-device)' if credential.device_type == 'multi_device' else 'Single device' }}</td>
+              <td>{{ credential.created_at | local_time('%Y-%m-%d') }}</td>
+              <td>{{ credential.last_used_at | local_time('%Y-%m-%d %H:%M %Z') if credential.last_used_at else 'never' }}</td>
+              <td>
+                <form method="post" action="/account/webauthn/{{ credential.id }}/delete" class="inline-form"
+                      data-confirm="Remove this passkey? It will no longer be able to sign in to this account.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button button-danger">Remove</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint">No passkeys registered.</p>
+      {% endif %}
+
+      <form class="form stack-gap" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="webauthn_name">Name this passkey (e.g. "YubiKey", "MacBook Touch ID")</label>
+        <input type="text" id="webauthn_name" name="name" maxlength="100" placeholder="Passkey">
+        <button type="button" class="button" data-webauthn-register>Add a passkey</button>
+        <p class="hint" data-webauthn-status></p>
+      </form>
+    </section>
+  {% endif %}
+
   <section class="panel">
     <h2>Sessions</h2>
     <p class="hint">Signs out every other browser/device this account is logged into — not this one.</p>
@@ -177,4 +228,8 @@
       </p>
     {% endif %}
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/webauthn.js" defer></script>
 {% endblock %}

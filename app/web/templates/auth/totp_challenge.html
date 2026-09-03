@@ -10,24 +10,43 @@
   <main class="auth-page">
     <span class="brand">debcontrol</span>
     <div class="panel">
-      <h2>Enter your code</h2>
-      <p class="hint">
-        Enter the 6-digit code from your authenticator app, or one of your
-        recovery codes if you've lost access to it.
-      </p>
+      <h2>Verify it's you</h2>
 
       {% if error %}
         <div class="alert alert-error"><p>{{ error }}</p></div>
       {% endif %}
 
-      <form method="post" action="/login/totp" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="next" value="{{ next }}">
-        <label for="code">Code</label>
-        <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
-        <button type="submit" class="button">Verify</button>
-      </form>
+      {% if show_totp_form %}
+        <p class="hint">
+          Enter the 6-digit code from your authenticator app, or one of your
+          recovery codes if you've lost access to it.
+        </p>
+        <form method="post" action="/login/totp" class="form" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="{{ next }}">
+          <label for="code">Code</label>
+          <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
+          <button type="submit" class="button">Verify</button>
+        </form>
+      {% endif %}
+
+      {% if has_webauthn %}
+        <form data-webauthn-login class="form stack-gap" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="{{ next }}">
+          {% if show_totp_form %}
+            <p class="hint">Or, use a security key or your device's biometrics instead:</p>
+          {% else %}
+            <p class="hint">Sign in with a security key or your device's biometrics.</p>
+          {% endif %}
+          <button type="button" class="button button-secondary" data-webauthn-login-button>
+            Use a passkey
+          </button>
+          <p class="hint" data-webauthn-status></p>
+        </form>
+      {% endif %}
     </div>
   </main>
+  <script src="/static/js/webauthn.js" defer></script>
 </body>
 </html>

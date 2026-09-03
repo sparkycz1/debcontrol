@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.31.0"
+version = "0.32.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -86,6 +86,13 @@ dependencies = [
     # not passed through), so a runbook can't inject markup even though
     # only machine.manage accounts can edit one. See app.web.templating.
     "mistune>=3.0.0",
+    # WebAuthn/passkey registration and authentication ceremony verification
+    # (RP-side): attestation/assertion signature checking, challenge
+    # handling. The de facto standard Python implementation (py_webauthn) —
+    # see app/auth/webauthn.py. Pulls in cbor2 (CBOR decoding for
+    # attestation objects) and pyOpenSSL (certificate chain validation for
+    # attestation) as transitive dependencies.
+    "webauthn>=2.0.0",
 ]
 
 [dependency-groups]

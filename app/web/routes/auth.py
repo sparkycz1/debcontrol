@@ -22,9 +22,11 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, 
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from webauthn.helpers import options_to_json
 
 from app.audit import client_ip, log_event
 from app.auth import totp as totp_module
+from app.auth import webauthn as webauthn_module
 from app.auth.api_tokens import create_api_token, revoke_api_token
 from app.auth.dependencies import get_current_user
 from app.auth.login import (
@@ -39,17 +41,23 @@ from app.auth.security import hash_password, verify_password
 from app.auth.sessions import (
     PENDING_TOTP_COOKIE_NAME,
     SESSION_COOKIE_NAME,
+    WEBAUTHN_CHALLENGE_COOKIE_NAME,
     clear_pending_totp_cookie,
     clear_session_cookie,
+    clear_webauthn_challenge_cookie,
     create_pending_totp_ticket,
     create_session,
+    create_webauthn_challenge_ticket,
     get_valid_session,
     read_pending_totp_ticket,
+    read_webauthn_challenge_ticket,
     revoke_all_sessions_for_user,
     revoke_session,
     set_pending_totp_cookie,
     set_session_cookie,
+    set_webauthn_challenge_cookie,
 )
+from app.auth.webauthn import WebAuthnError
 from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.core.security import decrypt_secret, encrypt_secret
@@ -58,6 +66,7 @@ from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
+from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
 from app.i18n import available_locales, get_locale
 from app.schemas.user import MIN_PASSWORD_LENGTH
@@ -84,6 +93,17 @@ _OIDC_ERROR_MESSAGES = {
         "Ask an administrator to check the account is set up for OIDC login."
     ),
 }
+
+
+async def _user_webauthn_credentials(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[WebAuthnCredential]:
+    result = await db.execute(
+        select(WebAuthnCredential)
+        .where(WebAuthnCredential.user_id == user_id)
+        .order_by(WebAuthnCredential.created_at)
+    )
+    return list(result.scalars().all())
 
 
 def _safe_next(value: str | None) -> str:
@@ -267,7 +287,8 @@ async def login_submit(
 
     user = result.user
     assert user is not None
-    if user.totp_enabled:
+    has_webauthn = bool(await _user_webauthn_credentials(db, user.id))
+    if user.totp_enabled or has_webauthn:
         ticket = create_pending_totp_ticket(user.id)
         response = RedirectResponse(
             url=f"/login/totp?next={quote(next_url, safe='')}",
@@ -279,16 +300,42 @@ async def login_submit(
     return await _finish_login(request, db, user, next_url, provider=user.auth_provider.value)
 
 
+async def _totp_challenge_context(
+    request: Request, db: AsyncSession, user_id: uuid.UUID, *, next_url: str, error: str | None
+) -> dict[str, object] | None:
+    """Shared context for both the second-factor challenge page and its
+    error re-renders — `None` if the pending user has vanished/been
+    deactivated since the ticket was issued (caller redirects to /login)."""
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        return None
+    credentials = await _user_webauthn_credentials(db, user_id)
+    return {
+        "csrf_token": request.state.csrf_token,
+        "next": next_url,
+        "error": error,
+        # A user with TOTP enabled always gets the code form; one with only
+        # passkeys (no TOTP) skips straight to "use a passkey" since there's
+        # no code to type. Both true shows the code form plus a fallback link.
+        "show_totp_form": user.totp_enabled,
+        "has_webauthn": bool(credentials),
+    }
+
+
 @router.get("/login/totp")
-async def totp_challenge_form(request: Request, next: str = "/") -> Response:
+async def totp_challenge_form(
+    request: Request, db: AsyncSession = Depends(get_db), next: str = "/"
+) -> Response:
     ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
-    if ticket is None or read_pending_totp_ticket(ticket) is None:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    return templates.TemplateResponse(
-        request,
-        "auth/totp_challenge.html",
-        {"csrf_token": request.state.csrf_token, "next": _safe_next(next), "error": None},
+    user_id = read_pending_totp_ticket(ticket) if ticket else None
+    context = (
+        await _totp_challenge_context(request, db, user_id, next_url=_safe_next(next), error=None)
+        if user_id is not None
+        else None
     )
+    if context is None:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(request, "auth/totp_challenge.html", context)
 
 
 @router.post("/login/totp", dependencies=[Depends(verify_csrf)])
@@ -323,26 +370,30 @@ async def totp_challenge_submit(
             target_id=user.id,
             target_label=user.username,
         )
+        context = await _totp_challenge_context(
+            request, db, user_id, next_url=next_url, error=_RATE_LIMIT_MESSAGE
+        )
+        assert context is not None
         return templates.TemplateResponse(
             request,
             "auth/totp_challenge.html",
-            {
-                "csrf_token": request.state.csrf_token,
-                "next": next_url,
-                "error": _RATE_LIMIT_MESSAGE,
-            },
+            context,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
     if user.is_locked_out:
+        context = await _totp_challenge_context(
+            request,
+            db,
+            user_id,
+            next_url=next_url,
+            error="Too many failed attempts — try again shortly.",
+        )
+        assert context is not None
         return templates.TemplateResponse(
             request,
             "auth/totp_challenge.html",
-            {
-                "csrf_token": request.state.csrf_token,
-                "next": next_url,
-                "error": "Too many failed attempts — try again shortly.",
-            },
+            context,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
@@ -357,16 +408,177 @@ async def totp_challenge_submit(
             target_id=user.id,
             target_label=user.username,
         )
+        context = await _totp_challenge_context(
+            request, db, user_id, next_url=next_url, error="Invalid code."
+        )
+        assert context is not None
         return templates.TemplateResponse(
             request,
             "auth/totp_challenge.html",
-            {"csrf_token": request.state.csrf_token, "next": next_url, "error": "Invalid code."},
+            context,
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
     return await _finish_login(
         request, db, user, next_url, provider=f"{user.auth_provider.value}+totp"
     )
+
+
+@router.get("/login/webauthn/options")
+async def login_webauthn_options(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    """Called by `webauthn.js` right before `navigator.credentials.get()` —
+    same pending-2FA ticket as the TOTP challenge, so this only ever hands
+    out an authentication challenge for the account that already passed
+    step one (password/LDAP)."""
+    ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
+    user_id = read_pending_totp_ticket(ticket) if ticket else None
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your login session has expired — start over.",
+        )
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your login session has expired — start over.",
+        )
+    credentials = await _user_webauthn_credentials(db, user_id)
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No passkeys are registered for this account.",
+        )
+    options, challenge = webauthn_module.generate_authentication(request, credentials=credentials)
+    response = Response(content=options_to_json(options), media_type="application/json")
+    challenge_ticket = create_webauthn_challenge_ticket(
+        user_id=user_id, challenge=challenge, purpose="authenticate"
+    )
+    set_webauthn_challenge_cookie(response, challenge_ticket)
+    return response
+
+
+@router.post("/login/webauthn/verify", dependencies=[Depends(verify_csrf)])
+async def login_webauthn_verify(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    credential: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    next_url = _safe_next(next)
+    pending_ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
+    challenge_ticket = request.cookies.get(WEBAUTHN_CHALLENGE_COOKIE_NAME)
+    pending_user_id = read_pending_totp_ticket(pending_ticket) if pending_ticket else None
+    challenge_info = (
+        read_webauthn_challenge_ticket(challenge_ticket, purpose="authenticate")
+        if challenge_ticket
+        else None
+    )
+    if (
+        pending_user_id is None
+        or challenge_info is None
+        or challenge_info[0] != pending_user_id
+    ):
+        response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        clear_pending_totp_cookie(response)
+        clear_webauthn_challenge_cookie(response)
+        return response
+    _, challenge = challenge_info
+
+    user = await db.get(User, pending_user_id)
+    if user is None or not user.is_active:
+        response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        clear_pending_totp_cookie(response)
+        clear_webauthn_challenge_cookie(response)
+        return response
+
+    if not await _within_rate_limit(request, bucket="totp", limit=_TOTP_RATE_LIMIT):
+        await log_event(
+            db,
+            request=request,
+            action="auth.rate_limited",
+            summary=(
+                f'Blocked passkey sign-in attempt for "{user.username}": '
+                "too many attempts from this IP"
+            ),
+            outcome=AuditOutcome.DENIED,
+            target_type="user",
+            target_id=user.id,
+            target_label=user.username,
+        )
+        context = await _totp_challenge_context(
+            request, db, pending_user_id, next_url=next_url, error=_RATE_LIMIT_MESSAGE
+        )
+        assert context is not None
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_challenge.html",
+            context,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    if user.is_locked_out:
+        context = await _totp_challenge_context(
+            request,
+            db,
+            pending_user_id,
+            next_url=next_url,
+            error="Too many failed attempts — try again shortly.",
+        )
+        assert context is not None
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_challenge.html",
+            context,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    verified = None
+    stored: WebAuthnCredential | None = None
+    try:
+        credential_id = webauthn_module.credential_id_from_authentication_json(credential)
+        for candidate in await _user_webauthn_credentials(db, user.id):
+            if candidate.credential_id == credential_id:
+                stored = candidate
+                break
+        if stored is not None:
+            verified = webauthn_module.verify_authentication(
+                credential=credential, expected_challenge=challenge, request=request, stored=stored
+            )
+    except WebAuthnError:
+        verified = None
+
+    if stored is None or verified is None:
+        await log_event(
+            db,
+            request=request,
+            action="user.login.totp",
+            summary=f'Failed passkey sign-in attempt for "{user.username}"',
+            outcome=AuditOutcome.DENIED,
+            target_type="user",
+            target_id=user.id,
+            target_label=user.username,
+        )
+        context = await _totp_challenge_context(
+            request, db, pending_user_id, next_url=next_url, error="Passkey sign-in failed."
+        )
+        assert context is not None
+        return templates.TemplateResponse(
+            request,
+            "auth/totp_challenge.html",
+            context,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    stored.sign_count = verified.new_sign_count
+    stored.last_used_at = datetime.now(UTC)
+    await db.commit()
+
+    final_response = await _finish_login(
+        request, db, user, next_url, provider=f"{user.auth_provider.value}+webauthn"
+    )
+    clear_webauthn_challenge_cookie(final_response)
+    return final_response
 
 
 @router.post("/logout", dependencies=[Depends(verify_csrf)])
@@ -473,6 +685,7 @@ async def _render_account(
         .where(ApiToken.user_id == user.id, ApiToken.revoked_at.is_(None))
         .order_by(ApiToken.created_at.desc())
     )
+    webauthn_credentials = await _user_webauthn_credentials(db, user.id)
     context: dict[str, object] = {
         "user": user,
         "csrf_token": request.state.csrf_token,
@@ -481,6 +694,7 @@ async def _render_account(
         "min_password_length": MIN_PASSWORD_LENGTH,
         "api_tokens": list(tokens_result.scalars().all()),
         "available_locales": available_locales(),
+        "webauthn_credentials": webauthn_credentials,
         **extra,
     }
     return templates.TemplateResponse(request, "auth/account.html", context)
@@ -749,6 +963,110 @@ async def regenerate_recovery_codes(
         target_label=user.username,
     )
     return await _render_account(request, db, user, recovery_codes=plain_codes)
+
+
+@router.get("/account/webauthn/register/options")
+async def webauthn_register_options(
+    request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+) -> Response:
+    if user.auth_provider == AuthProvider.OIDC:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OIDC accounts don't register passkeys here — the provider handles its own MFA.",
+        )
+    existing = await _user_webauthn_credentials(db, user.id)
+    options, challenge = webauthn_module.generate_registration(
+        request, user_id=user.id, username=user.username, existing=existing
+    )
+    response = Response(content=options_to_json(options), media_type="application/json")
+    challenge_ticket = create_webauthn_challenge_ticket(
+        user_id=user.id, challenge=challenge, purpose="register"
+    )
+    set_webauthn_challenge_cookie(response, challenge_ticket)
+    return response
+
+
+@router.post("/account/webauthn/register/verify", dependencies=[Depends(verify_csrf)])
+async def webauthn_register_verify(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    credential: str = Form(...),
+    name: str = Form(""),
+) -> Response:
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    challenge_ticket = request.cookies.get(WEBAUTHN_CHALLENGE_COOKIE_NAME)
+    challenge_info = (
+        read_webauthn_challenge_ticket(challenge_ticket, purpose="register")
+        if challenge_ticket
+        else None
+    )
+    if challenge_info is None or challenge_info[0] != user.id:
+        return await _render_account(
+            request, db, user, errors=["Passkey registration expired — try again."]
+        )
+    _, challenge = challenge_info
+
+    try:
+        verified = webauthn_module.verify_registration(
+            credential=credential, expected_challenge=challenge, request=request
+        )
+    except WebAuthnError as exc:
+        return await _render_account(request, db, user, errors=[str(exc)])
+
+    db.add(
+        WebAuthnCredential(
+            user_id=user.id,
+            name=(name.strip() or "Passkey")[:100],
+            credential_id=verified.credential_id,
+            public_key=verified.credential_public_key,
+            sign_count=verified.sign_count,
+            device_type=verified.credential_device_type.value,
+            backed_up=verified.credential_backed_up,
+        )
+    )
+    await db.commit()
+    response = await _render_account(request, db, user, just_registered_webauthn=True)
+    clear_webauthn_challenge_cookie(response)
+    await log_event(
+        db,
+        request=request,
+        action="user.webauthn.register",
+        summary=f'"{user.username}" registered a new passkey',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return response
+
+
+@router.post("/account/webauthn/{credential_id}/delete", dependencies=[Depends(verify_csrf)])
+async def webauthn_delete(
+    request: Request,
+    credential_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    result = await db.execute(
+        select(WebAuthnCredential).where(
+            WebAuthnCredential.id == credential_id, WebAuthnCredential.user_id == current_user.id
+        )
+    )
+    credential = result.scalar_one_or_none()
+    if credential is not None:
+        await db.delete(credential)
+        await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="user.webauthn.delete",
+            summary=f'"{current_user.username}" removed a passkey ("{credential.name}")',
+            target_type="user",
+            target_id=current_user.id,
+            target_label=current_user.username,
+        )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/account/sessions/revoke-all", dependencies=[Depends(verify_csrf)])

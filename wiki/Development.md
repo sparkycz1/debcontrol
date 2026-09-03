@@ -53,7 +53,8 @@ client fixtures:
 - **`client`** — already logged in as a user with *every* permission. What
   most tests want.
 - **`anonymous_client`** — no session cookie at all; for login/logout/
-  TOTP/access-denied tests (see `tests/test_auth.py`).
+  TOTP/WebAuthn/access-denied tests (see `tests/test_auth.py`,
+  `tests/test_webauthn.py`).
 - **`login_as(some_client, permissions={Permission.X, ...})`** — creates a
   role+user with exactly those permissions and points `some_client`'s
   session cookie at them; for RBAC boundary tests (see

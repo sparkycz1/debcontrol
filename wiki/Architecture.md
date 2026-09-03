@@ -17,6 +17,7 @@
 | Auth: LDAP | [`ldap3`](https://github.com/cannatag/ldap3) | pure Python, no system libldap headers needed |
 | Auth: OIDC | [`Authlib`](https://authlib.org/) | discovery, authorization-code flow, ID token validation |
 | Auth: TOTP | [`pyotp`](https://github.com/pyauth/pyotp) + [`qrcode`](https://github.com/lincolnloop/python-qrcode) | RFC 6238 two-factor codes; QR rendered as inline SVG |
+| Auth: WebAuthn/passkeys | [`webauthn`](https://github.com/duo-labs/py_webauthn) (py_webauthn) | registration/authentication ceremony verification (attestation/assertion signatures) |
 | Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
 | Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
 | Containers | Docker (multi-stage build) + Docker Compose | |
@@ -262,7 +263,8 @@ wiki/           this documentation
 
 ## Authentication & RBAC
 
-Every page requires a valid session except `/login`, `/login/totp`, the
+Every page requires a valid session except `/login`, `/login/totp`,
+`/login/webauthn/options` + `/login/webauthn/verify`, the
 `/auth/oidc/...` endpoints, `/healthz`, and `/api/*` (which has its own
 bearer-token auth) — enforced by one ASGI middleware,
 `app.auth.middleware.require_auth`, registered in `app/main.py` before the
@@ -313,12 +315,17 @@ DB session via `request.app.state.db_session_factory` — the same pattern
 `app.main`'s `lifespan`) so tests can point it at their own SQLite engine
 (`tests/conftest.py`'s `_configure_app_for_tests`).
 
-One *signed but stateless* value exists: the pending-TOTP ticket covering
-the few minutes between "password/LDAP check passed" and "TOTP code
-confirmed" (`app.auth.sessions.create_pending_totp_ticket`, an
-`itsdangerous.URLSafeTimedSerializer` keyed by `SECRET_KEY`, 5-minute
-expiry). It grants no session. `SECRET_KEY` also signs the OIDC-flow
-session cookie.
+Two *signed but stateless* values exist, both `itsdangerous.
+URLSafeTimedSerializer` keyed by `SECRET_KEY`, 5-minute expiry, neither
+granting a session by itself: the pending-2FA ticket covering the few
+minutes between "password/LDAP check passed" and "second factor
+confirmed" (`app.auth.sessions.create_pending_totp_ticket` — despite the
+name, it's read by the WebAuthn login routes too, since "this account,
+mid-login, still needs a second factor" is identical whichever factor
+they end up using), and the WebAuthn challenge ticket
+(`create_webauthn_challenge_ticket`) carrying one ceremony's own
+challenge — see the WebAuthn/passkeys section above. `SECRET_KEY` also
+signs the OIDC-flow session cookie.
 
 ### RBAC: custom roles, a fixed permission set
 
@@ -424,15 +431,57 @@ whenever TOTP is disabled and re-enabled, or explicitly via "Regenerate
 recovery codes" — which requires a fresh *TOTP* code, not a recovery code,
 so one leaked recovery code can't relearn the whole batch.
 
+### WebAuthn/passkeys: a second factor alongside (or instead of) TOTP
+
+`app.auth.webauthn` is a thin relying-party wrapper around py_webauthn —
+it derives the RP id (bare hostname) and origin (scheme+host+port) from
+the live `Request` rather than a config value (same reasoning
+`app.auth.oidc`'s redirect URI already uses: getting either wrong fails
+the ceremony outright, so there's no sensible static default), and shapes
+options/results around `app.db.models.webauthn_credential.WebAuthnCredential`
+(one row per registered authenticator: credential id, public key,
+signature counter, device type, `backed_up`). Available to `local`/`ldap`
+accounts only, same restriction as TOTP.
+
+Both ceremonies (registration under "My account", authentication as a
+login-time second factor) follow the same shape: a `GET .../options` route
+generates a challenge, hands it back as browser-ready JSON
+(`webauthn.helpers.options_to_json`), and stashes it in a short-lived
+signed cookie (`app.auth.sessions.create_webauthn_challenge_ticket`,
+5 minutes, `purpose` of `"register"` or `"authenticate"` so one can never
+be replayed as the other); `app/web/static/js/webauthn.js` decodes the
+base64url fields, drives `navigator.credentials.create()`/`.get()`, and
+submits the browser's result as a normal form POST to a matching
+`.../verify` route — no SPA/fetch round trip needed once the ceremony
+itself completes, consistent with the rest of the app being server-
+rendered. A signature counter that doesn't advance is the spec's own
+clone-detection signal and hard-fails verification (`WebAuthnError`); two
+authenticators both permanently at count 0 — common for platform passkeys
+that don't implement a counter — is accepted, since py_webauthn only
+flags a **decrease or non-increase from a previously nonzero count**.
+
+At login, `POST /login` sends an account with TOTP enabled **or** at least
+one registered passkey to the same `/login/totp` second-factor page
+(reusing the pending-2FA ticket — see below); that page renders the TOTP
+code form only if TOTP is actually enabled, and a "use a passkey" button
+whenever the account has one, so an account with only passkeys skips
+straight to that option.
+
 ### Role-enforced TOTP: real-time, not just a login-time redirect
 
-`Role.require_totp` mandates TOTP for everyone holding a given role.
+`Role.require_totp` mandates a second factor — TOTP, or a registered
+passkey, either satisfies it — for everyone holding a given role.
 `app.auth.middleware` checks the *current* session's user's *current* role
-and *current* `totp_enabled` state on **every request**, so toggling the
-flag on takes effect on the next request of every affected user. A blocked
-user may reach exactly two things: `GET`/`POST /account/totp/enroll` and
-`/logout`; everything else redirects there (or, for an `HX-Request`, sends
-`HX-Redirect` so htmx navigates the whole page).
+and *current* `totp_enabled`/passkey state on **every request** (a cheap
+in-memory pre-check, `_needs_second_factor_check`, keeps the extra
+passkey-count query off the hot path for accounts that don't need it), so
+toggling the flag on takes effect on the next request of every affected
+user. A blocked user may reach exactly `GET`/`POST /account/totp/enroll`,
+`GET /account/webauthn/register/options` + `POST .../verify`, the account
+page they're linked from, and `/logout`; everything else redirects to the
+TOTP enrollment page (or, for an `HX-Request`, sends `HX-Redirect` so htmx
+navigates the whole page) — registering a passkey there satisfies the
+block exactly like enrolling TOTP would.
 
 By contrast `User.must_change_password` only steers `_finish_login`'s
 post-login redirect (`app/web/routes/auth.py`), so an already-logged-in

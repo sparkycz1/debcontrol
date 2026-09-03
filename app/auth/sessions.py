@@ -10,6 +10,8 @@ needs a fresh login.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import secrets
 import uuid
@@ -33,6 +35,15 @@ SESSION_ABSOLUTE_MAX = timedelta(days=30)
 PENDING_TOTP_COOKIE_NAME = "totp_pending"
 _PENDING_TOTP_SALT = "totp-pending-2fa"
 _PENDING_TOTP_MAX_AGE_SECONDS = 300
+# Despite the name, this ticket also carries "which account passed step
+# one" for a WebAuthn/passkey second factor, not just TOTP — the state it
+# holds ("this account, mid-login, still needs a second factor") is
+# identical either way, so app/web/routes/auth.py's WebAuthn routes reuse
+# it rather than minting a second, redundant ticket type.
+
+WEBAUTHN_CHALLENGE_COOKIE_NAME = "webauthn_challenge"
+_WEBAUTHN_CHALLENGE_SALT = "webauthn-challenge"
+_WEBAUTHN_CHALLENGE_MAX_AGE_SECONDS = 300
 
 
 def _hash_token(raw_token: str) -> str:
@@ -180,3 +191,59 @@ def set_pending_totp_cookie(response: Response, ticket: str) -> None:
 
 def clear_pending_totp_cookie(response: Response) -> None:
     response.delete_cookie(PENDING_TOTP_COOKIE_NAME)
+
+
+def _webauthn_challenge_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(
+        get_settings().secret_key.get_secret_value(), salt=_WEBAUTHN_CHALLENGE_SALT
+    )
+
+
+def create_webauthn_challenge_ticket(*, user_id: uuid.UUID, challenge: bytes, purpose: str) -> str:
+    """A short-lived signed value carrying the challenge issued for one
+    WebAuthn ceremony (`purpose` is `"register"` or `"authenticate"`)
+    together with which account it's for — read back by the matching
+    `.../verify` route so the challenge checked against the browser's
+    response is exactly the one this server issued, and a registration
+    challenge can never be replayed to complete an authentication (or vice
+    versa). Deliberately not a DB row, same reasoning as the pending-TOTP
+    ticket above — a ceremony only ever takes a few seconds."""
+    return _webauthn_challenge_serializer().dumps(
+        {
+            "user_id": str(user_id),
+            "challenge": base64.urlsafe_b64encode(challenge).decode("ascii"),
+            "purpose": purpose,
+        }
+    )
+
+
+def read_webauthn_challenge_ticket(ticket: str, *, purpose: str) -> tuple[uuid.UUID, bytes] | None:
+    try:
+        raw = _webauthn_challenge_serializer().loads(
+            ticket, max_age=_WEBAUTHN_CHALLENGE_MAX_AGE_SECONDS
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    if not isinstance(raw, dict) or raw.get("purpose") != purpose:
+        return None
+    try:
+        user_id = uuid.UUID(raw["user_id"])
+        challenge = base64.urlsafe_b64decode(raw["challenge"])
+    except (ValueError, KeyError, TypeError, binascii.Error):
+        return None
+    return user_id, challenge
+
+
+def set_webauthn_challenge_cookie(response: Response, ticket: str) -> None:
+    response.set_cookie(
+        WEBAUTHN_CHALLENGE_COOKIE_NAME,
+        ticket,
+        httponly=True,
+        samesite="strict",
+        secure=get_settings().is_production,
+        max_age=_WEBAUTHN_CHALLENGE_MAX_AGE_SECONDS,
+    )
+
+
+def clear_webauthn_challenge_cookie(response: Response) -> None:
+    response.delete_cookie(WEBAUTHN_CHALLENGE_COOKIE_NAME)

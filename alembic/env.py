@@ -31,6 +31,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     TotpRecoveryCode,
     User,
     UserSession,
+    WebAuthnCredential,
 )
 
 config = context.config

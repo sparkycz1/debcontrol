@@ -6,11 +6,16 @@ routes it mirrors: a locale, a saved machine-list view, or a display name
 is data about a specific account, not something an admin's role-permission
 matrix gates. Covers the UI language (`app.i18n`) and saved machine-list
 views (`app.services.saved_views`); other self-service actions (display
-name, password, TOTP, sessions, API tokens themselves) stay web-UI-only
-for now — see `api_v1.py`'s module docstring for the reasoning that
-applies to those (mostly: a token creating/managing tokens, or resetting
-the very password it might be authenticated by proxy of, is circular or
-session-bound in a way this doesn't have a clean answer for yet).
+name, password, TOTP, WebAuthn/passkeys, sessions, API tokens themselves)
+stay web-UI-only for now — see `api_v1.py`'s module docstring for the
+reasoning that applies to those (mostly: a token creating/managing
+tokens, or resetting the very password it might be authenticated by
+proxy of, is circular or session-bound in a way this doesn't have a
+clean answer for yet). WebAuthn/passkeys specifically also needs a live
+browser ceremony (`navigator.credentials.create()`/`.get()`) that has no
+meaningful shape as a token-authenticated API call at all — there's no
+"submit this JSON" equivalent a script could do instead, same reasoning
+`api_v1.py` excludes the interactive SSH terminal for.
 """
 
 from __future__ import annotations

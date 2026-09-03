@@ -24,6 +24,7 @@ from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
 from app.db.models.user_machine_group_access import UserMachineGroupAccess
 from app.db.models.user_session import UserSession
+from app.db.models.webauthn_credential import WebAuthnCredential
 
 __all__ = [
     "AiConversation",
@@ -65,4 +66,5 @@ __all__ = [
     "User",
     "UserMachineGroupAccess",
     "UserSession",
+    "WebAuthnCredential",
 ]

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from app.db.models.api_token import ApiToken
     from app.db.models.totp_recovery_code import TotpRecoveryCode
     from app.db.models.user_session import UserSession
+    from app.db.models.webauthn_credential import WebAuthnCredential
 
 
 class AuthProvider(enum.StrEnum):
@@ -144,6 +145,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     totp_recovery_codes: Mapped[list[TotpRecoveryCode]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    webauthn_credentials: Mapped[list[WebAuthnCredential]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     api_tokens: Mapped[list[ApiToken]] = relationship(
