@@ -24,6 +24,7 @@ class MachineExport(BaseModel):
     auth_method: AuthMethod
     group: str | None = None
     description: str | None = None
+    runbook: str | None = None
     tags: list[str] = Field(default_factory=list)
     is_active: bool = True
 

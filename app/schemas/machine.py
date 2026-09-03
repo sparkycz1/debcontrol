@@ -37,6 +37,9 @@ class MachineCreate(BaseModel):
     description: str | None = Field(default=None, max_length=1024)
     # Free-form, independent of group_id — see app.db.models.machine_tag.
     tags: list[str] = Field(default_factory=list)
+    # Longer Markdown-formatted notes — see Machine.runbook's own docstring
+    # for how this differs from `description` above.
+    runbook: str | None = Field(default=None, max_length=20_000)
 
     @field_validator("ip_address")
     @classmethod
@@ -62,6 +65,7 @@ class MachineUpdate(BaseModel):
     group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
     tags: list[str] = Field(default_factory=list)
+    runbook: str | None = Field(default=None, max_length=20_000)
     is_active: bool = True
     # Per-machine overrides of the global `.env` sweep cadences — `None`
     # means "use the global default" (see `Machine.

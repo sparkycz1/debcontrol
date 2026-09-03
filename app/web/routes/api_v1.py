@@ -137,6 +137,7 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "group": machine.group.name if machine.group else None,
         "group_id": str(machine.group_id) if machine.group_id else None,
         "description": machine.description,
+        "runbook": machine.runbook,
         "tags": [tag.name for tag in machine.tags],
         "is_active": machine.is_active,
         "is_reachable": machine.is_reachable,
@@ -482,6 +483,7 @@ async def create_machine_api(
         secret_encrypted=encrypt_secret(payload.secret) if payload.secret else None,
         group_id=payload.group_id,
         description=payload.description,
+        runbook=payload.runbook,
     )
     db.add(machine)
     await db.commit()
@@ -525,6 +527,7 @@ async def update_machine_api(
     machine.auth_method = payload.auth_method
     machine.group_id = payload.group_id
     machine.description = payload.description
+    machine.runbook = payload.runbook
     machine.is_active = payload.is_active
     await set_machine_tags(db, machine, payload.tags)
 

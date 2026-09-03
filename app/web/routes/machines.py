@@ -374,6 +374,7 @@ async def create_machine(
     secret: str = Form(""),
     group_id: str = Form(""),
     description: str = Form(""),
+    runbook: str = Form(""),
     tags: str = Form(""),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -387,6 +388,7 @@ async def create_machine(
             secret=secret or None,
             group_id=uuid.UUID(group_id) if group_id else None,
             description=description or None,
+            runbook=runbook or None,
         )
     except ValueError as exc:
         await log_event(
@@ -412,6 +414,7 @@ async def create_machine(
                     "username": username,
                     "auth_method": auth_method,
                     "description": description,
+                    "runbook": runbook,
                 },
                 "csrf_token": csrf_token,
             },
@@ -446,6 +449,7 @@ async def create_machine(
         secret_encrypted=encrypt_secret(payload.secret) if payload.secret else None,
         group_id=payload.group_id,
         description=payload.description,
+        runbook=payload.runbook,
     )
     db.add(machine)
     await db.commit()
@@ -601,6 +605,10 @@ async def export_machine_config_endpoint(
             row = machine.model_dump()
             row["auth_method"] = machine.auth_method.value
             row["tags"] = ", ".join(machine.tags)
+            # Doesn't flatten sensibly into one CSV cell — JSON export is
+            # the full-fidelity round-trip for a runbook, same reasoning
+            # groups are CSV-machines-only for. See _CONFIG_EXPORT_CSV_FIELDS.
+            del row["runbook"]
             writer.writerow({k: _csv_safe(v) for k, v in row.items()})
         return Response(
             content=buffer.getvalue(),
@@ -1341,6 +1349,7 @@ async def update_machine(
     secret: str = Form(""),
     group_id: str = Form(""),
     description: str = Form(""),
+    runbook: str = Form(""),
     is_active: str = Form(""),
     reachability_check_interval_seconds: str = Form(""),
     facts_refresh_interval_seconds: str = Form(""),
@@ -1361,6 +1370,7 @@ async def update_machine(
             secret=secret or None,
             group_id=uuid.UUID(group_id) if group_id else None,
             description=description or None,
+            runbook=runbook or None,
             # HTML only sends a checkbox field when it's checked.
             is_active=bool(is_active),
             reachability_check_interval_seconds=(
@@ -1438,6 +1448,7 @@ async def update_machine(
     machine.auth_method = payload.auth_method
     machine.group_id = payload.group_id
     machine.description = payload.description
+    machine.runbook = payload.runbook
     machine.is_active = payload.is_active
     machine.reachability_check_interval_seconds = payload.reachability_check_interval_seconds
     machine.facts_refresh_interval_seconds = payload.facts_refresh_interval_seconds

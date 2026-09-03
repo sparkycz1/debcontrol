@@ -78,6 +78,11 @@
       {% for existing_tag in all_tags %}<option value="{{ existing_tag.name }}">{% endfor %}
     </datalist>
 
+    <label for="runbook">Runbook</label>
+    <textarea id="runbook" name="runbook" rows="8"
+              placeholder="How to deal with this server, who owns it, anything worth knowing…">{{ machine.runbook or '' }}</textarea>
+    <p class="hint">Markdown supported. Shown on the Overview tab.</p>
+
     <label>
       <input type="checkbox" name="is_active" {% if machine.is_active %}checked{% endif %}>
       Active (included in reachability checks and facts refresh)

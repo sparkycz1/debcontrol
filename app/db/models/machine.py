@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -100,6 +101,13 @@ class Machine(Base):
     )
 
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # A longer, Markdown-formatted runbook — "how to deal with this
+    # server, who owns it" — separate from `description` above (a short,
+    # searchable one-liner used in the machine list) since the two serve
+    # different purposes and a runbook can reasonably run to several
+    # paragraphs. Rendered via app.web.templating's `markdown` filter
+    # (mistune, HTML-escaped by default — see that filter's docstring).
+    runbook: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False, index=True)
 
     # --- Facts, discovered over SSH (see app.ssh.facts) ---

@@ -87,6 +87,7 @@ async def export_machine_config(db: AsyncSession, user: User) -> MachineConfigEx
             auth_method=m.auth_method,
             group=m.group.name if m.group else None,
             description=m.description,
+            runbook=m.runbook,
             tags=[tag.name for tag in m.tags],
             is_active=m.is_active,
         )
@@ -199,6 +200,7 @@ async def import_machine_config(db: AsyncSession, payload: MachineConfigExport) 
             host_key_fingerprint=None,
             group_id=groups_by_name[machine.group].id if machine.group else None,
             description=machine.description,
+            runbook=machine.runbook,
             is_active=machine.is_active,
         )
         db.add(new_machine)

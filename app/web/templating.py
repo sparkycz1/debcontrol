@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import mistune
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
@@ -105,6 +106,33 @@ def tojson_filter(value: object) -> Markup:
 
 
 templates.env.filters["tojson"] = tojson_filter
+
+
+# Deliberately NOT the `mistune.html` module-level convenience callable —
+# that preset has `escape=False` (raw HTML in the source passes straight
+# through unescaped), the opposite of what a stored-content renderer
+# needs. `escape=True` here is what actually escapes a `<script>` in the
+# source to inert text rather than executing it.
+_markdown = mistune.create_markdown(escape=True)
+
+
+def markdown_filter(text: str | None) -> Markup:
+    """Renders `text` as Markdown to HTML — used for a machine's runbook
+    (`Machine.runbook`). Raw HTML in the source is escaped to plain text,
+    not passed through — a runbook is admin-authored (only
+    `machine.manage` accounts can edit one) but there's no reason to trust
+    it with markup injection just because of that; `javascript:`-scheme
+    links are likewise stripped by mistune's own default link-safety
+    check. `None`/empty renders as an empty string rather than an error,
+    so a template can call this unconditionally."""
+    if not text:
+        return Markup("")
+    html = _markdown(text)
+    assert isinstance(html, str)
+    return Markup(html)  # noqa: S704 - escape=True above, not raw interpolation
+
+
+templates.env.filters["markdown"] = markdown_filter
 
 
 def t(request: Request, key: str, **kwargs: object) -> str:

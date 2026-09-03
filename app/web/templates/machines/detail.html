@@ -92,6 +92,13 @@
     <dt>Notes</dt><dd>{{ machine.description or '—' }}</dd>
   </dl>
 
+  {% if machine.runbook %}
+    <section class="panel runbook">
+      <h2>Runbook</h2>
+      {{ machine.runbook | markdown }}
+    </section>
+  {% endif %}
+
   <section class="panel" id="host-key-panel">
     <h2>SSH host key fingerprint</h2>
     {% if machine.host_key_fingerprint %}

@@ -604,6 +604,26 @@ p { margin: 0 0 var(--space-3); }
 }
 .saved-view-chip .link-button:hover { color: var(--color-danger); }
 
+/* --- Machine runbook (Machine.runbook, rendered via the `markdown`
+   Jinja filter — app/web/templating.py) — the panel's own <h2>Runbook</h2>
+   already used the page's h2 size, so headings *inside* the rendered
+   Markdown are scaled down a notch to stay subordinate to it rather than
+   competing at the same size. #}
+.runbook :is(h1, h2, h3, h4) { font-size: 1rem; margin-top: var(--space-4); }
+.runbook :is(h1, h2, h3, h4):first-child { margin-top: 0; }
+.runbook :is(ul, ol) { padding-left: 1.4em; }
+.runbook li { margin-bottom: var(--space-1); }
+.runbook blockquote {
+  margin: var(--space-3) 0;
+  padding: var(--space-1) var(--space-3);
+  border-left: 3px solid var(--color-border-strong);
+  color: var(--color-muted);
+}
+.runbook pre {
+  overflow-x: auto;
+}
+.runbook :is(p, ul, ol, blockquote, pre):last-child { margin-bottom: 0; }
+
 .saved-view-name-input {
   display: inline-block;
   width: auto;

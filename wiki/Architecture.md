@@ -1088,6 +1088,35 @@ an optional source filter, no new storage. Capped at 500 rows
 avoid the eager-loading cost) so the results page can show which machine
 each hit belongs to without a per-row round trip.
 
+### Machine runbook: Markdown notes, rendered server-side
+
+**Machines → create/edit** has a **Runbook** field (a multi-line
+`<textarea>`, up to 20,000 characters) separate from the existing
+`description` — a short, single-line-ish note used in the machine list
+and free-text search. A runbook is meant to run longer: how to deal with
+this server, who owns it, an escalation contact — and it's rendered as
+actual formatted HTML on the Overview tab, not shown as plain text.
+
+`app.web.templating`'s `markdown` Jinja filter (`{{ machine.runbook |
+markdown }}`) does the rendering, via [mistune](https://mistune.lepture.com/),
+a small pure-Python Markdown parser with no transitive dependencies.
+Built with **`escape=True` explicitly** — `mistune.create_markdown(escape=True)`,
+*not* the module-level `mistune.html` convenience callable, which
+defaults to `escape=False` (raw HTML in the source passed straight
+through unescaped, the opposite of safe here). With `escape=True`, a
+`<script>` in the Markdown source renders as inert text, not executable
+markup, and mistune's own default link-safety check neutralizes
+`javascript:`-scheme links. A runbook is admin-authored (only
+`machine.manage` accounts can edit one) but there's no reason to trust it
+with markup injection just because of that — same "don't extend trust
+further than necessary" reasoning this app already applies elsewhere.
+
+Included in machine configuration export/import and the REST API's
+machine payload, same as `description` and `tags` — structural data, not
+a credential. Left out of the CSV export specifically (unlike JSON):
+CSV's "one flat row per machine" shape doesn't suit a multi-paragraph
+field, and JSON already round-trips it in full.
+
 ### Machine tags: cross-cutting, independent of the group tree
 
 **Machines → create/edit** has a free-form **Tags** field (comma-
