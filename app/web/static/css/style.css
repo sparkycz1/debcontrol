@@ -243,6 +243,30 @@ p { margin: 0 0 var(--space-3); }
   .site-header-user { order: 2; margin-left: 0; }
 }
 
+/* Phone-width tightening — everything above already reflows (flex-wrap,
+   auto-fill grids, overflow-x tables, a viewport-sized modal), this just
+   trims spacing/type scale so content isn't fighting the header's own
+   collapse breakpoint for room on the smallest common screens (~360-480px
+   wide phones in portrait). */
+@media (max-width: 480px) {
+  .container { padding: var(--space-4) var(--space-3); }
+  .auth-page { padding: var(--space-4) var(--space-3); }
+  h1 { font-size: 1.35rem; }
+  .panel { padding: var(--space-4); }
+  .data-table th, .data-table td { padding: 0.5rem 0.6rem; }
+
+  /* A `dt`/`dd` pair sitting side by side gets cramped once the label
+     itself (e.g. "Reachability check interval") is a meaningful fraction
+     of a ~340px content width — stacking each pair reads far better than
+     wrapping mid-value. */
+  .detail-list {
+    grid-template-columns: 1fr;
+    gap: var(--space-1) 0;
+  }
+  .detail-list dt { margin-top: var(--space-2); }
+  .detail-list dt:first-child { margin-top: 0; }
+}
+
 /* Standalone pages (login, TOTP challenge) that don't extend base.html —
    no header/nav to go with, just a centered card. */
 .auth-body {
@@ -282,6 +306,13 @@ p { margin: 0 0 var(--space-3); }
   border-radius: var(--radius);
   padding: var(--space-4);
   margin: var(--space-4) 0;
+}
+
+@media (max-width: 420px) {
+  /* Two columns of an 8+ char monospace code plus its gap doesn't fit a
+     phone-width auth card without wrapping mid-code — one column reads
+     cleanly at any width instead. */
+  .recovery-codes { grid-template-columns: 1fr; }
 }
 
 .totp-qr {
