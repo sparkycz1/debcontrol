@@ -454,6 +454,37 @@ def check_machine_readiness(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_check_machine_readiness(machine_id))
 
 
+async def _refresh_all_machine_readiness() -> None:
+    """Periodic sweep re-running the post-onboarding readiness check
+    (`app.ssh.readiness`) for every machine with a pinned host key — same
+    fan-out pattern and cadence (`FACTS_REFRESH_INTERVAL_SECONDS`) as
+    `_refresh_all_machine_services`.
+
+    Before this existed, `check_machine_readiness` only ever ran once,
+    right after a host key was first trusted (or on an explicit "Re-check"/
+    "Run initial setup" click) — so `Machine.readiness_missing` could go
+    stale forever: ncurses-term or a sudoers grant removed by a later
+    `apt-get autoremove` or a hand-edited sudoers file would never be
+    reflected in the Overview banner unless someone happened to click
+    "Re-check" again. This closes that gap the same way facts/packages/
+    services already avoid it — a periodic sweep, not just an on-demand
+    action.
+    """
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine.id).where(Machine.is_active, Machine.host_key_fingerprint.is_not(None))
+        )
+        machine_ids = [row[0] for row in result.all()]
+
+    for machine_id in machine_ids:
+        check_machine_readiness.delay(str(machine_id))
+
+
+@celery_app.task(name="app.tasks.jobs.refresh_all_machine_readiness")
+def refresh_all_machine_readiness() -> None:
+    asyncio.run(_refresh_all_machine_readiness())
+
+
 def _due_machines[M](
     machines: list[M],
     *,

@@ -159,6 +159,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.refresh_all_machine_services",
         "schedule": timedelta(seconds=settings.facts_refresh_interval_seconds),
     },
+    # Was on-demand only (right after a host key was first trusted, or an
+    # explicit "Re-check"/"Run initial setup" click) — a requirement that
+    # got un-set later (ncurses-term removed by `autoremove`, a sudoers
+    # grant edited away) would never surface on its own. Same cadence as
+    # the other fleet sweeps above; see app.tasks.jobs._refresh_all_machine_readiness.
+    "refresh-all-machine-readiness": {
+        "task": "app.tasks.jobs.refresh_all_machine_readiness",
+        "schedule": timedelta(seconds=settings.facts_refresh_interval_seconds),
+    },
     "monitor-all-machines": {
         "task": "app.tasks.jobs.monitor_all_machines",
         "schedule": timedelta(seconds=settings.monitoring_interval_seconds),

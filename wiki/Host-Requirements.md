@@ -78,22 +78,22 @@ safety margin → `concurrency ≥ 2000 × 10 / (60 × 2) ≈ 167`. Round up and
 ### 2. Worker throughput must keep up with the fan-out sweeps
 
 `refresh_all_machine_facts`, `refresh_all_machine_packages`,
-`refresh_all_machine_services`, and `check_all_machine_updates` each
-enqueue one Celery task **per machine**, every
-`FACTS_REFRESH_INTERVAL_SECONDS` (default 600s, 10 minutes) — four SSH
-round trips per machine per interval, fanned out rather than awaited inline
-(see
+`refresh_all_machine_services`, `refresh_all_machine_readiness`, and
+`check_all_machine_updates` each enqueue one Celery task **per machine**,
+every `FACTS_REFRESH_INTERVAL_SECONDS` (default 600s, 10 minutes) — five
+SSH round trips per machine per interval, fanned out rather than awaited
+inline (see
 [Architecture](Architecture.md#background-tasks-celery-and-celery-beat)),
 so one slow/unreachable machine never holds up the rest. `monitor_all_
 machines` is the same idea on its own, much shorter cadence
-(`MONITORING_INTERVAL_SECONDS`, default 120s) — a fifth, lighter round
+(`MONITORING_INTERVAL_SECONDS`, default 120s) — a sixth, lighter round
 trip (see that task's own `MONITORING_COMMAND`, a `sleep 1` plus a few
 cheap reads, versus facts/packages' several commands) that, because it
 ticks so much more often, is usually the *larger* contributor to total
 worker load at fleet scale even though each individual task is cheaper.
 
 ```
-tasks per hour ≈ 4 × machine_count × (3600 / FACTS_REFRESH_INTERVAL_SECONDS)
+tasks per hour ≈ 5 × machine_count × (3600 / FACTS_REFRESH_INTERVAL_SECONDS)
                 + machine_count × (3600 / MONITORING_INTERVAL_SECONDS)
 worker capacity per hour ≈ (worker replicas × --concurrency) × (3600 / avg_task_seconds)
 ```
@@ -112,13 +112,13 @@ A typical facts/packages/update-check task (SSH connect + a handful of
 remote commands) takes on the order of 1-5 seconds against a healthy,
 nearby machine — call it 3s for planning. The bundled `worker` service
 defaults to one replica at `--concurrency=10`, i.e. roughly 12,000 tasks/
-hour of headroom at that estimate. At the default cadences (`54 ×
+hour of headroom at that estimate. At the default cadences (`60 ×
 machine_count` tasks/hour — the formula above with 600s facts and 120s
 monitoring plugged in) that's comfortable up to roughly 200 machines
 before the sweeps can't finish inside their own interval; lengthen
 `FACTS_REFRESH_INTERVAL_SECONDS` for a larger fleet before reaching for
-more worker capacity, since facts/packages/services/update-checks changing
-every 10 minutes is rarely necessary at scale.
+more worker capacity, since facts/packages/services/readiness/update-checks
+changing every 10 minutes is rarely necessary at scale.
 
 Past that, scale **out** (more `worker` replicas — safe, see the comment on
 that service in `docker-compose.yml`) or **up** (`--concurrency=N` per

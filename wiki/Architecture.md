@@ -998,9 +998,16 @@ permission/scope-checked htmx endpoint its poll always used.
 **Machines → a machine → Overview** shows a banner if
 `app.ssh.readiness`'s probes (ncurses-term installed; scoped `sudo -n` for
 apt/shutdown/dmidecode/flatpak+snap — everything `app.ssh.onboarding`
-sets up) found something missing — re-run automatically right after a
-host key is confirmed and right after "Run initial setup" completes, or
-on demand ("Re-check"). For a machine *already* on the app's own SSH-key
+sets up) found something missing — re-run right after a host key is
+confirmed, right after "Run initial setup" completes, on demand
+("Re-check"), **and periodically** for every machine with a pinned host
+key (`refresh_all_machine_readiness`, same `FACTS_REFRESH_INTERVAL_SECONDS`
+cadence as facts/packages/services — see `app.tasks.celery_app`'s
+`beat_schedule`). That periodic sweep is what catches a requirement that
+got *un-set* after onboarding — `ncurses-term` removed by a later
+`apt-get autoremove`, a sudoers grant hand-edited away — rather than only
+ever detecting a gap at onboarding time. For a machine *already* on the
+app's own SSH-key
 identity (so there's no root credential stored anymore to fix a gap with),
 the banner's "Fix it" form collects a one-time root/sudo login, uses it to
 temporarily put the machine back into the exact shape a never-onboarded
