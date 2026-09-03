@@ -6,7 +6,7 @@
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
-  <div class="page-header" data-live-machine-id="{{ machine.id }}">
+  <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ render_os_badge(machine.os_id, size=28) }} {{ machine.name }}</h1>
   </div>
 

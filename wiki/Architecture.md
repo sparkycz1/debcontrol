@@ -1052,6 +1052,22 @@ machine data, so there's nothing for a stale/duplicate message to get
 wrong, and every actual fetch still goes through the exact same
 permission/scope-checked htmx endpoint its poll always used.
 
+**Browser notifications** are a pure client-side layer on top of the same
+`live-<kind>` events, added to `live-updates.js` itself rather than as new
+server-side infrastructure: when this tab is backgrounded
+(`document.visibilityState === "hidden"`) and the viewer has opted in (a
+"🔔 Enable notifications" toggle the script injects next to the page
+heading), a received event also becomes a plain [Notification API](https://developer.mozilla.org/en-US/docs/Web/API/Notification)
+popup — clicking it focuses the tab. Deliberately the Notification API,
+not the Push API: no service worker, no VAPID keys, no server-side
+subscription storage, and nothing that would still fire once the tab (or
+browser) is fully closed — it only ever surfaces something this same open
+tab already received over the WebSocket above. The opt-in choice is kept
+in `localStorage` (per-browser, not per-account — there's no server round
+trip involved at all), and each machine page's `[data-live-machine-id]`
+anchor also carries `data-live-machine-name` so the notification's title
+is readable without an extra request.
+
 ### Post-onboarding readiness check
 
 **Machines → a machine → Overview** shows a banner if

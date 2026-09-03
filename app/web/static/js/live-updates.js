@@ -9,6 +9,15 @@
 // a missed/dropped push, so panels update within roughly a second of a
 // background job finishing instead of waiting out the old ~20s poll.
 //
+// Also offers a browser Notification for the same event when this tab is
+// backgrounded (`document.visibilityState === "hidden"`) and the viewer
+// opted in via the toggle button this script injects next to the page
+// heading — see `notifyIfBackgrounded`/`buildToggle` below. Deliberately
+// the plain Notification API, not the Push API: no service worker, no
+// server-side subscription storage, nothing that would still fire with
+// the tab fully closed. It only ever surfaces something this same open
+// tab already received over the WebSocket above.
+//
 // No-ops entirely on a page with no `[data-live-machine-id]` anchor —
 // nothing loads this unconditionally, each machine-scoped page opts in by
 // including it (see machines/detail.html, monitoring.html,
@@ -19,6 +28,7 @@
   const anchor = document.querySelector("[data-live-machine-id]");
   const machineId = anchor && anchor.getAttribute("data-live-machine-id");
   if (!machineId) return;
+  const machineName = anchor.getAttribute("data-live-machine-name") || "This machine";
 
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const url = `${scheme}://${window.location.host}/machines/${encodeURIComponent(machineId)}/live/ws`;
@@ -46,6 +56,7 @@
     }
     if (!payload || typeof payload.kind !== "string") return;
     document.body.dispatchEvent(new Event(`live-${payload.kind}`));
+    notifyIfBackgrounded(payload.kind);
   }
 
   function connect() {
@@ -77,4 +88,102 @@
       retryDelayMs = INITIAL_RETRY_MS;
     }
   });
+
+  // --- Browser notifications ------------------------------------------
+
+  const NOTIFY_PREF_KEY = "debcontrol:notifications-enabled";
+
+  const KIND_MESSAGES = {
+    status: "Reachability status changed",
+    facts: "Facts refreshed",
+    packages: "Installed packages refreshed",
+    services: "Services refreshed",
+    updates: "Update availability changed",
+  };
+
+  function notificationsWanted() {
+    try {
+      return window.localStorage.getItem(NOTIFY_PREF_KEY) === "1";
+    } catch {
+      return false; // private browsing / storage blocked — just skip it
+    }
+  }
+
+  function setNotificationsWanted(value) {
+    try {
+      window.localStorage.setItem(NOTIFY_PREF_KEY, value ? "1" : "0");
+    } catch {
+      // Nothing to persist to — the toggle still reflects the in-memory
+      // choice for the rest of this page view, it just won't survive a
+      // reload. Not worth surfacing an error for.
+    }
+  }
+
+  function notifyIfBackgrounded(kind) {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    if (!notificationsWanted()) return;
+    if (document.visibilityState !== "hidden") return; // tab is frontmost — the DOM update is enough
+    const body = KIND_MESSAGES[kind] || "Something changed";
+    let notification;
+    try {
+      notification = new Notification(machineName, { body, tag: `debcontrol-${machineId}` });
+    } catch {
+      return; // some browsers throw if constructed from a background/service context
+    }
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  }
+
+  // --- The toggle button, injected next to the page heading rather than
+  // duplicated in three separate templates. ---
+
+  function buildToggle() {
+    if (!("Notification" in window)) return; // unsupported browser — nothing to offer
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "link-button live-notify-toggle";
+
+    function render() {
+      if (Notification.permission === "denied") {
+        button.textContent = "🔕 Notifications blocked";
+        button.disabled = true;
+        button.title = "Blocked in this browser's site settings.";
+        return;
+      }
+      if (Notification.permission === "granted" && notificationsWanted()) {
+        button.textContent = "🔔 Notifications on";
+        button.title = "Click to turn off background notifications for this machine's page.";
+      } else {
+        button.textContent = "🔔 Enable notifications";
+        button.title = "Get a browser notification when this page updates while backgrounded.";
+      }
+    }
+
+    button.addEventListener("click", async () => {
+      if (Notification.permission === "default") {
+        let permission;
+        try {
+          permission = await Notification.requestPermission();
+        } catch {
+          return;
+        }
+        if (permission === "granted") setNotificationsWanted(true);
+        render();
+        return;
+      }
+      if (Notification.permission === "granted") {
+        setNotificationsWanted(!notificationsWanted());
+        render();
+      }
+    });
+
+    render();
+    anchor.appendChild(button);
+  }
+
+  buildToggle();
 })();
