@@ -7,6 +7,7 @@ for why these are Settings-page config rather than environment variables).
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, Form, Request, Response, status
@@ -15,7 +16,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AiProviderError
-from app.ai.config import get_or_create_ai_provider_configs, replace_fetched_models
+from app.ai.config import (
+    get_or_create_ai_provider_configs,
+    get_selectable_models,
+    replace_fetched_models,
+)
 from app.ai.providers import build_client
 from app.audit import log_event, verify_chain
 from app.auth.dependencies import require_permission
@@ -31,6 +36,7 @@ from app.db.models.app_settings import (
     DEFAULT_OIDC_SCOPES,
     DEFAULT_OIDC_USERNAME_CLAIM,
     DEFAULT_SYSLOG_PORT,
+    FleetSummaryFrequency,
     SyslogProtocol,
 )
 from app.db.models.audit_log import AuditOutcome
@@ -108,6 +114,7 @@ async def _render_settings(
         # blocks in the same order.
         "ai_configs": [ai_configs[kind] for kind in AiProviderKind if kind in ai_configs],
         "openai_compatible_kind": AiProviderKind.OPENAI_COMPATIBLE.value,
+        "selectable_models": await get_selectable_models(db),
         "tabs": _TABS,
         "active_tab": tab,
         **extra,
@@ -760,5 +767,69 @@ async def update_ai_limits(
         action="settings.ai_limits.update",
         summary="Updated the AI token limits",
         details={"daily": daily, "weekly": weekly, "monthly": monthly},
+    )
+    return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/fleet-summary", dependencies=[_manage, Depends(verify_csrf)])
+async def update_fleet_summary_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    frequency: str = Form("disabled"),
+    provider_model: str = Form(""),
+) -> Response:
+    """The scheduled fleet summary's opt-in switch and which model pays for
+    it — see `app.tasks.ai_jobs.generate_fleet_summary`. Setting `frequency`
+    back to "disabled" deliberately leaves `provider_model` untouched
+    (re-enabling later remembers the last choice) rather than clearing it."""
+    try:
+        parsed_frequency = FleetSummaryFrequency(frequency)
+    except ValueError:
+        return await _render_settings(
+            request, db, [f'"{frequency}" is not a valid frequency.'], tab="ai"
+        )
+
+    app_settings = await get_or_create_app_settings(db)
+
+    if parsed_frequency != FleetSummaryFrequency.DISABLED:
+        raw = provider_model.strip()
+        provider_id_str, _, model_id = raw.partition(":")
+        try:
+            provider_id = uuid.UUID(provider_id_str)
+        except ValueError:
+            return await _render_settings(
+                request, db, ["Choose a model for the fleet summary first."], tab="ai"
+            )
+        # Re-check that this provider+model really is enabled — never trust
+        # the submitted pair just because the dropdown offered something.
+        result = await db.execute(
+            select(AiModel, AiProviderConfig)
+            .join(AiProviderConfig, AiProviderConfig.id == AiModel.provider_id)
+            .where(
+                AiModel.provider_id == provider_id,
+                AiModel.model_id == model_id,
+                AiModel.enabled,
+                AiProviderConfig.enabled,
+            )
+        )
+        if result.first() is None:
+            return await _render_settings(
+                request, db, ["That AI model isn't enabled for use."], tab="ai"
+            )
+        app_settings.fleet_summary_provider_id = provider_id
+        app_settings.fleet_summary_model_id = model_id
+
+    app_settings.fleet_summary_frequency = parsed_frequency
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.fleet_summary.update",
+        summary=f"Set the scheduled fleet summary to {parsed_frequency.value}",
+        details={
+            "frequency": parsed_frequency.value,
+            "model": app_settings.fleet_summary_model_id,
+        },
     )
     return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)

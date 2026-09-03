@@ -32,9 +32,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AiProviderError, ChatTurnResult, ToolCall
 from app.ai.providers import build_client
@@ -47,11 +49,19 @@ from app.ai.tools import (
     execute_read_only_tool,
 )
 from app.ai.usage import check_within_limits, record_usage
+from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.db import session as db_session
 from app.db.models.ai_conversation import AiConversation
 from app.db.models.ai_message import AiMessage, AiMessageRole
+from app.db.models.ai_provider import AiProviderConfig
+from app.db.models.app_settings import FleetSummaryFrequency
+from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+from app.db.models.fleet_summary import FleetSummary
+from app.db.models.machine import Machine
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.models.user import User
+from app.services.fleet_stats import compute_fleet_stats
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -295,3 +305,240 @@ def summarize_tool_output(conversation_id: str, output_text: str) -> dict[str, A
     and therefore cannot even produce a new proposal to confirm.
     """
     return asyncio.run(_run_turn(conversation_id, allow_tools=False, user_message=output_text))
+
+
+# --- Scheduled fleet summary (app.db.models.fleet_summary.FleetSummary) ---
+#
+# Deliberately display-only, for now: this only ever writes a FleetSummary
+# row for the Dashboard to show. No email, Slack, or other notification is
+# sent from here — that's a separate, not-yet-built feature (see the wiki),
+# and bolting it on later only means adding a call after the `session.add`
+# below, not restructuring anything here.
+#
+# Off by default (`FleetSummaryFrequency.DISABLED`) and checked on every
+# tick of a *daily* Beat entry (see app.tasks.celery_app) regardless of
+# whether the configured frequency is "daily" or "weekly" — `_is_due` below
+# is what actually decides whether today's tick does anything, the same
+# "cheap sweep, real work is conditional" shape `app.tasks.jobs._refresh_all_machine_readiness`
+# and friends already use for their own settings-driven cadences.
+
+_FLEET_SUMMARY_SYSTEM_PROMPT = (
+    "You are a fleet-management assistant. You are given a snapshot of a "
+    "fleet of Debian/Ubuntu servers managed by debcontrol: counts, and "
+    "specific machines that need attention. Write a short, plain-language "
+    "report for a system administrator: what changed or stands out, and "
+    "what needs attention, roughly in that order. Use short paragraphs or "
+    "a short bullet list. Do not invent facts beyond what's given — if "
+    "nothing needs attention, say so briefly."
+)
+
+# Same time budget reasoning as _AI_TURN_TIME_LIMIT_SECONDS — this is one
+# provider call, not several, but a slow model's single response can still
+# take close to CHAT_TIMEOUT_SECONDS (90s, app/ai/providers.py).
+_FLEET_SUMMARY_TIME_LIMIT_SECONDS = 120
+
+# How large a "still needs attention" list gets before the prompt just says
+# "and N more" — keeps the prompt (and therefore the token cost) bounded
+# against a fleet with hundreds of matching machines, without hiding scale
+# from the model entirely.
+_FLEET_SUMMARY_LIST_LIMIT = 25
+
+
+def _fleet_summary_due(
+    last_generated_at: datetime | None, frequency: FleetSummaryFrequency, now: datetime
+) -> bool:
+    """Never generated yet is always due. Otherwise, due once comfortably
+    more than a day (daily) or a week (weekly) has passed — the `-4 hours`
+    margin absorbs the fact that this is checked on a fixed daily Beat tick
+    (see app.tasks.celery_app), not a precise timer, without waiting an
+    extra full day if that tick lands a little earlier one day than the
+    last time a summary was actually written."""
+    if last_generated_at is None:
+        return True
+    if last_generated_at.tzinfo is None:
+        last_generated_at = last_generated_at.replace(tzinfo=UTC)
+    elapsed = now - last_generated_at
+    if frequency == FleetSummaryFrequency.WEEKLY:
+        return elapsed >= timedelta(days=7) - timedelta(hours=4)
+    return elapsed >= timedelta(days=1) - timedelta(hours=4)
+
+
+def _format_named_list(names: list[str], total: int) -> str:
+    if not names:
+        return "none"
+    shown = ", ".join(names)
+    if total > len(names):
+        shown += f", and {total - len(names)} more"
+    return shown
+
+
+async def _build_fleet_summary_prompt(
+    session: AsyncSession, frequency: FleetSummaryFrequency, now: datetime
+) -> str:
+    """Everything the model gets to work with — counts plus specific,
+    named machines, bounded to `_FLEET_SUMMARY_LIST_LIMIT` each so the
+    prompt stays a fixed, small size regardless of fleet size."""
+    is_weekly = frequency == FleetSummaryFrequency.WEEKLY
+    since = now - (timedelta(days=7) if is_weekly else timedelta(days=1))
+    period = "7 days" if is_weekly else "24 hours"
+
+    stats = await compute_fleet_stats(session)
+
+    offline_result = await session.execute(
+        select(Machine.name)
+        .where(Machine.is_active, Machine.is_reachable.is_(False))
+        .order_by(Machine.name)
+    )
+    offline_names = [row[0] for row in offline_result.all()]
+
+    security_result = await session.execute(
+        select(Machine.name)
+        .where(Machine.is_active, Machine.security_upgradable_count > 0)
+        .order_by(Machine.security_upgradable_count.desc(), Machine.name)
+    )
+    security_names = [row[0] for row in security_result.all()]
+
+    readiness_result = await session.execute(
+        select(Machine.name, Machine.readiness_missing).where(
+            Machine.is_active, Machine.readiness_missing.is_not(None)
+        )
+    )
+    readiness_names = [name for name, missing in readiness_result.all() if missing]
+
+    failed_updates_result = await session.execute(
+        select(func.count())
+        .select_from(MachineUpdateRun)
+        .where(
+            MachineUpdateRun.status == UpdateRunStatus.FAILED,
+            MachineUpdateRun.created_at >= since,
+        )
+    )
+    failed_update_count = failed_updates_result.scalar_one()
+
+    denied_events_result = await session.execute(
+        select(func.count())
+        .select_from(AuditLogEntry)
+        .where(AuditLogEntry.outcome != AuditOutcome.SUCCESS, AuditLogEntry.created_at >= since)
+    )
+    denied_event_count = denied_events_result.scalar_one()
+
+    offline_shown = _format_named_list(
+        offline_names[:_FLEET_SUMMARY_LIST_LIMIT], len(offline_names)
+    )
+    return (
+        f"Fleet snapshot (last {period}):\n"
+        f"- Total machines: {stats['total']} "
+        f"({stats['online']} online, {stats['offline']} offline)\n"
+        f"- Currently offline: {offline_shown}\n"
+        f"- Needs updates: {stats['needs_updates']} machine(s), "
+        f"{stats['needs_security_updates']} with a security update pending\n"
+        f"- Security updates pending on: "
+        f"{_format_named_list(security_names[:_FLEET_SUMMARY_LIST_LIMIT], len(security_names))}\n"
+        f"- Needs reboot: {stats['needs_reboot']} machine(s)\n"
+        f"- Readiness check found something missing on: "
+        f"{_format_named_list(readiness_names[:_FLEET_SUMMARY_LIST_LIMIT], len(readiness_names))}\n"
+        f"- Failed update runs in the period: {failed_update_count}\n"
+        f"- Denied/failed audit events in the period: {denied_event_count}\n"
+    )
+
+
+async def _generate_fleet_summary() -> None:
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        frequency = app_settings.fleet_summary_frequency
+        if frequency == FleetSummaryFrequency.DISABLED:
+            return
+        if not app_settings.fleet_summary_provider_id or not app_settings.fleet_summary_model_id:
+            logger.info("generate_fleet_summary: enabled but no model configured yet")
+            return
+
+        now = datetime.now(UTC)
+        last_result = await session.execute(
+            select(FleetSummary.created_at).order_by(FleetSummary.created_at.desc()).limit(1)
+        )
+        last_generated_at = last_result.scalar_one_or_none()
+        if not _fleet_summary_due(last_generated_at, frequency, now):
+            return
+
+        provider = await session.get(AiProviderConfig, app_settings.fleet_summary_provider_id)
+        if provider is None or not provider.enabled:
+            logger.warning("generate_fleet_summary: configured provider is missing or disabled")
+            return
+
+        try:
+            client = build_client(provider)
+        except AiProviderError as exc:
+            logger.warning("generate_fleet_summary: provider not usable: %s", exc)
+            return
+
+        prompt = await _build_fleet_summary_prompt(session, frequency, now)
+        try:
+            result = await client.send(
+                [client.build_user_message(prompt)],
+                [],
+                app_settings.fleet_summary_model_id,
+                _FLEET_SUMMARY_SYSTEM_PROMPT,
+            )
+        except AiProviderError as exc:
+            logger.warning("generate_fleet_summary: provider call failed: %s", exc)
+            return
+
+        if not result.text:
+            return
+
+        session.add(
+            FleetSummary(
+                frequency=frequency.value,
+                content=result.text,
+                provider_kind=provider.kind.value,
+                model_id=app_settings.fleet_summary_model_id,
+            )
+        )
+        await session.commit()
+
+
+@celery_app.task(
+    name="app.tasks.ai_jobs.generate_fleet_summary",
+    time_limit=_FLEET_SUMMARY_TIME_LIMIT_SECONDS,
+)
+def generate_fleet_summary() -> None:
+    asyncio.run(_generate_fleet_summary())
+
+
+_FLEET_SUMMARY_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def _purge_old_fleet_summaries() -> None:
+    """Same shape as `app.tasks.jobs._purge_old_fleet_snapshots` — skipped
+    entirely when retention is unset (`None` = keep forever)."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        retention_days = app_settings.fleet_summary_retention_days
+        if not retention_days:
+            return
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        count_result = await session.execute(
+            select(func.count()).select_from(FleetSummary).where(FleetSummary.created_at < cutoff)
+        )
+        deleted_count = count_result.scalar_one()
+        if not deleted_count:
+            return
+
+        await session.execute(delete(FleetSummary).where(FleetSummary.created_at < cutoff))
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_FLEET_SUMMARY_PURGE_ACTOR,
+            action="fleet_summary.purge",
+            summary=(
+                f"Purged {deleted_count} fleet summar{'ies' if deleted_count != 1 else 'y'} "
+                f"older than {retention_days} day(s)"
+            ),
+            details={"deleted_count": deleted_count, "retention_days": retention_days},
+        )
+
+
+@celery_app.task(name="app.tasks.ai_jobs.purge_old_fleet_summaries")
+def purge_old_fleet_summaries() -> None:
+    asyncio.run(_purge_old_fleet_summaries())

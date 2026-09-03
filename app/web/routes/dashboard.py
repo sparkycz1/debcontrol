@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.fleet_snapshot import FleetSnapshot
+from app.db.models.fleet_summary import FleetSummary
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
@@ -65,6 +66,17 @@ async def show_dashboard(
             snapshots = list(snapshot_result.scalars().all())
             if len(snapshots) >= _MIN_SNAPSHOTS_FOR_TREND:
                 context["fleet_snapshots"] = snapshots
+
+            # Same "unrestricted accounts only" reasoning as fleet_snapshots
+            # just above: this is a single fleet-wide report a background
+            # job wrote with no "current user" to scope to (see
+            # app.tasks.ai_jobs.generate_fleet_summary) — showing it to a
+            # restricted account would leak facts about machines outside
+            # their own scope.
+            summary_result = await db.execute(
+                select(FleetSummary).order_by(FleetSummary.created_at.desc()).limit(1)
+            )
+            context["fleet_summary"] = summary_result.scalar_one_or_none()
 
     if user.has_permission(Permission.GROUP_VIEW):
         context["group_count"] = await count_visible_groups(db, user)

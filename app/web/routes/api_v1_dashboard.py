@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_api_token_user, require_api_permission
 from app.db.models.fleet_snapshot import FleetSnapshot
+from app.db.models.fleet_summary import FleetSummary
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
@@ -58,3 +59,35 @@ async def dashboard_trends_api(
     result = await db.execute(select(FleetSnapshot).order_by(FleetSnapshot.snapshot_date.asc()))
     snapshots = list(result.scalars().all())
     return {"snapshots": [_snapshot_to_dict(s) for s in snapshots]}
+
+
+def _fleet_summary_to_dict(summary: FleetSummary) -> dict[str, object]:
+    return {
+        "id": str(summary.id),
+        "frequency": summary.frequency,
+        "content": summary.content,
+        "provider_kind": summary.provider_kind,
+        "model_id": summary.model_id,
+        "created_at": summary.created_at.isoformat(),
+    }
+
+
+@router.get("/fleet-summary", dependencies=[_view])
+async def latest_fleet_summary_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The most recent scheduled fleet summary (`app.tasks.ai_jobs.
+    generate_fleet_summary`), or `{"summary": None}` if none has been
+    generated yet (the feature is off by default — see Settings' AI tab).
+
+    Same "restricted account sees nothing" reasoning as `/trends` above: a
+    summary is unattended, fleet-wide text a background job wrote with no
+    per-account scoping possible after the fact."""
+    if await is_restricted(db, user):
+        return {"summary": None}
+    result = await db.execute(
+        select(FleetSummary).order_by(FleetSummary.created_at.desc()).limit(1)
+    )
+    summary = result.scalar_one_or_none()
+    return {"summary": _fleet_summary_to_dict(summary) if summary is not None else None}

@@ -254,12 +254,41 @@ the button was even visible to you. From there it's an ordinary
 conversation — the assistant can still look things up and propose actions,
 gated by the same permissions as always.
 
+## 🗓️ Scheduled fleet summary
+
+**Settings → AI → Scheduled fleet summary** — off by default. Once an
+admin picks a frequency (daily or weekly) and a model,
+`app.tasks.ai_jobs.generate_fleet_summary` runs on a daily Beat tick
+(deciding for itself whether today's tick is actually due for the chosen
+frequency — see `_fleet_summary_due`) and writes a `FleetSummary` row: a
+short, plain-language "what changed, what needs attention" report built
+from the same counts the Dashboard shows (`app.services.fleet_stats`),
+plus which specific machines are offline, need a security update, or have
+a readiness-check finding, and how many update runs/audit events failed
+in the period. The Dashboard shows the most recent one to any account
+with `machine.view` and no machine-group restriction (a summary is
+unattended, fleet-wide text with nothing left to scope after the fact,
+same reasoning as the Dashboard's trend chart).
+
+**Display-only, on purpose, for now.** This never sends an email, a Slack
+message, or any other notification — it only ever writes a row for the
+Dashboard to render. Retention (`Settings → AI`'s own field, default 180
+days) is purged daily the same way fleet snapshots and update-run history
+already are.
+
 ## 🚫 Deliberately out of scope
 
-- **No REST API surface.** There is no `/api/v1/ai*`, at all — same as SSH
-  key rotation and LDAP/OIDC configuration being web-UI-only (see
-  [Architecture → The REST API](Architecture.md#the-rest-api-read-and-write-mirroring-the-web-ui)).
-  Everything here requires a browser session and a CSRF token.
+- **No REST API surface for the chat itself.** There is no `/api/v1/ai*`,
+  at all — same as SSH key rotation and LDAP/OIDC configuration being
+  web-UI-only (see [Architecture → The REST API](Architecture.md#the-rest-api-read-and-write-mirroring-the-web-ui)).
+  Everything here requires a browser session and a CSRF token. The one
+  exception is the scheduled fleet summary's own *output* —
+  `GET /api/v1/dashboard/fleet-summary` returns the latest generated
+  report, read-only, gated by the same `machine.view` permission the
+  Dashboard itself uses — there's no conversation, provider credential, or
+  proposable action anywhere near that endpoint, just text a background
+  job already wrote to the Dashboard for anyone with that permission to
+  read.
 - **A conversation is visible only to the account that created it.** There
   is no shared view and no admin view — not even for `user.manage`. The
   routes filter on `user_id`, so another account gets a 404, not a 403 (a

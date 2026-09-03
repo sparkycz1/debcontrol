@@ -591,7 +591,8 @@ see [Per-user UI language](#per-user-ui-language-i18n)). Split across
 router modules under `app/web/routes/` (`api_v1.py` for
 machines/groups/bulk, `api_v1_scheduling.py`, `api_v1_users.py`,
 `api_v1_roles.py`, `api_v1_audit.py`, `api_v1_settings.py`,
-`api_v1_dashboard.py` for the Dashboard's trend-snapshot history,
+`api_v1_dashboard.py` for the Dashboard's trend-snapshot history and the
+scheduled fleet summary's latest output,
 `api_v1_account.py` for self-service account settings), all mounted under
 `/api/v1` in `app.main`.
 

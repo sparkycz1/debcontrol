@@ -4,9 +4,10 @@ from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 from app.db.models.ai_usage import AiUsageRecord
 from app.db.models.api_token import ApiToken
-from app.db.models.app_settings import AppSettings
+from app.db.models.app_settings import AppSettings, FleetSummaryFrequency
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.fleet_snapshot import FleetSnapshot
+from app.db.models.fleet_summary import FleetSummary
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
@@ -38,6 +39,8 @@ __all__ = [
     "AuthMethod",
     "AuthProvider",
     "FleetSnapshot",
+    "FleetSummary",
+    "FleetSummaryFrequency",
     "Machine",
     "MachineGroup",
     "MachineMonitoringSample",

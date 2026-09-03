@@ -204,6 +204,20 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.purge_old_monitoring_samples",
         "schedule": crontab(hour=3, minute=15),
     },
+    # Off by default (AppSettings.fleet_summary_frequency) — this tick is a
+    # cheap no-op check unless an admin opted in. Runs once a day regardless
+    # of whether the chosen frequency is "daily" or "weekly": the task
+    # itself decides whether today's tick is actually due — see
+    # app.tasks.ai_jobs._fleet_summary_due. A later hour than the retention
+    # sweeps above so a same-day fleet snapshot/purge has already run.
+    "generate-fleet-summary": {
+        "task": "app.tasks.ai_jobs.generate_fleet_summary",
+        "schedule": crontab(hour=6, minute=0),
+    },
+    "purge-old-fleet-summaries": {
+        "task": "app.tasks.ai_jobs.purge_old_fleet_summaries",
+        "schedule": crontab(hour=3, minute=20),
+    },
 }
 
 

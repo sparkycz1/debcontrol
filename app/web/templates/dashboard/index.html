@@ -48,6 +48,19 @@
   </section>
   {% endif %}
 
+  {% if fleet_summary %}
+  <section class="panel">
+    <h2>Fleet summary</h2>
+    <p class="hint">
+      {{ fleet_summary.frequency | capitalize }}, generated
+      {{ fleet_summary.created_at | local_time('%Y-%m-%d %H:%M %Z') }} by
+      {{ fleet_summary.provider_kind }}/{{ fleet_summary.model_id }}.
+      <a href="/settings?tab=ai">Configure</a>.
+    </p>
+    <div class="fleet-summary-content">{{ fleet_summary.content }}</div>
+  </section>
+  {% endif %}
+
   {% if fleet_snapshots is defined %}
   <section class="panel">
     <h2>Fleet trends</h2>

@@ -132,4 +132,44 @@
 
       <button type="submit" class="button">Save</button>
     </form>
+
+    <hr>
+    <h3>Scheduled fleet summary</h3>
+    <p class="hint">
+      A background job writes a plain-language "what changed, what needs
+      attention" report to the <a href="/dashboard">Dashboard</a> — off by
+      default, since (unlike everything else above) this makes a real AI
+      API call on a schedule, whether or not anyone reads it. This only
+      ever <em>displays</em> a report; it does not send an email, Slack
+      message, or any other notification.
+    </p>
+    {% if selectable_models %}
+      <form method="post" action="/settings/fleet-summary" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <label for="fleet_summary_frequency">Frequency</label>
+        <select id="fleet_summary_frequency" name="frequency">
+          <option value="disabled" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'disabled' else '' }}>Disabled</option>
+          <option value="daily" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'daily' else '' }}>Daily</option>
+          <option value="weekly" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'weekly' else '' }}>Weekly</option>
+        </select>
+
+        <label for="fleet_summary_model">Model</label>
+        <select id="fleet_summary_model" name="provider_model">
+          {% for provider, model in selectable_models %}
+            {% set value = provider.id ~ ':' ~ model.model_id %}
+            <option value="{{ value }}"
+                {{ 'selected' if app_settings.fleet_summary_provider_id == provider.id and app_settings.fleet_summary_model_id == model.model_id else '' }}>
+              {{ provider.kind.value }} — {{ model.model_id }}
+            </option>
+          {% endfor %}
+        </select>
+
+        <button type="submit" class="button">Save</button>
+      </form>
+    {% else %}
+      <p class="hint">
+        Enable a provider and choose at least one model above first.
+      </p>
+    {% endif %}
   </section>

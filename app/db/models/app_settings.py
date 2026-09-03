@@ -24,9 +24,10 @@ deploy-time infrastructure. Secrets in here (`ldap_bind_password_encrypted`,
 from __future__ import annotations
 
 import enum
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Integer, LargeBinary, String, func
+from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -54,6 +55,18 @@ class SyslogProtocol(enum.StrEnum):
 
 
 DEFAULT_SYSLOG_PORT = 514
+
+
+class FleetSummaryFrequency(enum.StrEnum):
+    """How often `app.tasks.ai_jobs.generate_fleet_summary` writes a new
+    `FleetSummary` row — see that module and `AppSettings.
+    fleet_summary_frequency`. `DISABLED` (the default) means the daily Beat
+    tick checking this setting is a no-op — no AI provider is ever called
+    unless an admin opts in."""
+
+    DISABLED = "disabled"
+    DAILY = "daily"
+    WEEKLY = "weekly"
 
 
 class AppSettings(Base):
@@ -123,6 +136,26 @@ class AppSettings(Base):
     ai_daily_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ai_weekly_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ai_monthly_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # --- Scheduled fleet summary (app.tasks.ai_jobs.generate_fleet_summary) ---
+    # Off by default — unlike the always-on daily FleetSnapshot row, this is
+    # a genuine AI API call with a genuine token cost, so an admin opts in
+    # explicitly and picks which configured model pays for it.
+    fleet_summary_frequency: Mapped[FleetSummaryFrequency] = mapped_column(
+        pg_enum(FleetSummaryFrequency, name="fleet_summary_frequency"),
+        default=FleetSummaryFrequency.DISABLED,
+        nullable=False,
+    )
+    fleet_summary_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ai_provider_configs.id", ondelete="SET NULL"), nullable=True
+    )
+    fleet_summary_model_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Same "operational/derived data, not a compliance record" reasoning as
+    # dashboard_trends_retention_days — bounded by default (roughly six
+    # months of history to browse "what's changed"), NULL means keep forever.
+    fleet_summary_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=180
+    )
 
     # --- LDAP login (app.auth.ldap) ---
     ldap_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
