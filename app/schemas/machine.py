@@ -13,6 +13,7 @@ import uuid
 from pydantic import BaseModel, Field, field_validator
 
 from app.db.models.machine import AuthMethod
+from app.services.machine_tags import normalize_tag_names
 
 
 def _check_ip_address(value: str) -> str:
@@ -34,11 +35,18 @@ class MachineCreate(BaseModel):
     )
     group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
+    # Free-form, independent of group_id — see app.db.models.machine_tag.
+    tags: list[str] = Field(default_factory=list)
 
     @field_validator("ip_address")
     @classmethod
     def _validate_ip_address(cls, value: str) -> str:
         return _check_ip_address(value)
+
+    @field_validator("tags")
+    @classmethod
+    def _normalize_tags(cls, value: list[str]) -> list[str]:
+        return normalize_tag_names(value)
 
 
 class MachineUpdate(BaseModel):
@@ -53,6 +61,7 @@ class MachineUpdate(BaseModel):
     )
     group_id: uuid.UUID | None = None
     description: str | None = Field(default=None, max_length=1024)
+    tags: list[str] = Field(default_factory=list)
     is_active: bool = True
     # Per-machine overrides of the global `.env` sweep cadences — `None`
     # means "use the global default" (see `Machine.
@@ -66,3 +75,8 @@ class MachineUpdate(BaseModel):
     @classmethod
     def _validate_ip_address(cls, value: str) -> str:
         return _check_ip_address(value)
+
+    @field_validator("tags")
+    @classmethod
+    def _normalize_tags(cls, value: list[str]) -> list[str]:
+        return normalize_tag_names(value)

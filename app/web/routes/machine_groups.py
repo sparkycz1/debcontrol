@@ -17,6 +17,7 @@ from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.role import Permission
 from app.db.models.user import User
@@ -92,6 +93,15 @@ async def _all_visible_machines(db: AsyncSession, user: User) -> list[Machine]:
     created it. See `app/web/routes/scheduling.py`.)"""
     query = await machines_visible_to(db, user)
     result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+async def _get_all_tags(db: AsyncSession) -> list[Tag]:
+    """Every tag currently in use, alphabetical — same helper as
+    `app.web.routes.machines`'s own (not shared as a cross-module import:
+    each route module owns its own small query helpers, same convention
+    as `_get_groups` existing separately in both already)."""
+    result = await db.execute(select(Tag).order_by(Tag.name))
     return list(result.scalars().all())
 
 
@@ -243,6 +253,7 @@ async def all_machines_group(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     q: str = "",
+    tag: str = "",
     page: int = 1,
 ) -> Response:
     """The "All machines" virtual group — every machine, always, automatically.
@@ -263,6 +274,8 @@ async def all_machines_group(
     query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
+    if tag.strip():
+        query = query.where(Machine.tags.any(Tag.name == tag.strip().lower()))
 
     offset = (page - 1) * _MACHINE_LIST_PAGE_SIZE
     result = await db.execute(
@@ -278,7 +291,9 @@ async def all_machines_group(
         "machine_groups/all.html",
         {
             "machines": machines,
+            "all_tags": await _get_all_tags(db),
             "q": q,
+            "tag": tag,
             "page": page,
             "has_more": has_more,
             "csrf_token": csrf_token,
@@ -417,6 +432,7 @@ async def group_detail(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     q: str = "",
+    tag: str = "",
 ) -> Response:
     group = await _get_group_or_404(group_id, db, current_user)
 
@@ -425,6 +441,8 @@ async def group_detail(
     )
     if q.strip():
         members_query = members_query.where(machine_search_clause(q))
+    if tag.strip():
+        members_query = members_query.where(Machine.tags.any(Tag.name == tag.strip().lower()))
     result = await db.execute(members_query.order_by(Machine.name))
     machines = result.scalars().all()
 
@@ -450,7 +468,9 @@ async def group_detail(
             "active_tab": "overview",
             "machines": machines,
             "available_machines": available_machines,
+            "all_tags": await _get_all_tags(db),
             "q": q,
+            "tag": tag,
             "csrf_token": csrf_token,
         },
     )

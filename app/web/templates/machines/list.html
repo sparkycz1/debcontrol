@@ -105,6 +105,12 @@
               <td>
                 {{ render_os_badge(machine.os_id) }}
                 <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>
+                {% if machine.tags %}
+                  <br>
+                  {% for tag in machine.tags %}
+                    <a class="badge badge-tag" href="?tag={{ tag.name }}">{{ tag.name }}</a>
+                  {% endfor %}
+                {% endif %}
               </td>
               <td>{{ machine.ip_address }}</td>
               <td>{{ machine.discovered_hostname or '—' }}</td>

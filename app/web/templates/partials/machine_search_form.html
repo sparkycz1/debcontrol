@@ -1,6 +1,14 @@
 <form method="get" class="search-form">
   <input type="search" name="q" value="{{ q }}"
          placeholder="Search by name, IP, hostname, OS version, username, notes...">
+  {% if all_tags is defined %}
+    <select name="tag" aria-label="Filter by tag">
+      <option value="">All tags</option>
+      {% for existing_tag in all_tags %}
+        <option value="{{ existing_tag.name }}" {% if tag == existing_tag.name %}selected{% endif %}>{{ existing_tag.name }}</option>
+      {% endfor %}
+    </select>
+  {% endif %}
   <button type="submit" class="button">Search</button>
-  {% if q %}<a class="button button-secondary" href="{{ request.url.path }}">Clear</a>{% endif %}
+  {% if q or (tag is defined and tag) %}<a class="button button-secondary" href="{{ request.url.path }}">Clear</a>{% endif %}
 </form>

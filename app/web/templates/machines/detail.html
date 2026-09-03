@@ -79,6 +79,16 @@
     </dd>
     <dt>Status</dt>
     <dd>{% include "partials/machine_status.html" %}</dd>
+    <dt>Tags</dt>
+    <dd>
+      {% if machine.tags %}
+        {% for tag in machine.tags %}
+          <a class="badge badge-tag" href="/machines?tag={{ tag.name }}">{{ tag.name }}</a>
+        {% endfor %}
+      {% else %}
+        —
+      {% endif %}
+    </dd>
     <dt>Notes</dt><dd>{{ machine.description or '—' }}</dd>
   </dl>
 

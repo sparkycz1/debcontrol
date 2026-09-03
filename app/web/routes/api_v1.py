@@ -65,6 +65,7 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
@@ -87,6 +88,7 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.services.machine_tags import set_machine_tags
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
@@ -135,6 +137,7 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "group": machine.group.name if machine.group else None,
         "group_id": str(machine.group_id) if machine.group_id else None,
         "description": machine.description,
+        "tags": [tag.name for tag in machine.tags],
         "is_active": machine.is_active,
         "is_reachable": machine.is_reachable,
         "last_ping_at": _isoformat(machine.last_ping_at),
@@ -254,8 +257,11 @@ async def _visible_machines(db: AsyncSession, user: User) -> list[Machine]:
 async def list_machines_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
+    tag: str = "",
 ) -> list[dict[str, object]]:
     query = (await machines_visible_to(db, user)).options(selectinload(Machine.group))
+    if tag.strip():
+        query = query.where(Machine.tags.any(Tag.name == tag.strip().lower()))
     result = await db.execute(query)
     return [_machine_to_dict(m) for m in result.scalars().all()]
 
@@ -481,6 +487,9 @@ async def create_machine_api(
     await db.commit()
     await db.refresh(machine)
     machine = await _get_machine_or_404(machine.id, db, user)
+    await set_machine_tags(db, machine, payload.tags)
+    await db.commit()
+    machine = await _get_machine_or_404(machine.id, db, user)
 
     await log_event(
         db,
@@ -517,6 +526,7 @@ async def update_machine_api(
     machine.group_id = payload.group_id
     machine.description = payload.description
     machine.is_active = payload.is_active
+    await set_machine_tags(db, machine, payload.tags)
 
     if payload.auth_method == AuthMethod.PASSWORD:
         if payload.secret:

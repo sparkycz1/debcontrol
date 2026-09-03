@@ -44,7 +44,15 @@
       <tbody>
         {% for machine in machines %}
           <tr>
-            <td><a href="/machines/{{ machine.id }}">{{ machine.name }}</a></td>
+            <td>
+              <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>
+              {% if machine.tags %}
+                <br>
+                {% for tag in machine.tags %}
+                  <a class="badge badge-tag" href="?tag={{ tag.name }}">{{ tag.name }}</a>
+                {% endfor %}
+              {% endif %}
+            </td>
             <td>{{ machine.ip_address }}</td>
             <td>
               {% if machine.group %}

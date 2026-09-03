@@ -46,6 +46,7 @@ from app.db.models.machine_group import MachineGroup
 from app.db.models.user import User
 from app.schemas.machine_config import GroupExport, MachineConfigExport, MachineExport
 from app.services.access_scope import groups_visible_to, machines_visible_to
+from app.services.machine_tags import set_machine_tags
 
 # Shown once per import result, regardless of how many machines were
 # created — every one of them starts with no pinned host key.
@@ -86,6 +87,7 @@ async def export_machine_config(db: AsyncSession, user: User) -> MachineConfigEx
             auth_method=m.auth_method,
             group=m.group.name if m.group else None,
             description=m.description,
+            tags=[tag.name for tag in m.tags],
             is_active=m.is_active,
         )
         for m in machine_result.scalars().all()
@@ -187,20 +189,22 @@ async def import_machine_config(db: AsyncSession, payload: MachineConfigExport) 
             auth_method = AuthMethod.SSH_KEY
             result.auth_method_warnings.append(machine.name)
 
-        db.add(
-            Machine(
-                name=machine.name,
-                ip_address=machine.ip_address,
-                port=machine.port,
-                username=machine.username,
-                auth_method=auth_method,
-                secret_encrypted=None,
-                host_key_fingerprint=None,
-                group_id=groups_by_name[machine.group].id if machine.group else None,
-                description=machine.description,
-                is_active=machine.is_active,
-            )
+        new_machine = Machine(
+            name=machine.name,
+            ip_address=machine.ip_address,
+            port=machine.port,
+            username=machine.username,
+            auth_method=auth_method,
+            secret_encrypted=None,
+            host_key_fingerprint=None,
+            group_id=groups_by_name[machine.group].id if machine.group else None,
+            description=machine.description,
+            is_active=machine.is_active,
         )
+        db.add(new_machine)
+        if machine.tags:
+            await db.flush()  # assign an id before set_machine_tags needs one
+            await set_machine_tags(db, new_machine, machine.tags)
         existing_machine_names.add(machine.name)
         result.created_machines.append(machine.name)
 

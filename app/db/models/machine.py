@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.models.machine_tag import Tag, machine_tags
 from app.db.pg_enum import pg_enum
 
 if TYPE_CHECKING:
@@ -89,6 +90,14 @@ class Machine(Base):
         ForeignKey("machine_groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
     group: Mapped[MachineGroup | None] = relationship(back_populates="machines")
+
+    # Free-form, cross-cutting labels independent of `group` above — see
+    # app.db.models.machine_tag's own docstring. `order_by` keeps the list
+    # alphabetical everywhere it's rendered/serialized without every caller
+    # needing to sort it itself.
+    tags: Mapped[list[Tag]] = relationship(
+        secondary=machine_tags, order_by="Tag.name", lazy="selectin"
+    )
 
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False, index=True)

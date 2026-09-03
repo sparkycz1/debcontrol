@@ -69,6 +69,15 @@
     <label for="description">Notes</label>
     <textarea id="description" name="description" rows="2">{{ machine.description or '' }}</textarea>
 
+    <label for="tags">Tags</label>
+    <input type="text" id="tags" name="tags" list="tag-suggestions"
+           placeholder="prod, web, praha-dc1"
+           value="{{ machine.tags | map(attribute='name') | join(', ') }}">
+    <p class="hint">Comma-separated. Independent of the group above — a machine can carry any number.</p>
+    <datalist id="tag-suggestions">
+      {% for existing_tag in all_tags %}<option value="{{ existing_tag.name }}">{% endfor %}
+    </datalist>
+
     <label>
       <input type="checkbox" name="is_active" {% if machine.is_active %}checked{% endif %}>
       Active (included in reachability checks and facts refresh)

@@ -6,9 +6,10 @@ rationale (what's excluded and why, and the conflict-handling policy).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.db.models.machine import AuthMethod
+from app.services.machine_tags import normalize_tag_names
 
 
 class MachineExport(BaseModel):
@@ -23,7 +24,13 @@ class MachineExport(BaseModel):
     auth_method: AuthMethod
     group: str | None = None
     description: str | None = None
+    tags: list[str] = Field(default_factory=list)
     is_active: bool = True
+
+    @field_validator("tags")
+    @classmethod
+    def _normalize_tags(cls, value: list[str]) -> list[str]:
+        return normalize_tag_names(value)
 
 
 class GroupExport(BaseModel):

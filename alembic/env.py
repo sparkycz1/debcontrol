@@ -26,6 +26,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     RolePermission,
     ScheduledTask,
     SSHIdentity,
+    Tag,
     TotpRecoveryCode,
     User,
     UserSession,

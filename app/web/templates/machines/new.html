@@ -66,6 +66,14 @@
     <label for="description">Notes</label>
     <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
 
+    <label for="tags">Tags</label>
+    <input type="text" id="tags" name="tags" list="tag-suggestions"
+           placeholder="prod, web, praha-dc1" value="{{ form.tags or '' }}">
+    <p class="hint">Comma-separated. Independent of the group above — a machine can carry any number.</p>
+    <datalist id="tag-suggestions">
+      {% for existing_tag in all_tags %}<option value="{{ existing_tag.name }}">{% endfor %}
+    </datalist>
+
     <button type="submit" class="button">Save</button>
     <a class="button button-secondary" href="/machines">Cancel</a>
   </form>

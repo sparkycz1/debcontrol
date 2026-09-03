@@ -33,6 +33,7 @@ from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_service import MachineService
+from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
@@ -53,6 +54,7 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.services.machine_tags import parse_tag_names_from_text, set_machine_tags
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
@@ -131,6 +133,17 @@ async def _get_groups(db: AsyncSession, user: User) -> list[MachineGroup]:
     (which would make it vanish from their own view)."""
     query = await groups_visible_to(db, user)
     result = await db.execute(query.order_by(MachineGroup.name))
+    return list(result.scalars().all())
+
+
+async def _get_all_tags(db: AsyncSession) -> list[Tag]:
+    """Every tag currently in use, alphabetical — the machine list's filter
+    dropdown and the create/edit forms' autocomplete `<datalist>`. Not
+    scoped by machine-group access: a tag *name* existing isn't fleet
+    data, and a restricted account typing a tag another machine happens to
+    use just filters to nothing, the same as typing a free-text search
+    term that doesn't match anything in scope."""
+    result = await db.execute(select(Tag).order_by(Tag.name))
     return list(result.scalars().all())
 
 
@@ -236,12 +249,15 @@ async def list_machines(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     q: str = "",
+    tag: str = "",
     page: int = 1,
 ) -> Response:
     page = max(page, 1)
     query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
+    if tag.strip():
+        query = query.where(Machine.tags.any(Tag.name == tag.strip().lower()))
 
     offset = (page - 1) * _MACHINE_LIST_PAGE_SIZE
     result = await db.execute(
@@ -258,7 +274,9 @@ async def list_machines(
         {
             "machines": machines,
             "pending_machines": await _get_pending_machines(db),
+            "all_tags": await _get_all_tags(db),
             "q": q,
+            "tag": tag,
             "page": page,
             "has_more": has_more,
             "csrf_token": csrf_token,
@@ -284,6 +302,7 @@ async def new_machine_form(
         {
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db, current_user),
+            "all_tags": await _get_all_tags(db),
             "errors": [],
             "form": {
                 "name": request.query_params.get("name", ""),
@@ -309,6 +328,7 @@ async def create_machine(
     secret: str = Form(""),
     group_id: str = Form(""),
     description: str = Form(""),
+    tags: str = Form(""),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     try:
@@ -337,6 +357,7 @@ async def create_machine(
             {
                 "auth_methods": list(AuthMethod),
                 "groups": await _get_groups(db, current_user),
+                "all_tags": await _get_all_tags(db),
                 "errors": [str(exc)],
                 "form": {
                     "name": name,
@@ -383,6 +404,9 @@ async def create_machine(
     db.add(machine)
     await db.commit()
     await db.refresh(machine)
+
+    await set_machine_tags(db, machine, parse_tag_names_from_text(tags))
+    await db.commit()
 
     await log_event(
         db,
@@ -487,6 +511,7 @@ _CONFIG_EXPORT_CSV_FIELDS = (
     "auth_method",
     "group",
     "description",
+    "tags",
     "is_active",
 )
 
@@ -529,6 +554,7 @@ async def export_machine_config_endpoint(
         for machine in export.machines:
             row = machine.model_dump()
             row["auth_method"] = machine.auth_method.value
+            row["tags"] = ", ".join(machine.tags)
             writer.writerow({k: _csv_safe(v) for k, v in row.items()})
         return Response(
             content=buffer.getvalue(),
@@ -1060,6 +1086,7 @@ async def edit_machine_form(
             "active_tab": "settings",
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db, current_user),
+            "all_tags": await _get_all_tags(db),
             "errors": [],
             "csrf_token": csrf_token,
             "global_settings": get_settings(),
@@ -1135,6 +1162,7 @@ async def run_onboarding_endpoint(
             "active_tab": "settings",
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db, current_user),
+            "all_tags": await _get_all_tags(db),
             "errors": [],
             "onboarding_error": error,
             "onboarding_output": output,
@@ -1272,6 +1300,7 @@ async def update_machine(
     facts_refresh_interval_seconds: str = Form(""),
     monitoring_interval_seconds: str = Form(""),
     monitoring_history_retention_days: str = Form(""),
+    tags: str = Form(""),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
@@ -1328,6 +1357,7 @@ async def update_machine(
                 "active_tab": "settings",
                 "auth_methods": list(AuthMethod),
                 "groups": await _get_groups(db, current_user),
+                "all_tags": await _get_all_tags(db),
                 "errors": [str(exc)],
                 "csrf_token": csrf_token,
                 "global_settings": get_settings(),
@@ -1390,6 +1420,7 @@ async def update_machine(
         machine.disks = None
         machine.facts_updated_at = None
 
+    await set_machine_tags(db, machine, parse_tag_names_from_text(tags))
     await db.commit()
 
     await log_event(

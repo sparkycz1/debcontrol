@@ -1088,6 +1088,49 @@ an optional source filter, no new storage. Capped at 500 rows
 avoid the eager-loading cost) so the results page can show which machine
 each hit belongs to without a per-row round trip.
 
+### Machine tags: cross-cutting, independent of the group tree
+
+**Machines → create/edit** has a free-form **Tags** field (comma-
+separated) alongside — not instead of — the existing single-group
+membership: `Machine.group_id` stays a strict one-group-or-none tree
+(`MachineGroup`), while `Machine.tags` is a plain many-to-many
+(`app.db.models.machine_tag.Tag` + the `machine_tags` association table)
+for labels that don't fit or need a place in that tree — `prod`, `web`,
+`praha-dc1`, whatever an operator finds useful — and a machine can carry
+any number of them. The machine list, "All machines", and each group's own
+member list all gained a **tag** filter (`?tag=...`) alongside the
+existing free-text search, and the REST API's `GET /api/v1/machines`
+accepts the same `?tag=` filter.
+
+`app.services.machine_tags` is the only place `Tag`/`machine_tags` rows
+are ever written:
+
+- **Names are normalized on the way in** (lowercased, trimmed, capped at
+  64 chars, de-duplicated) — `normalize_tag_names`/
+  `parse_tag_names_from_text` — the same "normalize once" choice
+  `User.username` already makes, so `Tag.name` needs only a plain unique
+  index, never a case-insensitive one.
+- **A tag is created the first time it's used, and deleted automatically
+  once no machine references it anymore** (`set_machine_tags`, called
+  after every create/edit, on both the web routes and the REST API) —
+  there's no separate "manage tags" page to keep in sync by hand; renaming
+  is "remove the old one, add the new one" on each machine, same as any
+  other field.
+- **Works at the association-table row level, not through the ORM
+  relationship attribute.** `Machine.tags` is mapped `lazy="selectin"`
+  for reads (so it's populated for free whenever a machine loads, the
+  same convention `User.role` uses with `lazy="joined"`), but touching an
+  *unloaded* relationship as plain Python on an `AsyncSession`-managed
+  object raises `MissingGreenlet` regardless of that default — so
+  `set_machine_tags` reads/writes `machine_tags` directly via `select`/
+  `insert`/`delete` against the table, then `db.refresh(machine,
+  attribute_names=["tags"])` so a caller reading `machine.tags` right
+  after sees the new membership, not a stale collection.
+
+Included in machine/group configuration export and import
+(`app.services.machine_config`) — structural data like `description`, not
+a credential, so it needs no special exclusion.
+
 ### Bulk actions from the machine list
 
 **Machines** list checkboxes (system update, check-updates,
