@@ -422,6 +422,193 @@ async def test_api_action_without_permission_is_rejected(client, login_as):
     assert response.status_code == 403
 
 
+async def test_refresh_facts_packages_services_api_dispatch_the_right_tasks(
+    client, db_session_factory, celery_calls
+):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+
+    facts_resp = await client.post(
+        f"/api/v1/machines/{machine_id}/refresh-facts", headers=headers
+    )
+    packages_resp = await client.post(
+        f"/api/v1/machines/{machine_id}/refresh-packages", headers=headers
+    )
+    services_resp = await client.post(
+        f"/api/v1/machines/{machine_id}/refresh-services", headers=headers
+    )
+
+    assert facts_resp.status_code == 200, facts_resp.text
+    assert packages_resp.status_code == 200, packages_resp.text
+    assert services_resp.status_code == 200, services_resp.text
+    assert "app.tasks.jobs.refresh_machine_facts" in celery_calls.names
+    assert "app.tasks.jobs.refresh_machine_packages" in celery_calls.names
+    assert "app.tasks.jobs.refresh_machine_services" in celery_calls.names
+
+
+async def test_refresh_facts_api_reports_task_failure(client, db_session_factory, celery_calls):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+    celery_calls.result_for["app.tasks.jobs.refresh_machine_facts"] = {
+        "ok": False,
+        "error": "boom",
+    }
+
+    response = await client.post(f"/api/v1/machines/{machine_id}/refresh-facts", headers=headers)
+
+    assert response.status_code == 502
+    assert "boom" in response.text
+
+
+async def test_test_connection_api_dispatches_task(client, db_session_factory, celery_calls):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/test-connection", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert celery_calls.names == ["app.tasks.jobs.test_machine_connection"]
+
+
+async def test_discover_host_key_api(client, db_session_factory, monkeypatch):
+    import app.web.routes.api_v1 as api_v1
+
+    machine_id = await _create_machine(client, await _api_token(client), "discover-me")
+    headers = await _api_token(client)
+
+    async def _fake_discover(*args, **kwargs):
+        return "SHA256:" + "a" * 43
+
+    monkeypatch.setattr(api_v1, "discover_host_key_fingerprint", _fake_discover)
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/discover-host-key", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["fingerprint"] == "SHA256:" + "a" * 43
+
+
+async def test_trust_host_key_api_dispatches_facts_and_readiness(
+    client, db_session_factory, celery_calls
+):
+    headers = await _api_token(client)
+    machine_id = await _create_machine(client, headers, "trust-me")
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/trust-host-key",
+        json={"fingerprint": "SHA256:" + "b" * 43},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert "app.tasks.jobs.refresh_machine_facts" in celery_calls.names
+    assert "app.tasks.jobs.check_machine_readiness" in celery_calls.names
+
+
+async def test_trust_host_key_api_rejects_a_malformed_fingerprint(client, db_session_factory):
+    headers = await _api_token(client)
+    machine_id = await _create_machine(client, headers, "trust-bad")
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/trust-host-key",
+        json={"fingerprint": "not a fingerprint"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+
+
+async def test_run_onboarding_api_dispatches_readiness_on_success(
+    client, db_session_factory, celery_calls
+):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/run-onboarding", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert "app.tasks.jobs.run_machine_onboarding" in celery_calls.names
+    assert "app.tasks.jobs.check_machine_readiness" in celery_calls.names
+
+
+async def test_recheck_readiness_api(client, db_session_factory, celery_calls):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/recheck-readiness", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert celery_calls.names == ["app.tasks.jobs.check_machine_readiness"]
+
+
+async def test_logs_api_defaults_to_the_journal(client, db_session_factory, celery_calls):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+
+    response = await client.get(f"/api/v1/machines/{machine_id}/logs", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert celery_calls.names == ["app.tasks.jobs.view_machine_journal"]
+    assert "fake" in response.json()["output"]
+
+
+async def test_logs_api_requires_terminal_permission(client, db_session_factory, login_as):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    await login_as(
+        client, permissions={Permission.MACHINE_VIEW}, api_access_enabled=True
+    )
+    headers = await _api_token(client)
+
+    response = await client.get(f"/api/v1/machines/{machine_id}/logs", headers=headers)
+
+    assert response.status_code == 403
+
+
+async def test_pending_machines_list_and_dismiss_api(client, db_session_factory):
+    from app.db.models.pending_machine import PendingMachine
+
+    async with db_session_factory() as session:
+        pending = PendingMachine(ip_address="10.5.5.5", reported_hostname="fresh-box")
+        session.add(pending)
+        await session.commit()
+        pending_id = pending.id
+
+    headers = await _api_token(client)
+
+    list_resp = await client.get("/api/v1/machines/pending", headers=headers)
+    assert list_resp.status_code == 200
+    assert any(p["id"] == str(pending_id) for p in list_resp.json())
+
+    dismiss_resp = await client.post(
+        f"/api/v1/machines/pending/{pending_id}/dismiss", headers=headers
+    )
+    assert dismiss_resp.status_code == 204
+
+    list_after = await client.get("/api/v1/machines/pending", headers=headers)
+    assert all(p["id"] != str(pending_id) for p in list_after.json())
+
+
 async def test_api_actions_are_audit_logged_with_correct_actor(client, db_session_factory):
     """Verifies the fix to `get_api_token_user` — `request.state.user` is now
     set for `/api/` requests too, so `log_event`'s automatic actor

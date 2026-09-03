@@ -15,19 +15,34 @@ phrase require an explicit `confirm` field here instead (see each route's
 docstring).
 
 What's deliberately still web-UI-only, and why: SSH key rotation
-(`/settings/ssh-key/...`) and LDAP/OIDC configuration are excluded for the
-reasons given in wiki/Architecture.md's "The REST API: read and write,
-mirroring the web UI" section. The interactive SSH terminal
-(`app/web/routes/terminal_ws.py`) is excluded for a different reason: it's
-inherently an interactive, browser-only feature (a live WebSocket relaying
-keystrokes to a PTY and a real terminal emulator's output back) with no
-meaningful "REST" shape to expose — there's nothing here for a script to
-call that would do anything useful without a human typing into it.
+(`/settings/ssh-key/...`), LDAP/OIDC configuration, syslog forwarding, and
+the AI assistant's provider credentials are excluded for the reasons given
+in wiki/Architecture.md's "The REST API: read and write, mirroring the web
+UI" section — each one is either a secret/credential surface or carries a
+lock-out/blast-radius risk that's meant to be handled deliberately, by a
+human, not scriptable. The interactive SSH terminal
+(`app/web/routes/terminal_ws.py`) and the AI assistant's chat
+(`app/web/routes/ai.py`) are excluded for a different reason: both are
+inherently interactive, browser-only features (a live WebSocket relaying
+keystrokes to a PTY and a real terminal emulator's output back; a
+conversational back-and-forth where every proposed action needs an
+explicit human confirmation click) with no meaningful "REST" shape to
+expose — there's nothing here for a script to call that would do anything
+useful without a human driving it. `POST /{id}/run-onboarding-with-
+credential` (a *fresh*, one-time password submitted through the "Fix it"
+flow, not the machine's stored credential) is excluded for the same
+secret-handling reason as SSH key rotation; `POST /{id}/run-onboarding`
+(using the credential already on file) has an API equivalent below. CSV
+bulk import of pending machines is excluded too — a script importing
+machines already has `POST /machines` (or `POST /api/inform` for genuine
+self-registration) and doesn't need a CSV-parsing endpoint of its own.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import re
 import uuid
 from datetime import datetime
 
@@ -51,6 +66,7 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
@@ -71,18 +87,27 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.ssh import logs as ssh_logs
+from app.ssh.client import discover_host_key_fingerprint
+from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
+from app.tasks import jobs as tasks
 from app.tasks.jobs import preview_machine_update, run_machine_update, send_machine_power_command
 
 router = APIRouter(prefix="/api/v1")
 
 _view_machines = Depends(require_api_permission(Permission.MACHINE_VIEW))
 _manage_machines = Depends(require_api_permission(Permission.MACHINE_MANAGE))
+_action_terminal = Depends(require_api_permission(Permission.ACTION_TERMINAL))
 _view_groups = Depends(require_api_permission(Permission.GROUP_VIEW))
 _manage_groups = Depends(require_api_permission(Permission.GROUP_MANAGE))
 _action_updates = Depends(require_api_permission(Permission.ACTION_UPDATES))
 _action_power = Depends(require_api_permission(Permission.ACTION_POWER))
+
+# Fingerprint shaped like "SHA256:<base64...>", as returned by AsyncSSH/OpenSSH
+# — same pattern the web UI's trust-host-key form validates against.
+_FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
 
 _PACKAGE_SEARCH_LIMIT = 500
 _UPDATE_RUNS_PAGE_SIZE = 50
@@ -298,6 +323,65 @@ async def import_machine_config_api(
     return result.to_dict()
 
 
+# --- Pending machines (self-registration review queue) -----------------------
+# Registered here, before `/machines/{machine_id}` below, so "pending" is
+# never swallowed as an attempted (and invalid) machine UUID — FastAPI/
+# Starlette matches path routes in registration order and commits to the
+# first one whose shape fits, same reasoning as `/machines/package-search`
+# and `/machines/config/export` above.
+
+
+def _pending_machine_to_dict(pending: PendingMachine) -> dict[str, object]:
+    return {
+        "id": str(pending.id),
+        "ip_address": pending.ip_address,
+        "reported_hostname": pending.reported_hostname,
+        "os_version": pending.os_version,
+        "kernel_version": pending.kernel_version,
+        "cpu_cores": pending.cpu_cores,
+        "ram_bytes": pending.ram_bytes,
+        "disks": pending.disks,
+        "source_ip": pending.source_ip,
+        "created_at": _isoformat(pending.created_at),
+    }
+
+
+@router.get("/machines/pending", dependencies=[_view_machines])
+async def list_pending_machines_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """Machines that announced themselves via `POST /api/inform` and are
+    awaiting review — see `app.db.models.pending_machine`'s module
+    docstring. Not scoped by machine group: a pending entry isn't a real
+    `Machine` yet, so there's nothing to scope against."""
+    result = await db.execute(select(PendingMachine).order_by(PendingMachine.created_at.desc()))
+    return [_pending_machine_to_dict(p) for p in result.scalars().all()]
+
+
+@router.post("/machines/pending/{pending_id}/dismiss", dependencies=[_manage_machines])
+async def dismiss_pending_machine_api(
+    request: Request,
+    pending_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    pending = await db.get(PendingMachine, pending_id)
+    if pending is not None:
+        await db.delete(pending)
+        await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="machine.pending.dismiss",
+            summary=f'Dismissed pending machine "{pending.ip_address}"',
+            target_type="pending_machine",
+            target_id=pending_id,
+            target_label=pending.ip_address,
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/machines/{machine_id}", dependencies=[_view_machines])
 async def get_machine_api(
     machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
@@ -503,6 +587,364 @@ async def delete_machine_api(
         target_label=machine_name,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Machines: on-demand checks and refreshes --------------------------------
+# Each of these blocks on the same background job the web UI's equivalent
+# button waits for, and returns once it's done rather than requiring the
+# caller to poll — see each web route in `app/web/routes/machines.py` for
+# the identical pattern this mirrors.
+
+
+@router.post("/machines/{machine_id}/test-connection", dependencies=[_manage_machines])
+async def test_connection_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.test_machine_connection.delay(str(machine.id))
+    result: dict[str, object] | None = None
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 5
+        )
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.test_connection",
+        summary=f'Tested connection to "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return result or {"ok": True}
+
+
+@router.post("/machines/{machine_id}/discover-host-key", dependencies=[_manage_machines])
+async def discover_host_key_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    fingerprint: str | None = None
+    error: str | None = None
+    try:
+        fingerprint = await discover_host_key_fingerprint(
+            machine.ip_address, machine.port, settings.ssh_connect_timeout
+        )
+    except SSHConnectionError as exc:
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.host_key.discover",
+        summary=f'Discovered host key fingerprint for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"fingerprint": fingerprint}
+
+
+class _TrustHostKey(BaseModel):
+    fingerprint: str = Field(min_length=1)
+
+
+@router.post("/machines/{machine_id}/trust-host-key", dependencies=[_manage_machines])
+async def trust_host_key_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    payload: _TrustHostKey,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    fingerprint = payload.fingerprint.strip()
+    if not _FINGERPRINT_RE.match(fingerprint):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid fingerprint format."
+        )
+    machine.host_key_fingerprint = fingerprint
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.host_key.trust",
+        summary=f'Trusted host key fingerprint for "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"fingerprint": fingerprint},
+    )
+    # Same follow-up the web UI's equivalent kicks off: an initial facts pass
+    # and a readiness check, both fire-and-forget.
+    tasks.refresh_machine_facts.delay(str(machine.id))
+    tasks.check_machine_readiness.delay(str(machine.id))
+    return {"ok": True}
+
+
+@router.post("/machines/{machine_id}/refresh-facts", dependencies=[_manage_machines])
+async def refresh_facts_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.refresh_machine_facts.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 5
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    if error is None:
+        machine = await _get_machine_or_404(machine_id, db, user)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.facts.refresh",
+        summary=f'Refreshed facts for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return _machine_to_dict(machine)
+
+
+@router.post("/machines/{machine_id}/refresh-packages", dependencies=[_manage_machines])
+async def refresh_packages_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.refresh_machine_packages.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 15
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.packages.refresh",
+        summary=f'Refreshed installed packages for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"ok": True}
+
+
+@router.post("/machines/{machine_id}/refresh-services", dependencies=[_manage_machines])
+async def refresh_services_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.refresh_machine_services.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 15
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.services.refresh",
+        summary=f'Refreshed services for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"ok": True}
+
+
+@router.post("/machines/{machine_id}/run-onboarding", dependencies=[_manage_machines])
+async def run_onboarding_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Runs initial setup using the credential already stored on the
+    machine record. See this module's docstring for why the "Fix it"
+    variant that submits a fresh one-time credential is not exposed here."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.run_machine_onboarding.delay(str(machine.id))
+    error: str | None = None
+    output: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 120
+        )
+        if isinstance(result, dict):
+            if result.get("ok"):
+                output = str(result.get("output") or "")
+            else:
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The setup script did not finish in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.onboarding.run",
+        summary=f'Ran initial setup on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is None:
+        tasks.check_machine_readiness.delay(str(machine.id))
+    else:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"ok": True, "output": output}
+
+
+@router.post("/machines/{machine_id}/recheck-readiness", dependencies=[_manage_machines])
+async def recheck_readiness_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.check_machine_readiness.delay(str(machine.id))
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(async_result.get, timeout=settings.ssh_connect_timeout + 15)
+    return {"ok": True}
+
+
+@router.get("/machines/{machine_id}/logs", dependencies=[_action_terminal])
+async def machine_logs_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    path: str = "",
+    lines: int = ssh_logs.DEFAULT_LINE_LIMIT,
+    search: str = "",
+    since: str = "",
+    until: str = "",
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The API equivalent of `GET /machines/{id}/logs` — journal by default,
+    or one allow-listed file when `path` is given. Gated behind
+    `ACTION_TERMINAL`, same as the web route, not `MACHINE_VIEW` — see
+    `app.ssh.logs`'s module docstring for why. Never stored anywhere."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before viewing logs.",
+        )
+
+    clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
+    output: str | None = None
+    error: str | None = None
+    try:
+        if path.strip():
+            async_result = tasks.view_machine_log_file.delay(
+                str(machine.id), path=path.strip(), lines=clamped_lines, search=search
+            )
+        else:
+            async_result = tasks.view_machine_journal.delay(
+                str(machine.id), lines=clamped_lines, search=search, since=since, until=until
+            )
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 15
+        )
+        if isinstance(result, dict):
+            if result.get("ok"):
+                output = str(result.get("output") or "")
+            else:
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The command did not finish in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.logs.view",
+        summary=(
+            f'Viewed log file "{path.strip()}" on "{machine.name}"'
+            if path.strip()
+            else f'Viewed journal on "{machine.name}"'
+        ),
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"search": search} if search.strip() else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"output": output or ""}
 
 
 # --- Bulk actions (ad-hoc selection from the machine list) ------------------

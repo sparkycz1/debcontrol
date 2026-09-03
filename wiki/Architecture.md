@@ -523,11 +523,14 @@ Only a `user.manage` admin can set the checkbox, from the Users
 
 `/api/v1/...` covers essentially everything doable from the web UI:
 machines (create/update/delete, trigger updates/checks/power, package
-listings, fleet-wide package search), machine groups (create/update/delete,
-membership, group- and "All machines"-scoped actions), the ad-hoc bulk
-actions from the machine list, scheduling (full CRUD plus
-enable/disable/run-now), users and roles (full CRUD), the audit log
-(list/filter/export), and a read-only slice of Settings. Split across
+listings, fleet-wide package search, on-demand test-connection/discover-
+host-key/trust-host-key/refresh-facts/refresh-packages/refresh-services/
+run-onboarding/recheck-readiness/logs, the pending-machines review queue),
+machine groups (create/update/delete, membership, group- and "All
+machines"-scoped actions), the ad-hoc bulk actions from the machine list,
+scheduling (full CRUD plus enable/disable/run-now), users and roles (full
+CRUD), the audit log (list/filter/export), and a read-only slice of
+Settings. Split across
 router modules under `app/web/routes/` (`api_v1.py` for
 machines/groups/bulk, `api_v1_scheduling.py`, `api_v1_users.py`,
 `api_v1_roles.py`, `api_v1_audit.py`, `api_v1_settings.py`,
@@ -558,10 +561,19 @@ mounted under `/api/v1` in `app.main`.
 Deliberately still web-UI-only: **SSH key rotation**
 (`/settings/ssh-key/...`), a multi-step human-paced process designed so the
 app is never locked out of every machine mid-rotation; **LDAP/OIDC
-configuration**, which carries encrypted secrets and changes how every
-login is authenticated; and **syslog forwarding configuration**.
+configuration** and **the AI assistant's provider credentials**, which
+carry encrypted secrets; and **syslog forwarding configuration**.
 `GET /api/v1/settings` exposes only version/commit info, the SSH public
-key/fingerprint, background-check intervals, and audit log retention.
+key/fingerprint, background-check intervals, and audit log retention (all
+read-only — changing any of them, including the retention-policy knobs
+elsewhere on Settings, stays web-UI-only). Also excluded: the **interactive
+SSH terminal** and the **AI assistant's chat**, both inherently interactive
+features with no meaningful REST shape (see `api_v1.py`'s module
+docstring); the "Fix it" onboarding flow that submits a **fresh one-time
+credential** (as opposed to `POST /{id}/run-onboarding`, which reuses the
+credential already on file, and *is* in the API); and **CSV bulk import**
+of pending machines (a script already has `POST /machines` or
+`POST /api/inform`).
 
 #### Interactive docs: Swagger UI at `/api`
 
