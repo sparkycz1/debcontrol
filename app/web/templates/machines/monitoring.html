@@ -3,7 +3,7 @@
 {% from "partials/_services_summary.html" import render as render_services_summary with context %}
 {% from "macros/charts.html" import trend_chart %}
 
-{% block title %}Monitoring — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "monitoring.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {# Rotating palette for series that don't have one fixed color (Load
    average's 1/5/15m lines, one line per network interface/disk/filesystem
@@ -21,10 +21,7 @@
   {% if not machine.monitoring_updated_at and not availability.sample_count %}
     <section class="panel">
       <p class="hint">
-        Not gathered yet — this happens automatically once the host key
-        fingerprint is confirmed on the Overview tab, and refreshes
-        periodically after that (every {{ machine.monitoring_interval_seconds or 'the instance default' }}
-        {{ 'seconds' if machine.monitoring_interval_seconds }}).
+        {{ t(request, "monitoring.not_gathered_yet", interval=(machine.monitoring_interval_seconds or t(request, "monitoring.instance_default")), seconds=(t(request, "monitoring.seconds_suffix") if machine.monitoring_interval_seconds else "")) }}
       </p>
     </section>
   {% else %}
@@ -34,32 +31,29 @@
           <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
-      <noscript><button type="submit" class="button">Apply</button></noscript>
+      <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
     </form>
 
     {% if history.truncated or availability.truncated %}
       <div class="alert alert-warn">
         <p>
-          This machine has more samples in this window than can be shown at
-          once — the graphs below cover the most recent samples rather than
-          the full range. Pick a shorter range, or shorten the retention
-          window in Settings.
+          {{ t(request, "monitoring.truncated_hint") }}
         </p>
       </div>
     {% endif %}
 
-    <p class="hint">Hover (or touch-drag) any chart below to see the value at a point in time.</p>
+    <p class="hint">{{ t(request, "monitoring.hover_hint") }}</p>
 
     {% if machine.monitoring_updated_at %}
       <section class="panel">
-        <h2>CPU</h2>
+        <h2>{{ t(request, "monitoring.cpu.heading") }}</h2>
         {% if history.cpu_percent %}
-          <h3>Utilization</h3>
+          <h3>{{ t(request, "monitoring.cpu.utilization") }}</h3>
           {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_percent}], history.bucket_timestamps, fixed_max=100, unit='%') }}
           <p class="hint">
-            Current: {{ '%.1f' % history.latest_cpu_percent if history.latest_cpu_percent is not none else '—' }}%
+            {{ t(request, "monitoring.current_percent", value=('%.1f' % history.latest_cpu_percent if history.latest_cpu_percent is not none else '—')) }}
           </p>
-          <h3>Load average</h3>
+          <h3>{{ t(request, "monitoring.cpu.load_average") }}</h3>
           {% if history.load1 %}
             {{ trend_chart([
               {'label': '1 min', 'color': palette[0], 'points': history.load1},
@@ -67,42 +61,36 @@
               {'label': '15 min', 'color': palette[2], 'points': history.load15},
             ], history.bucket_timestamps) }}
             <p class="hint">
-              Current:
               {% if history.latest_load1 is not none %}
-                {{ '%.2f' % history.latest_load1 }} / {{ '%.2f' % history.latest_load5 }} / {{ '%.2f' % history.latest_load15 }}
-                (1 / 5 / 15 min — a count of runnable processes, not a percentage; can exceed the machine's core count)
+                {{ t(request, "monitoring.cpu.load_current", load1=('%.2f' % history.latest_load1), load5=('%.2f' % history.latest_load5), load15=('%.2f' % history.latest_load15)) }}
               {% else %}
-                —
+                {{ t(request, "monitoring.current") }} —
               {% endif %}
             </p>
           {% endif %}
         {% else %}
-          <p class="hint">No data in this range.</p>
+          <p class="hint">{{ t(request, "monitoring.no_data") }}</p>
         {% endif %}
       </section>
 
       <section class="panel">
-        <h2>Memory</h2>
+        <h2>{{ t(request, "monitoring.memory.heading") }}</h2>
         {% if history.ram_percent %}
           {{ trend_chart([{'label': 'RAM', 'color': palette[0], 'points': history.ram_percent}], history.bucket_timestamps, fixed_max=100, unit='%') }}
           <p class="hint">
-            Current:
             {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
-              {{ '%.1f GB' % (history.latest_ram_used_bytes / 1073741824) }} used /
-              {{ '%.1f GB' % ((history.latest_ram_total_bytes - history.latest_ram_used_bytes) / 1073741824) }} available
-              (of {{ '%.1f GB' % (history.latest_ram_total_bytes / 1073741824) }},
-              {{ '%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100) }}% used)
+              {{ t(request, "monitoring.memory.current", used=('%.1f GB' % (history.latest_ram_used_bytes / 1073741824)), available=('%.1f GB' % ((history.latest_ram_total_bytes - history.latest_ram_used_bytes) / 1073741824)), total=('%.1f GB' % (history.latest_ram_total_bytes / 1073741824)), percent=('%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100))) }}
             {% else %}
-              —
+              {{ t(request, "monitoring.current") }} —
             {% endif %}
           </p>
         {% else %}
-          <p class="hint">No data in this range.</p>
+          <p class="hint">{{ t(request, "monitoring.no_data") }}</p>
         {% endif %}
       </section>
 
       <section class="panel">
-        <h2>Network</h2>
+        <h2>{{ t(request, "monitoring.network.heading") }}</h2>
         {% if history.network_rate_by_iface %}
           {% for iface, series in history.network_rate_by_iface.items() %}
             {% set current = history.latest_network_io.get(iface) %}
@@ -110,47 +98,46 @@
             {{ trend_chart([{'label': iface, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, bytes_rate=True) }}
             <p class="hint">
               {% if current %}
-                rx {{ '%.1f GB' % (current.rx_bytes / 1073741824) }} / tx {{ '%.1f GB' % (current.tx_bytes / 1073741824) }} total since boot
+                {{ t(request, "monitoring.network.current", rx=('%.1f GB' % (current.rx_bytes / 1073741824)), tx=('%.1f GB' % (current.tx_bytes / 1073741824))) }}
               {% else %}
                 —
               {% endif %}
             </p>
           {% endfor %}
         {% else %}
-          <p class="hint">No network interfaces found.</p>
+          <p class="hint">{{ t(request, "monitoring.network.none_found") }}</p>
         {% endif %}
       </section>
 
       <section class="panel">
-        <h2>Disk</h2>
+        <h2>{{ t(request, "monitoring.disk.heading") }}</h2>
         {% if history.disk_rate_by_device %}
-          <h3>I/O throughput</h3>
+          <h3>{{ t(request, "monitoring.disk.io_throughput") }}</h3>
           {% for device, series in history.disk_rate_by_device.items() %}
             {% set current = history.latest_disk_io.get(device) %}
             <h4><code>{{ device }}</code></h4>
             {{ trend_chart([{'label': device, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, bytes_rate=True) }}
             <p class="hint">
               {% if current %}
-                read {{ '%.1f GB' % (current.read_bytes / 1073741824) }} / write {{ '%.1f GB' % (current.write_bytes / 1073741824) }} total since boot
+                {{ t(request, "monitoring.disk.io_current", read=('%.1f GB' % (current.read_bytes / 1073741824)), write=('%.1f GB' % (current.write_bytes / 1073741824))) }}
               {% else %}
                 —
               {% endif %}
             </p>
           {% endfor %}
         {% else %}
-          <p class="hint">No disks found.</p>
+          <p class="hint">{{ t(request, "monitoring.disk.none_found") }}</p>
         {% endif %}
 
         {% if history.filesystem_usage_by_mount %}
-          <h3>Usage</h3>
+          <h3>{{ t(request, "monitoring.disk.usage") }}</h3>
           {% for mount, series in history.filesystem_usage_by_mount.items() %}
             {% set current = history.latest_filesystems.get(mount) %}
             <h4><code>{{ mount }}</code></h4>
             {{ trend_chart([{'label': mount, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, fixed_max=100, unit='%') }}
             <p class="hint">
               {% if current %}
-                {{ '%.1f GB' % (current.used_bytes / 1073741824) }} used of
-                {{ '%.1f GB' % (current.size_bytes / 1073741824) }}
+                {{ t(request, "monitoring.disk.usage_current", used=('%.1f GB' % (current.used_bytes / 1073741824)), size=('%.1f GB' % (current.size_bytes / 1073741824))) }}
                 {% if current.use_percent is not none %}({{ current.use_percent }}%){% endif %}
               {% else %}
                 —
@@ -158,41 +145,38 @@
             </p>
           {% endfor %}
         {% else %}
-          <p class="hint">No filesystem usage data in this range.</p>
+          <p class="hint">{{ t(request, "monitoring.disk.no_usage_data") }}</p>
         {% endif %}
       </section>
     {% endif %}
 
     {% if availability.sample_count %}
       <section class="panel">
-        <h2>Availability</h2>
+        <h2>{{ t(request, "monitoring.availability.heading") }}</h2>
         <p class="hint">
-          A plain TCP connect to the SSH port, checked every
-          {{ machine.reachability_check_interval_seconds or 'the instance default' }}
-          {{ 'seconds' if machine.reachability_check_interval_seconds }} — not ICMP ping, since
-          a host can block ICMP while still serving SSH just fine (and vice versa).
+          {{ t(request, "monitoring.availability.hint", interval=(machine.reachability_check_interval_seconds or t(request, "monitoring.instance_default")), seconds=(t(request, "monitoring.seconds_suffix") if machine.reachability_check_interval_seconds else "")) }}
         </p>
         {% if availability.uptime_percent %}
-          <h3>Uptime</h3>
+          <h3>{{ t(request, "monitoring.availability.uptime") }}</h3>
           {{ trend_chart([{'label': 'Uptime', 'color': palette[1], 'points': availability.uptime_percent}], availability.bucket_timestamps, fixed_max=100, unit='%') }}
           <p class="hint">
-            Latest check:
             {% if availability.latest_reachable is not none %}
+              {{ t(request, "monitoring.availability.latest_check") }}
               <span class="badge {{ 'badge-ok' if availability.latest_reachable else 'badge-error' }}">
-                {{ 'reachable' if availability.latest_reachable else 'unreachable' }}
+                {{ t(request, "monitoring.availability.reachable") if availability.latest_reachable else t(request, "monitoring.availability.unreachable") }}
               </span>
               {% if availability.latest_checked_at %}({{ availability.latest_checked_at | local_time('%Y-%m-%d %H:%M %Z') }}){% endif %}
             {% else %}
-              —
+              {{ t(request, "monitoring.availability.latest_check") }} —
             {% endif %}
           </p>
         {% endif %}
         {% if availability.latency_ms %}
-          <h3>Connect latency</h3>
+          <h3>{{ t(request, "monitoring.availability.latency") }}</h3>
           {{ trend_chart([{'label': 'Latency', 'color': palette[0], 'points': availability.latency_ms}], availability.bucket_timestamps, unit='ms') }}
           <p class="hint">
-            Current:
-            {{ '%.0f ms' % availability.latest_latency_ms if availability.latest_latency_ms is not none else '— (unreachable)' }}
+            {{ t(request, "monitoring.current") }}
+            {{ '%.0f ms' % availability.latest_latency_ms if availability.latest_latency_ms is not none else t(request, "monitoring.availability.unreachable_dash") }}
           </p>
         {% endif %}
       </section>
@@ -204,7 +188,7 @@
       </section>
 
       <p class="hint">
-        Last sample {{ machine.monitoring_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
+        {{ t(request, "monitoring.last_sample", when=(machine.monitoring_updated_at | local_time('%Y-%m-%d %H:%M %Z'))) }}
       </p>
     {% endif %}
   {% endif %}
@@ -212,19 +196,19 @@
   <div id="services-modal" popover class="modal">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2 class="modal-title">Services — {{ machine.name }}</h2>
+        <h2 class="modal-title">{{ t(request, "monitoring.services_modal_title", name=(machine.name | e)) | safe }}</h2>
         <button
           type="button"
           class="modal-close"
           popovertarget="services-modal"
           popovertargetaction="hide"
-          aria-label="Close"
+          aria-label="{{ t(request, 'settings.ai.close') }}"
         >
           &times;
         </button>
       </div>
       <div id="services-panel" class="modal-body">
-        <p class="hint">Loading…</p>
+        <p class="hint">{{ t(request, "machine.loading") }}</p>
       </div>
     </div>
   </div>
