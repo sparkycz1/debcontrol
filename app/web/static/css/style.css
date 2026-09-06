@@ -652,13 +652,26 @@ p { margin: 0 0 var(--space-3); }
   font-size: 0.95rem;
 }
 
-/* --- Machine list display modes (Table / List / Cards) — see
-   app/web/templates/machines/list.html and MACHINES_VIEW_COOKIE_NAME in
-   app.web.routes.machines. --- */
+/* --- The machine list's combined search/filter/display-mode toolbar —
+   one visually distinct bar instead of loose floating controls. --- */
+.machines-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.machines-toolbar .search-form { margin-bottom: 0; flex: 1 1 auto; }
+
 .view-mode-toggle {
   display: flex;
   gap: var(--space-1);
-  margin-bottom: var(--space-4);
+  flex-shrink: 0;
 }
 .view-mode-toggle .button,
 .view-mode-toggle .button-secondary {
@@ -706,11 +719,12 @@ p { margin: 0 0 var(--space-3); }
   gap: var(--space-2);
   padding: var(--space-4);
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
-.machine-card:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); }
+.machine-card:hover { border-color: var(--color-accent); box-shadow: var(--shadow-md); }
 .machine-card-header {
   display: flex;
   align-items: center;

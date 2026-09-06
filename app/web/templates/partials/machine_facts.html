@@ -49,12 +49,6 @@
     </dd>
     <dt>Last refreshed</dt><dd>{{ machine.facts_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}</dd>
   </dl>
-  <p class="hint">
-    Filesystem usage moved to the
-    <a href="/machines/{{ machine.id }}/monitoring">Monitoring</a> tab's
-    Disk category, where it's tracked over time rather than just the
-    latest reading.
-  </p>
 {% endif %}
 
 <button

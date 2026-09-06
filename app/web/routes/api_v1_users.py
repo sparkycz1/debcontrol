@@ -20,9 +20,16 @@ from app.auth.login import count_active_users_with_permission
 from app.auth.security import hash_password
 from app.auth.sessions import revoke_all_sessions_for_user
 from app.db.models.role import Permission, Role
+from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
 from app.db.models.user import AuthProvider, User, role_has_permission
 from app.db.session import get_db
 from app.schemas.user import MIN_PASSWORD_LENGTH, UserCreate, UserUpdate
+from app.services.temporary_permissions import (
+    MAX_GRANT_HOURS,
+    grant_temporary_permission,
+    list_temporary_grants,
+    revoke_temporary_grant,
+)
 
 router = APIRouter(prefix="/api/v1/users")
 
@@ -330,5 +337,101 @@ async def delete_user_api(
         target_type="user",
         target_id=user_id,
         target_label=username,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _grant_to_dict(grant: TemporaryPermissionGrant) -> dict[str, object]:
+    return {
+        "id": str(grant.id),
+        "permission": grant.permission.value,
+        "granted_by_id": str(grant.granted_by_id) if grant.granted_by_id else None,
+        "granted_at": grant.granted_at.isoformat(),
+        "expires_at": grant.expires_at.isoformat(),
+        "revoked_at": grant.revoked_at.isoformat() if grant.revoked_at else None,
+        "is_active": grant.is_active,
+    }
+
+
+@router.get("/{user_id}/temporary-permissions", dependencies=[_manage])
+async def list_temporary_permissions_api(
+    user_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> list[dict[str, object]]:
+    await _get_user_or_404(user_id, db)
+    grants = await list_temporary_grants(db, user_id)
+    return [_grant_to_dict(g) for g in grants]
+
+
+class _GrantTemporaryPermission(BaseModel):
+    permission: Permission
+    hours: int = Field(gt=0, le=MAX_GRANT_HOURS)
+
+
+@router.post(
+    "/{user_id}/temporary-permissions",
+    dependencies=[_manage],
+    status_code=status.HTTP_201_CREATED,
+)
+async def grant_temporary_permission_api(
+    request: Request,
+    user_id: uuid.UUID,
+    payload: _GrantTemporaryPermission,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_api_permission(Permission.USER_MANAGE)),
+) -> dict[str, object]:
+    """A permission on top of whatever the account's role already grants,
+    expiring on its own after `hours` — see
+    `app.services.temporary_permissions` and `User.has_permission`."""
+    user = await _get_user_or_404(user_id, db)
+    grant = await grant_temporary_permission(
+        db,
+        user_id=user.id,
+        permission=payload.permission,
+        hours=payload.hours,
+        granted_by_id=current_user.id,
+    )
+    await log_event(
+        db,
+        request=request,
+        action="user.temporary_permission.grant",
+        summary=(
+            f'Granted "{user.username}" {payload.permission.value} for {payload.hours}h '
+            f'(until {grant.expires_at.strftime("%Y-%m-%d %H:%M UTC")})'
+        ),
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+        details={
+            "permission": payload.permission.value,
+            "hours": payload.hours,
+            "expires_at": grant.expires_at.isoformat(),
+        },
+    )
+    return _grant_to_dict(grant)
+
+
+@router.delete("/{user_id}/temporary-permissions/{grant_id}", dependencies=[_manage])
+async def revoke_temporary_permission_api(
+    request: Request,
+    user_id: uuid.UUID,
+    grant_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    user = await _get_user_or_404(user_id, db)
+    grant = await revoke_temporary_grant(db, user_id=user.id, grant_id=grant_id)
+    if grant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active temporary permission grant with that id.",
+        )
+    await log_event(
+        db,
+        request=request,
+        action="user.temporary_permission.revoke",
+        summary=f'Revoked "{user.username}"\'s temporary {grant.permission.value} early',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+        details={"permission": grant.permission.value},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

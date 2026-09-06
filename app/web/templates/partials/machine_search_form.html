@@ -1,29 +1,29 @@
 <form method="get" class="search-form">
   <input type="search" name="q" value="{{ q }}"
-         placeholder="Search by name, IP, hostname, OS version, username, notes...">
+         placeholder="{{ t(request, 'machines.search.placeholder') }}">
   {% if all_tags is defined %}
     {% if tag_mode is defined %}
       {# The machine list: multiple tags at once, AND/OR — `tag` is a list. #}
-      <select name="tag" multiple aria-label="Filter by tag (ctrl/cmd-click for more than one)"
-              size="{{ [[all_tags | length, 5] | min, 1] | max }}">
+      <select name="tag" multiple aria-label="{{ t(request, 'machines.tag.filter_label') }}"
+              size="{{ [[all_tags | length, 5] | min, 3] | max }}">
         {% for existing_tag in all_tags %}
           <option value="{{ existing_tag.name }}" {% if existing_tag.name in tag %}selected{% endif %}>{{ existing_tag.name }}</option>
         {% endfor %}
       </select>
-      <select name="tag_mode" aria-label="Match any or all selected tags">
-        <option value="or" {% if tag_mode != 'and' %}selected{% endif %}>any selected tag</option>
-        <option value="and" {% if tag_mode == 'and' %}selected{% endif %}>all selected tags</option>
+      <select name="tag_mode" aria-label="{{ t(request, 'machines.tag.filter_label') }}">
+        <option value="or" {% if tag_mode != 'and' %}selected{% endif %}>{{ t(request, 'machines.tag.mode_or') }}</option>
+        <option value="and" {% if tag_mode == 'and' %}selected{% endif %}>{{ t(request, 'machines.tag.mode_and') }}</option>
       </select>
     {% else %}
       {# Machine groups' "All machines"/group pages: one tag — `tag` is a string. #}
-      <select name="tag" aria-label="Filter by tag">
-        <option value="">All tags</option>
+      <select name="tag" aria-label="{{ t(request, 'machines.tag.filter_label') }}">
+        <option value="">{{ t(request, 'machines.tag.all') }}</option>
         {% for existing_tag in all_tags %}
           <option value="{{ existing_tag.name }}" {% if tag == existing_tag.name %}selected{% endif %}>{{ existing_tag.name }}</option>
         {% endfor %}
       </select>
     {% endif %}
   {% endif %}
-  <button type="submit" class="button">Search</button>
-  {% if q or tag %}<a class="button button-secondary" href="{{ request.url.path }}">Clear</a>{% endif %}
+  <button type="submit" class="button">{{ t(request, 'machines.search.submit') }}</button>
+  {% if q or tag %}<a class="button button-secondary" href="{{ request.url.path }}">{{ t(request, 'machines.search.clear') }}</a>{% endif %}
 </form>

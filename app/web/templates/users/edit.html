@@ -18,6 +18,10 @@
     </div>
   {% endif %}
 
+  {% if request.query_params.get('perm_error') %}
+    <div class="alert alert-error"><p>{{ request.query_params.get('perm_error') }}</p></div>
+  {% endif %}
+
   <section class="panel">
     <form method="post" action="/users/{{ target_user.id }}/edit" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -100,6 +104,85 @@
       </form>
     </section>
   {% endif %}
+
+  <section class="panel">
+    <h2>Temporary permissions</h2>
+    <p class="hint">
+      A permission on top of whatever the account's role already grants —
+      e.g. "terminal access for 2 hours" — that lapses on its own, no
+      separate revoke step needed unless you want to end it early.
+    </p>
+
+    {% set active_grants = temporary_grants | selectattr('is_active') | list %}
+    {% if active_grants %}
+      <table class="data-table">
+        <thead>
+          <tr><th>Permission</th><th>Granted by</th><th>Expires</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for grant in active_grants %}
+            <tr>
+              <td><code>{{ grant.permission.value }}</code></td>
+              <td>{{ grant.granted_by.username if grant.granted_by else '—' }}</td>
+              <td>{{ grant.expires_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
+              <td>
+                <form method="post"
+                      action="/users/{{ target_user.id }}/temporary-permissions/{{ grant.id }}/revoke"
+                      class="inline-form" data-confirm="End this temporary permission now?">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button button-danger">Revoke</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">No active temporary permissions.</p>
+    {% endif %}
+
+    <form method="post" action="/users/{{ target_user.id }}/temporary-permissions"
+          class="form stack-gap" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="temp_permission">Permission</label>
+      <select id="temp_permission" name="permission" required>
+        {% for perm in all_permissions %}
+          <option value="{{ perm.value }}">{{ perm.value }}</option>
+        {% endfor %}
+      </select>
+      <label for="temp_hours">Duration (hours)</label>
+      <input type="number" id="temp_hours" name="hours" min="1" max="{{ max_grant_hours }}"
+             value="2" required>
+      <button type="submit" class="button">Grant</button>
+    </form>
+
+    {% if temporary_grants | rejectattr('is_active') | list %}
+      <details class="stack-gap">
+        <summary>History (expired/revoked)</summary>
+        <table class="data-table">
+          <thead>
+            <tr><th>Permission</th><th>Granted by</th><th>Granted</th><th>Ended</th></tr>
+          </thead>
+          <tbody>
+            {% for grant in temporary_grants | rejectattr('is_active') | list %}
+              <tr>
+                <td><code>{{ grant.permission.value }}</code></td>
+                <td>{{ grant.granted_by.username if grant.granted_by else '—' }}</td>
+                <td>{{ grant.granted_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
+                <td>
+                  {% if grant.revoked_at %}
+                    revoked {{ grant.revoked_at | local_time('%Y-%m-%d %H:%M %Z') }}
+                  {% else %}
+                    expired {{ grant.expires_at | local_time('%Y-%m-%d %H:%M %Z') }}
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    {% endif %}
+  </section>
 
   <section class="panel">
     <h2>Sessions</h2>

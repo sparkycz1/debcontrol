@@ -29,6 +29,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     ScheduledTask,
     SSHIdentity,
     Tag,
+    TemporaryPermissionGrant,
     TotpRecoveryCode,
     User,
     UserSession,

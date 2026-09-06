@@ -34,6 +34,7 @@ from app.db.pg_enum import pg_enum
 
 if TYPE_CHECKING:
     from app.db.models.api_token import ApiToken
+    from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
     from app.db.models.totp_recovery_code import TotpRecoveryCode
     from app.db.models.user_session import UserSession
     from app.db.models.webauthn_credential import WebAuthnCredential
@@ -55,20 +56,30 @@ _MANAGE_IMPLIES_VIEW: dict[Permission, Permission] = {
 }
 
 
-def role_has_permission(role: Role, permission: Permission) -> bool:
-    """The check behind `User.has_permission`, taking a `Role` directly —
-    used where there's a role to check against but no (or not yet a saved)
-    `User` row, e.g. `app/web/routes/users.py` simulating "if this user's
-    role were changed to X, would they still have `user.manage`?" before
-    committing a change that might remove the last account able to grant it
-    back."""
-    granted = role.permissions
+def _permission_granted(
+    granted: frozenset[Permission] | set[Permission], permission: Permission
+) -> bool:
+    """Shared by `role_has_permission` and `User.has_permission` — does
+    `granted` (a role's own permissions, optionally unioned with a user's
+    active temporary grants) cover `permission`, directly or via a MANAGE
+    permission that implies it?"""
     if permission in granted:
         return True
     implying_manage = next(
         (manage for manage, view in _MANAGE_IMPLIES_VIEW.items() if view == permission), None
     )
     return implying_manage is not None and implying_manage in granted
+
+
+def role_has_permission(role: Role, permission: Permission) -> bool:
+    """The check behind `User.has_permission`, taking a `Role` directly —
+    used where there's a role to check against but no (or not yet a saved)
+    `User` row, e.g. `app/web/routes/users.py` simulating "if this user's
+    role were changed to X, would they still have `user.manage`?" before
+    committing a change that might remove the last account able to grant it
+    back. Never considers temporary grants — those are per-user, not
+    per-role, so there's nothing here for a role-only check to see."""
+    return _permission_granted(role.permissions, permission)
 
 
 class User(Base):
@@ -153,6 +164,15 @@ class User(Base):
     api_tokens: Mapped[list[ApiToken]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    # lazy="selectin": same convention as Role.permission_grants — always
+    # loaded alongside the user, so `has_permission` below stays a plain
+    # in-memory check with no extra query of its own, on every request.
+    temporary_permission_grants: Mapped[list[TemporaryPermissionGrant]] = relationship(
+        back_populates="user",
+        foreign_keys="TemporaryPermissionGrant.user_id",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -160,9 +180,18 @@ class User(Base):
     )
 
     def has_permission(self, permission: Permission) -> bool:
-        """Does this user's role grant `permission` — directly, or via a
-        MANAGE permission that implies it?"""
-        return role_has_permission(self.role, permission)
+        """Does this user's role grant `permission` — directly, via a
+        MANAGE permission that implies it, or via a currently-active
+        `TemporaryPermissionGrant` (see that model) — a time-limited,
+        per-account permission on top of whatever the role already
+        grants, checked live against `expires_at`/`revoked_at` rather
+        than needing a background job to "turn one off"."""
+        granted = set(self.role.permissions) | self.active_temporary_permissions
+        return _permission_granted(granted, permission)
+
+    @property
+    def active_temporary_permissions(self) -> set[Permission]:
+        return {g.permission for g in self.temporary_permission_grants if g.is_active}
 
     @property
     def is_locked_out(self) -> bool:

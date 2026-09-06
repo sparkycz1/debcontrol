@@ -40,6 +40,66 @@
     "account.profile.display_name": "Display name",
     "account.language.heading": "Language",
     "account.language.label": "UI language",
-    "account.language.help": "Only affects your own account — everyone else keeps their own choice (or the default, English)."
+    "account.language.help": "Only affects your own account — everyone else keeps their own choice (or the default, English).",
+
+    "machines.title": "Machines",
+    "machines.actions.package_search": "Package search",
+    "machines.actions.bulk_import": "Bulk import",
+    "machines.actions.export_json": "Export config (JSON)",
+    "machines.actions.export_csv": "Export config (CSV)",
+    "machines.actions.import_config": "Import config",
+    "machines.actions.add": "Add machine",
+
+    "machines.pending.heading": "Pending machines",
+    "machines.pending.description": "Self-registered via POST /api/inform — not yet added, not trusted for anything. Review each entry and either add it (you'll still go through the normal host-key confirmation flow) or dismiss it.",
+    "machines.pending.ip": "IP address",
+    "machines.pending.hostname": "Reported hostname",
+    "machines.pending.os": "OS",
+    "machines.pending.seen": "Seen",
+    "machines.pending.use_this": "Use this",
+    "machines.pending.dismiss": "Dismiss",
+
+    "machines.view.table": "Table",
+    "machines.view.list": "List",
+    "machines.view.cards": "Cards",
+
+    "machines.search.placeholder": "Search by name, IP, hostname, OS version, username, notes...",
+    "machines.search.submit": "Search",
+    "machines.search.clear": "Clear",
+    "machines.tag.all": "All tags",
+    "machines.tag.filter_label": "Filter by tag",
+    "machines.tag.mode_or": "any selected tag",
+    "machines.tag.mode_and": "all selected tags",
+
+    "machines.save_view.placeholder": "Name this view…",
+    "machines.save_view.submit": "Save this view",
+    "machines.save_view.duplicate": "You already have a saved view with that name.",
+
+    "machines.empty.no_match": "No machines match \"{query}\".",
+    "machines.empty.no_filter_match": "No machines match this filter.",
+    "machines.empty.none_yet": "No managed machines yet.",
+    "machines.empty.add_first": "Add your first machine",
+
+    "machines.table.name": "Name",
+    "machines.table.ip": "IP address",
+    "machines.table.hostname": "Hostname",
+    "machines.table.group": "Group",
+    "machines.table.status": "Status",
+    "machines.table.updates": "Updates",
+    "machines.table.host_key": "Host key",
+    "machines.table.details": "Details",
+
+    "machines.bulk.with_selected": "With selected:",
+    "machines.bulk.check_updates": "Check for updates",
+    "machines.bulk.run_update": "Run update",
+    "machines.bulk.reboot": "Reboot",
+    "machines.bulk.shutdown": "Shut down",
+    "machines.bulk.tags_placeholder": "tag1, tag2…",
+    "machines.bulk.add_tags": "Add tags",
+    "machines.bulk.remove_tags": "Remove tags",
+
+    "machines.pagination.previous": "Previous",
+    "machines.pagination.next": "Next",
+    "machines.power_skipped": "{count} selected machine(s) skipped — no confirmed host key yet."
   }
 }

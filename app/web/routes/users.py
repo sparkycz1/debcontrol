@@ -18,6 +18,7 @@ existing `user.manage` rather than a `Permission` of its own — see
 from __future__ import annotations
 
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -42,6 +43,12 @@ from app.services.access_scope import (
     allowed_group_ids,
     group_names_for,
     set_group_access,
+)
+from app.services.temporary_permissions import (
+    MAX_GRANT_HOURS,
+    grant_temporary_permission,
+    list_temporary_grants,
+    revoke_temporary_grant,
 )
 from app.web.templating import templates
 
@@ -275,6 +282,9 @@ async def edit_user_form(
             "auth_providers": list(AuthProvider),
             "all_groups": await _get_all_groups(db),
             "selected_group_ids": [str(gid) for gid in (await allowed_group_ids(db, user) or [])],
+            "all_permissions": list(Permission),
+            "temporary_grants": await list_temporary_grants(db, user.id),
+            "max_grant_hours": MAX_GRANT_HOURS,
             "errors": [],
             "csrf_token": request.state.csrf_token,
         },
@@ -428,6 +438,93 @@ async def update_user(
     if group_access_changed:
         await _log_group_access_change(db, request, user, scoped_group_ids)
     return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{user_id}/temporary-permissions", dependencies=[Depends(verify_csrf)])
+async def grant_temporary_permission_endpoint(
+    request: Request,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    permission: str = Form(...),
+    hours: str = Form(...),
+) -> Response:
+    """"Časově omezený přístup" — a temporary permission on top of
+    whatever the account's role already grants, expiring on its own after
+    `hours` (see `app.services.temporary_permissions` and
+    `User.has_permission`). No confirmation phrase needed: unlike a
+    permanent role change, this already carries its own built-in undo."""
+    user = await _get_user_or_404(user_id, db)
+
+    def _error_redirect(message: str) -> Response:
+        return RedirectResponse(
+            url=f"/users/{user.id}/edit?perm_error={quote(message, safe='')}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    try:
+        parsed_permission = Permission(permission)
+    except ValueError:
+        return _error_redirect("Unknown permission.")
+    try:
+        parsed_hours = int(hours)
+        if not (0 < parsed_hours <= MAX_GRANT_HOURS):
+            raise ValueError
+    except ValueError:
+        return _error_redirect(
+            f"Duration must be a whole number of hours, 1-{MAX_GRANT_HOURS}."
+        )
+
+    grant = await grant_temporary_permission(
+        db,
+        user_id=user.id,
+        permission=parsed_permission,
+        hours=parsed_hours,
+        granted_by_id=current_user.id,
+    )
+    await log_event(
+        db,
+        request=request,
+        action="user.temporary_permission.grant",
+        summary=(
+            f'Granted "{user.username}" {parsed_permission.value} for {parsed_hours}h '
+            f'(until {grant.expires_at.strftime("%Y-%m-%d %H:%M UTC")})'
+        ),
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+        details={
+            "permission": parsed_permission.value,
+            "hours": parsed_hours,
+            "expires_at": grant.expires_at.isoformat(),
+        },
+    )
+    return RedirectResponse(url=f"/users/{user.id}/edit", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post(
+    "/{user_id}/temporary-permissions/{grant_id}/revoke", dependencies=[Depends(verify_csrf)]
+)
+async def revoke_temporary_permission_endpoint(
+    request: Request,
+    user_id: uuid.UUID,
+    grant_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    user = await _get_user_or_404(user_id, db)
+    grant = await revoke_temporary_grant(db, user_id=user.id, grant_id=grant_id)
+    if grant is not None:
+        await log_event(
+            db,
+            request=request,
+            action="user.temporary_permission.revoke",
+            summary=f'Revoked "{user.username}"\'s temporary {grant.permission.value} early',
+            target_type="user",
+            target_id=user.id,
+            target_label=user.username,
+            details={"permission": grant.permission.value},
+        )
+    return RedirectResponse(url=f"/users/{user.id}/edit", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{user_id}/reset-password", dependencies=[Depends(verify_csrf)])

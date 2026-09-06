@@ -40,6 +40,66 @@
     "account.profile.display_name": "Zobrazované jméno",
     "account.language.heading": "Jazyk",
     "account.language.label": "Jazyk rozhraní",
-    "account.language.help": "Ovlivňuje jen tvůj vlastní účet — ostatní si zachovají svou vlastní volbu (nebo výchozí angličtinu)."
+    "account.language.help": "Ovlivňuje jen tvůj vlastní účet — ostatní si zachovají svou vlastní volbu (nebo výchozí angličtinu).",
+
+    "machines.title": "Zařízení",
+    "machines.actions.package_search": "Vyhledávání balíčků",
+    "machines.actions.bulk_import": "Hromadný import",
+    "machines.actions.export_json": "Export konfigurace (JSON)",
+    "machines.actions.export_csv": "Export konfigurace (CSV)",
+    "machines.actions.import_config": "Import konfigurace",
+    "machines.actions.add": "Přidat zařízení",
+
+    "machines.pending.heading": "Čekající zařízení",
+    "machines.pending.description": "Zaregistrováno samo přes POST /api/inform — ještě nepřidáno, zatím nedůvěryhodné. Každý záznam buď přidej (i tak projdeš normální potvrzení klíče hostitele), nebo zamítni.",
+    "machines.pending.ip": "IP adresa",
+    "machines.pending.hostname": "Nahlášený hostname",
+    "machines.pending.os": "OS",
+    "machines.pending.seen": "Zjištěno",
+    "machines.pending.use_this": "Použít",
+    "machines.pending.dismiss": "Zamítnout",
+
+    "machines.view.table": "Tabulka",
+    "machines.view.list": "Seznam",
+    "machines.view.cards": "Karty",
+
+    "machines.search.placeholder": "Hledat podle jména, IP, hostname, verze OS, uživatele, poznámek...",
+    "machines.search.submit": "Hledat",
+    "machines.search.clear": "Zrušit filtr",
+    "machines.tag.all": "Všechny štítky",
+    "machines.tag.filter_label": "Filtrovat podle štítku",
+    "machines.tag.mode_or": "kterýkoli vybraný štítek",
+    "machines.tag.mode_and": "všechny vybrané štítky",
+
+    "machines.save_view.placeholder": "Pojmenuj tento pohled…",
+    "machines.save_view.submit": "Uložit pohled",
+    "machines.save_view.duplicate": "Pohled s tímto názvem už máš uložený.",
+
+    "machines.empty.no_match": "Žádná zařízení neodpovídají \"{query}\".",
+    "machines.empty.no_filter_match": "Žádná zařízení neodpovídají tomuto filtru.",
+    "machines.empty.none_yet": "Zatím žádná spravovaná zařízení.",
+    "machines.empty.add_first": "Přidat první zařízení",
+
+    "machines.table.name": "Název",
+    "machines.table.ip": "IP adresa",
+    "machines.table.hostname": "Hostname",
+    "machines.table.group": "Skupina",
+    "machines.table.status": "Stav",
+    "machines.table.updates": "Aktualizace",
+    "machines.table.host_key": "Klíč hostitele",
+    "machines.table.details": "Detail",
+
+    "machines.bulk.with_selected": "S vybranými:",
+    "machines.bulk.check_updates": "Zkontrolovat aktualizace",
+    "machines.bulk.run_update": "Spustit aktualizaci",
+    "machines.bulk.reboot": "Restartovat",
+    "machines.bulk.shutdown": "Vypnout",
+    "machines.bulk.tags_placeholder": "štítek1, štítek2…",
+    "machines.bulk.add_tags": "Přidat štítky",
+    "machines.bulk.remove_tags": "Odebrat štítky",
+
+    "machines.pagination.previous": "Předchozí",
+    "machines.pagination.next": "Další",
+    "machines.power_skipped": "{count} vybraných zařízení přeskočeno — zatím bez potvrzeného klíče hostitele."
   }
 }

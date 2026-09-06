@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/_os_badge.html" import render as render_os_badge %}
 
-{% block title %}Machines — debcontrol{% endblock %}
+{% block title %}{{ t(request, 'machines.title') }} — debcontrol{% endblock %}
 
 {% macro status_badge(machine) %}
   {% if machine.is_reachable is none %}
@@ -48,34 +48,30 @@
 
 {% block content %}
   <div class="page-header">
-    <h1>Machines</h1>
+    <h1>{{ t(request, 'machines.title') }}</h1>
     <div class="page-header-actions">
-      <a class="button button-secondary" href="/machines/package-search">Package search</a>
-      <a class="button button-secondary" href="/machines/import">Bulk import</a>
+      <a class="button button-secondary" href="/machines/package-search">{{ t(request, 'machines.actions.package_search') }}</a>
+      <a class="button button-secondary" href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
       <a class="button button-secondary"
-         href="/machines/config/export?format=json">Export config (JSON)</a>
+         href="/machines/config/export?format=json">{{ t(request, 'machines.actions.export_json') }}</a>
       <a class="button button-secondary"
-         href="/machines/config/export?format=csv">Export config (CSV)</a>
-      <a class="button button-secondary" href="/machines/config/import">Import config</a>
-      <a class="button" href="/machines/new">Add machine</a>
+         href="/machines/config/export?format=csv">{{ t(request, 'machines.actions.export_csv') }}</a>
+      <a class="button button-secondary" href="/machines/config/import">{{ t(request, 'machines.actions.import_config') }}</a>
+      <a class="button" href="/machines/new">{{ t(request, 'machines.actions.add') }}</a>
     </div>
   </div>
 
   {% if pending_machines %}
     <section class="panel">
-      <h2>Pending machines</h2>
-      <p class="hint">
-        Self-registered via <code>POST /api/inform</code> — not yet added, not
-        trusted for anything. Review each entry and either add it (you'll
-        still go through the normal host-key confirmation flow) or dismiss it.
-      </p>
+      <h2>{{ t(request, 'machines.pending.heading') }}</h2>
+      <p class="hint">{{ t(request, 'machines.pending.description') }}</p>
       <table class="data-table">
         <thead>
           <tr>
-            <th>IP address</th>
-            <th>Reported hostname</th>
-            <th>OS</th>
-            <th>Seen</th>
+            <th>{{ t(request, 'machines.pending.ip') }}</th>
+            <th>{{ t(request, 'machines.pending.hostname') }}</th>
+            <th>{{ t(request, 'machines.pending.os') }}</th>
+            <th>{{ t(request, 'machines.pending.seen') }}</th>
             <th></th>
           </tr>
         </thead>
@@ -89,12 +85,12 @@
               <td>
                 <a class="button"
                    href="/machines/new?ip_address={{ pending.ip_address | urlencode }}&name={{ (pending.reported_hostname or '') | urlencode }}">
-                  Use this
+                  {{ t(request, 'machines.pending.use_this') }}
                 </a>
                 <form action="/machines/pending/{{ pending.id }}/dismiss" method="post"
                       class="inline-form">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button type="submit" class="button button-secondary">Dismiss</button>
+                  <button type="submit" class="button button-secondary">{{ t(request, 'machines.pending.dismiss') }}</button>
                 </form>
               </td>
             </tr>
@@ -119,34 +115,36 @@
     </div>
   {% endif %}
 
-  {% include "partials/machine_search_form.html" %}
+  <div class="machines-toolbar">
+    {% include "partials/machine_search_form.html" %}
 
-  <div class="view-mode-toggle" role="group" aria-label="Machine list display">
-    {% for mode, label in (('table', 'Table'), ('list', 'List'), ('cards', 'Cards')) %}
-      <form method="post" action="/machines/view-mode" class="inline-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="view" value="{{ mode }}">
-        <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
-        <button type="submit" class="button {{ 'button' if view_mode == mode else 'button-secondary' }}"
-                aria-pressed="{{ 'true' if view_mode == mode else 'false' }}">{{ label }}</button>
-      </form>
-    {% endfor %}
+    <div class="view-mode-toggle" role="group" aria-label="{{ t(request, 'machines.title') }}">
+      {% for mode, label_key in (('table', 'machines.view.table'), ('list', 'machines.view.list'), ('cards', 'machines.view.cards')) %}
+        <form method="post" action="/machines/view-mode" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="view" value="{{ mode }}">
+          <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+          <button type="submit" class="button {{ 'button' if view_mode == mode else 'button-secondary' }}"
+                  aria-pressed="{{ 'true' if view_mode == mode else 'false' }}">{{ t(request, label_key) }}</button>
+        </form>
+      {% endfor %}
+    </div>
   </div>
 
   {% if q or tag %}
     <form method="post" action="/machines/views" class="inline-form stack-gap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="q" value="{{ q }}">
-      {% for t in tag %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+      {% for t_val in tag %}<input type="hidden" name="tag" value="{{ t_val }}">{% endfor %}
       <input type="hidden" name="tag_mode" value="{{ tag_mode }}">
       <input type="text" name="name" class="inline-text-input"
-             placeholder="Name this view…" maxlength="100" required>
-      <button type="submit" class="button button-secondary">Save this view</button>
+             placeholder="{{ t(request, 'machines.save_view.placeholder') }}" maxlength="100" required>
+      <button type="submit" class="button button-secondary">{{ t(request, 'machines.save_view.submit') }}</button>
     </form>
   {% endif %}
 
   {% if request.query_params.get('view_error') == 'duplicate_name' %}
-    <div class="alert alert-error"><p>You already have a saved view with that name.</p></div>
+    <div class="alert alert-error"><p>{{ t(request, 'machines.save_view.duplicate') }}</p></div>
   {% endif %}
 
   {% if bulk_error %}
@@ -154,19 +152,27 @@
   {% endif %}
   {% if power_skipped %}
     <div class="alert alert-warn">
-      <p>{{ power_skipped }} selected machine(s) skipped — no confirmed host key yet.</p>
+      <p>{{ t(request, 'machines.power_skipped', count=power_skipped) }}</p>
     </div>
   {% endif %}
 
   {% if not machines %}
     <div class="empty-state">
       {% if q %}
-        <p>No machines match "{{ q }}".</p>
+        {# `| safe`: the translation string itself is trusted app content
+           (from app/i18n/locales/*.json, never user input) and contains
+           literal quote marks around the placeholder — autoescape would
+           otherwise turn those into &#34; the same way it would for any
+           other Jinja expression. `query=q` is still escaped correctly:
+           `.format()` substitutes the *escaped* value in already, since
+           the interpolation happens before this `| safe` marks the
+           surrounding template text as pre-escaped. #}
+        <p>{{ t(request, 'machines.empty.no_match', query=q | e) | safe }}</p>
       {% elif tag %}
-        <p>No machines match this filter.</p>
+        <p>{{ t(request, 'machines.empty.no_filter_match') }}</p>
       {% else %}
-        <p>No managed machines yet.</p>
-        <a class="button" href="/machines/new">Add your first machine</a>
+        <p>{{ t(request, 'machines.empty.none_yet') }}</p>
+        <a class="button" href="/machines/new">{{ t(request, 'machines.empty.add_first') }}</a>
       {% endif %}
     </div>
   {% else %}
@@ -198,7 +204,7 @@
               </div>
               <dl class="machine-card-details">
                 <dt>IP</dt><dd>{{ machine.ip_address }}</dd>
-                <dt>Group</dt>
+                <dt>{{ t(request, 'machines.table.group') }}</dt>
                 <dd>
                   {% if machine.group %}
                     <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
@@ -225,7 +231,7 @@
                 <div class="machine-card-tags">{{ tag_chips(machine) }}</div>
               {% endif %}
               <a href="/machines/{{ machine.id }}" class="button button-secondary machine-card-details-link">
-                Details
+                {{ t(request, 'machines.table.details') }}
               </a>
             </div>
           {% endfor %}
@@ -235,13 +241,13 @@
           <thead>
             <tr>
               <th><input type="checkbox" data-select-all aria-label="Select all machines"></th>
-              <th>Name</th>
-              <th>IP address</th>
-              <th>Hostname</th>
-              <th>Group</th>
-              <th>Status</th>
-              <th>Updates</th>
-              <th>Host key</th>
+              <th>{{ t(request, 'machines.table.name') }}</th>
+              <th>{{ t(request, 'machines.table.ip') }}</th>
+              <th>{{ t(request, 'machines.table.hostname') }}</th>
+              <th>{{ t(request, 'machines.table.group') }}</th>
+              <th>{{ t(request, 'machines.table.status') }}</th>
+              <th>{{ t(request, 'machines.table.updates') }}</th>
+              <th>{{ t(request, 'machines.table.host_key') }}</th>
               <th></th>
             </tr>
           </thead>
@@ -269,7 +275,7 @@
                 <td>{{ status_badge(machine) }}</td>
                 <td>{% include "partials/machine_update_status_cell.html" %}</td>
                 <td>{{ host_key_badge(machine) }}</td>
-                <td><a href="/machines/{{ machine.id }}">Details</a></td>
+                <td><a href="/machines/{{ machine.id }}">{{ t(request, 'machines.table.details') }}</a></td>
               </tr>
             {% endfor %}
           </tbody>
@@ -277,43 +283,43 @@
       {% endif %}
 
       <div class="page-header-actions" id="bulk-actions-bar">
-        <span class="hint">With selected:</span>
+        <span class="hint">{{ t(request, 'machines.bulk.with_selected') }}</span>
         <button type="submit" formaction="/machines/bulk/check-updates" class="button button-secondary">
-          Check for updates
+          {{ t(request, 'machines.bulk.check_updates') }}
         </button>
         <select name="strategy" aria-label="Upgrade strategy for bulk update">
           <option value="dist_upgrade">dist-upgrade</option>
           <option value="full_upgrade">full-upgrade</option>
         </select>
-        <button type="submit" formaction="/machines/bulk/updates" class="button">Run update</button>
+        <button type="submit" formaction="/machines/bulk/updates" class="button">{{ t(request, 'machines.bulk.run_update') }}</button>
         <button type="submit" formaction="/machines/bulk/power-confirm/reboot" class="button button-secondary">
-          Reboot
+          {{ t(request, 'machines.bulk.reboot') }}
         </button>
         <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
-          Shut down
+          {{ t(request, 'machines.bulk.shutdown') }}
         </button>
-        <input type="text" name="tags" class="inline-text-input" placeholder="tag1, tag2…"
+        <input type="text" name="tags" class="inline-text-input" placeholder="{{ t(request, 'machines.bulk.tags_placeholder') }}"
                aria-label="Tags for the buttons below">
         <button type="submit" formaction="/machines/bulk/tags/add" class="button button-secondary">
-          Add tags
+          {{ t(request, 'machines.bulk.add_tags') }}
         </button>
         <button type="submit" formaction="/machines/bulk/tags/remove" class="button button-secondary">
-          Remove tags
+          {{ t(request, 'machines.bulk.remove_tags') }}
         </button>
       </div>
     </form>
 
     {% if page > 1 or has_more %}
-      {% set tag_qs %}{% for t in tag %}&tag={{ t | urlencode }}{% endfor %}{% if tag_mode == 'and' and tag | length > 1 %}&tag_mode=and{% endif %}{% endset %}
+      {% set tag_qs %}{% for t_val in tag %}&tag={{ t_val | urlencode }}{% endfor %}{% if tag_mode == 'and' and tag | length > 1 %}&tag_mode=and{% endif %}{% endset %}
       <div class="page-header-actions">
         {% if page > 1 %}
           <a class="button button-secondary" href="/machines?q={{ q | urlencode }}{{ tag_qs }}&page={{ page - 1 }}">
-            Previous
+            {{ t(request, 'machines.pagination.previous') }}
           </a>
         {% endif %}
         {% if has_more %}
           <a class="button button-secondary" href="/machines?q={{ q | urlencode }}{{ tag_qs }}&page={{ page + 1 }}">
-            Next
+            {{ t(request, 'machines.pagination.next') }}
           </a>
         {% endif %}
       </div>

@@ -124,6 +124,38 @@ async def test_default_locale_is_english_for_a_user_who_never_chose_one(client):
     assert 'lang="en"' in response.text
 
 
+async def test_machines_list_translates_into_czech(client):
+    await client.get("/account")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/account/locale", data={"locale": "cs", "csrf_token": csrf_token})
+
+    response = await client.get("/machines")
+
+    assert "Zařízení" in response.text
+    assert "Přidat zařízení" in response.text
+    assert "Tabulka" in response.text and "Seznam" in response.text and "Karty" in response.text
+
+
+async def test_machines_empty_search_message_translates_and_keeps_literal_quotes(client):
+    """A regression test for a real bug: the translation string's own
+    literal quote marks around `{query}` were getting HTML-entity-escaped
+    (`&#34;`) by Jinja's autoescape once the whole "No machines match ..."
+    sentence came from one `t()` call instead of only the interpolated
+    value — see the `| safe` comment in machines/list.html."""
+    response = await client.get("/machines?q=zzz-nonexistent-zzz")
+
+    assert 'No machines match "zzz-nonexistent-zzz".' in response.text
+    assert "&#34;" not in response.text
+
+    await client.get("/account")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/account/locale", data={"locale": "cs", "csrf_token": csrf_token})
+
+    cs_response = await client.get("/machines?q=zzz-nonexistent-zzz")
+    assert 'Žádná zařízení neodpovídají "zzz-nonexistent-zzz".' in cs_response.text
+    assert "&#34;" not in cs_response.text
+
+
 async def test_switching_to_an_unknown_locale_falls_back_to_english(client):
     await client.get("/account")
     csrf_token = client.cookies.get("csrftoken")

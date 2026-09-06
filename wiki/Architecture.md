@@ -359,6 +359,36 @@ other. `user.manage` covers both user and role management.
 > nothing is "private" to whoever created it, and scheduled tasks are not
 > owned by their author.
 
+### Time-limited per-user permissions: on top of the role, not instead of it
+
+**Users → edit a user → Temporary permissions** grants one `Permission`
+directly to *this account*, expiring on its own after a chosen number of
+hours (`TemporaryPermissionGrant`, up to `MAX_GRANT_HOURS` — 30 days) —
+"this user gets `action.terminal` for the next 2 hours," without editing
+their role (which is shared, fleet-wide configuration) or creating a
+disposable one-off role for it.
+
+`User.has_permission` is the only thing that changed to support this: it
+now checks the *union* of the role's own permissions and the user's
+currently-active temporary grants (`active_temporary_permissions`, a
+plain in-memory filter over `expires_at`/`revoked_at` — no query, no
+background job). `temporary_permission_grants` is `lazy="selectin"` on
+`User`, the same convention `Role.permission_grants` already uses, so
+every request that resolves a session already has the data it needs to
+check this live — an expired grant simply stops counting the moment
+`expires_at` passes, the same way a session's own expiry needs no
+separate cleanup step to take effect. `role_has_permission` (the
+role-only check `app/web/routes/users.py` uses to simulate "would this
+account still have `user.manage` if its role changed?") deliberately
+never considers temporary grants — those are per-user, not per-role, so
+there is nothing for a role-only check to see.
+
+A grant can also be ended early (`revoked_at`) from the same page. Both
+the grant and the revoke are audit-logged
+(`user.temporary_permission.grant`/`.revoke`); the REST API mirrors both
+at `POST`/`GET /api/v1/users/{id}/temporary-permissions` and `DELETE
+.../temporary-permissions/{grant_id}`.
+
 ### Machine-group scoping: which machines an account may see
 
 An orthogonal layer on top of the permission matrix — permissions decide
@@ -623,12 +653,27 @@ Wired in three places:
   applies everywhere else.
 
 **Coverage today** is the site-wide chrome (header/nav/footer), the login
-page, and the Account page — not yet every page in the app, which would be
-a large, ongoing translation effort rather than an infrastructure one.
-Every other page's strings are still plain English in the template source;
-translating one is exactly "wrap the string in `t(request, "new.key")`,
-add that key to every `locales/*.json` file" — see [Development](Development.md)
-for the checklist.
+page, the Account page, and the **Machines list** — not yet every page in
+the app, which would be a large, ongoing translation effort rather than an
+infrastructure one. Every other page's strings are still plain English in
+the template source; translating one is exactly "wrap the string in
+`t(request, "new.key")`, add that key to every `locales/*.json` file" —
+see [Development](Development.md) for the checklist.
+
+> [!WARNING]
+> A translated string that itself contains literal quote marks or other
+> HTML-special characters around a `{placeholder}` (e.g. `machines.
+> empty.no_match`, `"No machines match \"{query}\"."`) needs `| safe` on
+> the `t(...)` call, and the interpolated value pre-escaped with `| e`
+> (`t(request, "...", query=q | e) | safe`) — otherwise Jinja's autoescape
+> HTML-entity-escapes the *whole* translated string (turning the
+> template's own literal `"` into `&#34;`), since the entire sentence now
+> comes from one expression instead of the quotes being untouched
+> template markup around a separately-escaped `{{ q }}`. This bit
+> `machines/list.html`'s own conversion — see that template's comment for
+> why pre-escaping the interpolated value (rather than skipping `| safe`
+> and losing the literal quotes) is what keeps this safe against a
+> free-text search term containing HTML.
 
 ### The REST API: read and write, mirroring the web UI
 

@@ -21,6 +21,7 @@ from app.db.models.role import Permission, Role, RolePermission
 from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
 from app.db.models.ssh_identity import SSHIdentity
+from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
 from app.db.models.user_machine_group_access import UserMachineGroupAccess
@@ -62,6 +63,7 @@ __all__ = [
     "ScheduledTask",
     "SSHIdentity",
     "Tag",
+    "TemporaryPermissionGrant",
     "TotpRecoveryCode",
     "UpdateRunStatus",
     "UpgradeStrategy",
