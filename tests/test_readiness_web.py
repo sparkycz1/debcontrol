@@ -1,8 +1,9 @@
 """HTTP-level tests for the post-onboarding readiness check — the
-Overview-tab banner, "Re-check", and the "fix an already-onboarded
-machine" one-time-credential flow. Real SSH stays mocked out via the
-autouse `celery_calls` fixture (see tests/test_onboarding.py's own module
-comment for the same pattern).
+Overview-tab's short mention, the Settings-tab banner with "Re-check" and
+either an "Install now" button (root) or a one-time-credential /
+manual-sudoers-line flow (non-root SSH key). Real SSH stays mocked out via
+the autouse `celery_calls` fixture (see tests/test_onboarding.py's own
+module comment for the same pattern).
 """
 
 from __future__ import annotations
@@ -28,16 +29,18 @@ async def test_trust_host_key_dispatches_facts_and_readiness(
     assert "app.tasks.jobs.check_machine_readiness" in celery_calls.names
 
 
-async def test_overview_shows_no_banner_when_readiness_ok(client, db_session_factory):
+async def test_overview_shows_no_mention_when_readiness_ok(client, db_session_factory):
     machine_id = await _make_machine(db_session_factory)
 
     response = await client.get(f"/machines/{machine_id}")
 
     assert response.status_code == 200
-    assert "recheck-readiness" not in response.text
+    assert "is missing" not in response.text
 
 
-async def test_overview_shows_banner_when_readiness_missing(client, db_session_factory):
+async def test_overview_mentions_missing_items_and_links_to_settings(
+    client, db_session_factory
+):
     machine_id = await _make_machine(db_session_factory)
     async with db_session_factory() as session:
         machine = await session.get(Machine, machine_id)
@@ -49,10 +52,27 @@ async def test_overview_shows_banner_when_readiness_missing(client, db_session_f
 
     assert response.status_code == 200
     assert "ncurses-term" in response.text
+    assert f'href="/machines/{machine_id}/edit"' in response.text
+    # The actual fix controls live on Settings, not Overview.
+    assert "recheck-readiness" not in response.text
+
+
+async def test_settings_shows_recheck_form_when_readiness_missing(client, db_session_factory):
+    machine_id = await _make_machine(db_session_factory)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.readiness_missing = ["ncurses-term (needed for full-color terminal output)"]
+        await session.commit()
+
+    response = await client.get(f"/machines/{machine_id}/edit")
+
+    assert response.status_code == 200
+    assert "ncurses-term" in response.text
     assert f'action="/machines/{machine_id}/recheck-readiness"' in response.text
 
 
-async def test_overview_banner_offers_credential_form_for_ssh_key_machines(
+async def test_settings_offers_credential_form_and_manual_sudoers_line_for_non_root(
     client, db_session_factory
 ):
     machine_id = await _make_machine(db_session_factory)  # PASSWORD auth by default
@@ -60,16 +80,63 @@ async def test_overview_banner_offers_credential_form_for_ssh_key_machines(
         machine = await session.get(Machine, machine_id)
         assert machine is not None
         machine.auth_method = AuthMethod.SSH_KEY
+        machine.username = "debcontrol"
         machine.readiness_missing = [
             "passwordless sudo for dmidecode (needed for the RAM speed fact)"
         ]
         await session.commit()
 
-    response = await client.get(f"/machines/{machine_id}")
+    response = await client.get(f"/machines/{machine_id}/edit")
 
     assert response.status_code == 200
     assert f'action="/machines/{machine_id}/run-onboarding-with-credential"' in response.text
     assert 'name="password"' in response.text
+    # The exact sudoers line to apply by hand, filled in with this
+    # machine's real username — not just "debcontrol" as a placeholder.
+    assert "debcontrol ALL=(root) NOPASSWD:" in response.text
+    assert f"/machines/{machine_id}/fix-readiness-directly" not in response.text
+
+
+async def test_settings_root_machine_offers_install_now_without_a_credential_form(
+    client, db_session_factory
+):
+    machine_id = await _make_machine(db_session_factory)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.auth_method = AuthMethod.SSH_KEY
+        machine.username = "root"
+        machine.readiness_missing = ["ncurses-term (needed for full-color terminal output)"]
+        await session.commit()
+
+    response = await client.get(f"/machines/{machine_id}/edit")
+
+    assert response.status_code == 200
+    assert f'action="/machines/{machine_id}/fix-readiness-directly"' in response.text
+    # No credential prompt at all — the existing SSH key is enough.
+    assert 'name="password"' not in response.text
+    assert f"/machines/{machine_id}/run-onboarding-with-credential" not in response.text
+
+
+async def test_fix_readiness_directly_dispatches_the_task(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await _make_machine(db_session_factory)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.auth_method = AuthMethod.SSH_KEY
+        machine.username = "root"
+        await session.commit()
+
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        f"/machines/{machine_id}/fix-readiness-directly", data={"csrf_token": csrf_token}
+    )
+
+    assert response.status_code in (200, 303)
+    assert "app.tasks.jobs.fix_root_readiness" in celery_calls.names
 
 
 async def test_recheck_readiness_dispatches_the_task(client, db_session_factory, celery_calls):

@@ -1119,7 +1119,7 @@ is readable without an extra request.
 
 ### Post-onboarding readiness check
 
-**Machines → a machine → Overview** shows a banner if
+**Machines → a machine → Settings** shows a banner if
 `app.ssh.readiness`'s probes (ncurses-term installed; scoped `sudo -n` for
 apt/shutdown/dmidecode/flatpak+snap — everything `app.ssh.onboarding`
 sets up) found something missing — re-run right after a host key is
@@ -1130,16 +1130,34 @@ cadence as facts/packages/services — see `app.tasks.celery_app`'s
 `beat_schedule`). That periodic sweep is what catches a requirement that
 got *un-set* after onboarding — `ncurses-term` removed by a later
 `apt-get autoremove`, a sudoers grant hand-edited away — rather than only
-ever detecting a gap at onboarding time. For a machine *already* on the
-app's own SSH-key
-identity (so there's no root credential stored anymore to fix a gap with),
-the banner's "Fix it" form collects a one-time root/sudo login, uses it to
-temporarily put the machine back into the exact shape a never-onboarded
-machine is in (`auth_method=PASSWORD` + that credential), and reuses
-`run_machine_onboarding` unchanged — on failure, the endpoint itself
-restores the machine's previous auth state rather than leaving a real
-password sitting in `secret_encrypted`, since the task's own
-success-path revert never runs when the script fails.
+ever detecting a gap at onboarding time. Lives on Settings rather than
+Overview since it's a one-time-per-gap configuration concern, not
+day-to-day operational status.
+
+**A machine connected as `root` never has a sudo grant to be missing** —
+every probe here (like every *real* privileged command — see
+`app.ssh.updates`/`app.ssh.power`) tries `sudo -n` first and falls back to
+running directly once `id -u` is 0, so those four requirements always read
+`ok` for root. The only thing left root can be missing is `ncurses-term`
+itself, and the banner's "Install now" button
+(`fix_readiness_directly_endpoint` → `app.tasks.jobs.fix_root_readiness`)
+installs it with the credential already on file — no fresh login, no
+sudoers file, nothing to escalate.
+
+For a **non-root** machine already on the app's own SSH-key identity (so
+there's no root credential stored anymore to fix a sudo gap with), the
+banner instead shows the exact sudoers line to add (same one
+[Machine-Requirements.md](Machine-Requirements.md) documents, filled in
+with this machine's actual username) so an operator can apply it by hand
+over their own SSH session — often the only option, since password SSH to
+a privileged account is commonly disabled by policy. A "Fix it" form
+underneath still offers to do it for them: it collects a one-time
+root/sudo login, uses it to temporarily put the machine back into the
+exact shape a never-onboarded machine is in (`auth_method=PASSWORD` +
+that credential), and reuses `run_machine_onboarding` unchanged — on
+failure, the endpoint itself restores the machine's previous auth state
+rather than leaving a real password sitting in `secret_encrypted`, since
+the task's own success-path revert never runs when the script fails.
 
 ### Fleet-wide package search
 

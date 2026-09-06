@@ -82,6 +82,15 @@ from app.web.templating import templates
 # selection doesn't have a name of its own to ask someone to type.
 _BULK_POWER_CONFIRM_PHRASE = "SELECTED MACHINES"
 
+# The machine list's display density — a per-browser cosmetic preference,
+# not per-account data worth a DB column (unlike saved views/tags, which
+# are meaningful to look up or share across a session). Same plain,
+# long-lived, non-httponly-adjacent cookie pattern `app.web.routes.theme`
+# already uses for the light/dark toggle.
+MACHINES_VIEW_COOKIE_NAME = "machines_view"
+_MACHINES_VIEW_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
+_MACHINE_VIEW_MODES = ("table", "list", "cards")
+
 router = APIRouter(
     prefix="/machines", dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))]
 )
@@ -274,6 +283,10 @@ async def list_machines(
     has_more = len(machines) > _MACHINE_LIST_PAGE_SIZE
     machines = machines[:_MACHINE_LIST_PAGE_SIZE]
 
+    view_mode = request.cookies.get(MACHINES_VIEW_COOKIE_NAME, "table")
+    if view_mode not in _MACHINE_VIEW_MODES:
+        view_mode = "table"
+
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -287,6 +300,7 @@ async def list_machines(
             "tag": tag,
             "page": page,
             "has_more": has_more,
+            "view_mode": view_mode,
             "csrf_token": csrf_token,
             "bulk_error": request.query_params.get("bulk_error"),
             "power_skipped": request.query_params.get("power_skipped"),
@@ -294,6 +308,39 @@ async def list_machines(
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
+    return response
+
+
+def _safe_machines_redirect(next_path: str) -> str:
+    """Only ever redirect back into `/machines...` — `next` comes from a
+    form field an attacker could tamper with, same reasoning
+    `app.web.routes.theme._safe_redirect_target` already documents."""
+    if next_path.startswith("/machines") and not next_path.startswith("//"):
+        return next_path
+    return "/machines"
+
+
+@router.post("/view-mode", dependencies=[Depends(verify_csrf)])
+async def set_machines_view_mode(
+    view: str = Form(...), next: str = Form("/machines")
+) -> Response:
+    """The "Table" / "List" / "Cards" toggle above the machine list —
+    remembered in a cookie, not a query param, so it carries over to the
+    next visit (and every saved view/pagination link) without needing to
+    be threaded through every href on the page. See
+    `MACHINES_VIEW_COOKIE_NAME`."""
+    chosen = view if view in _MACHINE_VIEW_MODES else "table"
+    response = RedirectResponse(
+        url=_safe_machines_redirect(next), status_code=status.HTTP_303_SEE_OTHER
+    )
+    response.set_cookie(
+        MACHINES_VIEW_COOKIE_NAME,
+        chosen,
+        max_age=_MACHINES_VIEW_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=get_settings().is_production,
+    )
     return response
 
 
@@ -1330,6 +1377,55 @@ async def run_onboarding_with_credential_endpoint(
     )
 
     machine = await _get_machine_or_404(machine_id, db, current_user)
+    redirect_url = f"/machines/{machine.id}"
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=status.HTTP_200_OK, headers={"HX-Redirect": redirect_url})
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post(
+    "/{machine_id}/fix-readiness-directly", dependencies=[_manage, Depends(verify_csrf)]
+)
+async def fix_readiness_directly_endpoint(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The readiness banner's "Install now" button for a machine connected
+    as root — installs `ncurses-term` with the credential already on file,
+    no one-time root login needed (there is nothing to grant sudo for: see
+    `app.ssh.readiness`'s module docstring). Only ever shown for
+    `username == "root"` (`app/web/templates/machines/detail.html`), but
+    not re-checked here — a machine reconfigured to a different username
+    between page load and this click just gets its own real error back
+    from the SSH connection, same as any other stale-page race."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    async_result = tasks.fix_root_readiness.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 60
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "Timed out. Reload this page shortly."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.readiness.fix_directly",
+        summary=f'Installed missing readiness packages directly on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
     redirect_url = f"/machines/{machine.id}"
     if request.headers.get("HX-Request") == "true":
         return Response(status_code=status.HTTP_200_OK, headers={"HX-Redirect": redirect_url})

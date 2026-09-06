@@ -66,8 +66,8 @@ from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_o
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import check_reachable
+from app.ssh.readiness import DIRECT_FIX_COMMAND, missing_requirements
 from app.ssh.readiness import check_machine_readiness as run_readiness_probes
-from app.ssh.readiness import missing_requirements
 from app.ssh.services import gather_services
 from app.ssh.updates import check_updates, preview_update, run_system_update
 from app.tasks.celery_app import celery_app
@@ -452,6 +452,50 @@ async def _check_machine_readiness(machine_id: str) -> dict[str, Any]:
 )
 def check_machine_readiness(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_check_machine_readiness(machine_id))
+
+
+async def _fix_root_readiness(machine_id: str) -> dict[str, Any]:
+    """Installs `ncurses-term` directly, using the machine's own
+    already-configured credential — the readiness banner's "Install now"
+    button for a machine that's connected as root (see
+    `app.web.routes.machines.fix_readiness_directly_endpoint`, the only
+    caller). No fresh credential, no sudoers file, no new user: every
+    *other* readiness requirement is a sudo grant a root account never
+    needs (`app.ssh.readiness`'s module docstring), so this is the only
+    thing left for a root-connected machine to actually fix. Re-runs the
+    readiness probes afterward either way, so the banner reflects reality
+    even if the install itself failed (no network, no matching package)."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+        try:
+            await run_command(
+                machine,
+                secret,
+                DIRECT_FIX_COMMAND,
+                settings.ssh_connect_timeout,
+                settings.ssh_connect_timeout + 30,
+            )
+        except SSHConnectionError as exc:
+            logger.warning("fix_root_readiness failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+    return await _check_machine_readiness(machine_id)
+
+
+@celery_app.task(
+    name="app.tasks.jobs.fix_root_readiness",
+    time_limit=get_settings().ssh_connect_timeout + 60,
+)
+def fix_root_readiness(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_fix_root_readiness(machine_id))
 
 
 async def _refresh_all_machine_readiness() -> None:

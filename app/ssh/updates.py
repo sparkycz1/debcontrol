@@ -26,6 +26,15 @@ flatpak/snap are also run via `sudo -n` for consistency (system-wide
 flatpak/snap operations commonly need it too) — see the sudoers example in
 the wiki page, which covers all three.
 
+Every privileged step is wrapped by `_with_root_fallback`: try it via
+`sudo -n` first, and if that fails (no sudo grant — or no `sudo` binary at
+all on a minimal root-only image), run it directly instead. That fallback
+only ever matters when the connecting account is already root (an
+unprivileged fallback just fails again with its own permission-denied
+error, no different from today) — see `app.ssh.facts`'s `dmidecode` probe
+for the same idiom, and `app.ssh.readiness` for why root should never be
+asked to grant itself sudo in the first place.
+
 Neither flatpak nor snap is required to be installed: every step here is
 guarded with `command -v`, so a machine without one (or both) simply skips
 that part rather than failing.
@@ -54,7 +63,16 @@ class PendingPackage(TypedDict):
     # genuinely doesn't report it (kept for symmetry, unused today).
     new_version: str | None
 
-_SUDO_APT = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -y -q"
+def _with_root_fallback(command: str) -> str:
+    """`command`, run via passwordless sudo, or run directly if sudo isn't
+    there/configured for it — see the module docstring. `2>/dev/null` on
+    the sudo attempt only, so a real failure from the fallback (whichever
+    account actually ran it) still shows up in the captured output instead
+    of being masked by sudo's own "a password is required" noise."""
+    return f"(sudo -n {command} 2>/dev/null || {command})"
+
+
+_APT_BASE = "env DEBIAN_FRONTEND=noninteractive apt-get -y -q"
 # Never prompt on a config-file conflict — keep the admin's existing config.
 # The standard safe default for unattended Debian upgrades.
 _DPKG_NONINTERACTIVE_FLAGS = (
@@ -64,6 +82,19 @@ _UPGRADE_SUBCOMMAND = {
     UpgradeStrategy.DIST_UPGRADE: "dist-upgrade",
     UpgradeStrategy.FULL_UPGRADE: "full-upgrade",
 }
+
+
+def _apt(args: str) -> str:
+    return _with_root_fallback(f"{_APT_BASE} {args}")
+
+
+# `apt-get update`'s own stdout is only ever wanted once, for a real update
+# run — `_CHECK_UPDATES_COMMAND` and the preview below only care about the
+# refresh's exit status, so they use the `>/dev/null` variant instead.
+_APT_REFRESH = _with_root_fallback("env DEBIAN_FRONTEND=noninteractive apt-get update -q")
+_APT_REFRESH_QUIET = _with_root_fallback(
+    "env DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null"
+)
 
 
 def build_update_command(strategy: UpgradeStrategy) -> str:
@@ -77,18 +108,19 @@ def build_update_command(strategy: UpgradeStrategy) -> str:
     upgrade_subcommand = _UPGRADE_SUBCOMMAND[strategy]
     return (
         "{ "
-        "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q; "
+        f"{_APT_REFRESH}; "
         'status=$?; '
         'if [ "$status" -eq 0 ]; then '
-        f"{_SUDO_APT} {_DPKG_NONINTERACTIVE_FLAGS} {upgrade_subcommand}; "
+        f"{_apt(f'{_DPKG_NONINTERACTIVE_FLAGS} {upgrade_subcommand}')}; "
         'status=$?; '
         "fi; "
-        f"{_SUDO_APT} autoremove; "
-        f"{_SUDO_APT} autoclean; "
+        f"{_apt('autoremove')}; "
+        f"{_apt('autoclean')}; "
         "if command -v flatpak >/dev/null 2>&1; then "
-        "sudo -n flatpak update -y --noninteractive; "
+        f"{_with_root_fallback('flatpak update -y --noninteractive')}; "
         "fi; "
-        "if command -v snap >/dev/null 2>&1; then sudo -n snap refresh; fi; "
+        "if command -v snap >/dev/null 2>&1; then "
+        f"{_with_root_fallback('snap refresh')}; fi; "
         'exit "$status"; '
         "} 2>&1"
     )
@@ -158,7 +190,7 @@ _CHECK_SECTION_MARKERS = ("APT_UPGRADABLE", "FLATPAK_UPGRADABLE", "SNAP_UPGRADAB
 #     of pending refreshes, and (unlike applying them) doesn't need root.
 _CHECK_UPDATES_COMMAND = (
     "{ "
-    "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null; "
+    f"{_APT_REFRESH_QUIET}; "
     'status=$?; '
     f"echo {_APT_MARKER}; "
     'if [ "$status" -eq 0 ]; then apt list --upgradable 2>/dev/null | tail -n +2; fi; '
@@ -338,7 +370,7 @@ async def check_updates(
 # `--just-print` / `--dry-run` / `--recon` / `--no-act` — all synonyms for
 # the same flag) for both the upgrade step and `autoremove`, so an operator
 # can see what would be *removed* (the risky part of `autoremove`) before
-# confirming. Reuses `_SUDO_APT` (same `sudo -n ... apt-get -y -q` prefix
+# confirming. Reuses `_apt` (same root-fallback `apt-get -y -q` prefix
 # `build_update_command` uses) with `-s` appended — `-y` is harmless
 # alongside `-s` (apt never actually prompts in simulate mode either way).
 #
@@ -369,12 +401,12 @@ def build_update_preview_command(strategy: UpgradeStrategy) -> str:
     upgrade_subcommand = _UPGRADE_SUBCOMMAND[strategy]
     return (
         "{ "
-        "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q >/dev/null; "
+        f"{_APT_REFRESH_QUIET}; "
         'status=$?; '
         f"echo {_UPGRADE_SIM_MARKER}; "
-        f'if [ "$status" -eq 0 ]; then {_SUDO_APT} -s {upgrade_subcommand}; fi; '
+        f'if [ "$status" -eq 0 ]; then {_apt(f"-s {upgrade_subcommand}")}; fi; '
         f"echo {_AUTOREMOVE_SIM_MARKER}; "
-        f'if [ "$status" -eq 0 ]; then {_SUDO_APT} -s autoremove; fi; '
+        f'if [ "$status" -eq 0 ]; then {_apt("-s autoremove")}; fi; '
         'exit "$status"; '
         "} 2>&1"
     )

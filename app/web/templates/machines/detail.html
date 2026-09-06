@@ -17,47 +17,8 @@
       <p>
         This machine is missing:
         {% for item in machine.readiness_missing %}{{ item }}{% if not loop.last %}; {% endif %}{% endfor %}.
+        <a href="/machines/{{ machine.id }}/edit">Fix it on the Settings tab</a>.
       </p>
-      {% if machine.auth_method.value == 'password' %}
-        <p class="hint">
-          <a href="/machines/{{ machine.id }}/edit">Run initial setup</a> on the
-          Settings tab to fix this.
-        </p>
-      {% else %}
-        <details>
-          <summary>Fix it (needs a one-time root/sudo login)</summary>
-          <p class="hint">
-            This machine already uses debcontrol's own SSH key for everyday
-            use — fixing the items above needs a root-equivalent login just
-            this once, the same as the original setup did. Nothing is
-            stored afterward; on success this machine goes right back to
-            using its own SSH key.
-          </p>
-          <form method="post" action="/machines/{{ machine.id }}/run-onboarding-with-credential"
-                class="form" autocomplete="off"
-                data-confirm="Temporarily connect as this account to fix what's missing, then switch back to debcontrol's own SSH key?">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label for="readiness_username">Username</label>
-            <input type="text" id="readiness_username" name="username" value="root" required>
-            <label for="readiness_password">Password</label>
-            <input type="password" id="readiness_password" name="password" required>
-            <button type="submit" class="button">Run initial setup</button>
-          </form>
-        </details>
-      {% endif %}
-      <form method="post" action="/machines/{{ machine.id }}/recheck-readiness"
-            class="inline-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="button button-secondary">Re-check</button>
-      </form>
-      {% if request.state.user.has_permission('ai.access') %}
-        <form method="post" action="/ai/explain" class="inline-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="kind" value="readiness">
-          <input type="hidden" name="machine_id" value="{{ machine.id }}">
-          <button type="submit" class="button button-secondary">Ask AI why</button>
-        </form>
-      {% endif %}
     </div>
   {% endif %}
 

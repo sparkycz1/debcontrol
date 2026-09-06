@@ -62,6 +62,25 @@ def test_build_update_command_includes_guarded_flatpak_and_snap():
     assert "snap refresh" in command
 
 
+def test_build_update_command_falls_back_to_running_directly_as_root():
+    """Every privileged step tries `sudo -n` first, then runs the plain
+    command directly if that fails — the case that matters is an account
+    that's already root and has no sudo grant (or password) at all. See
+    `app.ssh.updates._with_root_fallback`."""
+    command = build_update_command(UpgradeStrategy.DIST_UPGRADE)
+
+    assert "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -q" in command
+    assert (
+        "|| env DEBIAN_FRONTEND=noninteractive apt-get update -q" in command
+    )
+    assert "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -y -q autoremove" in command
+    assert "|| env DEBIAN_FRONTEND=noninteractive apt-get -y -q autoremove" in command
+    assert "sudo -n flatpak update -y --noninteractive" in command
+    assert "|| flatpak update -y --noninteractive" in command
+    assert "sudo -n snap refresh" in command
+    assert "|| snap refresh" in command
+
+
 def test_parse_upgradable_output_counts_packages_and_security():
     raw = (
         "Listing...\n"

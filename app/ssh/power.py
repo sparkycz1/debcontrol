@@ -10,7 +10,11 @@ per-minute reachability check already shows a machine going offline and
 
 Requires root — same as `app.ssh.updates`; see the wiki page "Managed
 Machine Requirements" for the sudoers line (`shutdown` needs to be listed
-alongside `apt-get`).
+alongside `apt-get`). Same root fallback too: `sudo -n` first, falling
+back to running `shutdown` directly if that fails — the only case that
+matters in practice is the machine's configured account already being
+root, where no sudo grant exists (or is even possible, on a root account
+with no usable sudo password) but the plain command works fine.
 
 The confirmation step (typing the machine's/group's name before this is
 even called) lives in the web layer — see `app.web.routes.machines` and
@@ -45,7 +49,8 @@ _SHUTDOWN_FLAG = {
 
 
 def build_power_command(action: PowerAction) -> str:
-    return f"sudo -n shutdown {_SHUTDOWN_FLAG[action]} now"
+    flag = _SHUTDOWN_FLAG[action]
+    return f"(sudo -n shutdown {flag} now 2>/dev/null || shutdown {flag} now)"
 
 
 async def send_power_command(

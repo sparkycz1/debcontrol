@@ -876,6 +876,49 @@ async def run_onboarding_api(
     return {"ok": True, "output": output}
 
 
+@router.post("/machines/{machine_id}/fix-readiness-directly", dependencies=[_manage_machines])
+async def fix_readiness_directly_api(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Installs `ncurses-term` using the credential already stored on the
+    machine record — the readiness banner's "Install now" button for a
+    machine connected as root, where there is no sudo gap left to fix (see
+    `app.ssh.readiness`'s module docstring). Uses only the credential
+    already on file, same as `run_onboarding_api` above, so it's exposed
+    here for the same reason that one is."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+
+    async_result = tasks.fix_root_readiness.delay(str(machine.id))
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 60
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "Timed out."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.readiness.fix_directly",
+        summary=f'Installed missing readiness packages directly on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"ok": True}
+
+
 @router.post("/machines/{machine_id}/recheck-readiness", dependencies=[_manage_machines])
 async def recheck_readiness_api(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),

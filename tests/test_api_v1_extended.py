@@ -544,6 +544,20 @@ async def test_run_onboarding_api_dispatches_readiness_on_success(
     assert "app.tasks.jobs.check_machine_readiness" in celery_calls.names
 
 
+async def test_fix_readiness_directly_api(client, db_session_factory, celery_calls):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+
+    response = await client.post(
+        f"/api/v1/machines/{machine_id}/fix-readiness-directly", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert celery_calls.names == ["app.tasks.jobs.fix_root_readiness"]
+
+
 async def test_recheck_readiness_api(client, db_session_factory, celery_calls):
     from tests.test_onboarding import _make_machine
 

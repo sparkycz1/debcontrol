@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.ssh.readiness import missing_requirements, parse_readiness_output
+from app.ssh.readiness import READINESS_COMMAND, missing_requirements, parse_readiness_output
 
 
 def _raw(
@@ -69,3 +69,17 @@ def test_flatpak_snap_sudo_not_reported_when_present_and_ok():
     result = parse_readiness_output(_raw(fs_present="yes", fs_sudo="ok"))
 
     assert not any("flatpak" in m for m in missing_requirements(result))
+
+
+def test_readiness_command_skips_sudo_probes_when_already_root():
+    """A machine already connected as root must never be told it's missing
+    a sudo grant it has no way to need (or, on a locked/no-password root
+    account, no way to even authenticate for) — see the module docstring.
+    Every sudo-gated probe is short-circuited to "ok" once `id -u` is 0."""
+    command = READINESS_COMMAND
+
+    assert 'is_root=0; [ "$(id -u)" = "0" ] && is_root=1;' in command
+    for probe in ("apt-get --version", "shutdown --help", "dmidecode -t 17"):
+        assert f'[ "$is_root" = 1 ] && echo ok || (sudo -n {probe}' in command
+    # The flatpak/snap sudo probe loop is skipped outright when already root.
+    assert 'if [ "$is_root" != 1 ]; then' in command

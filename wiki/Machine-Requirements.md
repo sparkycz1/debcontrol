@@ -177,6 +177,15 @@ requirement:
   individually (visible in the run's stored output) rather than blocking
   the rest.
 
+Connecting as `root` directly needs none of the above — every privileged
+command tries `sudo -n` first and, if that fails, just runs directly
+instead, which is exactly what happens for an account that's already
+root. This also means a root-connected machine's readiness check (below)
+never asks for a sudo grant it doesn't need: the one thing it can still be
+missing is `ncurses-term`, which the "Install now" button on that page
+installs directly with the credential already on file — no password
+prompt, since there's nothing left to escalate.
+
 Reboot and shutdown are double-confirmed in the UI (a dedicated warning
 page, then typing the machine's — or group's — name exactly); there's no
 undo once sent. All three actions — update, check for

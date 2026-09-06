@@ -10,6 +10,75 @@
 
   {{ render_tabnav(tabs, active_tab) }}
 
+  {% if machine.readiness_missing %}
+    <div class="alert alert-warn">
+      <p>
+        This machine is missing:
+        {% for item in machine.readiness_missing %}{{ item }}{% if not loop.last %}; {% endif %}{% endfor %}.
+      </p>
+      {% if machine.auth_method.value == 'password' %}
+        <p class="hint">Run "Run initial setup" below to fix this.</p>
+      {% elif machine.username == 'root' %}
+        <p class="hint">
+          This machine already connects as <code>root</code> — nothing
+          needs sudo access it doesn't already have. The credential
+          already on file is enough to install what's missing directly,
+          no login needed.
+        </p>
+        <form method="post" action="/machines/{{ machine.id }}/fix-readiness-directly"
+              class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button">Install now</button>
+        </form>
+      {% else %}
+        <p class="hint">
+          Add this sudoers rule yourself over your own SSH session (then
+          click "Re-check" below) — often the only option, since password
+          SSH to a privileged account is commonly disabled by policy:
+        </p>
+        <pre><code>cat &gt; /etc/sudoers.d/{{ machine.username }} &lt;&lt;'EOF'
+{{ machine.username }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
+EOF
+chmod 440 /etc/sudoers.d/{{ machine.username }}
+visudo -cf /etc/sudoers.d/{{ machine.username }}</code></pre>
+        <details>
+          <summary>Or let debcontrol do it (needs a one-time root/sudo login)</summary>
+          <p class="hint">
+            This machine already uses debcontrol's own SSH key for everyday
+            use — fixing the items above needs a root-equivalent login just
+            this once, the same as the original setup did. Nothing is
+            stored afterward; on success this machine goes right back to
+            using its own SSH key. This won't work if password SSH to that
+            account is disabled — use the manual command above instead.
+          </p>
+          <form method="post" action="/machines/{{ machine.id }}/run-onboarding-with-credential"
+                class="form" autocomplete="off"
+                data-confirm="Temporarily connect as this account to fix what's missing, then switch back to debcontrol's own SSH key?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="readiness_username">Username</label>
+            <input type="text" id="readiness_username" name="username" value="root" required>
+            <label for="readiness_password">Password</label>
+            <input type="password" id="readiness_password" name="password" required>
+            <button type="submit" class="button">Run initial setup</button>
+          </form>
+        </details>
+      {% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/recheck-readiness"
+            class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-secondary">Re-check</button>
+      </form>
+      {% if request.state.user.has_permission('ai.access') %}
+        <form method="post" action="/ai/explain" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="kind" value="readiness">
+          <input type="hidden" name="machine_id" value="{{ machine.id }}">
+          <button type="submit" class="button button-secondary">Ask AI why</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+
   {% if errors %}
     <div class="alert alert-error">
       {% for error in errors %}<p>{{ error }}</p>{% endfor %}

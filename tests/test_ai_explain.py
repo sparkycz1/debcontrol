@@ -180,6 +180,9 @@ async def test_update_run_page_offers_ask_ai_why_button_when_failed(client, db_s
 
 
 async def test_readiness_banner_offers_ask_ai_why_button(client, db_session_factory):
+    """The readiness banner itself lives on the Settings tab (see
+    app/web/templates/machines/edit.html) — Overview only shows a short
+    mention with a link there."""
     machine_id = await create_machine(db_session_factory)
     async with db_session_factory() as db:
         machine = await db.get(Machine, machine_id)
@@ -187,7 +190,7 @@ async def test_readiness_banner_offers_ask_ai_why_button(client, db_session_fact
         machine.readiness_missing = ["ncurses-term (needed for full-color terminal output)"]
         await db.commit()
 
-    response = await client.get(f"/machines/{machine_id}")
+    response = await client.get(f"/machines/{machine_id}/edit")
 
     assert 'action="/ai/explain"' in response.text
     assert 'value="readiness"' in response.text
