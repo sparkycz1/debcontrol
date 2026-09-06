@@ -10,7 +10,7 @@
     <h1>{{ render_os_badge(machine.os_id, size=28) }} {{ machine.name }}</h1>
     {% if request.state.user.has_permission('audit.view') %}
       <a href="/audit?target_type=machine&target_id={{ machine.id }}" class="hint">
-        View audit history for this machine
+        {{ t(request, "machine.view_audit_history") }}
       </a>
     {% endif %}
   </div>
@@ -20,22 +20,22 @@
   {% if machine.readiness_missing %}
     <div class="alert alert-warn">
       <p>
-        This machine is missing:
+        {{ t(request, "machine.readiness_missing") }}
         {% for item in machine.readiness_missing %}{{ item }}{% if not loop.last %}; {% endif %}{% endfor %}.
-        <a href="/machines/{{ machine.id }}/edit">Fix it on the Settings tab</a>.
+        <a href="/machines/{{ machine.id }}/edit">{{ t(request, "machine.fix_it") }}</a>.
       </p>
     </div>
   {% endif %}
 
   <dl class="detail-list">
-    <dt>IP address</dt><dd>{{ machine.ip_address }}</dd>
-    <dt>Port</dt><dd>{{ machine.port }}</dd>
-    <dt>User</dt><dd>{{ machine.username }}</dd>
-    <dt>Auth method</dt>
-    <dd>{{ 'SSH key' if machine.auth_method.value == 'ssh_key' else 'Password' }}</dd>
-    <dt>Operating system</dt>
+    <dt>{{ t(request, "machines.table.ip") }}</dt><dd>{{ machine.ip_address }}</dd>
+    <dt>{{ t(request, "machine.port") }}</dt><dd>{{ machine.port }}</dd>
+    <dt>{{ t(request, "groups.detail.user") }}</dt><dd>{{ machine.username }}</dd>
+    <dt>{{ t(request, "machine.auth_method") }}</dt>
+    <dd>{{ t(request, "machine.auth_method_ssh_key") if machine.auth_method.value == 'ssh_key' else t(request, "machine.auth_method_password") }}</dd>
+    <dt>{{ t(request, "machine.operating_system") }}</dt>
     <dd>{{ machine.os_version or '—' }}</dd>
-    <dt>Group</dt>
+    <dt>{{ t(request, "machines.table.group") }}</dt>
     <dd>
       {% if machine.group %}
         <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
@@ -43,9 +43,9 @@
         —
       {% endif %}
     </dd>
-    <dt>Status</dt>
+    <dt>{{ t(request, "machines.table.status") }}</dt>
     <dd>{% include "partials/machine_status.html" %}</dd>
-    <dt>Tags</dt>
+    <dt>{{ t(request, "machine.tags") }}</dt>
     <dd>
       {% if machine.tags %}
         {% for tag in machine.tags %}
@@ -55,30 +55,26 @@
         —
       {% endif %}
     </dd>
-    <dt>Notes</dt><dd>{{ machine.description or '—' }}</dd>
+    <dt>{{ t(request, "machine.notes") }}</dt><dd>{{ machine.description or '—' }}</dd>
   </dl>
 
   {% if machine.runbook %}
     <section class="panel runbook">
-      <h2>Runbook</h2>
+      <h2>{{ t(request, "machine.runbook") }}</h2>
       {{ machine.runbook | markdown }}
     </section>
   {% endif %}
 
   <section class="panel" id="host-key-panel">
-    <h2>SSH host key fingerprint</h2>
+    <h2>{{ t(request, "machine.host_key_heading") }}</h2>
     {% if machine.host_key_fingerprint %}
-      <p>Pinned fingerprint: <code>{{ machine.host_key_fingerprint }}</code></p>
+      <p>{{ t(request, "machine.pinned_fingerprint") }}: <code>{{ machine.host_key_fingerprint }}</code></p>
       <p class="hint">
-        The connection will be refused if the server ever presents a different key.
+        {{ t(request, "machine.host_key_pinned_hint") }}
       </p>
     {% else %}
       <p class="hint">
-        This machine doesn't have a confirmed host key fingerprint yet — until it
-        does, no connection can be safely established (no automatic "trust on
-        first use"), and facts can't be gathered. Discovery runs automatically
-        below; you still have to confirm the fingerprint yourself once it's
-        shown, after checking it through a channel outside this app.
+        {{ t(request, "machine.host_key_missing_hint") }}
       </p>
       <button
         class="button"
@@ -88,7 +84,7 @@
         hx-swap="innerHTML"
         hx-trigger="click, load"
       >
-        Discover key fingerprint
+        {{ t(request, "machine.discover_key") }}
       </button>
     {% endif %}
   </section>
@@ -115,25 +111,25 @@
   <div id="packages-modal" popover class="modal">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2 class="modal-title">Installed packages — {{ machine.name }}</h2>
+        <h2 class="modal-title">{{ t(request, "machine.installed_packages_title", name=(machine.name | e)) | safe }}</h2>
         <button
           type="button"
           class="modal-close"
           popovertarget="packages-modal"
           popovertargetaction="hide"
-          aria-label="Close"
+          aria-label="{{ t(request, 'settings.ai.close') }}"
         >
           &times;
         </button>
       </div>
       <div id="packages-panel">
-        <p class="hint">Loading…</p>
+        <p class="hint">{{ t(request, "machine.loading") }}</p>
       </div>
     </div>
   </div>
 
   <section class="panel">
-    <h2>Test connection</h2>
+    <h2>{{ t(request, "machine.test_connection") }}</h2>
     <button
       class="button"
       hx-post="/machines/{{ machine.id }}/test-connection"
@@ -142,10 +138,10 @@
       hx-swap="innerHTML"
       {% if not machine.host_key_fingerprint %}disabled{% endif %}
     >
-      Test connection
+      {{ t(request, "machine.test_connection") }}
     </button>
     {% if not machine.host_key_fingerprint %}
-      <p class="hint">Confirm the server's key fingerprint above first.</p>
+      <p class="hint">{{ t(request, "machine.confirm_key_first") }}</p>
     {% endif %}
     <div id="test-result"></div>
   </section>

@@ -1,30 +1,29 @@
-<h2>Facts</h2>
+<h2>{{ t(request, "machine.facts.heading") }}</h2>
 
 {% if error %}
   <div class="alert alert-error">
-    <p>Could not refresh facts: {{ error }}</p>
+    <p>{{ t(request, "machine.facts.refresh_error", error=(error | e)) | safe }}</p>
   </div>
 {% endif %}
 
 {% if not machine.facts_updated_at %}
   <p class="hint">
-    Not gathered yet — this happens automatically once the host key
-    fingerprint is confirmed above, and refreshes periodically after that.
+    {{ t(request, "machine.facts.not_gathered_yet") }}
   </p>
 {% else %}
   <dl class="detail-list">
-    <dt>Hostname</dt><dd>{{ machine.discovered_hostname or '—' }}</dd>
-    <dt>OS version</dt><dd>{{ machine.os_version or '—' }}</dd>
-    <dt>Kernel</dt><dd>{{ machine.kernel_version or '—' }}</dd>
-    <dt>CPU</dt><dd>{{ machine.cpu_model or '—' }}</dd>
-    <dt>CPU architecture</dt><dd>{{ machine.cpu_architecture or '—' }}</dd>
-    <dt>CPU cores</dt><dd>{{ machine.cpu_cores if machine.cpu_cores is not none else '—' }}</dd>
-    <dt>RAM</dt>
+    <dt>{{ t(request, "machine.facts.hostname") }}</dt><dd>{{ machine.discovered_hostname or '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.os_version") }}</dt><dd>{{ machine.os_version or '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.kernel") }}</dt><dd>{{ machine.kernel_version or '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.cpu") }}</dt><dd>{{ machine.cpu_model or '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.cpu_architecture") }}</dt><dd>{{ machine.cpu_architecture or '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.cpu_cores") }}</dt><dd>{{ machine.cpu_cores if machine.cpu_cores is not none else '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.ram") }}</dt>
     <dd>
       {{ '%.1f GB' % (machine.ram_bytes / 1073741824) if machine.ram_bytes else '—' }}
       {% if machine.ram_speed_mhz %}({{ machine.ram_speed_mhz }} MHz){% endif %}
     </dd>
-    <dt>Disks</dt>
+    <dt>{{ t(request, "machine.facts.disks") }}</dt>
     <dd>
       {% if machine.disks %}
         {% for disk in machine.disks %}
@@ -34,10 +33,10 @@
         —
       {% endif %}
     </dd>
-    <dt>Uptime</dt><dd>{{ machine.uptime_seconds | format_uptime }}</dd>
-    <dt>Processes</dt>
+    <dt>{{ t(request, "machine.facts.uptime") }}</dt><dd>{{ machine.uptime_seconds | format_uptime }}</dd>
+    <dt>{{ t(request, "machine.facts.processes") }}</dt>
     <dd>{{ machine.process_count if machine.process_count is not none else '—' }}</dd>
-    <dt>Network</dt>
+    <dt>{{ t(request, "machine.facts.network") }}</dt>
     <dd>
       {% if machine.network_interfaces %}
         {% for iface in machine.network_interfaces %}
@@ -47,7 +46,7 @@
         —
       {% endif %}
     </dd>
-    <dt>Last refreshed</dt><dd>{{ machine.facts_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}</dd>
+    <dt>{{ t(request, "machine.facts.last_refreshed") }}</dt><dd>{{ machine.facts_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}</dd>
   </dl>
 {% endif %}
 
@@ -59,8 +58,8 @@
   hx-swap="innerHTML"
   {% if not machine.host_key_fingerprint %}disabled{% endif %}
 >
-  Refresh facts now
+  {{ t(request, "machine.facts.refresh_now") }}
 </button>
 {% if not machine.host_key_fingerprint %}
-  <p class="hint">Confirm the server's key fingerprint above first.</p>
+  <p class="hint">{{ t(request, "machine.confirm_key_first") }}</p>
 {% endif %}

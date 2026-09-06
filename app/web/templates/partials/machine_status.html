@@ -5,13 +5,13 @@
   hx-swap="outerHTML settle:600ms"
 >
   {% if machine.is_reachable is none %}
-    <span class="badge badge-warn">unknown</span>
+    <span class="badge badge-warn">{{ t(request, "groups.status.unknown") }}</span>
   {% elif machine.is_reachable %}
-    <span class="badge badge-ok">online</span>
+    <span class="badge badge-ok">{{ t(request, "groups.status.online") }}</span>
   {% else %}
-    <span class="badge badge-error">offline</span>
+    <span class="badge badge-error">{{ t(request, "groups.status.offline") }}</span>
   {% endif %}
   {% if machine.last_ping_at %}
-    <span class="hint">(checked {{ machine.last_ping_at | local_time('%Y-%m-%d %H:%M %Z') }})</span>
+    <span class="hint">{{ t(request, "machine.checked_at", when=(machine.last_ping_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</span>
   {% endif %}
 </span>
