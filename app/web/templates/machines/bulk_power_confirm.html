@@ -1,15 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}{{ 'Reboot' if action.value == 'reboot' else 'Shut down' }} {{ target_label }} — debcontrol{% endblock %}
+{% set action_word = t(request, "groups.power_confirm.reboot") if action.value == 'reboot' else t(request, "groups.power_confirm.shutdown") %}
+{% block title %}{{ action_word }} {{ target_label }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>{{ 'Reboot' if action.value == 'reboot' else 'Shut down' }} {{ target_label }}?</h1>
+  <h1>{{ t(request, "groups.power_confirm.title", action=action_word, target=(target_label | e)) | safe }}</h1>
 
   <div class="alert alert-warn">
     <p>
-      This sends <code>sudo shutdown {{ '-r' if action.value == 'reboot' else '-h' }} now</code>
-      to each selected machine that has a confirmed host key fingerprint
-      (others are skipped) — immediately, no going back once sent.
+      {{ t(request, "machine.bulk_power_confirm.body", command=('sudo shutdown -r now' if action.value == 'reboot' else 'sudo shutdown -h now')) | safe }}
     </p>
   </div>
 
@@ -24,13 +23,13 @@
     {% endfor %}
 
     <label for="confirm_name">
-      Type <code>{{ confirm_phrase }}</code> to confirm
+      {{ t(request, "groups.power_confirm.type_to_confirm", phrase=(confirm_phrase | e)) | safe }}
     </label>
     <input type="text" id="confirm_name" name="confirm_name" required autocomplete="off">
 
     <button type="submit" class="button button-danger">
-      Yes, {{ 'reboot' if action.value == 'reboot' else 'shut down' }} {{ target_label }}
+      {{ t(request, "groups.power_confirm.yes", action=(t(request, "groups.power_confirm.reboot_lower") if action.value == 'reboot' else t(request, "groups.power_confirm.shutdown_lower")), target=target_label) }}
     </button>
-    <a class="button button-secondary" href="{{ cancel_url }}">Cancel</a>
+    <a class="button button-secondary" href="{{ cancel_url }}">{{ t(request, "common.cancel") }}</a>
   </form>
 {% endblock %}

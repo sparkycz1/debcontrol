@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Power — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "groups.all.power") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -13,30 +13,28 @@
   {% if power_sent %}
     <div class="alert alert-warn">
       <p>
-        {{ 'Reboot' if power_sent == 'reboot' else 'Shutdown' }} command sent — the
-        status on the Overview tab will reflect it once it takes effect.
+        {{ t(request, "machine.power.command_sent", action=(t(request, "groups.power_confirm.reboot") if power_sent == 'reboot' else t(request, "machine.power.shutdown_noun"))) }}
       </p>
     </div>
   {% endif %}
 
   <section class="panel">
-    <h2>Power</h2>
+    <h2>{{ t(request, "groups.all.power") }}</h2>
     <p class="hint">
-      Requires root/sudo, same as system updates. Both ask you to type the
-      machine's name to confirm before doing anything.
+      {{ t(request, "machine.power.hint") }}
     </p>
     <div class="page-header-actions">
       <a class="button button-secondary{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
          href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/reboot{% else %}#{% endif %}">
-        Reboot
+        {{ t(request, "groups.power_confirm.reboot") }}
       </a>
       <a class="button button-danger{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
          href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/shutdown{% else %}#{% endif %}">
-        Shut down
+        {{ t(request, "groups.power_confirm.shutdown") }}
       </a>
     </div>
     {% if not machine.host_key_fingerprint %}
-      <p class="hint">Confirm the server's key fingerprint on the Overview tab first.</p>
+      <p class="hint">{{ t(request, "machine.edit.confirm_key_overview_first") }}</p>
     {% endif %}
   </section>
 {% endblock %}
