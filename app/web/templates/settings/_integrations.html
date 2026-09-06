@@ -1,143 +1,131 @@
   <section class="panel">
-    <h2>Syslog forwarding</h2>
+    <h2>{{ t(request, "settings.integrations.syslog") }}</h2>
     <p class="hint">
-      Live-mirrors every audit log entry to an external syslog server (e.g.
-      a SIEM) as it's written — RFC 5424 formatted, best-effort: a delivery
-      failure here is only ever logged, never blocks the action being
-      audited. The database entry (exportable on the Security tab) is
-      always the real record; this is just a copy sent elsewhere.
+      {{ t(request, "settings.integrations.syslog_hint") }}
     </p>
     <form method="post" action="/settings/syslog" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label for="syslog_enabled">
         <input type="checkbox" id="syslog_enabled" name="syslog_enabled" value="1"
                {% if app_settings.syslog_enabled %}checked{% endif %}>
-        Enabled
+        {{ t(request, "settings.integrations.enabled") }}
       </label>
-      <label for="syslog_host">Server host/IP</label>
+      <label for="syslog_host">{{ t(request, "settings.integrations.server_host") }}</label>
       <input type="text" id="syslog_host" name="syslog_host" maxlength="255"
              placeholder="siem.example.com" value="{{ app_settings.syslog_host or '' }}">
-      <label for="syslog_port">Port</label>
+      <label for="syslog_port">{{ t(request, "settings.integrations.port") }}</label>
       <input type="number" id="syslog_port" name="syslog_port" min="1" max="65535"
              value="{{ app_settings.syslog_port }}">
-      <label for="syslog_protocol">Protocol</label>
+      <label for="syslog_protocol">{{ t(request, "settings.integrations.protocol") }}</label>
       <select id="syslog_protocol" name="syslog_protocol">
         {% for protocol in syslog_protocols %}
           <option value="{{ protocol.value }}" {% if app_settings.syslog_protocol == protocol %}selected{% endif %}>
-            {% if protocol.value == 'udp' %}UDP (plain)
-            {% elif protocol.value == 'tcp' %}TCP (plain)
-            {% else %}TCP over TLS (encrypted){% endif %}
+            {% if protocol.value == 'udp' %}{{ t(request, "settings.integrations.protocol_udp") }}
+            {% elif protocol.value == 'tcp' %}{{ t(request, "settings.integrations.protocol_tcp") }}
+            {% else %}{{ t(request, "settings.integrations.protocol_tls") }}{% endif %}
           </option>
         {% endfor %}
       </select>
-      <button type="submit" class="button">Save</button>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>
 
   <section class="panel">
-    <h2>LDAP login</h2>
+    <h2>{{ t(request, "settings.integrations.ldap") }}</h2>
     <p class="hint">
-      When enabled, a user set to login method "ldap" (see <a href="/users">Users</a>)
-      logs in with the same username/password form as a local account — the
-      username is looked up in the directory below, and their password is
-      checked against it, not against anything stored here.
+      {{ t(request, "settings.integrations.ldap_hint_before") }}
+      <a href="/users">{{ t(request, "nav.users") }}</a>{{ t(request, "settings.integrations.ldap_hint_after") }}
     </p>
     <form method="post" action="/settings/ldap" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
       <label>
         <input type="checkbox" name="ldap_enabled" {{ 'checked' if app_settings.ldap_enabled else '' }}>
-        Enabled
+        {{ t(request, "settings.integrations.enabled") }}
       </label>
 
-      <label for="ldap_server_uri">Server URI</label>
+      <label for="ldap_server_uri">{{ t(request, "settings.integrations.server_uri") }}</label>
       <input type="text" id="ldap_server_uri" name="ldap_server_uri" placeholder="ldaps://dc.example.com:636"
              value="{{ app_settings.ldap_server_uri or '' }}">
 
       <label>
         <input type="checkbox" name="ldap_use_starttls" {{ 'checked' if app_settings.ldap_use_starttls else '' }}>
-        Use StartTLS (only relevant for a plain "ldap://" server URI)
+        {{ t(request, "settings.integrations.use_starttls") }}
       </label>
 
       <label>
         <input type="checkbox" name="ldap_tls_verify" {{ 'checked' if app_settings.ldap_tls_verify else '' }}>
-        Verify the directory's TLS certificate
+        {{ t(request, "settings.integrations.tls_verify") }}
       </label>
       <p class="hint">
-        Only for "ldaps://" or StartTLS. Turn off only if you know this
-        directory's certificate is self-signed or otherwise won't validate
-        and you still want to use it — with it off, any certificate is
-        accepted, with no protection against a machine-in-the-middle.
+        {{ t(request, "settings.integrations.tls_verify_hint") }}
       </p>
 
-      <label for="ldap_bind_dn">Service account bind DN</label>
+      <label for="ldap_bind_dn">{{ t(request, "settings.integrations.bind_dn") }}</label>
       <input type="text" id="ldap_bind_dn" name="ldap_bind_dn" placeholder="cn=debcontrol,ou=services,dc=example,dc=com"
              value="{{ app_settings.ldap_bind_dn or '' }}">
 
-      <label for="ldap_bind_password">Service account password</label>
+      <label for="ldap_bind_password">{{ t(request, "settings.integrations.bind_password") }}</label>
       <input type="password" id="ldap_bind_password" name="ldap_bind_password" autocomplete="new-password"
-             placeholder="{{ 'unchanged' if app_settings.ldap_bind_password_encrypted else '' }}">
-      <p class="hint">Leave blank to keep the current value unchanged.</p>
+             placeholder="{{ t(request, 'settings.integrations.unchanged') if app_settings.ldap_bind_password_encrypted else '' }}">
+      <p class="hint">{{ t(request, "settings.integrations.leave_blank_hint") }}</p>
 
-      <label for="ldap_user_search_base">User search base</label>
+      <label for="ldap_user_search_base">{{ t(request, "settings.integrations.user_search_base") }}</label>
       <input type="text" id="ldap_user_search_base" name="ldap_user_search_base" placeholder="ou=people,dc=example,dc=com"
              value="{{ app_settings.ldap_user_search_base or '' }}">
 
-      <label for="ldap_user_search_filter">User search filter</label>
+      <label for="ldap_user_search_filter">{{ t(request, "settings.integrations.user_search_filter") }}</label>
       <input type="text" id="ldap_user_search_filter" name="ldap_user_search_filter"
              value="{{ app_settings.ldap_user_search_filter }}">
       <p class="hint">
-        Must contain <code>{username}</code>. Typical OpenLDAP: <code>(uid={username})</code>.
-        Active Directory: <code>(sAMAccountName={username})</code>.
+        {{ t(request, "settings.integrations.user_search_filter_hint") | safe }}
       </p>
 
-      <label for="ldap_connect_timeout_seconds">Connect timeout (seconds)</label>
+      <label for="ldap_connect_timeout_seconds">{{ t(request, "settings.integrations.connect_timeout") }}</label>
       <input type="number" id="ldap_connect_timeout_seconds" name="ldap_connect_timeout_seconds"
              min="1" step="1" value="{{ app_settings.ldap_connect_timeout_seconds }}">
 
-      <button type="submit" class="button">Save</button>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>
 
   <section class="panel">
-    <h2>OIDC login</h2>
+    <h2>{{ t(request, "settings.integrations.oidc") }}</h2>
     <p class="hint">
-      When enabled, the login page shows a "Log in with OIDC" button. A user
-      set to login method "oidc" (see <a href="/users">Users</a>) is matched
-      by comparing their username against the claim named below in the ID
-      token the provider returns — nothing is auto-created from this.
+      {{ t(request, "settings.integrations.oidc_hint_before") }}
+      <a href="/users">{{ t(request, "nav.users") }}</a>{{ t(request, "settings.integrations.oidc_hint_after") }}
     </p>
     <form method="post" action="/settings/oidc" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
       <label>
         <input type="checkbox" name="oidc_enabled" {{ 'checked' if app_settings.oidc_enabled else '' }}>
-        Enabled
+        {{ t(request, "settings.integrations.enabled") }}
       </label>
 
-      <label for="oidc_issuer_url">Issuer URL</label>
+      <label for="oidc_issuer_url">{{ t(request, "settings.integrations.issuer_url") }}</label>
       <input type="text" id="oidc_issuer_url" name="oidc_issuer_url" placeholder="https://idp.example.com"
              value="{{ app_settings.oidc_issuer_url or '' }}">
       <p class="hint">
-        Must serve <code>/.well-known/openid-configuration</code> (standard for any OIDC provider — Keycloak, Authentik, Entra ID, Okta, Google, ...).
+        {{ t(request, "settings.integrations.issuer_url_hint") | safe }}
       </p>
 
-      <label for="oidc_client_id">Client ID</label>
+      <label for="oidc_client_id">{{ t(request, "settings.integrations.client_id") }}</label>
       <input type="text" id="oidc_client_id" name="oidc_client_id" value="{{ app_settings.oidc_client_id or '' }}">
 
-      <label for="oidc_client_secret">Client secret</label>
+      <label for="oidc_client_secret">{{ t(request, "settings.integrations.client_secret") }}</label>
       <input type="password" id="oidc_client_secret" name="oidc_client_secret" autocomplete="new-password"
-             placeholder="{{ 'unchanged' if app_settings.oidc_client_secret_encrypted else '' }}">
-      <p class="hint">Leave blank to keep the current value unchanged.</p>
+             placeholder="{{ t(request, 'settings.integrations.unchanged') if app_settings.oidc_client_secret_encrypted else '' }}">
+      <p class="hint">{{ t(request, "settings.integrations.leave_blank_hint") }}</p>
 
-      <label for="oidc_username_claim">Username claim</label>
+      <label for="oidc_username_claim">{{ t(request, "settings.integrations.username_claim") }}</label>
       <input type="text" id="oidc_username_claim" name="oidc_username_claim"
              value="{{ app_settings.oidc_username_claim }}">
 
-      <label for="oidc_scopes">Scopes</label>
+      <label for="oidc_scopes">{{ t(request, "settings.integrations.scopes") }}</label>
       <input type="text" id="oidc_scopes" name="oidc_scopes" value="{{ app_settings.oidc_scopes }}">
-      <p class="hint">Must include <code>openid</code>.</p>
+      <p class="hint">{{ t(request, "settings.integrations.scopes_hint") | safe }}</p>
 
-      <button type="submit" class="button">Save</button>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>

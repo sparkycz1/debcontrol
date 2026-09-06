@@ -1,12 +1,8 @@
   <section class="panel">
-    <h2>AI assistant</h2>
+    <h2>{{ t(request, "ai.title") }}</h2>
     <p class="hint">
-      Configure the providers behind the <a href="/ai">AI</a> page. Enabling a
-      provider isn't the same as trusting its whole catalog: fetch its models,
-      then tick exactly which ones may be picked for a conversation. Everything
-      the assistant can actually do against a machine is still gated by the
-      requesting user's own role permissions, and every action it proposes must
-      be confirmed by a human before it runs.
+      {{ t(request, "settings.ai.intro_before") }}
+      <a href="/ai">{{ t(request, "nav.ai") }}</a>{{ t(request, "settings.ai.intro_after") }}
     </p>
 
     {% for config in ai_configs %}
@@ -18,59 +14,57 @@
 
         <label>
           <input type="checkbox" name="enabled" {{ 'checked' if config.enabled else '' }}>
-          Enabled
+          {{ t(request, "settings.integrations.enabled") }}
         </label>
 
-        <label for="api_key_{{ config.kind.value }}">API key</label>
+        <label for="api_key_{{ config.kind.value }}">{{ t(request, "settings.ai.api_key") }}</label>
         <input type="password" id="api_key_{{ config.kind.value }}" name="api_key"
                autocomplete="new-password"
-               placeholder="{{ 'unchanged' if config.api_key_encrypted else '' }}">
-        <p class="hint">Leave blank to keep the current value unchanged.</p>
+               placeholder="{{ t(request, 'settings.integrations.unchanged') if config.api_key_encrypted else '' }}">
+        <p class="hint">{{ t(request, "settings.integrations.leave_blank_hint") }}</p>
 
         {% if config.kind.value == openai_compatible_kind %}
-          <label for="base_url_{{ config.kind.value }}">Base URL</label>
+          <label for="base_url_{{ config.kind.value }}">{{ t(request, "settings.ai.base_url") }}</label>
           <input type="text" id="base_url_{{ config.kind.value }}" name="base_url"
                  placeholder="https://litellm.example.com/v1"
                  value="{{ config.base_url or '' }}">
           <p class="hint">
-            Required when this provider is enabled. Must expose the OpenAI
-            <code>/models</code> and <code>/chat/completions</code> endpoints.
+            {{ t(request, "settings.ai.base_url_hint") | safe }}
           </p>
         {% endif %}
 
-        <button type="submit" class="button">Save</button>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
       </form>
 
       <form method="post" action="/settings/ai/fetch-models" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="kind" value="{{ config.kind.value }}">
-        <button type="submit" class="button button-secondary">Fetch models now</button>
+        <button type="submit" class="button button-secondary">{{ t(request, "settings.ai.fetch_models_now") }}</button>
       </form>
       {% if config.models_fetched_at %}
-        <p class="hint">Last fetched {{ config.models_fetched_at | local_time('%Y-%m-%d %H:%M %Z') }}.</p>
+        <p class="hint">{{ t(request, "settings.ai.last_fetched", when=(config.models_fetched_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</p>
       {% endif %}
 
       {% if config.models %}
         {% set enabled_count = config.models | selectattr('enabled') | list | length %}
         <p class="hint">
-          {{ enabled_count }} of {{ config.models | length }}
-          model{{ 's' if config.models | length != 1 else '' }} enabled for chat.
+          {{ t(request, "settings.ai.models_enabled_singular" if config.models | length == 1 else "settings.ai.models_enabled_plural", enabled=enabled_count, total=(config.models | length)) }}
         </p>
         <button type="button" class="button button-secondary"
                 popovertarget="models-modal-{{ config.kind.value }}">
-          Choose models
+          {{ t(request, "settings.ai.choose_models") }}
         </button>
 
         <div id="models-modal-{{ config.kind.value }}" popover class="modal">
           <div class="modal-dialog">
             <div class="modal-header">
-              <h2 class="modal-title">Choose models — {{ config.kind.value }}</h2>
+              <h2 class="modal-title">{{ t(request, "settings.ai.choose_models_title", kind=(config.kind.value | e)) | safe }}</h2>
               <button
                 type="button"
                 class="modal-close"
                 popovertarget="models-modal-{{ config.kind.value }}"
                 popovertargetaction="hide"
-                aria-label="Close"
+                aria-label="{{ t(request, 'settings.ai.close') }}"
               >
                 &times;
               </button>
@@ -79,8 +73,8 @@
               <input
                 type="search"
                 class="model-search-input"
-                placeholder="Filter models…"
-                aria-label="Filter models for {{ config.kind.value }}"
+                placeholder="{{ t(request, 'settings.ai.filter_models_placeholder') }}"
+                aria-label="{{ t(request, 'settings.ai.filter_models_for', kind=(config.kind.value | e)) | safe }}"
                 data-model-search="models-list-{{ config.kind.value }}"
               >
               <form method="post" action="/settings/ai/models" class="form form-wide">
@@ -95,7 +89,7 @@
                     </label>
                   {% endfor %}
                 </div>
-                <button type="submit" class="button">Save model selection</button>
+                <button type="submit" class="button">{{ t(request, "settings.ai.save_model_selection") }}</button>
               </form>
             </div>
           </div>
@@ -104,57 +98,51 @@
     {% endfor %}
 
     <hr>
-    <h3>Token limits</h3>
+    <h3>{{ t(request, "settings.ai.token_limits") }}</h3>
     <p class="hint">
-      Global ceilings on total tokens (input + output, all providers together)
-      spent by the AI assistant in a <strong>rolling</strong> window — the last
-      24 hours, 7 days, and 30 days respectively, not calendar days/weeks/months.
-      A limit that is already reached blocks the next chat turn before any
-      provider call is made. Leave empty for no limit.
+      {{ t(request, "settings.ai.token_limits_hint_before") }}
+      <strong>{{ t(request, "settings.ai.rolling") }}</strong>{{ t(request, "settings.ai.token_limits_hint_after") }}
     </p>
     <form method="post" action="/settings/ai-limits" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-      <label for="ai_daily_token_limit">Tokens per rolling 24 hours</label>
+      <label for="ai_daily_token_limit">{{ t(request, "settings.ai.tokens_daily") }}</label>
       <input type="number" id="ai_daily_token_limit" name="ai_daily_token_limit" min="0" step="1"
-             placeholder="unlimited"
+             placeholder="{{ t(request, 'settings.ai.unlimited') }}"
              value="{{ app_settings.ai_daily_token_limit if app_settings.ai_daily_token_limit is not none else '' }}">
 
-      <label for="ai_weekly_token_limit">Tokens per rolling 7 days</label>
+      <label for="ai_weekly_token_limit">{{ t(request, "settings.ai.tokens_weekly") }}</label>
       <input type="number" id="ai_weekly_token_limit" name="ai_weekly_token_limit" min="0" step="1"
-             placeholder="unlimited"
+             placeholder="{{ t(request, 'settings.ai.unlimited') }}"
              value="{{ app_settings.ai_weekly_token_limit if app_settings.ai_weekly_token_limit is not none else '' }}">
 
-      <label for="ai_monthly_token_limit">Tokens per rolling 30 days</label>
+      <label for="ai_monthly_token_limit">{{ t(request, "settings.ai.tokens_monthly") }}</label>
       <input type="number" id="ai_monthly_token_limit" name="ai_monthly_token_limit" min="0" step="1"
-             placeholder="unlimited"
+             placeholder="{{ t(request, 'settings.ai.unlimited') }}"
              value="{{ app_settings.ai_monthly_token_limit if app_settings.ai_monthly_token_limit is not none else '' }}">
 
-      <button type="submit" class="button">Save</button>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
 
     <hr>
-    <h3>Scheduled fleet summary</h3>
+    <h3>{{ t(request, "settings.ai.fleet_summary") }}</h3>
     <p class="hint">
-      A background job writes a plain-language "what changed, what needs
-      attention" report to the <a href="/dashboard">Dashboard</a> — off by
-      default, since (unlike everything else above) this makes a real AI
-      API call on a schedule, whether or not anyone reads it. This only
-      ever <em>displays</em> a report; it does not send an email, Slack
-      message, or any other notification.
+      {{ t(request, "settings.ai.fleet_summary_hint_before") }}
+      <a href="/dashboard">{{ t(request, "dashboard.title") }}</a>{{ t(request, "settings.ai.fleet_summary_hint_middle") }}
+      <em>{{ t(request, "settings.ai.displays") }}</em>{{ t(request, "settings.ai.fleet_summary_hint_after") }}
     </p>
     {% if selectable_models %}
       <form method="post" action="/settings/fleet-summary" class="form" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-        <label for="fleet_summary_frequency">Frequency</label>
+        <label for="fleet_summary_frequency">{{ t(request, "settings.ai.frequency") }}</label>
         <select id="fleet_summary_frequency" name="frequency">
-          <option value="disabled" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'disabled' else '' }}>Disabled</option>
-          <option value="daily" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'daily' else '' }}>Daily</option>
-          <option value="weekly" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'weekly' else '' }}>Weekly</option>
+          <option value="disabled" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'disabled' else '' }}>{{ t(request, "settings.ai.disabled") }}</option>
+          <option value="daily" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'daily' else '' }}>{{ t(request, "settings.ai.daily") }}</option>
+          <option value="weekly" {{ 'selected' if app_settings.fleet_summary_frequency.value == 'weekly' else '' }}>{{ t(request, "settings.ai.weekly") }}</option>
         </select>
 
-        <label for="fleet_summary_model">Model</label>
+        <label for="fleet_summary_model">{{ t(request, "ai.model") }}</label>
         <select id="fleet_summary_model" name="provider_model">
           {% for provider, model in selectable_models %}
             {% set value = provider.id ~ ':' ~ model.model_id %}
@@ -165,11 +153,11 @@
           {% endfor %}
         </select>
 
-        <button type="submit" class="button">Save</button>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
       </form>
     {% else %}
       <p class="hint">
-        Enable a provider and choose at least one model above first.
+        {{ t(request, "settings.ai.enable_provider_first") }}
       </p>
     {% endif %}
   </section>

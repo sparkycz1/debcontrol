@@ -1,108 +1,88 @@
   <section class="panel">
-    <h2>Audit log</h2>
+    <h2>{{ t(request, "settings.security.audit_log") }}</h2>
 
     <p class="hint">
-      Every entry is hash-chained (each links to the previous one's hash),
-      so altering or removing an entry breaks the chain from that point on
-      — see <a href="/audit">Audit</a> and the wiki page "Architecture" for
-      how that works and what it doesn't protect against.
+      {{ t(request, "settings.security.audit_hash_chain_hint") | safe }}
     </p>
 
     <form method="post" action="/settings/audit-retention" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="retention_days">Keep audit log entries for (days)</label>
+      <label for="retention_days">{{ t(request, "settings.security.keep_audit_days") }}</label>
       <input type="number" id="retention_days" name="retention_days" min="0" step="1"
-             placeholder="forever"
+             placeholder="{{ t(request, 'settings.security.forever') }}"
              value="{{ app_settings.audit_log_retention_days if app_settings.audit_log_retention_days is not none else '' }}">
       <p class="hint">
-        Leave empty to keep every entry forever (the default). Otherwise,
-        entries older than this are permanently deleted once a day — the
-        chain's most recent entries and its ability to verify what remains
-        are unaffected, since only the oldest end is ever pruned.
+        {{ t(request, "settings.security.keep_audit_days_hint") }}
       </p>
-      <button type="submit" class="button">Save</button>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
 
     <form method="post" action="/settings/audit-verify" class="stack-gap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-secondary">Verify chain integrity now</button>
+      <button type="submit" class="button button-secondary">{{ t(request, "settings.security.verify_chain") }}</button>
     </form>
 
     {% if verify_result %}
       <div class="alert {{ 'alert-ok' if verify_result.ok else 'alert-error' }}">
         <p>{{ verify_result.message }}</p>
-        <p class="hint">Checked {{ verify_result.checked }} chained entr{{ 'y' if verify_result.checked == 1 else 'ies' }}.</p>
+        <p class="hint">{{ t(request, "settings.security.checked_entry" if verify_result.checked == 1 else "settings.security.checked_entries", count=verify_result.checked) }}</p>
       </div>
     {% endif %}
 
     <p class="hint stack-gap">
-      Every entry can also be exported for archival/compliance outside the
-      app: <a href="/audit/export?format=csv">CSV</a> ·
-      <a href="/audit/export?format=json">JSON</a> (the <a href="/audit">Audit</a>
-      page's own export links respect whatever search/outcome filter is set
-      there).
+      {{ t(request, "settings.security.export_hint_before") }}
+      <a href="/audit/export?format=csv">CSV</a> ·
+      <a href="/audit/export?format=json">JSON</a>{{ t(request, "settings.security.export_hint_after") }}
     </p>
   </section>
 
   <section class="panel">
-    <h2>Dashboard trends</h2>
+    <h2>{{ t(request, "settings.security.dashboard_trends") }}</h2>
     <p class="hint">
-      A background job records one daily snapshot of fleet-wide counts
-      (online/offline machines, pending updates, ...) for the trend chart(s)
-      on the <a href="/dashboard">Dashboard</a>. This only controls how long
-      those snapshots are kept — it doesn't affect the live counts
-      themselves.
+      {{ t(request, "settings.security.dashboard_trends_hint_before") }}
+      <a href="/dashboard">{{ t(request, "dashboard.title") }}</a>{{ t(request, "settings.security.dashboard_trends_hint_after") }}
     </p>
     <form method="post" action="/settings/dashboard-trends-retention" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="dashboard_trends_retention_days">Keep daily snapshots for (days)</label>
+      <label for="dashboard_trends_retention_days">{{ t(request, "settings.security.keep_snapshots_days") }}</label>
       <input type="number" id="dashboard_trends_retention_days" name="retention_days" min="0" step="1"
-             placeholder="forever"
+             placeholder="{{ t(request, 'settings.security.forever') }}"
              value="{{ app_settings.dashboard_trends_retention_days if app_settings.dashboard_trends_retention_days is not none else '' }}">
-      <p class="hint">Leave empty to keep every snapshot forever. Defaults to 90 days.</p>
-      <button type="submit" class="button">Save</button>
+      <p class="hint">{{ t(request, "settings.security.keep_snapshots_hint") }}</p>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>
 
   <section class="panel">
-    <h2>Update run history</h2>
+    <h2>{{ t(request, "settings.security.update_run_history") }}</h2>
     <p class="hint">
-      Each entry on a machine's Updates tab (the apt/flatpak/snap output from
-      one run) is stored in full — this only controls how long those stored
-      runs are kept, not whether updates themselves run. On a large fleet
-      with recurring scheduled updates (see <a href="/scheduling">Scheduling</a>)
-      this table can otherwise grow without bound. The fact that an update
-      was <em>triggered</em> stays in the <a href="/audit">audit log</a>
-      regardless of this setting — only the stored run record/output is
-      purged.
+      {{ t(request, "settings.security.update_run_hint_before") }}
+      <a href="/scheduling">{{ t(request, "nav.scheduling") }}</a>{{ t(request, "settings.security.update_run_hint_middle") }}
+      <a href="/audit">{{ t(request, "settings.security.audit_log_lower") }}</a>{{ t(request, "settings.security.update_run_hint_after") }}
     </p>
     <form method="post" action="/settings/update-run-retention" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="machine_update_run_retention_days">Keep update run history for (days)</label>
+      <label for="machine_update_run_retention_days">{{ t(request, "settings.security.keep_update_run_days") }}</label>
       <input type="number" id="machine_update_run_retention_days" name="retention_days" min="0" step="1"
-             placeholder="forever"
+             placeholder="{{ t(request, 'settings.security.forever') }}"
              value="{{ app_settings.machine_update_run_retention_days if app_settings.machine_update_run_retention_days is not none else '' }}">
-      <p class="hint">Leave empty to keep every run forever. Defaults to 90 days.</p>
-      <button type="submit" class="button">Save</button>
+      <p class="hint">{{ t(request, "settings.security.keep_update_run_hint") }}</p>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>
 
   <section class="panel">
-    <h2>Monitoring history</h2>
+    <h2>{{ t(request, "settings.security.monitoring_history") }}</h2>
     <p class="hint">
-      A CPU/RAM/disk-usage sample is stored for every machine on the
-      Monitoring tab's own cadence (<code>MONITORING_INTERVAL_SECONDS</code>,
-      2 minutes by default) — this only controls how long those samples are
-      kept, not how often they're taken. A single machine can override this
-      instance-wide default on its own Settings tab.
+      {{ t(request, "settings.security.monitoring_history_hint") | safe }}
     </p>
     <form method="post" action="/settings/monitoring-retention" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="monitoring_history_retention_days">Keep monitoring history for (days)</label>
+      <label for="monitoring_history_retention_days">{{ t(request, "settings.security.keep_monitoring_days") }}</label>
       <input type="number" id="monitoring_history_retention_days" name="retention_days" min="0" step="1"
-             placeholder="forever"
+             placeholder="{{ t(request, 'settings.security.forever') }}"
              value="{{ app_settings.monitoring_history_retention_days if app_settings.monitoring_history_retention_days is not none else '' }}">
-      <p class="hint">Leave empty to keep every sample forever. Defaults to 90 days.</p>
-      <button type="submit" class="button">Save</button>
+      <p class="hint">{{ t(request, "settings.security.keep_monitoring_hint") }}</p>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
   </section>
