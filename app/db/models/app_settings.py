@@ -173,6 +173,13 @@ class AppSettings(Base):
         String(255), default=DEFAULT_LDAP_USER_SEARCH_FILTER, nullable=False
     )
     ldap_connect_timeout_seconds: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    # Verify the directory's TLS certificate against the system CA bundle
+    # for `ldaps://`/STARTTLS — on by default. Turning it off accepts any
+    # certificate (self-signed, expired, wrong hostname) with no chain-of-
+    # trust check at all, an explicit opt-out for a directory whose
+    # certificate an admin already knows isn't (or can't easily be made)
+    # verifiable, not a default anyone should want. See app.auth.ldap.
+    ldap_tls_verify: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # --- OIDC login (app.auth.oidc) ---
     oidc_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

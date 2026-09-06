@@ -16,6 +16,14 @@
     <a href="/settings">Settings</a> page.
   </p>
 
+  {% if target_type and target_id %}
+    <p class="hint">
+      Showing entries for {{ target_type }}
+      {% if target_label %}"{{ target_label }}"{% else %}<code>{{ target_id }}</code>{% endif %}
+      only. <a href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">Clear this filter</a>.
+    </p>
+  {% endif %}
+
   <form method="get" class="search-form">
     <input type="search" name="q" value="{{ q }}"
            placeholder="Search by action, summary, target, IP...">
@@ -27,16 +35,18 @@
         </option>
       {% endfor %}
     </select>
+    <input type="hidden" name="target_type" value="{{ target_type }}">
+    <input type="hidden" name="target_id" value="{{ target_id }}">
     <button type="submit" class="button">Search</button>
-    {% if q or outcome %}
+    {% if q or outcome or target_type %}
       <a class="button button-secondary" href="/audit">Clear</a>
     {% endif %}
     <a class="button button-secondary"
-       href="/audit/export?format=csv&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">Export CSV</a>
+       href="/audit/export?format=csv&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">Export CSV</a>
     <a class="button button-secondary"
-       href="/audit/export?format=json&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">Export JSON</a>
+       href="/audit/export?format=json&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">Export JSON</a>
   </form>
-  <p class="hint">Export respects the search/outcome filters above (blank means everything).</p>
+  <p class="hint">Export respects the filters above (blank means everything).</p>
 
   {% if entries %}
     <table class="data-table">
@@ -88,20 +98,20 @@
     <div class="page-header-actions">
       {% if page > 1 %}
         <a class="button button-secondary"
-           href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&page={{ page - 1 }}">
+           href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}&page={{ page - 1 }}">
           Newer
         </a>
       {% endif %}
       {% if has_older %}
         <a class="button button-secondary"
-           href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&page={{ page + 1 }}">
+           href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}&page={{ page + 1 }}">
           Older
         </a>
       {% endif %}
     </div>
   {% else %}
     <div class="empty-state">
-      <p>No audit log entries {% if q or outcome %}match this filter{% else %}yet{% endif %}.</p>
+      <p>No audit log entries {% if q or outcome or target_type %}match this filter{% else %}yet{% endif %}.</p>
     </div>
   {% endif %}
 {% endblock %}

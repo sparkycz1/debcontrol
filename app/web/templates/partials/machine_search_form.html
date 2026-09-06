@@ -2,13 +2,28 @@
   <input type="search" name="q" value="{{ q }}"
          placeholder="Search by name, IP, hostname, OS version, username, notes...">
   {% if all_tags is defined %}
-    <select name="tag" aria-label="Filter by tag">
-      <option value="">All tags</option>
-      {% for existing_tag in all_tags %}
-        <option value="{{ existing_tag.name }}" {% if tag == existing_tag.name %}selected{% endif %}>{{ existing_tag.name }}</option>
-      {% endfor %}
-    </select>
+    {% if tag_mode is defined %}
+      {# The machine list: multiple tags at once, AND/OR — `tag` is a list. #}
+      <select name="tag" multiple aria-label="Filter by tag (ctrl/cmd-click for more than one)"
+              size="{{ [[all_tags | length, 5] | min, 1] | max }}">
+        {% for existing_tag in all_tags %}
+          <option value="{{ existing_tag.name }}" {% if existing_tag.name in tag %}selected{% endif %}>{{ existing_tag.name }}</option>
+        {% endfor %}
+      </select>
+      <select name="tag_mode" aria-label="Match any or all selected tags">
+        <option value="or" {% if tag_mode != 'and' %}selected{% endif %}>any selected tag</option>
+        <option value="and" {% if tag_mode == 'and' %}selected{% endif %}>all selected tags</option>
+      </select>
+    {% else %}
+      {# Machine groups' "All machines"/group pages: one tag — `tag` is a string. #}
+      <select name="tag" aria-label="Filter by tag">
+        <option value="">All tags</option>
+        {% for existing_tag in all_tags %}
+          <option value="{{ existing_tag.name }}" {% if tag == existing_tag.name %}selected{% endif %}>{{ existing_tag.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
   {% endif %}
   <button type="submit" class="button">Search</button>
-  {% if q or (tag is defined and tag) %}<a class="button button-secondary" href="{{ request.url.path }}">Clear</a>{% endif %}
+  {% if q or tag %}<a class="button button-secondary" href="{{ request.url.path }}">Clear</a>{% endif %}
 </form>

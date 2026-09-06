@@ -50,8 +50,8 @@ from datetime import datetime
 # subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
 # would silently never match.
 from celery.exceptions import TimeoutError as CeleryTimeoutError
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,7 +65,6 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
@@ -88,7 +87,12 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
-from app.services.machine_tags import set_machine_tags
+from app.services.machine_tags import (
+    add_tags_to_machines,
+    normalize_tag_names,
+    remove_tags_from_machines,
+    set_machine_tags,
+)
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.exceptions import SSHConnectionError
@@ -96,6 +100,7 @@ from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.tasks import jobs as tasks
 from app.tasks.jobs import preview_machine_update, run_machine_update, send_machine_power_command
+from app.web.machine_search import apply_tag_filter
 
 router = APIRouter(prefix="/api/v1")
 
@@ -258,11 +263,11 @@ async def _visible_machines(db: AsyncSession, user: User) -> list[Machine]:
 async def list_machines_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
-    tag: str = "",
+    tag: list[str] = Query(default=[]),
+    tag_mode: str = "or",
 ) -> list[dict[str, object]]:
     query = (await machines_visible_to(db, user)).options(selectinload(Machine.group))
-    if tag.strip():
-        query = query.where(Machine.tags.any(Tag.name == tag.strip().lower()))
+    query = apply_tag_filter(query, tag, tag_mode if tag_mode == "and" else "or")
     result = await db.execute(query)
     return [_machine_to_dict(m) for m in result.scalars().all()]
 
@@ -1022,6 +1027,15 @@ class _BulkPowerAction(_BulkMachineIds):
     )
 
 
+class _BulkTags(_BulkMachineIds):
+    tags: list[str] = Field(min_length=1)
+
+    @field_validator("tags")
+    @classmethod
+    def _normalize_tags(cls, value: list[str]) -> list[str]:
+        return normalize_tag_names(value)
+
+
 async def _get_machines_by_ids(
     machine_ids: list[uuid.UUID], db: AsyncSession, user: User
 ) -> list[Machine]:
@@ -1097,6 +1111,52 @@ async def bulk_power_action_api(
         details={"skipped": skipped},
     )
     return {"machine_count": len(machines), "skipped": skipped}
+
+
+@router.post("/machines/bulk/tags/add", dependencies=[_manage_machines])
+async def bulk_add_tags_api(
+    request: Request, payload: _BulkTags, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Add `payload.tags` to every machine in `payload.machine_ids`, leaving
+    each machine's other tags untouched — the API equivalent of the machine
+    list's bulk "Add tags" button."""
+    machines = await _get_machines_by_ids(payload.machine_ids, db, user)
+    await add_tags_to_machines(db, [m.id for m in machines], payload.tags)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.tags.add",
+        summary=(
+            f'Added tag(s) {", ".join(payload.tags)} to {len(machines)} selected machine(s)'
+        ),
+        details={"tags": payload.tags, "machine_count": len(machines)},
+    )
+    return {"machine_count": len(machines), "tags": payload.tags}
+
+
+@router.post("/machines/bulk/tags/remove", dependencies=[_manage_machines])
+async def bulk_remove_tags_api(
+    request: Request, payload: _BulkTags, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Remove `payload.tags` from every machine in `payload.machine_ids` —
+    a no-op for any machine that didn't have a given tag, never an error."""
+    machines = await _get_machines_by_ids(payload.machine_ids, db, user)
+    await remove_tags_from_machines(db, [m.id for m in machines], payload.tags)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.tags.remove",
+        summary=(
+            f'Removed tag(s) {", ".join(payload.tags)} from {len(machines)} selected machine(s)'
+        ),
+        details={"tags": payload.tags, "machine_count": len(machines)},
+    )
+    return {"machine_count": len(machines), "tags": payload.tags}
+
 
 @router.get("/machines/{machine_id}/updates/preview", dependencies=[_action_updates])
 async def preview_machine_update_api(

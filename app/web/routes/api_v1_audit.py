@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.auth.dependencies import require_api_permission
-from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+from app.db.models.audit_log import AuditLogEntry
 from app.db.models.role import Permission
 from app.db.session import get_db
-from app.web.audit_search import audit_search_clause
+from app.web.audit_search import apply_audit_filters
 from app.web.routes.audit import _EXPORT_FIELDS, _csv_safe, _entry_to_export_row
 
 router = APIRouter(prefix="/api/v1/audit")
@@ -47,14 +47,17 @@ def _entry_to_dict(entry: AuditLogEntry) -> dict[str, Any]:
 
 @router.get("", dependencies=[_view])
 async def list_audit_log_api(
-    db: AsyncSession = Depends(get_db), q: str = "", outcome: str = "", page: int = 1
+    db: AsyncSession = Depends(get_db),
+    q: str = "",
+    outcome: str = "",
+    target_type: str = "",
+    target_id: str = "",
+    page: int = 1,
 ) -> dict[str, object]:
     page = max(page, 1)
-    query = select(AuditLogEntry)
-    if q.strip():
-        query = query.where(audit_search_clause(q))
-    if outcome in {o.value for o in AuditOutcome}:
-        query = query.where(AuditLogEntry.outcome == AuditOutcome(outcome))
+    query = apply_audit_filters(
+        select(AuditLogEntry), q=q, outcome=outcome, target_type=target_type, target_id=target_id
+    )
 
     offset = (page - 1) * _PAGE_SIZE
     result = await db.execute(
@@ -76,13 +79,13 @@ async def export_audit_log_api(
     db: AsyncSession = Depends(get_db),
     q: str = "",
     outcome: str = "",
+    target_type: str = "",
+    target_id: str = "",
     format: str = "csv",  # noqa: A002
 ) -> Response:
-    query = select(AuditLogEntry)
-    if q.strip():
-        query = query.where(audit_search_clause(q))
-    if outcome in {o.value for o in AuditOutcome}:
-        query = query.where(AuditLogEntry.outcome == AuditOutcome(outcome))
+    query = apply_audit_filters(
+        select(AuditLogEntry), q=q, outcome=outcome, target_type=target_type, target_id=target_id
+    )
     result = await db.execute(query.order_by(AuditLogEntry.created_at.asc()))
     entries = list(result.scalars().all())
 

@@ -21,7 +21,10 @@ from app.db.models.saved_machine_view import SavedMachineView
 # same filters always produce byte-identical query_string values. Deny-
 # by-default rather than "whatever was on the URL": a saved view replays a
 # *filter*, not an arbitrary querystring (see the model's own docstring).
-ALLOWED_VIEW_PARAMS = ("q", "tag")
+# `tag` is repeatable (a view can capture more than one tag); everything
+# else is single-valued.
+ALLOWED_VIEW_PARAMS = ("q", "tag", "tag_mode")
+_MULTI_VALUED_PARAMS = frozenset({"tag"})
 
 MAX_VIEW_NAME_LENGTH = 100
 
@@ -30,14 +33,29 @@ class DuplicateViewNameError(Exception):
     """Raised when this account already has a saved view with that name."""
 
 
-def build_query_string(params: dict[str, str]) -> str:
-    """`{"q": "web", "tag": "prod"}` -> `"q=web&tag=prod"` — only the
-    recognized filter keys, in `ALLOWED_VIEW_PARAMS` order, blanks
-    dropped. Empty when every filter is blank (a saved "no filter"
-    view — legitimate, e.g. "everything, sorted the way I like").
+def build_query_string(params: dict[str, str | list[str]]) -> str:
+    """`{"q": "web", "tag": ["prod", "web"], "tag_mode": "and"}` ->
+    `"q=web&tag=prod&tag=web&tag_mode=and"` — only the recognized filter
+    keys, in `ALLOWED_VIEW_PARAMS` order, blanks/empty lists dropped.
+    Empty when every filter is blank (a saved "no filter" view —
+    legitimate, e.g. "everything, sorted the way I like"). `tag_mode` is
+    dropped whenever it wouldn't change anything — its own default
+    (`"or"`), or fewer than two tags to have a mode between at all — so a
+    single-tag view's query string looks exactly like it did before
+    `tag_mode` existed.
     """
-    ordered = {key: params[key] for key in ALLOWED_VIEW_PARAMS if params.get(key, "").strip()}
-    return urlencode(ordered)
+    ordered: dict[str, str | list[str]] = {}
+    for key in ALLOWED_VIEW_PARAMS:
+        value = params.get(key, "" if key not in _MULTI_VALUED_PARAMS else [])
+        if isinstance(value, list):
+            cleaned = [v for v in value if v.strip()]
+            if cleaned:
+                ordered[key] = cleaned
+        elif value.strip():
+            if key == "tag_mode" and (value != "and" or len(ordered.get("tag", [])) < 2):
+                continue
+            ordered[key] = value
+    return urlencode(ordered, doseq=True)
 
 
 async def list_saved_views(db: AsyncSession, user_id: uuid.UUID) -> list[SavedMachineView]:

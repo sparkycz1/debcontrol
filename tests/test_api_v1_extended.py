@@ -384,6 +384,22 @@ async def test_audit_log_list_and_export_via_api(client):
     assert export.headers["content-type"].startswith("application/json")
 
 
+async def test_audit_log_api_filters_by_exact_target(client):
+    headers = await _api_token(client)
+    machine_id = await _create_machine(client, headers, "api-target-a")
+    await _create_machine(client, headers, "api-target-b")
+
+    response = await client.get(
+        f"/api/v1/audit?target_type=machine&target_id={machine_id}", headers=headers
+    )
+
+    assert response.status_code == 200
+    entries = response.json()["entries"]
+    assert entries
+    assert all(e["target_id"] == machine_id for e in entries)
+    assert any(e["target_label"] == "api-target-a" for e in entries)
+
+
 async def test_settings_read_via_api(client):
     headers = await _api_token(client)
     response = await client.get("/api/v1/settings", headers=headers)

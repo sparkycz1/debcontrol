@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
@@ -125,7 +125,18 @@ class _SavedViewCreate(BaseModel):
     # Deliberately structured filters, not an arbitrary querystring — see
     # app.db.models.saved_machine_view's module docstring.
     q: str = ""
-    tag: str = ""
+    # A single string is still accepted (and normalized to a one-item
+    # list) for backward compatibility with callers built against the
+    # pre-multi-tag API, which only ever sent one.
+    tag: str | list[str] = Field(default_factory=list)
+    tag_mode: str = "or"
+
+    @field_validator("tag")
+    @classmethod
+    def _tag_as_list(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value else []
+        return list(value)
 
 
 @router.post("/account/saved-views", status_code=status.HTTP_201_CREATED)
@@ -135,7 +146,9 @@ async def create_saved_view_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    query_string = build_query_string({"q": payload.q, "tag": payload.tag})
+    query_string = build_query_string(
+        {"q": payload.q, "tag": payload.tag, "tag_mode": payload.tag_mode}
+    )
     try:
         view = await create_saved_view(db, user.id, payload.name, query_string)
     except DuplicateViewNameError:

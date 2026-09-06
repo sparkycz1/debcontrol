@@ -8,6 +8,11 @@
 {% block content %}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ render_os_badge(machine.os_id, size=28) }} {{ machine.name }}</h1>
+    {% if request.state.user.has_permission('audit.view') %}
+      <a href="/audit?target_type=machine&target_id={{ machine.id }}" class="hint">
+        View audit history for this machine
+      </a>
+    {% endif %}
   </div>
 
   {{ render_tabnav(tabs, active_tab) }}

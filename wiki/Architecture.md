@@ -287,6 +287,12 @@ who it is:
   a *second*, independent connection binds as that DN with the password
   just entered. An empty password is rejected before reaching the bind step
   — many directories treat that as a successful "unauthenticated bind".
+  For `ldaps://`/StartTLS, `AppSettings.ldap_tls_verify` (on by default)
+  controls certificate verification — `ldap3.Server` defaults to *no*
+  verification at all unless it's given an explicit `Tls` object, so
+  `app.auth.ldap` always passes one rather than relying on that default;
+  turning it off is an explicit opt-out for a directory with a
+  self-signed/otherwise-invalid certificate an admin already knows about.
 - **`oidc`**: redirected to the provider (Authlib, authorization-code
   flow); on callback the account is matched by comparing `username` against
   a claim from the validated ID token — which claim is configurable
@@ -1214,6 +1220,63 @@ member list all gained a **tag** filter (`?tag=...`) alongside the
 existing free-text search, and the REST API's `GET /api/v1/machines`
 accepts the same `?tag=` filter.
 
+**The machine list specifically** (not "All machines"/group pages, which
+keep the single-tag filter above) can filter by *several* tags at once —
+`?tag=prod&tag=web&tag_mode=and|or` (repeated `tag`, `tag_mode` defaulting
+to `or`) — via `app.web.machine_search.apply_tag_filter`, shared with the
+REST API's `GET /api/v1/machines`. `or` is one `.any(Tag.name.in_(...))`
+clause; `and` is one independent `.any(Tag.name == ...)` clause **per
+tag**, chained as separate `.where()` calls (SQLAlchemy ANDs successive
+`.where()`s together) rather than combined into a single clause — each
+needs its own correlated `EXISTS`, since the same machine must match each
+tag separately, not just carry *some* tag from the set. Saved views
+capture `tag`/`tag_mode` the same way they capture `q` — see
+`app.services.saved_views.build_query_string`'s `doseq` encoding for the
+repeated `tag` param (and its dropping `tag_mode` from the query string
+whenever it wouldn't actually change anything: its own `or` default, or
+fewer than two tags to have a mode between at all — so a plain single-tag
+view's link looks exactly like it did before `tag_mode` existed). The
+REST API's saved-view creation endpoint accepts `tag` as either a single
+string or an array, for backward compatibility with a caller built
+against the pre-multi-tag shape.
+
+The machine list also has bulk **Add tags**/**Remove tags** buttons
+(`app.services.machine_tags.add_tags_to_machines`/
+`remove_tags_from_machines`, and the REST equivalents at `POST /api/v1/
+machines/bulk/tags/{add,remove}`) for an ad-hoc checkbox selection —
+additive/subtractive, unlike the create/edit form's `set_machine_tags`
+(which *replaces* one machine's whole tag set): adding leaves a machine's
+other tags untouched and creates any tag that doesn't exist yet; removing
+leaves other tags untouched, is a silent no-op for a machine that never
+had the tag, and still deletes a tag left with zero machines afterward,
+same as `set_machine_tags`.
+
+Cards view (see the display-modes note below) shows each visible
+machine's *latest* monitoring sample as a small CPU/RAM bar — one batched
+window-function query (`_get_latest_monitoring_by_machine`, `row_number()
+OVER (PARTITION BY machine_id ...)`) for the whole page of machines, not
+one query per machine, and skipped entirely for Table/List. Deliberately
+just the latest reading, not a historical sparkline — an actual trend
+line would mean fetching a whole time window's samples for up to a page's
+worth of machines at once, which doesn't scale the way a single indexed
+"give me each machine's newest row" query does; a real trend chart is one
+click away on that machine's own Monitoring tab. The bar's fill width
+avoids an inline `style` (CSP has no `'unsafe-inline'` for `style-src`) by
+picking one of 11 fixed `.usage-bar-fill-N0` CSS classes (rounded to the
+nearest 10) instead of setting a percentage directly.
+
+### Machine list display modes: Table / List / Cards
+
+A per-browser cookie (`app.web.routes.machines.MACHINES_VIEW_COOKIE_NAME`,
+set via `POST /machines/view-mode` + redirect — the same pattern
+`app.web.routes.theme` already uses for the light/dark toggle), not
+per-account data: purely a display-density preference, not something
+worth a DB column or worth syncing across devices. List is a dense
+name+status row per machine; Cards is a grid with the OS logo prominent
+plus the CPU/RAM indicator above. All three modes share the exact same
+bulk-select checkboxes and underlying machine data — only the layout
+differs.
+
 `app.services.machine_tags` is the only place `Tag`/`machine_tags` rows
 are ever written:
 
@@ -1521,10 +1584,18 @@ by `machine.view`.
 ### Audit log export and syslog forwarding
 
 `GET /audit/export?format=csv|json` (`app/web/routes/audit.py`) respects the
-same `q`/`outcome` filters as the list view and streams every matching
-`AuditLogEntry` as a download — a plain `<a href>` link, not a POST; its
-only side effect is an `audit_log.export` entry. Not paginated: it fetches
-every matching row in one request.
+same `q`/`outcome`/`target_type`+`target_id` filters as the list view and
+streams every matching `AuditLogEntry` as a download — a plain `<a href>`
+link, not a POST; its only side effect is an `audit_log.export` entry. Not
+paginated: it fetches every matching row in one request.
+
+`target_type`+`target_id` is an *exact* match, unlike `q`'s free-text
+match on `target_label` (a point-in-time snapshot that can miss a
+since-renamed target) — the "view audit history for this machine" link on
+a machine's own Overview page uses it. `app.web.audit_search.
+apply_audit_filters` is the one place all four filters are applied, shared
+by the web routes and their REST equivalent (`api_v1_audit.py`) so list
+and export, web and API, never drift apart from each other.
 
 `app.audit_syslog.forward_to_syslog` is a live *mirror*, not an alternative
 record: `log_event` calls it once per entry, right after that entry's own

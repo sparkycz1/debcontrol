@@ -28,6 +28,7 @@ def _make_app_settings(**overrides: object) -> AppSettings:
         ldap_user_search_base="ou=people,dc=example,dc=com",
         ldap_user_search_filter="(uid={username})",
         ldap_connect_timeout_seconds=5,
+        ldap_tls_verify=True,
     )
     for key, value in overrides.items():
         setattr(settings, key, value)
@@ -91,6 +92,43 @@ async def test_ldap_authenticate_fails_when_user_not_found(monkeypatch):
 
     result = await ldap_module.authenticate(_make_app_settings(), "nobody", "whatever")
     assert result is False
+
+
+async def test_ldap_tls_verify_true_requires_a_valid_certificate(monkeypatch):
+    """`ldap3.Server` defaults to *no* verification at all when it isn't
+    given an explicit `Tls` object — `ldap_tls_verify=True` (the model
+    default) must always pass one requiring a valid chain."""
+    import ssl
+
+    server_mock = MagicMock()
+    monkeypatch.setattr(ldap3, "Server", server_mock)
+    monkeypatch.setattr(ldap3, "Connection", MagicMock(return_value=MagicMock(entries=[])))
+
+    await ldap_module.authenticate(
+        _make_app_settings(ldap_tls_verify=True), "alice", "whatever"
+    )
+
+    _args, kwargs = server_mock.call_args
+    assert isinstance(kwargs["tls"], ldap3.Tls)
+    assert kwargs["tls"].validate == ssl.CERT_REQUIRED
+
+
+async def test_ldap_tls_verify_false_accepts_any_certificate(monkeypatch):
+    """The explicit opt-out for a directory with a self-signed/otherwise
+    invalid certificate — see `AppSettings.ldap_tls_verify`'s docstring."""
+    import ssl
+
+    server_mock = MagicMock()
+    monkeypatch.setattr(ldap3, "Server", server_mock)
+    monkeypatch.setattr(ldap3, "Connection", MagicMock(return_value=MagicMock(entries=[])))
+
+    await ldap_module.authenticate(
+        _make_app_settings(ldap_tls_verify=False), "alice", "whatever"
+    )
+
+    _args, kwargs = server_mock.call_args
+    assert isinstance(kwargs["tls"], ldap3.Tls)
+    assert kwargs["tls"].validate == ssl.CERT_NONE
 
 
 def test_password_hash_roundtrip():

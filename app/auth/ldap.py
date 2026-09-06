@@ -6,11 +6,21 @@ never used for anything but that final bind.
 
 `ldap3` is a synchronous library — every call here runs in a worker thread
 (`asyncio.to_thread`) so it doesn't block the event loop.
+
+TLS certificate verification (for `ldaps://` and STARTTLS alike) is on by
+default and configurable — `AppSettings.ldap_tls_verify` — since `ldap3`
+itself defaults to *no* verification at all when a `Server` isn't given an
+explicit `Tls` object, which would otherwise make "secure by default" an
+accident of remembering to pass one rather than an actual guarantee. Off
+is meant for a directory whose certificate an admin already knows isn't
+verifiable (self-signed, expired, wrong hostname) and still wants to use —
+same trade-off a browser's "proceed anyway" click makes.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ssl
 
 import ldap3
 from ldap3.core.exceptions import LDAPException
@@ -39,9 +49,16 @@ def _authenticate_sync(
     username: str,
     password: str,
     timeout: int,
+    tls_verify: bool,
 ) -> bool:
     use_ssl = server_uri.lower().startswith("ldaps://")
-    server = ldap3.Server(server_uri, use_ssl=use_ssl, connect_timeout=timeout)
+    # `ldap3.Server` defaults to *not* validating the certificate at all
+    # (`Tls()`'s own default is `ssl.CERT_NONE`) whenever `tls=` isn't
+    # given explicitly — always pass one, so verification is opt-out
+    # (`ldap_tls_verify=False`), never an accidental opt-out by omission.
+    # STARTTLS reuses the same `Tls` object via `start_tls()` below.
+    tls = ldap3.Tls(validate=ssl.CERT_REQUIRED if tls_verify else ssl.CERT_NONE)
+    server = ldap3.Server(server_uri, use_ssl=use_ssl, tls=tls, connect_timeout=timeout)
 
     try:
         with ldap3.Connection(
@@ -111,4 +128,5 @@ async def authenticate(app_settings: AppSettings, username: str, password: str) 
         username=username,
         password=password,
         timeout=app_settings.ldap_connect_timeout_seconds,
+        tls_verify=app_settings.ldap_tls_verify,
     )

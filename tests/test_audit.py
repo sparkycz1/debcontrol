@@ -308,3 +308,61 @@ async def test_creating_a_user_writes_an_audit_entry(client):
     assert "user.create" in log.text
     assert "audited-new-user" in log.text
     assert "role.create" in log.text
+
+
+async def test_machine_overview_links_to_its_own_audit_history(client):
+    from tests.test_web import _create_machine
+
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="linked-machine")
+
+    detail = await client.get(f"/machines/{machine_id}")
+    assert f"/audit?target_type=machine&target_id={machine_id}" in detail.text
+
+
+async def test_audit_log_filters_by_exact_machine_target(client, db_session_factory):
+    from tests.test_web import _create_machine
+
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="target-a")
+    await _create_machine(client, csrf_token, name="target-b")
+
+    response = await client.get(f"/audit?target_type=machine&target_id={machine_id}")
+
+    assert response.status_code == 200
+    assert "target-a" in response.text
+    assert "target-b" not in response.text
+    assert f'value="{machine_id}"' in response.text  # hidden target_id carried through the form
+
+
+async def test_audit_log_target_filter_banner_and_clear_link(client, db_session_factory):
+    from tests.test_web import _create_machine
+
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="banner-machine")
+
+    response = await client.get(f"/audit?target_type=machine&target_id={machine_id}")
+
+    assert "Showing entries for machine" in response.text
+    assert "banner-machine" in response.text
+    assert 'href="/audit?q=&outcome="' in response.text
+
+
+async def test_audit_export_respects_target_filter(client, db_session_factory):
+    from tests.test_web import _create_machine
+
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="export-target")
+    await _create_machine(client, csrf_token, name="export-other")
+
+    response = await client.get(
+        f"/audit/export?format=json&target_type=machine&target_id={machine_id}"
+    )
+
+    assert response.status_code == 200
+    assert "export-target" in response.text
+    assert "export-other" not in response.text

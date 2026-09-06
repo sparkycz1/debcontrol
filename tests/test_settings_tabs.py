@@ -61,6 +61,9 @@ async def test_integrations_tab_has_syslog_ldap_and_oidc(client):
     assert "LDAP login" in response.text
     assert "OIDC login" in response.text
     assert "AI assistant" not in response.text
+    # On (verified) by default — an unchecked box would silently disable
+    # certificate verification, the opposite of the safe default.
+    assert 'name="ldap_tls_verify" checked' in response.text
 
 
 async def test_ai_tab_has_ai_assistant_content(client):
@@ -93,6 +96,28 @@ async def test_saving_ldap_settings_redirects_back_to_integrations_tab(client):
     )
     assert response.status_code == 303
     assert response.headers["location"] == "/settings?tab=integrations"
+
+
+async def test_disabling_ldap_tls_verify_persists(client, db_session_factory):
+    from sqlalchemy import select
+
+    from app.db.models.app_settings import AppSettings
+
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/settings/ldap",
+        data={"csrf_token": csrf_token, "ldap_enabled": ""},  # ldap_tls_verify omitted = unchecked
+        follow_redirects=False,
+    )
+
+    async with db_session_factory() as db:
+        result = await db.execute(select(AppSettings))
+        app_settings = result.scalar_one()
+        assert app_settings.ldap_tls_verify is False
+
+    response = await client.get("/settings?tab=integrations")
+    assert 'name="ldap_tls_verify" checked' not in response.text
 
 
 async def test_saving_ai_limits_redirects_back_to_ai_tab(client):

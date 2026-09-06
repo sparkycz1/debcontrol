@@ -14,12 +14,12 @@ from datetime import UTC, datetime
 # subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
 # would silently never match and the timeout branches below would be dead code.
 from celery.exceptions import TimeoutError as CeleryTimeoutError
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
@@ -54,7 +54,12 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
-from app.services.machine_tags import parse_tag_names_from_text, set_machine_tags
+from app.services.machine_tags import (
+    add_tags_to_machines,
+    parse_tag_names_from_text,
+    remove_tags_from_machines,
+    set_machine_tags,
+)
 from app.services.saved_views import (
     DuplicateViewNameError,
     build_query_string,
@@ -73,7 +78,7 @@ from app.ssh.updates import PendingPackage
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
 from app.tasks import jobs as tasks
-from app.web.machine_search import machine_search_clause
+from app.web.machine_search import apply_tag_filter, machine_search_clause
 from app.web.routes.audit import _csv_safe
 from app.web.templating import templates
 
@@ -166,6 +171,41 @@ async def _get_all_tags(db: AsyncSession) -> list[Tag]:
 async def _get_pending_machines(db: AsyncSession) -> list[PendingMachine]:
     result = await db.execute(select(PendingMachine).order_by(PendingMachine.created_at.desc()))
     return list(result.scalars().all())
+
+
+async def _get_latest_monitoring_by_machine(
+    db: AsyncSession, machine_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, MachineMonitoringSample]:
+    """The single most recent monitoring sample for each machine in
+    `machine_ids` — the Cards view's small CPU/RAM indicator. One query
+    (a `row_number() OVER (PARTITION BY machine_id ...)` window, filtered
+    to rank 1), not one query per machine — this runs against the current
+    page's machines only (at most `_MACHINE_LIST_PAGE_SIZE`), so it scales
+    the same way the page itself does. Deliberately just the latest
+    reading, not a historical sparkline: a real trend line would mean
+    fetching every sample in a time window for up to a page's worth of
+    machines at once, the same "don't fan out per machine" scale concern
+    `wiki/Development.md` calls out elsewhere — see the Monitoring tab
+    (`GET /machines/{id}/monitoring`) for actual trend charts, one machine
+    at a time."""
+    if not machine_ids:
+        return {}
+    ranked = (
+        select(
+            MachineMonitoringSample,
+            func.row_number()
+            .over(
+                partition_by=MachineMonitoringSample.machine_id,
+                order_by=MachineMonitoringSample.sampled_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(MachineMonitoringSample.machine_id.in_(machine_ids))
+        .subquery()
+    )
+    latest = aliased(MachineMonitoringSample, ranked)
+    result = await db.execute(select(latest).where(ranked.c.rn == 1))
+    return {sample.machine_id: sample for sample in result.scalars().all()}
 
 
 async def _get_package_counts(machine_id: uuid.UUID, db: AsyncSession) -> dict[str, int]:
@@ -265,15 +305,16 @@ async def list_machines(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     q: str = "",
-    tag: str = "",
+    tag: list[str] = Query(default=[]),
+    tag_mode: str = "or",
     page: int = 1,
 ) -> Response:
     page = max(page, 1)
+    tag_mode = tag_mode if tag_mode == "and" else "or"
     query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
-    if tag.strip():
-        query = query.where(Machine.tags.any(Tag.name == tag.strip().lower()))
+    query = apply_tag_filter(query, tag, tag_mode)
 
     offset = (page - 1) * _MACHINE_LIST_PAGE_SIZE
     result = await db.execute(
@@ -287,6 +328,12 @@ async def list_machines(
     if view_mode not in _MACHINE_VIEW_MODES:
         view_mode = "table"
 
+    latest_monitoring = (
+        await _get_latest_monitoring_by_machine(db, [m.id for m in machines])
+        if view_mode == "cards"
+        else {}
+    )
+
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -298,9 +345,11 @@ async def list_machines(
             "saved_views": await list_saved_views(db, current_user.id),
             "q": q,
             "tag": tag,
+            "tag_mode": tag_mode,
             "page": page,
             "has_more": has_more,
             "view_mode": view_mode,
+            "latest_monitoring": latest_monitoring,
             "csrf_token": csrf_token,
             "bulk_error": request.query_params.get("bulk_error"),
             "power_skipped": request.query_params.get("power_skipped"),
@@ -351,13 +400,14 @@ async def save_machine_view(
     current_user: User = Depends(get_current_user),
     name: str = Form(...),
     q: str = Form(""),
-    tag: str = Form(""),
+    tag: list[str] = Form(default=[]),
+    tag_mode: str = Form("or"),
 ) -> Response:
     """"Save this view" on the machine list — captures only the known
     filter fields (never an arbitrary querystring, see
     `app.services.saved_views`), so a saved view always replays as exactly
     the same filtered `GET /machines` request."""
-    query_string = build_query_string({"q": q, "tag": tag})
+    query_string = build_query_string({"q": q, "tag": tag, "tag_mode": tag_mode})
     if not name.strip():
         return RedirectResponse(
             url=f"/machines?{query_string}", status_code=status.HTTP_303_SEE_OTHER
@@ -951,6 +1001,72 @@ async def bulk_power_action(
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/tags/add", dependencies=[_manage, Depends(verify_csrf)])
+async def bulk_add_tags(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+    tags: str = Form(""),
+) -> Response:
+    """Add one or more tags to every machine in an ad-hoc selection from the
+    machine list, leaving each machine's other tags untouched — the bulk
+    equivalent of typing into one machine's own tags field on Settings."""
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
+    names = parse_tag_names_from_text(tags)
+    if not machines or not names:
+        return RedirectResponse(
+            url="/machines?bulk_error=Select+at+least+one+machine+and+tag.",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    await add_tags_to_machines(db, [m.id for m in machines], names)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.tags.add",
+        summary=(
+            f'Added tag(s) {", ".join(names)} to {len(machines)} selected machine(s)'
+        ),
+        details={"tags": names, "machine_count": len(machines)},
+    )
+    return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/tags/remove", dependencies=[_manage, Depends(verify_csrf)])
+async def bulk_remove_tags(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+    tags: str = Form(""),
+) -> Response:
+    """Remove one or more tags from every machine in an ad-hoc selection —
+    a no-op for any machine that didn't have a given tag in the first
+    place, never an error."""
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
+    names = parse_tag_names_from_text(tags)
+    if not machines or not names:
+        return RedirectResponse(
+            url="/machines?bulk_error=Select+at+least+one+machine+and+tag.",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    await remove_tags_from_machines(db, [m.id for m in machines], names)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.tags.remove",
+        summary=(
+            f'Removed tag(s) {", ".join(names)} from {len(machines)} selected machine(s)'
+        ),
+        details={"tags": names, "machine_count": len(machines)},
+    )
+    return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/{machine_id}")

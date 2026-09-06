@@ -20,7 +20,7 @@ from app.auth.dependencies import require_permission
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.role import Permission
 from app.db.session import get_db
-from app.web.audit_search import audit_search_clause
+from app.web.audit_search import apply_audit_filters
 from app.web.templating import templates
 
 router = APIRouter(
@@ -86,14 +86,14 @@ async def list_audit_log(
     db: AsyncSession = Depends(get_db),
     q: str = "",
     outcome: str = "",
+    target_type: str = "",
+    target_id: str = "",
     page: int = 1,
 ) -> Response:
     page = max(page, 1)
-    query = select(AuditLogEntry)
-    if q.strip():
-        query = query.where(audit_search_clause(q))
-    if outcome in {o.value for o in AuditOutcome}:
-        query = query.where(AuditLogEntry.outcome == AuditOutcome(outcome))
+    query = apply_audit_filters(
+        select(AuditLogEntry), q=q, outcome=outcome, target_type=target_type, target_id=target_id
+    )
 
     # Fetch one extra row to know whether an "Older" page exists, without a
     # separate COUNT(*) query — this table is append-only and can grow large.
@@ -105,6 +105,11 @@ async def list_audit_log(
     has_older = len(entries) > _PAGE_SIZE
     entries = entries[:_PAGE_SIZE]
 
+    # For the "Showing audit history for <label>" banner — the *current*
+    # label if there's still an entry to read it from (a renamed/deleted
+    # target just doesn't get the banner, no worse than before this existed).
+    target_label = entries[0].target_label if entries and target_type and target_id else None
+
     return templates.TemplateResponse(
         request,
         "audit/list.html",
@@ -113,6 +118,9 @@ async def list_audit_log(
             "outcomes": list(AuditOutcome),
             "q": q,
             "outcome": outcome,
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_label": target_label,
             "page": page,
             "has_older": has_older,
         },
@@ -125,22 +133,21 @@ async def export_audit_log(
     db: AsyncSession = Depends(get_db),
     q: str = "",
     outcome: str = "",
+    target_type: str = "",
+    target_id: str = "",
     format: str = "csv",  # noqa: A002 - matches the query param name, not shadowing anything here
 ) -> Response:
-    """Export the audit log — respecting the same `q`/`outcome` filters as
-    the list view — as CSV or JSON, for archival/compliance outside the app.
-    A plain `<a href>` download link (see `audit/list.html`), not a POST:
-    the only side effect is an audit entry for the export itself, not
-    anything worth CSRF-protecting. Not paginated — fetches every matching
-    row in one go, which is fine for an infrequent, admin-triggered action
-    on a self-hosted tool's own table, but could be slow on a very large,
-    unfiltered log.
+    """Export the audit log — respecting the same filters as the list view —
+    as CSV or JSON, for archival/compliance outside the app. A plain
+    `<a href>` download link (see `audit/list.html`), not a POST: the only
+    side effect is an audit entry for the export itself, not anything worth
+    CSRF-protecting. Not paginated — fetches every matching row in one go,
+    which is fine for an infrequent, admin-triggered action on a self-hosted
+    tool's own table, but could be slow on a very large, unfiltered log.
     """
-    query = select(AuditLogEntry)
-    if q.strip():
-        query = query.where(audit_search_clause(q))
-    if outcome in {o.value for o in AuditOutcome}:
-        query = query.where(AuditLogEntry.outcome == AuditOutcome(outcome))
+    query = apply_audit_filters(
+        select(AuditLogEntry), q=q, outcome=outcome, target_type=target_type, target_id=target_id
+    )
     result = await db.execute(query.order_by(AuditLogEntry.created_at.asc()))
     entries = list(result.scalars().all())
 

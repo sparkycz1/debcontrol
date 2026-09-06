@@ -5,8 +5,10 @@ listed."""
 from __future__ import annotations
 
 from sqlalchemy import ColumnElement, or_
+from sqlalchemy.sql import Select
 
 from app.db.models.machine import Machine
+from app.db.models.machine_tag import Tag
 
 _SEARCH_COLUMNS = (
     Machine.name,
@@ -27,3 +29,28 @@ def machine_search_clause(query: str) -> ColumnElement[bool]:
     equivalent elsewhere (e.g. SQLite, used in tests)."""
     pattern = f"%{query.strip()}%"
     return or_(*(column.ilike(pattern) for column in _SEARCH_COLUMNS))
+
+
+def apply_tag_filter[S: Select[tuple[Machine]]](query: S, tags: list[str], tag_mode: str) -> S:
+    """Filter `query` by one or more tag names — `tag_mode="or"` (default,
+    and used whenever `tag_mode` isn't exactly `"and"`) matches a machine
+    carrying *any* of `tags`; `"and"` matches only a machine carrying
+    *every one* of them. Shared by the web machine list
+    (`app/web/routes/machines.py`) and its REST equivalent
+    (`app/web/routes/api_v1.py`) so the two filter identically.
+
+    `"and"` is one `.any()` clause per tag, chained as separate `.where()`
+    calls rather than combined in one `and_(...)` — SQLAlchemy already ANDs
+    successive `.where()` calls together, and each `.any()` needs its own
+    independent correlated EXISTS subquery (the same machine must match
+    each one separately; a single subquery checking for several tag names
+    at once would still just be an OR across them, not AND).
+    """
+    names = [t.strip().lower() for t in tags if t.strip()]
+    if not names:
+        return query
+    if tag_mode == "and":
+        for name in names:
+            query = query.where(Machine.tags.any(Tag.name == name))
+        return query
+    return query.where(Machine.tags.any(Tag.name.in_(names)))

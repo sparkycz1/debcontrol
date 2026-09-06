@@ -422,6 +422,7 @@ async def update_ldap_settings(
     ldap_enabled: str = Form(""),
     ldap_server_uri: str = Form(""),
     ldap_use_starttls: str = Form(""),
+    ldap_tls_verify: str = Form(""),
     ldap_bind_dn: str = Form(""),
     # Blank = keep the existing bind password unchanged — same convention as
     # Machine.secret_encrypted (app/schemas/machine.py).
@@ -460,6 +461,7 @@ async def update_ldap_settings(
     app_settings.ldap_enabled = bool(ldap_enabled)
     app_settings.ldap_server_uri = server_uri or None
     app_settings.ldap_use_starttls = bool(ldap_use_starttls)
+    app_settings.ldap_tls_verify = bool(ldap_tls_verify)
     app_settings.ldap_bind_dn = ldap_bind_dn.strip() or None
     if ldap_bind_password:
         app_settings.ldap_bind_password_encrypted = encrypt_secret(ldap_bind_password)
@@ -468,12 +470,10 @@ async def update_ldap_settings(
     app_settings.ldap_connect_timeout_seconds = timeout
     await db.commit()
 
-    await log_event(
-        db,
-        request=request,
-        action="settings.ldap.update",
-        summary=f"Updated LDAP settings ({'enabled' if app_settings.ldap_enabled else 'disabled'})",
-    )
+    summary = f"Updated LDAP settings ({'enabled' if app_settings.ldap_enabled else 'disabled'})"
+    if not app_settings.ldap_tls_verify:
+        summary += " — certificate verification is OFF"
+    await log_event(db, request=request, action="settings.ldap.update", summary=summary)
     return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
 
 

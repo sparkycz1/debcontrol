@@ -478,6 +478,11 @@ p { margin: 0 0 var(--space-3); }
   max-width: 420px;
 }
 
+.search-form select[multiple] {
+  min-width: 10rem;
+  vertical-align: top;
+}
+
 .search-form input:focus-visible,
 .search-form select:focus-visible { border-color: var(--color-accent); }
 
@@ -635,7 +640,7 @@ p { margin: 0 0 var(--space-3); }
 .live-notify-toggle:hover:not(:disabled) { color: var(--color-text); }
 .live-notify-toggle:disabled { cursor: default; opacity: 0.6; }
 
-.saved-view-name-input {
+.inline-text-input {
   display: inline-block;
   width: auto;
   background: var(--color-surface);
@@ -738,6 +743,41 @@ p { margin: 0 0 var(--space-3); }
 }
 .machine-card-tags { display: flex; flex-wrap: wrap; }
 .machine-card-details-link { align-self: flex-start; margin-top: auto; }
+
+/* --- Cards view's CPU/RAM indicator (machines/list.html's `usage_bar`
+   macro) — the latest monitoring sample only, not a historical sparkline;
+   see `_get_latest_monitoring_by_machine`'s own docstring for why. No
+   inline `style` (CSP): the fill width is one of the fixed `-N0` classes
+   below, picked by rounding to the nearest 10. --- */
+.machine-card-usage { display: flex; flex-direction: column; gap: 0.2rem; }
+.usage-bar { display: flex; align-items: center; gap: var(--space-2); font-size: 0.8rem; }
+.usage-bar-label { color: var(--color-muted); width: 2.2em; flex-shrink: 0; }
+.usage-bar-track {
+  flex: 1 1 auto;
+  height: 0.4rem;
+  background: var(--color-surface-raised);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.usage-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: inherit;
+  transition: width var(--transition-fast);
+}
+.usage-bar-value { color: var(--color-muted); width: 2.4em; flex-shrink: 0; text-align: right; }
+.usage-bar-fill-0 { width: 0%; }
+.usage-bar-fill-10 { width: 10%; }
+.usage-bar-fill-20 { width: 20%; }
+.usage-bar-fill-30 { width: 30%; }
+.usage-bar-fill-40 { width: 40%; }
+.usage-bar-fill-50 { width: 50%; }
+.usage-bar-fill-60 { width: 60%; }
+.usage-bar-fill-70 { width: 70%; }
+.usage-bar-fill-80 { width: 80%; }
+.usage-bar-fill-90 { width: 90%; }
+.usage-bar-fill-100 { width: 100%; }
 
 /* --- Forms --- */
 

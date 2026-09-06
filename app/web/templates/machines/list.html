@@ -21,6 +21,23 @@
   {% endif %}
 {% endmacro %}
 
+{% macro usage_bar(label, percent) %}
+  {# No inline `style` (CSP has no 'unsafe-inline' for style-src) — the
+     fill width comes from one of 11 fixed `.usage-bar-fill-N0` classes
+     (0/10/.../100), picked by rounding to the nearest 10. #}
+  {% if percent is not none %}
+    {% set clamped = [[percent, 100] | min, 0] | max %}
+    {% set rounded = ((clamped / 10) | round | int) * 10 %}
+    <div class="usage-bar" role="img" aria-label="{{ label }}: {{ '%.0f' % percent }}%">
+      <span class="usage-bar-label">{{ label }}</span>
+      <span class="usage-bar-track">
+        <span class="usage-bar-fill usage-bar-fill-{{ rounded }}"></span>
+      </span>
+      <span class="usage-bar-value">{{ '%.0f' % percent }}%</span>
+    </div>
+  {% endif %}
+{% endmacro %}
+
 {% macro tag_chips(machine) %}
   {% if machine.tags %}
     {% for tag in machine.tags %}
@@ -120,8 +137,9 @@
     <form method="post" action="/machines/views" class="inline-form stack-gap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="q" value="{{ q }}">
-      <input type="hidden" name="tag" value="{{ tag }}">
-      <input type="text" name="name" class="saved-view-name-input"
+      {% for t in tag %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+      <input type="hidden" name="tag_mode" value="{{ tag_mode }}">
+      <input type="text" name="name" class="inline-text-input"
              placeholder="Name this view…" maxlength="100" required>
       <button type="submit" class="button button-secondary">Save this view</button>
     </form>
@@ -144,6 +162,8 @@
     <div class="empty-state">
       {% if q %}
         <p>No machines match "{{ q }}".</p>
+      {% elif tag %}
+        <p>No machines match this filter.</p>
       {% else %}
         <p>No managed machines yet.</p>
         <a class="button" href="/machines/new">Add your first machine</a>
@@ -192,6 +212,15 @@
                 {% include "partials/machine_update_status_cell.html" %}
                 {{ host_key_badge(machine) }}
               </div>
+              {% set sample = latest_monitoring.get(machine.id) %}
+              {% if sample %}
+                <div class="machine-card-usage">
+                  {{ usage_bar('CPU', sample.cpu_percent) }}
+                  {% if sample.ram_used_bytes is not none and sample.ram_total_bytes %}
+                    {{ usage_bar('RAM', sample.ram_used_bytes / sample.ram_total_bytes * 100) }}
+                  {% endif %}
+                </div>
+              {% endif %}
               {% if machine.tags %}
                 <div class="machine-card-tags">{{ tag_chips(machine) }}</div>
               {% endif %}
@@ -263,18 +292,27 @@
         <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
           Shut down
         </button>
+        <input type="text" name="tags" class="inline-text-input" placeholder="tag1, tag2…"
+               aria-label="Tags for the buttons below">
+        <button type="submit" formaction="/machines/bulk/tags/add" class="button button-secondary">
+          Add tags
+        </button>
+        <button type="submit" formaction="/machines/bulk/tags/remove" class="button button-secondary">
+          Remove tags
+        </button>
       </div>
     </form>
 
     {% if page > 1 or has_more %}
+      {% set tag_qs %}{% for t in tag %}&tag={{ t | urlencode }}{% endfor %}{% if tag_mode == 'and' and tag | length > 1 %}&tag_mode=and{% endif %}{% endset %}
       <div class="page-header-actions">
         {% if page > 1 %}
-          <a class="button button-secondary" href="/machines?q={{ q | urlencode }}&page={{ page - 1 }}">
+          <a class="button button-secondary" href="/machines?q={{ q | urlencode }}{{ tag_qs }}&page={{ page - 1 }}">
             Previous
           </a>
         {% endif %}
         {% if has_more %}
-          <a class="button button-secondary" href="/machines?q={{ q | urlencode }}&page={{ page + 1 }}">
+          <a class="button button-secondary" href="/machines?q={{ q | urlencode }}{{ tag_qs }}&page={{ page + 1 }}">
             Next
           </a>
         {% endif %}

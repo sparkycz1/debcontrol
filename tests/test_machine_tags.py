@@ -7,6 +7,8 @@ config export/import round-trip).
 from __future__ import annotations
 
 import json
+import uuid
+from typing import Any
 
 from sqlalchemy import select
 
@@ -261,3 +263,253 @@ async def test_config_export_import_round_trips_tags(client, db_session_factory)
         reimported = result.scalar_one_or_none()
         assert reimported is not None
         assert sorted(tag.name for tag in reimported.tags) == ["prod", "web"]
+
+
+async def _machine_id_by_name(db_session_factory: Any, name: str) -> uuid.UUID:
+    async with db_session_factory() as db:
+        result = await db.execute(select(Machine).where(Machine.name == name))
+        machine_id: uuid.UUID = result.scalar_one().id
+        return machine_id
+
+
+async def test_bulk_add_tags_leaves_other_tags_untouched(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="bulk-a", tags="existing")
+    await _create_machine(client, csrf_token, name="bulk-b", ip_address="10.0.2.1")
+
+    a_id = await _machine_id_by_name(db_session_factory, "bulk-a")
+    b_id = await _machine_id_by_name(db_session_factory, "bulk-b")
+
+    response = await client.post(
+        "/machines/bulk/tags/add",
+        data={
+            "csrf_token": csrf_token,
+            "machine_ids": [str(a_id), str(b_id)],
+            "tags": "prod, web",
+        },
+    )
+    assert response.status_code == 303
+
+    async with db_session_factory() as db:
+        a = await db.get(Machine, a_id)
+        b = await db.get(Machine, b_id)
+        await db.refresh(a, attribute_names=["tags"])
+        await db.refresh(b, attribute_names=["tags"])
+        assert sorted(t.name for t in a.tags) == ["existing", "prod", "web"]
+        assert sorted(t.name for t in b.tags) == ["prod", "web"]
+
+
+async def test_bulk_remove_tags_leaves_other_tags_and_is_a_noop_if_absent(
+    client, db_session_factory
+):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="bulk-c", tags="prod, web")
+    await _create_machine(client, csrf_token, name="bulk-d", ip_address="10.0.2.2")
+
+    c_id = await _machine_id_by_name(db_session_factory, "bulk-c")
+    d_id = await _machine_id_by_name(db_session_factory, "bulk-d")  # never had "prod"
+
+    response = await client.post(
+        "/machines/bulk/tags/remove",
+        data={
+            "csrf_token": csrf_token,
+            "machine_ids": [str(c_id), str(d_id)],
+            "tags": "prod",
+        },
+    )
+    assert response.status_code == 303
+
+    async with db_session_factory() as db:
+        c = await db.get(Machine, c_id)
+        d = await db.get(Machine, d_id)
+        await db.refresh(c, attribute_names=["tags"])
+        await db.refresh(d, attribute_names=["tags"])
+        assert sorted(t.name for t in c.tags) == ["web"]
+        assert list(d.tags) == []
+
+
+async def test_bulk_remove_tags_deletes_orphaned_tag(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="only-one", tags="ephemeral")
+    machine_id = await _machine_id_by_name(db_session_factory, "only-one")
+
+    await client.post(
+        "/machines/bulk/tags/remove",
+        data={"csrf_token": csrf_token, "machine_ids": [str(machine_id)], "tags": "ephemeral"},
+    )
+
+    async with db_session_factory() as db:
+        result = await db.execute(select(Tag).where(Tag.name == "ephemeral"))
+        assert result.scalar_one_or_none() is None
+
+
+async def test_bulk_add_tags_requires_a_selection_and_a_tag(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/machines/bulk/tags/add",
+        data={"csrf_token": csrf_token, "machine_ids": [], "tags": "prod"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "bulk_error" in response.headers["location"]
+
+
+async def test_bulk_add_tags_api(client):
+    headers = await _api_token(client)
+    create_resp = await client.post(
+        "/api/v1/machines",
+        json={
+            "name": "api-bulk-a",
+            "ip_address": "10.0.3.1",
+            "port": 22,
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "s3cret",
+            "tags": ["existing"],
+        },
+        headers=headers,
+    )
+    machine_id = create_resp.json()["id"]
+
+    response = await client.post(
+        "/api/v1/machines/bulk/tags/add",
+        json={"machine_ids": [machine_id], "tags": ["Prod", "web"]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["machine_count"] == 1
+
+    get_resp = await client.get(f"/api/v1/machines/{machine_id}", headers=headers)
+    assert sorted(get_resp.json()["tags"]) == ["existing", "prod", "web"]
+
+
+async def test_bulk_remove_tags_api(client):
+    headers = await _api_token(client)
+    create_resp = await client.post(
+        "/api/v1/machines",
+        json={
+            "name": "api-bulk-b",
+            "ip_address": "10.0.3.2",
+            "port": 22,
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "s3cret",
+            "tags": ["prod", "web"],
+        },
+        headers=headers,
+    )
+    machine_id = create_resp.json()["id"]
+
+    response = await client.post(
+        "/api/v1/machines/bulk/tags/remove",
+        json={"machine_ids": [machine_id], "tags": ["prod"]},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    get_resp = await client.get(f"/api/v1/machines/{machine_id}", headers=headers)
+    assert get_resp.json()["tags"] == ["web"]
+
+
+async def test_machine_list_filters_by_multiple_tags_or_mode(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="or-prod", tags="prod")
+    await _create_machine(client, csrf_token, name="or-web", ip_address="10.0.4.1", tags="web")
+    await _create_machine(client, csrf_token, name="or-neither", ip_address="10.0.4.2")
+
+    response = await client.get("/machines", params=[("tag", "prod"), ("tag", "web")])
+
+    assert "or-prod" in response.text
+    assert "or-web" in response.text
+    assert "or-neither" not in response.text
+
+
+async def test_machine_list_filters_by_multiple_tags_and_mode(client):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="and-both", tags="prod, web")
+    await _create_machine(
+        client, csrf_token, name="and-prod-only", ip_address="10.0.4.3", tags="prod"
+    )
+
+    response = await client.get(
+        "/machines", params=[("tag", "prod"), ("tag", "web"), ("tag_mode", "and")]
+    )
+
+    assert "and-both" in response.text
+    assert "and-prod-only" not in response.text
+
+
+async def test_machines_api_filters_by_multiple_tags(client):
+    headers = await _api_token(client)
+    await client.post(
+        "/api/v1/machines",
+        json={
+            "name": "api-and-both",
+            "ip_address": "10.0.5.1",
+            "port": 22,
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "s3cret",
+            "tags": ["prod", "web"],
+        },
+        headers=headers,
+    )
+    await client.post(
+        "/api/v1/machines",
+        json={
+            "name": "api-prod-only",
+            "ip_address": "10.0.5.2",
+            "port": 22,
+            "username": "admin",
+            "auth_method": "password",
+            "secret": "s3cret",
+            "tags": ["prod"],
+        },
+        headers=headers,
+    )
+
+    or_resp = await client.get(
+        "/api/v1/machines", params=[("tag", "prod"), ("tag", "web")], headers=headers
+    )
+    or_names = {m["name"] for m in or_resp.json()}
+    assert {"api-and-both", "api-prod-only"} <= or_names
+
+    and_resp = await client.get(
+        "/api/v1/machines",
+        params=[("tag", "prod"), ("tag", "web"), ("tag_mode", "and")],
+        headers=headers,
+    )
+    and_names = {m["name"] for m in and_resp.json()}
+    assert "api-and-both" in and_names
+    assert "api-prod-only" not in and_names
+
+
+async def test_saved_view_round_trips_multiple_tags_and_mode(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="view-both", tags="prod, web")
+
+    response = await client.post(
+        "/machines/views",
+        data={
+            "csrf_token": csrf_token,
+            "name": "prod and web",
+            "tag": ["prod", "web"],
+            "tag_mode": "and",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "tag=prod" in response.headers["location"]
+    assert "tag=web" in response.headers["location"]
+    assert "tag_mode=and" in response.headers["location"]
+
+    list_page = await client.get("/machines")
+    assert "prod and web" in list_page.text

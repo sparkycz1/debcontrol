@@ -59,6 +59,17 @@
         Use StartTLS (only relevant for a plain "ldap://" server URI)
       </label>
 
+      <label>
+        <input type="checkbox" name="ldap_tls_verify" {{ 'checked' if app_settings.ldap_tls_verify else '' }}>
+        Verify the directory's TLS certificate
+      </label>
+      <p class="hint">
+        Only for "ldaps://" or StartTLS. Turn off only if you know this
+        directory's certificate is self-signed or otherwise won't validate
+        and you still want to use it — with it off, any certificate is
+        accepted, with no protection against a machine-in-the-middle.
+      </p>
+
       <label for="ldap_bind_dn">Service account bind DN</label>
       <input type="text" id="ldap_bind_dn" name="ldap_bind_dn" placeholder="cn=debcontrol,ou=services,dc=example,dc=com"
              value="{{ app_settings.ldap_bind_dn or '' }}">
