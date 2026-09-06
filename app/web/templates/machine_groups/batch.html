@@ -1,17 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}Update batch — debcontrol{% endblock %}
+{% block title %}{{ t(request, "groups.batch.title") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Update batch</h1>
+    <h1>{{ t(request, "groups.batch.title") }}</h1>
   </div>
 
   {% if skipped %}
     <div class="alert alert-warn">
       <p>
-        {{ skipped }} machine(s) were skipped — no confirmed host key
-        fingerprint yet, so nothing could be safely connected to.
+        {{ t(request, "groups.batch.skipped", count=skipped) }}
       </p>
     </div>
   {% endif %}

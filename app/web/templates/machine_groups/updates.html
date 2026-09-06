@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Updates — {{ group.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machines.table.updates") }} — {{ group.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -11,26 +11,23 @@
   {{ render_tabnav(tabs, active_tab) }}
 
   <section class="panel">
-    <h2>Update all machines in this group</h2>
+    <h2>{{ t(request, "groups.updates.update_all") }}</h2>
     <p class="hint">
-      Runs update → upgrade → autoremove/autoclean on every machine in this
-      group that has a confirmed host key fingerprint — others are skipped.
+      {{ t(request, "groups.updates.update_all_hint") }}
     </p>
     <form method="post" action="/machine-groups/{{ group.id }}/updates" class="form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% include "partials/upgrade_strategy_fields.html" %}
-      <button type="submit" class="button">Run update on this group</button>
+      <button type="submit" class="button">{{ t(request, "groups.updates.run_update") }}</button>
     </form>
 
-    <h3>Check for updates</h3>
+    <h3>{{ t(request, "groups.all.check_updates") }}</h3>
     <p class="hint">
-      Dry run — refreshes each machine's package list and records how many
-      updates are available, without installing anything. Results appear on
-      each machine's own page as each check finishes.
+      {{ t(request, "groups.updates.check_updates_hint") }}
     </p>
     <form method="post" action="/machine-groups/{{ group.id }}/check-updates" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-secondary">Check for updates on this group</button>
+      <button type="submit" class="button button-secondary">{{ t(request, "groups.updates.check_updates") }}</button>
     </form>
   </section>
 {% endblock %}

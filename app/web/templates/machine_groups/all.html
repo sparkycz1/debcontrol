@@ -1,21 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}All machines — debcontrol{% endblock %}
+{% block title %}{{ t(request, "groups.all_machines") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>All machines</h1>
+    <h1>{{ t(request, "groups.all_machines") }}</h1>
   </div>
 
   <p class="hint">
-    Built-in group — every machine is always here automatically, regardless
-    of which other group (if any) it's also assigned to. There's nothing to
-    add, remove, or delete.
+    {{ t(request, "groups.all.builtin_hint") }}
   </p>
 
   {% if power_skipped %}
     <div class="alert alert-warn">
-      <p>{{ power_skipped }} machine(s) were skipped — no confirmed host key fingerprint yet.</p>
+      <p>{{ t(request, "groups.all.power_skipped", count=power_skipped) }}</p>
     </div>
   {% endif %}
 
@@ -24,21 +22,21 @@
   {% if not machines %}
     <div class="empty-state">
       {% if q %}
-        <p>No machines match "{{ q }}".</p>
+        <p>{{ t(request, "machines.empty.no_match", query=(q | e)) | safe }}</p>
       {% else %}
-        <p>No managed machines yet.</p>
-        <a class="button" href="/machines/new">Add your first machine</a>
+        <p>{{ t(request, "machines.empty.none_yet") }}</p>
+        <a class="button" href="/machines/new">{{ t(request, "machines.empty.add_first") }}</a>
       {% endif %}
     </div>
   {% else %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>IP address</th>
-          <th>Group</th>
-          <th>Status</th>
-          <th>Updates</th>
+          <th>{{ t(request, "machines.table.name") }}</th>
+          <th>{{ t(request, "machines.table.ip") }}</th>
+          <th>{{ t(request, "machines.table.group") }}</th>
+          <th>{{ t(request, "machines.table.status") }}</th>
+          <th>{{ t(request, "machines.table.updates") }}</th>
         </tr>
       </thead>
       <tbody>
@@ -63,11 +61,11 @@
             </td>
             <td>
               {% if machine.is_reachable is none %}
-                <span class="badge badge-warn">unknown</span>
+                <span class="badge badge-warn">{{ t(request, "groups.status.unknown") }}</span>
               {% elif machine.is_reachable %}
-                <span class="badge badge-ok">online</span>
+                <span class="badge badge-ok">{{ t(request, "groups.status.online") }}</span>
               {% else %}
-                <span class="badge badge-error">offline</span>
+                <span class="badge badge-error">{{ t(request, "groups.status.offline") }}</span>
               {% endif %}
             </td>
             <td>{% include "partials/machine_update_status_cell.html" %}</td>
@@ -80,12 +78,12 @@
       <div class="page-header-actions">
         {% if page > 1 %}
           <a class="button button-secondary" href="/machine-groups/all?q={{ q | urlencode }}&page={{ page - 1 }}">
-            Previous
+            {{ t(request, "machines.pagination.previous") }}
           </a>
         {% endif %}
         {% if has_more %}
           <a class="button button-secondary" href="/machine-groups/all?q={{ q | urlencode }}&page={{ page + 1 }}">
-            Next
+            {{ t(request, "machines.pagination.next") }}
           </a>
         {% endif %}
       </div>
@@ -93,39 +91,34 @@
   {% endif %}
 
   <section class="panel">
-    <h2>Update all machines</h2>
+    <h2>{{ t(request, "groups.all.update_all") }}</h2>
     <p class="hint">
-      Runs update → upgrade → autoremove/autoclean on every machine that has
-      a confirmed host key fingerprint — others are skipped. Ignores the
-      search box above; this always targets literally every machine.
+      {{ t(request, "groups.all.update_all_hint") }}
     </p>
     <form method="post" action="/machine-groups/all/updates" class="form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% include "partials/upgrade_strategy_fields.html" %}
-      <button type="submit" class="button">Run update on all machines</button>
+      <button type="submit" class="button">{{ t(request, "groups.all.run_update_all") }}</button>
     </form>
 
-    <h3>Check for updates</h3>
+    <h3>{{ t(request, "groups.all.check_updates") }}</h3>
     <p class="hint">
-      Dry run — refreshes each machine's package list and records how many
-      updates are available, without installing anything.
+      {{ t(request, "groups.all.check_updates_hint") }}
     </p>
     <form method="post" action="/machine-groups/all/check-updates" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-secondary">Check for updates on all machines</button>
+      <button type="submit" class="button button-secondary">{{ t(request, "groups.all.check_updates_all") }}</button>
     </form>
   </section>
 
   <section class="panel">
-    <h2>Power</h2>
+    <h2>{{ t(request, "groups.all.power") }}</h2>
     <p class="hint">
-      Sends the command to every machine with a confirmed host key
-      fingerprint — others are skipped. Requires typing a confirmation
-      phrase.
+      {{ t(request, "groups.all.power_hint") }}
     </p>
     <div class="page-header-actions">
-      <a class="button button-secondary" href="/machine-groups/all/power/reboot">Reboot all machines</a>
-      <a class="button button-danger" href="/machine-groups/all/power/shutdown">Shut down all machines</a>
+      <a class="button button-secondary" href="/machine-groups/all/power/reboot">{{ t(request, "groups.all.reboot_all") }}</a>
+      <a class="button button-danger" href="/machine-groups/all/power/shutdown">{{ t(request, "groups.all.shutdown_all") }}</a>
     </div>
   </section>
 {% endblock %}
