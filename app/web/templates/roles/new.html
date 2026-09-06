@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}Add role — debcontrol{% endblock %}
+{% block title %}{{ t(request, "roles.new.title") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Add role</h1>
+  <h1>{{ t(request, "roles.new.title") }}</h1>
 
   {% if errors %}
     <div class="alert alert-error">
@@ -14,13 +14,13 @@
   <form method="post" action="/roles" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="name">Name</label>
+    <label for="name">{{ t(request, "roles.table.name") }}</label>
     <input type="text" id="name" name="name" required maxlength="100" value="{{ form.name or '' }}">
 
-    <label for="description">Description</label>
+    <label for="description">{{ t(request, "roles.table.description") }}</label>
     <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
 
-    <label>Permissions</label>
+    <label>{{ t(request, "roles.table.permissions") }}</label>
     <div class="permission-grid">
       {% for permission in all_permissions %}
         <label>
@@ -33,16 +33,13 @@
 
     <label>
       <input type="checkbox" name="require_totp" value="1" {{ 'checked' if form.require_totp else '' }}>
-      Require two-factor authentication (TOTP) for users with this role
+      {{ t(request, "roles.new.require_totp") }}
     </label>
     <p class="hint">
-      A user holding this role who hasn't enrolled TOTP is blocked from
-      everything except enrolling it (and logging out) — checked live on
-      every request, not just at login. Doesn't apply to OIDC accounts
-      (their provider is expected to own MFA — TOTP isn't offered for them).
+      {{ t(request, "roles.new.require_totp_hint") }}
     </p>
 
-    <button type="submit" class="button">Save</button>
-    <a class="button button-secondary" href="/roles">Cancel</a>
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/roles">{{ t(request, "common.cancel") }}</a>
   </form>
 {% endblock %}

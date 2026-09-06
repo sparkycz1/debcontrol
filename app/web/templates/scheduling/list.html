@@ -1,28 +1,28 @@
 {% extends "base.html" %}
 
-{% block title %}Scheduling — debcontrol{% endblock %}
+{% block title %}{{ t(request, "nav.scheduling") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Scheduling</h1>
-    <a class="button" href="/scheduling/new">New scheduled task</a>
+    <h1>{{ t(request, "nav.scheduling") }}</h1>
+    <a class="button" href="/scheduling/new">{{ t(request, "scheduling.new") }}</a>
   </div>
 
   {% if ran %}
-    <div class="alert alert-ok"><p>Run enqueued — check the machine/group/batch page shortly.</p></div>
+    <div class="alert alert-ok"><p>{{ t(request, "scheduling.run_enqueued") }}</p></div>
   {% endif %}
 
   {% if tasks %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Applies to</th>
-          <th>Action</th>
-          <th>Cron (UTC)</th>
-          <th>Next run</th>
-          <th>Last run</th>
-          <th>Status</th>
+          <th>{{ t(request, "roles.table.name") }}</th>
+          <th>{{ t(request, "scheduling.table.applies_to") }}</th>
+          <th>{{ t(request, "audit.table.action") }}</th>
+          <th>{{ t(request, "scheduling.table.cron") }}</th>
+          <th>{{ t(request, "dashboard.scheduling.next_run") }}</th>
+          <th>{{ t(request, "scheduling.table.last_run") }}</th>
+          <th>{{ t(request, "users.table.status") }}</th>
           <th></th>
         </tr>
       </thead>
@@ -32,11 +32,11 @@
             <td><a href="/scheduling/{{ task.id }}/edit">{{ task.name }}</a></td>
             <td>
               {% if task.target_type.value == 'all_machines' %}
-                All machines
+                {{ t(request, "groups.all_machines") }}
               {% elif task.target_type.value == 'machine' %}
-                Machine: {{ task.target_machine.name if task.target_machine else '(deleted)' }}
+                {{ t(request, "scheduling.target_machine", name=(task.target_machine.name if task.target_machine else t(request, "scheduling.deleted"))) }}
               {% else %}
-                Group: {{ task.target_group.name if task.target_group else '(deleted)' }}
+                {{ t(request, "scheduling.target_group", name=(task.target_group.name if task.target_group else t(request, "scheduling.deleted"))) }}
               {% endif %}
             </td>
             <td>{{ action_labels.get(task.action, task.action) }}</td>
@@ -53,32 +53,32 @@
                 {{ task.last_run_at | local_time('%Y-%m-%d %H:%M %Z') }}
                 <br><span class="hint">{{ task.last_run_summary }}</span>
               {% else %}
-                never
+                {{ t(request, "users.never") }}
               {% endif %}
             </td>
             <td>
               {% if task.is_enabled %}
-                <span class="badge badge-ok">enabled</span>
+                <span class="badge badge-ok">{{ t(request, "scheduling.enabled") }}</span>
               {% else %}
-                <span class="badge badge-warn">disabled</span>
+                <span class="badge badge-warn">{{ t(request, "scheduling.disabled") }}</span>
               {% endif %}
             </td>
             <td>
               <form method="post" action="/scheduling/{{ task.id }}/run-now" class="inline-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="button button-secondary">Run now</button>
+                <button type="submit" class="button button-secondary">{{ t(request, "scheduling.run_now") }}</button>
               </form>
               <form method="post" action="/scheduling/{{ task.id }}/toggle" class="inline-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="button button-secondary">
-                  {{ 'Disable' if task.is_enabled else 'Enable' }}
+                  {{ t(request, "scheduling.disable") if task.is_enabled else t(request, "scheduling.enable") }}
                 </button>
               </form>
-              <a class="button button-secondary" href="/scheduling/{{ task.id }}/edit">Edit</a>
+              <a class="button button-secondary" href="/scheduling/{{ task.id }}/edit">{{ t(request, "roles.edit") }}</a>
               <form method="post" action="/scheduling/{{ task.id }}/delete" class="inline-form"
-                    data-confirm="Delete the scheduled task &quot;{{ task.name }}&quot;?">
+                    data-confirm="{{ t(request, 'scheduling.delete_confirm', name=(task.name | e)) | safe }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="button button-danger">Delete</button>
+                <button type="submit" class="button button-danger">{{ t(request, "scheduling.delete") }}</button>
               </form>
             </td>
           </tr>
@@ -87,7 +87,7 @@
     </table>
   {% else %}
     <div class="empty-state">
-      <p>No scheduled tasks yet.</p>
+      <p>{{ t(request, "scheduling.empty") }}</p>
     </div>
   {% endif %}
 {% endblock %}

@@ -1,34 +1,33 @@
 {% extends "base.html" %}
 
-{% block title %}Audit log — debcontrol{% endblock %}
+{% block title %}{{ t(request, "audit.title") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Audit log</h1>
+    <h1>{{ t(request, "audit.title") }}</h1>
   </div>
 
   <p class="hint">
-    Who (account and source IP), what happened, its outcome, and when.
-    A blank "User" is a pre-login event (a failed login attempt, machine
-    self-registration) or a background job's own fixed label (e.g. "scheduler
-    (automatic)"). Every entry is hash-chained for tamper-evidence; verify
-    the chain and set the retention policy on the
-    <a href="/settings">Settings</a> page.
+    {{ t(request, "audit.intro") }}
+    <a href="/settings">{{ t(request, "nav.settings") }}</a>{{ t(request, "audit.intro_tail") }}
   </p>
 
   {% if target_type and target_id %}
     <p class="hint">
-      Showing entries for {{ target_type }}
-      {% if target_label %}"{{ target_label }}"{% else %}<code>{{ target_id }}</code>{% endif %}
-      only. <a href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">Clear this filter</a>.
+      {% if target_label %}
+        {{ t(request, "audit.showing_for_labeled", target_type=target_type, target_label=(target_label | e)) | safe }}
+      {% else %}
+        {{ t(request, "audit.showing_for", target_type=target_type) }}<code>{{ target_id }}</code>
+      {% endif %}
+      <a href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}">{{ t(request, "audit.clear_filter") }}</a>.
     </p>
   {% endif %}
 
   <form method="get" class="search-form">
     <input type="search" name="q" value="{{ q }}"
-           placeholder="Search by action, summary, target, IP...">
+           placeholder="{{ t(request, 'audit.search.placeholder') }}">
     <select name="outcome">
-      <option value="" {% if not outcome %}selected{% endif %}>Any outcome</option>
+      <option value="" {% if not outcome %}selected{% endif %}>{{ t(request, "audit.search.any_outcome") }}</option>
       {% for o in outcomes %}
         <option value="{{ o.value }}" {% if outcome == o.value %}selected{% endif %}>
           {{ o.value }}
@@ -37,28 +36,28 @@
     </select>
     <input type="hidden" name="target_type" value="{{ target_type }}">
     <input type="hidden" name="target_id" value="{{ target_id }}">
-    <button type="submit" class="button">Search</button>
+    <button type="submit" class="button">{{ t(request, "machines.search.submit") }}</button>
     {% if q or outcome or target_type %}
-      <a class="button button-secondary" href="/audit">Clear</a>
+      <a class="button button-secondary" href="/audit">{{ t(request, "machines.search.clear") }}</a>
     {% endif %}
     <a class="button button-secondary"
-       href="/audit/export?format=csv&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">Export CSV</a>
+       href="/audit/export?format=csv&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">{{ t(request, "audit.export_csv") }}</a>
     <a class="button button-secondary"
-       href="/audit/export?format=json&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">Export JSON</a>
+       href="/audit/export?format=json&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">{{ t(request, "audit.export_json") }}</a>
   </form>
-  <p class="hint">Export respects the filters above (blank means everything).</p>
+  <p class="hint">{{ t(request, "audit.export_hint") }}</p>
 
   {% if entries %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>Time (UTC)</th>
-          <th>User</th>
-          <th>IP address</th>
-          <th>Action</th>
-          <th>Target</th>
-          <th>Summary</th>
-          <th>Outcome</th>
+          <th>{{ t(request, "audit.table.time") }}</th>
+          <th>{{ t(request, "audit.table.user") }}</th>
+          <th>{{ t(request, "audit.table.ip") }}</th>
+          <th>{{ t(request, "audit.table.action") }}</th>
+          <th>{{ t(request, "audit.table.target") }}</th>
+          <th>{{ t(request, "audit.table.summary") }}</th>
+          <th>{{ t(request, "audit.table.outcome") }}</th>
         </tr>
       </thead>
       <tbody>
@@ -83,11 +82,11 @@
             </td>
             <td>
               {% if entry.outcome.value == 'success' %}
-                <span class="badge badge-ok">success</span>
+                <span class="badge badge-ok">{{ t(request, "audit.outcome_success") }}</span>
               {% elif entry.outcome.value == 'denied' %}
-                <span class="badge badge-error">denied</span>
+                <span class="badge badge-error">{{ t(request, "audit.outcome_denied") }}</span>
               {% else %}
-                <span class="badge badge-warn">failure</span>
+                <span class="badge badge-warn">{{ t(request, "audit.outcome_failure") }}</span>
               {% endif %}
             </td>
           </tr>
@@ -99,19 +98,19 @@
       {% if page > 1 %}
         <a class="button button-secondary"
            href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}&page={{ page - 1 }}">
-          Newer
+          {{ t(request, "audit.newer") }}
         </a>
       {% endif %}
       {% if has_older %}
         <a class="button button-secondary"
            href="/audit?q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}&page={{ page + 1 }}">
-          Older
+          {{ t(request, "audit.older") }}
         </a>
       {% endif %}
     </div>
   {% else %}
     <div class="empty-state">
-      <p>No audit log entries {% if q or outcome or target_type %}match this filter{% else %}yet{% endif %}.</p>
+      <p>{% if q or outcome or target_type %}{{ t(request, "audit.empty.match_filter") }}{% else %}{{ t(request, "audit.empty.none_yet") }}{% endif %}</p>
     </div>
   {% endif %}
 {% endblock %}

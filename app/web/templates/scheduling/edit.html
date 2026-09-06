@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Edit {{ task.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "scheduling.edit_title", name=(task.name | e)) | safe }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Edit {{ task.name }}</h1>
+  <h1>{{ t(request, "scheduling.edit_title", name=(task.name | e)) | safe }}</h1>
   {% if task.last_run_summary %}
     <p class="hint">
-      Last run: {{ task.last_run_at | local_time('%Y-%m-%d %H:%M %Z') }}
-      — {{ task.last_run_summary }}
+      {{ t(request, "scheduling.last_run", when=(task.last_run_at | local_time('%Y-%m-%d %H:%M %Z')), summary=(task.last_run_summary | e)) | safe }}
     </p>
   {% endif %}
   {% set form_action = "/scheduling/" ~ task.id ~ "/edit" %}

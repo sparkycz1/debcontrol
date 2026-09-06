@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}Roles — debcontrol{% endblock %}
+{% block title %}{{ t(request, "roles.title") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Roles</h1>
+    <h1>{{ t(request, "roles.title") }}</h1>
     <div class="page-header-actions">
-      <a class="button button-secondary" href="/users">Users</a>
-      <a class="button" href="/roles/new">Add role</a>
+      <a class="button button-secondary" href="/users">{{ t(request, "nav.users") }}</a>
+      <a class="button" href="/roles/new">{{ t(request, "roles.add") }}</a>
     </div>
   </div>
 
   <table class="data-table">
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Description</th>
-        <th>Permissions</th>
-        <th>Users</th>
+        <th>{{ t(request, "roles.table.name") }}</th>
+        <th>{{ t(request, "roles.table.description") }}</th>
+        <th>{{ t(request, "roles.table.permissions") }}</th>
+        <th>{{ t(request, "roles.table.users") }}</th>
         <th></th>
       </tr>
     </thead>
@@ -28,7 +28,7 @@
           <td>{{ role.description or '—' }}</td>
           <td>{{ role.permission_grants | length }}</td>
           <td>{{ role.users | length }}</td>
-          <td><a href="/roles/{{ role.id }}/edit">Edit</a></td>
+          <td><a href="/roles/{{ role.id }}/edit">{{ t(request, "roles.edit") }}</a></td>
         </tr>
       {% endfor %}
     </tbody>

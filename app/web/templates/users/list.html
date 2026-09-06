@@ -1,26 +1,26 @@
 {% extends "base.html" %}
 
-{% block title %}Users — debcontrol{% endblock %}
+{% block title %}{{ t(request, "users.title") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Users</h1>
+    <h1>{{ t(request, "users.title") }}</h1>
     <div class="page-header-actions">
-      <a class="button button-secondary" href="/roles">Roles</a>
-      <a class="button" href="/users/new">Add user</a>
+      <a class="button button-secondary" href="/roles">{{ t(request, "nav.roles") }}</a>
+      <a class="button" href="/users/new">{{ t(request, "users.add") }}</a>
     </div>
   </div>
 
   <table class="data-table">
     <thead>
       <tr>
-        <th>Username</th>
-        <th>Role</th>
-        <th>Login method</th>
-        <th>2FA</th>
-        <th>API access</th>
-        <th>Status</th>
-        <th>Last login</th>
+        <th>{{ t(request, "users.table.username") }}</th>
+        <th>{{ t(request, "users.table.role") }}</th>
+        <th>{{ t(request, "users.table.login_method") }}</th>
+        <th>{{ t(request, "users.table.two_fa") }}</th>
+        <th>{{ t(request, "users.table.api_access") }}</th>
+        <th>{{ t(request, "users.table.status") }}</th>
+        <th>{{ t(request, "users.table.last_login") }}</th>
         <th></th>
       </tr>
     </thead>
@@ -34,13 +34,13 @@
           <td>{{ 'on' if u.api_access_enabled else '—' }}</td>
           <td>
             {% if u.is_active %}
-              <span class="badge badge-ok">active</span>
+              <span class="badge badge-ok">{{ t(request, "users.status.active") }}</span>
             {% else %}
-              <span class="badge badge-error">disabled</span>
+              <span class="badge badge-error">{{ t(request, "users.status.disabled") }}</span>
             {% endif %}
           </td>
-          <td>{{ u.last_login_at | local_time('%Y-%m-%d %H:%M %Z') if u.last_login_at else 'never' }}</td>
-          <td><a href="/users/{{ u.id }}/edit">Edit</a></td>
+          <td>{{ u.last_login_at | local_time('%Y-%m-%d %H:%M %Z') if u.last_login_at else t(request, "users.never") }}</td>
+          <td><a href="/users/{{ u.id }}/edit">{{ t(request, "users.edit") }}</a></td>
         </tr>
       {% endfor %}
     </tbody>

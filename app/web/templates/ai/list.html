@@ -1,28 +1,24 @@
 {% extends "base.html" %}
 
-{% block title %}AI — debcontrol{% endblock %}
+{% block title %}{{ t(request, "nav.ai") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>AI assistant</h1>
+    <h1>{{ t(request, "ai.title") }}</h1>
   </div>
 
   <p class="hint">
-    Describe what you want in plain language. The assistant can look up your
-    machines and groups on its own, and can <em>propose</em> actions against
-    them — updates, reboots, or a shell command. Nothing it proposes ever runs
-    until you read the exact command and target list and click
-    <strong>Confirm</strong>. It can only propose what your own role already
-    allows you to do by hand.
+    {{ t(request, "ai.intro_before_confirm") | safe }}
+    <strong>{{ t(request, "ai.confirm") }}</strong>{{ t(request, "ai.intro_after_confirm") }}
   </p>
 
   <section class="panel">
-    <h2>New conversation</h2>
+    <h2>{{ t(request, "ai.new_conversation") }}</h2>
     {% if selectable_models %}
       <form method="post" action="/ai/conversations" class="form" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-        <label for="provider_model">Model</label>
+        <label for="provider_model">{{ t(request, "ai.model") }}</label>
         <select id="provider_model" name="provider_model">
           {% for provider, model in selectable_models %}
             <option value="{{ provider.id }}:{{ model.model_id }}">
@@ -31,26 +27,26 @@
           {% endfor %}
         </select>
         <p class="hint">
-          A conversation stays on the model it was started with.
+          {{ t(request, "ai.model_hint") }}
         </p>
 
-        <label for="first_message">What do you need?</label>
+        <label for="first_message">{{ t(request, "ai.what_do_you_need") }}</label>
         <input type="text" id="first_message" name="first_message" maxlength="500" required
-               placeholder="e.g. install apache2 on the group web-servers">
+               placeholder="{{ t(request, 'ai.first_message_placeholder') }}">
 
-        <button type="submit" class="button">Start conversation</button>
+        <button type="submit" class="button">{{ t(request, "ai.start_conversation") }}</button>
       </form>
     {% else %}
       <div class="empty-state">
-        <p>No AI model is enabled yet.</p>
+        <p>{{ t(request, "ai.no_model_enabled") }}</p>
         {% if can_manage_settings %}
           <p class="hint">
-            Configure a provider, fetch its models, and tick the ones to allow
-            on the <a href="/settings">Settings</a> page.
+            {{ t(request, "ai.configure_provider_hint_before") }}
+            <a href="/settings">{{ t(request, "nav.settings") }}</a>{{ t(request, "ai.configure_provider_hint_after") }}
           </p>
         {% else %}
           <p class="hint">
-            An administrator needs to configure an AI provider in Settings first.
+            {{ t(request, "ai.admin_needed_hint") }}
           </p>
         {% endif %}
       </div>
@@ -58,14 +54,14 @@
   </section>
 
   <section class="panel">
-    <h2>Your conversations</h2>
+    <h2>{{ t(request, "ai.your_conversations") }}</h2>
     {% if conversations %}
       <table class="data-table">
         <thead>
           <tr>
-            <th>Title</th>
-            <th>Model</th>
-            <th>Last activity</th>
+            <th>{{ t(request, "ai.table.title") }}</th>
+            <th>{{ t(request, "ai.model") }}</th>
+            <th>{{ t(request, "ai.table.last_activity") }}</th>
             <th></th>
           </tr>
         </thead>
@@ -78,9 +74,9 @@
               <td>
                 <form method="post" action="/ai/conversations/{{ conversation.id }}/delete"
                       class="inline-form"
-                      data-confirm="Delete the conversation &quot;{{ conversation.title }}&quot;?">
+                      data-confirm="{{ t(request, 'ai.delete_confirm', title=(conversation.title | e)) | safe }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button type="submit" class="button button-danger">Delete</button>
+                  <button type="submit" class="button button-danger">{{ t(request, "scheduling.delete") }}</button>
                 </form>
               </td>
             </tr>
@@ -89,13 +85,12 @@
       </table>
     {% else %}
       <div class="empty-state">
-        <p>No conversations yet.</p>
+        <p>{{ t(request, "ai.no_conversations") }}</p>
       </div>
     {% endif %}
     <p class="hint">
-      Conversations are private to your own account — nobody else, including
-      administrators, can read them. Anything you actually confirm still shows
-      up in the <a href="/audit">Audit</a> log like every other action.
+      {{ t(request, "ai.privacy_hint_before") }}
+      <a href="/audit">{{ t(request, "nav.audit") }}</a>{{ t(request, "ai.privacy_hint_after") }}
     </p>
   </section>
 {% endblock %}

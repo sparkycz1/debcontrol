@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Settings — debcontrol{% endblock %}
+{% block title %}{{ t(request, "nav.settings") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Settings</h1>
+  <h1>{{ t(request, "nav.settings") }}</h1>
 
   {{ render_tabnav(tabs, active_tab) }}
 

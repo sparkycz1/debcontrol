@@ -1,42 +1,42 @@
 {% extends "base.html" %}
 
-{% block title %}Machine groups — debcontrol{% endblock %}
+{% block title %}{{ t(request, "groups.title") }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Machine groups</h1>
-    <a class="button" href="/machine-groups/new">Add group</a>
+    <h1>{{ t(request, "groups.title") }}</h1>
+    <a class="button" href="/machine-groups/new">{{ t(request, "groups.add") }}</a>
   </div>
 
   <form method="get" action="/machine-groups" class="search-form">
-    <input type="search" name="q" value="{{ q }}" placeholder="Search groups by name or description...">
-    <button type="submit" class="button">Search</button>
-    {% if q %}<a class="button button-secondary" href="/machine-groups">Clear</a>{% endif %}
+    <input type="search" name="q" value="{{ q }}" placeholder="{{ t(request, 'groups.search.placeholder') }}">
+    <button type="submit" class="button">{{ t(request, "machines.search.submit") }}</button>
+    {% if q %}<a class="button button-secondary" href="/machine-groups">{{ t(request, "machines.search.clear") }}</a>{% endif %}
   </form>
 
   {% set show_all_row = not q or 'all' in q.lower() or 'machine' in q.lower() %}
 
   {% if not groups and not show_all_row %}
     <div class="empty-state">
-      <p>No groups match "{{ q }}".</p>
+      <p>{{ t(request, "groups.empty.no_match", query=(q | e)) | safe }}</p>
     </div>
   {% else %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Description</th>
-          <th>Machines</th>
+          <th>{{ t(request, "roles.table.name") }}</th>
+          <th>{{ t(request, "roles.table.description") }}</th>
+          <th>{{ t(request, "nav.machines") }}</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% if show_all_row %}
           <tr>
-            <td><a href="/machine-groups/all">All machines</a> <span class="badge badge-ok">automatic</span></td>
-            <td>Every machine, always — built in, nothing to manage.</td>
+            <td><a href="/machine-groups/all">{{ t(request, "groups.all_machines") }}</a> <span class="badge badge-ok">{{ t(request, "groups.automatic") }}</span></td>
+            <td>{{ t(request, "groups.all_machines_description") }}</td>
             <td>{{ all_machines_count }}</td>
-            <td><a href="/machine-groups/all">Details</a></td>
+            <td><a href="/machine-groups/all">{{ t(request, "groups.details") }}</a></td>
           </tr>
         {% endif %}
         {% for group in groups %}
@@ -44,7 +44,7 @@
             <td><a href="/machine-groups/{{ group.id }}">{{ group.name }}</a></td>
             <td>{{ group.description or '—' }}</td>
             <td>{{ member_counts.get(group.id, 0) }}</td>
-            <td><a href="/machine-groups/{{ group.id }}">Details</a></td>
+            <td><a href="/machine-groups/{{ group.id }}">{{ t(request, "groups.details") }}</a></td>
           </tr>
         {% endfor %}
       </tbody>
@@ -53,8 +53,8 @@
 
   {% if not groups and not q %}
     <div class="empty-state">
-      <p>No custom groups yet — "All machines" above is built in and always there.</p>
-      <a class="button" href="/machine-groups/new">Add your first custom group</a>
+      <p>{{ t(request, "groups.empty.none_yet") }}</p>
+      <a class="button" href="/machine-groups/new">{{ t(request, "groups.add_first") }}</a>
     </div>
   {% endif %}
 {% endblock %}

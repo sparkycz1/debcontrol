@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}Add machine group — debcontrol{% endblock %}
+{% block title %}{{ t(request, "groups.new.title") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Add machine group</h1>
+  <h1>{{ t(request, "groups.new.title") }}</h1>
 
   {% if errors %}
     <div class="alert alert-error">
@@ -14,14 +14,14 @@
   <form method="post" action="/machine-groups" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="name">Name</label>
+    <label for="name">{{ t(request, "roles.table.name") }}</label>
     <input type="text" id="name" name="name" required maxlength="255"
            value="{{ form.name or '' }}">
 
-    <label for="description">Description</label>
+    <label for="description">{{ t(request, "roles.table.description") }}</label>
     <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
 
-    <button type="submit" class="button">Save</button>
-    <a class="button button-secondary" href="/machine-groups">Cancel</a>
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/machine-groups">{{ t(request, "common.cancel") }}</a>
   </form>
 {% endblock %}

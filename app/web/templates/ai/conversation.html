@@ -5,11 +5,11 @@
 {% block content %}
   <div class="page-header">
     <h1>{{ conversation.title }}</h1>
-    <a class="button button-secondary" href="/ai">Back to conversations</a>
+    <a class="button button-secondary" href="/ai">{{ t(request, "ai.back_to_conversations") }}</a>
   </div>
 
   <p class="hint">
-    Model: <code>{{ conversation.model_id }}</code>
+    {{ t(request, "ai.model") }}: <code>{{ conversation.model_id }}</code>
   </p>
 
   {% if errors %}
