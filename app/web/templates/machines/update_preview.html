@@ -1,36 +1,31 @@
 {% extends "base.html" %}
 
-{% block title %}Preview update — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machine.preview.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Preview update for {{ machine.name }}</h1>
+  <h1>{{ t(request, "machine.preview.heading", name=(machine.name | e)) | safe }}</h1>
 
   {% if error %}
-    <div class="alert alert-error"><p>Could not simulate the update: {{ error }}</p></div>
+    <div class="alert alert-error"><p>{{ t(request, "machine.preview.simulate_error", error=(error | e)) | safe }}</p></div>
     <p>
-      <a class="button button-secondary" href="/machines/{{ machine.id }}">Back</a>
+      <a class="button button-secondary" href="/machines/{{ machine.id }}">{{ t(request, "machine.preview.back") }}</a>
     </p>
   {% else %}
     <p class="hint">
-      Simulated with apt's dry-run mode (<code>apt-get -s</code>) — nothing on
-      {{ machine.name }} has changed yet. This is exactly what
-      <code>{{ 'dist-upgrade' if strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
-      followed by <code>autoremove</code> would do; review it, then confirm below
-      to actually run it.
+      {{ t(request, "machine.preview.simulated_hint", name=(machine.name | e), strategy=('dist-upgrade' if strategy.value == 'dist_upgrade' else 'full-upgrade')) | safe }}
     </p>
 
     <section class="panel">
-      <h2>Packages that would be removed ({{ to_remove|length }})</h2>
+      <h2>{{ t(request, "machine.preview.to_remove_heading", count=(to_remove|length)) }}</h2>
       {% if to_remove %}
         <div class="alert alert-warn">
           <p>
-            This is the risky part of <code>autoremove</code> — double-check
-            nothing here is something you still need.
+            {{ t(request, "machine.preview.to_remove_warning") | safe }}
           </p>
         </div>
         <table class="data-table">
           <thead>
-            <tr><th>Package</th><th>Installed version</th></tr>
+            <tr><th>{{ t(request, "machine.packages.package") }}</th><th>{{ t(request, "machine.preview.installed_version") }}</th></tr>
           </thead>
           <tbody>
             {% for pkg in to_remove %}
@@ -39,16 +34,16 @@
           </tbody>
         </table>
       {% else %}
-        <p class="hint">Nothing would be removed.</p>
+        <p class="hint">{{ t(request, "machine.preview.nothing_removed") }}</p>
       {% endif %}
     </section>
 
     <section class="panel">
-      <h2>Packages that would be installed or upgraded ({{ to_install_or_upgrade|length }})</h2>
+      <h2>{{ t(request, "machine.preview.to_install_heading", count=(to_install_or_upgrade|length)) }}</h2>
       {% if to_install_or_upgrade %}
         <table class="data-table">
           <thead>
-            <tr><th>Package</th><th>Current version</th><th>New version</th></tr>
+            <tr><th>{{ t(request, "machine.packages.package") }}</th><th>{{ t(request, "machine.preview.current_version") }}</th><th>{{ t(request, "machine.preview.new_version") }}</th></tr>
           </thead>
           <tbody>
             {% for pkg in to_install_or_upgrade %}
@@ -61,16 +56,14 @@
           </tbody>
         </table>
       {% else %}
-        <p class="hint">Nothing would be installed or upgraded.</p>
+        <p class="hint">{{ t(request, "machine.preview.nothing_installed") }}</p>
       {% endif %}
     </section>
 
     {% if not to_remove and not to_install_or_upgrade %}
       <div class="alert alert-warn">
         <p>
-          Nothing is pending — <code>apt-get update</code> and the cleanup
-          steps will still run if you confirm, same as clicking "Run update"
-          always has, but there's nothing for the upgrade step to do.
+          {{ t(request, "machine.preview.nothing_pending") | safe }}
         </p>
       </div>
     {% endif %}
@@ -79,9 +72,9 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="strategy" value="{{ strategy.value }}">
       <button type="submit" class="button{% if to_remove %} button-danger{% endif %}">
-        Confirm — run this update on {{ machine.name }}
+        {{ t(request, "machine.preview.confirm_run", name=machine.name) }}
       </button>
-      <a class="button button-secondary" href="/machines/{{ machine.id }}">Cancel</a>
+      <a class="button button-secondary" href="/machines/{{ machine.id }}">{{ t(request, "common.cancel") }}</a>
     </form>
   {% endif %}
 {% endblock %}

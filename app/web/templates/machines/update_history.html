@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Updates — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machines.table.updates") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
@@ -11,17 +11,9 @@
   {{ render_tabnav(tabs, active_tab) }}
 
   <section class="panel">
-    <h2>System updates</h2>
+    <h2>{{ t(request, "machine.updates.system_updates") }}</h2>
     <p class="hint">
-      Always runs <code>apt-get update</code>, then the selected upgrade
-      strategy, then <code>autoremove</code> and <code>autoclean</code>
-      (the cleanup steps run regardless of whether the upgrade step
-      succeeded) — and, if installed, <code>flatpak update</code> and
-      <code>snap refresh</code> too. Requires root for apt — either the
-      configured user is root, or has passwordless sudo for
-      <code>apt-get</code> (and, recommended, <code>flatpak</code>/
-      <code>snap</code> too). See the wiki page "Managed Machine
-      Requirements" for a sudoers example.
+      {{ t(request, "machine.updates.hint") | safe }}
     </p>
 
     {% include "partials/update_availability.html" %}
@@ -29,32 +21,31 @@
     <form method="get" action="/machines/{{ machine.id }}/updates/preview" class="form">
       {% include "partials/upgrade_strategy_fields.html" %}
       <button type="submit" class="button" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
-        Run update
+        {{ t(request, "machine.updates.run_update") }}
       </button>
     </form>
     <p class="hint">
-      Shows exactly what would happen — including anything <code>autoremove</code>
-      would remove — before anything actually runs.
+      {{ t(request, "machine.updates.preview_hint") | safe }}
     </p>
     {% if not machine.host_key_fingerprint %}
-      <p class="hint">Confirm the server's key fingerprint above first.</p>
+      <p class="hint">{{ t(request, "machine.confirm_key_first") }}</p>
     {% endif %}
   </section>
 
-  <h2>History</h2>
+  <h2>{{ t(request, "machine.updates.history") }}</h2>
 
   <form method="get" class="search-form">
     <select name="status_filter">
-      <option value="" {% if not status_filter %}selected{% endif %}>Any status</option>
+      <option value="" {% if not status_filter %}selected{% endif %}>{{ t(request, "audit.search.any_outcome") }}</option>
       {% for s in statuses %}
         <option value="{{ s.value }}" {% if status_filter == s.value %}selected{% endif %}>
           {{ s.value }}
         </option>
       {% endfor %}
     </select>
-    <button type="submit" class="button">Filter</button>
+    <button type="submit" class="button">{{ t(request, "machine.filter") }}</button>
     {% if status_filter %}
-      <a class="button button-secondary" href="/machines/{{ machine.id }}/updates">Clear</a>
+      <a class="button button-secondary" href="/machines/{{ machine.id }}/updates">{{ t(request, "machines.search.clear") }}</a>
     {% endif %}
   </form>
 
@@ -62,10 +53,10 @@
     <table class="data-table">
       <thead>
         <tr>
-          <th>Started</th>
-          <th>Strategy</th>
-          <th>Status</th>
-          <th>Finished</th>
+          <th>{{ t(request, "machine.updates.started") }}</th>
+          <th>{{ t(request, "machine.updates.strategy") }}</th>
+          <th>{{ t(request, "machines.table.status") }}</th>
+          <th>{{ t(request, "machine.updates.finished") }}</th>
           <th></th>
         </tr>
       </thead>
@@ -78,13 +69,13 @@
               {% if run.status.value in ('pending', 'running') %}
                 <span class="badge badge-warn">{{ run.status.value }}</span>
               {% elif run.status.value == 'succeeded' %}
-                <span class="badge badge-ok">succeeded</span>
+                <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
               {% else %}
-                <span class="badge badge-error">failed</span>
+                <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
               {% endif %}
             </td>
             <td>{{ run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
-            <td><a href="/machines/{{ machine.id }}/updates/{{ run.id }}">Details</a></td>
+            <td><a href="/machines/{{ machine.id }}/updates/{{ run.id }}">{{ t(request, "machine.updates.details") }}</a></td>
           </tr>
         {% endfor %}
       </tbody>
@@ -94,19 +85,19 @@
       {% if page > 1 %}
         <a class="button button-secondary"
            href="/machines/{{ machine.id }}/updates?status_filter={{ status_filter | urlencode }}&page={{ page - 1 }}">
-          Newer
+          {{ t(request, "audit.newer") }}
         </a>
       {% endif %}
       {% if has_older %}
         <a class="button button-secondary"
            href="/machines/{{ machine.id }}/updates?status_filter={{ status_filter | urlencode }}&page={{ page + 1 }}">
-          Older
+          {{ t(request, "audit.older") }}
         </a>
       {% endif %}
     </div>
   {% else %}
     <div class="empty-state">
-      <p>No update runs {% if status_filter %}match this filter{% else %}yet{% endif %}.</p>
+      <p>{% if status_filter %}{{ t(request, "machine.updates.no_runs_match") }}{% else %}{{ t(request, "machine.updates.no_runs_yet") }}{% endif %}</p>
     </div>
   {% endif %}
 {% endblock %}

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{% block title %}Update run — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machine.update_run.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>Update run — {{ machine.name }}</h1>
-    <a class="button button-secondary" href="/machines/{{ machine.id }}">Back to machine</a>
+    <h1>{{ t(request, "machine.update_run.title") }} — {{ machine.name }}</h1>
+    <a class="button button-secondary" href="/machines/{{ machine.id }}">{{ t(request, "machine.update_run.back") }}</a>
   </div>
 
   <section class="panel">
