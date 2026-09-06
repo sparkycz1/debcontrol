@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Settings — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "nav.settings") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -13,28 +13,23 @@
   {% if machine.readiness_missing %}
     <div class="alert alert-warn">
       <p>
-        This machine is missing:
+        {{ t(request, "machine.readiness_missing") }}
         {% for item in machine.readiness_missing %}{{ item }}{% if not loop.last %}; {% endif %}{% endfor %}.
       </p>
       {% if machine.auth_method.value == 'password' %}
-        <p class="hint">Run "Run initial setup" below to fix this.</p>
+        <p class="hint">{{ t(request, "machine.edit.readiness_password_hint") }}</p>
       {% elif machine.username == 'root' %}
         <p class="hint">
-          This machine already connects as <code>root</code> — nothing
-          needs sudo access it doesn't already have. The credential
-          already on file is enough to install what's missing directly,
-          no login needed.
+          {{ t(request, "machine.edit.readiness_root_hint") | safe }}
         </p>
         <form method="post" action="/machines/{{ machine.id }}/fix-readiness-directly"
               class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="button">Install now</button>
+          <button type="submit" class="button">{{ t(request, "machine.edit.install_now") }}</button>
         </form>
       {% else %}
         <p class="hint">
-          Add this sudoers rule yourself over your own SSH session (then
-          click "Re-check" below) — often the only option, since password
-          SSH to a privileged account is commonly disabled by policy:
+          {{ t(request, "machine.edit.readiness_sudoers_hint") | safe }}
         </p>
         <pre><code>cat &gt; /etc/sudoers.d/{{ machine.username }} &lt;&lt;'EOF'
 {{ machine.username }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
@@ -42,38 +37,33 @@ EOF
 chmod 440 /etc/sudoers.d/{{ machine.username }}
 visudo -cf /etc/sudoers.d/{{ machine.username }}</code></pre>
         <details>
-          <summary>Or let debcontrol do it (needs a one-time root/sudo login)</summary>
+          <summary>{{ t(request, "machine.edit.let_debcontrol_do_it") }}</summary>
           <p class="hint">
-            This machine already uses debcontrol's own SSH key for everyday
-            use — fixing the items above needs a root-equivalent login just
-            this once, the same as the original setup did. Nothing is
-            stored afterward; on success this machine goes right back to
-            using its own SSH key. This won't work if password SSH to that
-            account is disabled — use the manual command above instead.
+            {{ t(request, "machine.edit.let_debcontrol_do_it_hint") }}
           </p>
           <form method="post" action="/machines/{{ machine.id }}/run-onboarding-with-credential"
                 class="form" autocomplete="off"
-                data-confirm="Temporarily connect as this account to fix what's missing, then switch back to debcontrol's own SSH key?">
+                data-confirm="{{ t(request, 'machine.edit.temp_connect_confirm') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label for="readiness_username">Username</label>
+            <label for="readiness_username">{{ t(request, "groups.detail.user") }}</label>
             <input type="text" id="readiness_username" name="username" value="root" required>
-            <label for="readiness_password">Password</label>
+            <label for="readiness_password">{{ t(request, "login.password") }}</label>
             <input type="password" id="readiness_password" name="password" required>
-            <button type="submit" class="button">Run initial setup</button>
+            <button type="submit" class="button">{{ t(request, "machine.edit.run_initial_setup") }}</button>
           </form>
         </details>
       {% endif %}
       <form method="post" action="/machines/{{ machine.id }}/recheck-readiness"
             class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="button button-secondary">Re-check</button>
+        <button type="submit" class="button button-secondary">{{ t(request, "machine.edit.recheck") }}</button>
       </form>
       {% if request.state.user.has_permission('ai.access') %}
         <form method="post" action="/ai/explain" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="kind" value="readiness">
           <input type="hidden" name="machine_id" value="{{ machine.id }}">
-          <button type="submit" class="button button-secondary">Ask AI why</button>
+          <button type="submit" class="button button-secondary">{{ t(request, "machine.edit.ask_ai_why") }}</button>
         </form>
       {% endif %}
     </div>
@@ -88,46 +78,45 @@ visudo -cf /etc/sudoers.d/{{ machine.username }}</code></pre>
   <form method="post" action="/machines/{{ machine.id }}/edit" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="name">Name</label>
+    <label for="name">{{ t(request, "machines.table.name") }}</label>
     <input type="text" id="name" name="name" required maxlength="255" value="{{ machine.name }}">
 
-    <label for="ip_address">IP address</label>
+    <label for="ip_address">{{ t(request, "machines.table.ip") }}</label>
     <input type="text" id="ip_address" name="ip_address" required maxlength="255"
            value="{{ machine.ip_address }}">
     {% if machine.host_key_fingerprint %}
       <p class="hint">
-        Changing the IP address or port resets the pinned host key
-        fingerprint and gathered facts below — you'll need to
-        re-discover and re-confirm the fingerprint before connecting again.
+        {{ t(request, "machine.edit.ip_change_hint") }}
       </p>
     {% endif %}
 
-    <label for="port">SSH port</label>
+    <label for="port">{{ t(request, "machine.edit.ssh_port") }}</label>
     <input type="number" id="port" name="port" min="1" max="65535" value="{{ machine.port }}">
 
-    <label for="username">Username</label>
+    <label for="username">{{ t(request, "groups.detail.user") }}</label>
     <input type="text" id="username" name="username" required maxlength="255"
            value="{{ machine.username }}">
 
-    <label for="auth_method">Authentication method</label>
+    <label for="auth_method">{{ t(request, "machine.edit.auth_method") }}</label>
     <select id="auth_method" name="auth_method">
       {% for method in auth_methods %}
         <option value="{{ method.value }}" {% if machine.auth_method == method %}selected{% endif %}>
-          {{ 'SSH key (recommended)' if method.value == 'ssh_key' else 'Password (not recommended)' }}
+          {{ t(request, "machine.edit.auth_ssh_key") if method.value == 'ssh_key' else t(request, "machine.edit.auth_password") }}
         </option>
       {% endfor %}
     </select>
     <p class="hint">
-      See <a href="/settings">Settings</a> for the app's SSH public key.
+      {{ t(request, "machine.edit.ssh_key_hint_before") }}
+      <a href="/settings">{{ t(request, "nav.settings") }}</a>{{ t(request, "machine.edit.ssh_key_hint_after") }}
     </p>
 
-    <label for="secret">Password</label>
+    <label for="secret">{{ t(request, "login.password") }}</label>
     <textarea id="secret" name="secret" rows="2"
-      placeholder="{% if machine.secret_encrypted %}Leave empty to keep the current password unchanged.{% else %}Only used if 'Password' is selected above.{% endif %}"></textarea>
+      placeholder="{% if machine.secret_encrypted %}{{ t(request, 'machine.edit.password_unchanged_placeholder') }}{% else %}{{ t(request, 'machine.edit.password_only_used_placeholder') }}{% endif %}"></textarea>
 
-    <label for="group_id">Group</label>
+    <label for="group_id">{{ t(request, "machines.table.group") }}</label>
     <select id="group_id" name="group_id">
-      <option value="">— none —</option>
+      <option value="">{{ t(request, "machine.edit.none_option") }}</option>
       {% for group in groups %}
         <option value="{{ group.id }}" {% if machine.group_id == group.id %}selected{% endif %}>
           {{ group.name }}
@@ -135,119 +124,105 @@ visudo -cf /etc/sudoers.d/{{ machine.username }}</code></pre>
       {% endfor %}
     </select>
 
-    <label for="description">Notes</label>
+    <label for="description">{{ t(request, "machine.notes") }}</label>
     <textarea id="description" name="description" rows="2">{{ machine.description or '' }}</textarea>
 
-    <label for="tags">Tags</label>
+    <label for="tags">{{ t(request, "machine.tags") }}</label>
     <input type="text" id="tags" name="tags" list="tag-suggestions"
            placeholder="prod, web, praha-dc1"
            value="{{ machine.tags | map(attribute='name') | join(', ') }}">
-    <p class="hint">Comma-separated. Independent of the group above — a machine can carry any number.</p>
+    <p class="hint">{{ t(request, "machine.edit.tags_hint") }}</p>
     <datalist id="tag-suggestions">
       {% for existing_tag in all_tags %}<option value="{{ existing_tag.name }}">{% endfor %}
     </datalist>
 
-    <label for="runbook">Runbook</label>
+    <label for="runbook">{{ t(request, "machine.runbook") }}</label>
     <textarea id="runbook" name="runbook" rows="8"
-              placeholder="How to deal with this server, who owns it, anything worth knowing…">{{ machine.runbook or '' }}</textarea>
-    <p class="hint">Markdown supported. Shown on the Overview tab.</p>
+              placeholder="{{ t(request, 'machine.edit.runbook_placeholder') }}">{{ machine.runbook or '' }}</textarea>
+    <p class="hint">{{ t(request, "machine.edit.runbook_hint") }}</p>
 
     <label>
       <input type="checkbox" name="is_active" {% if machine.is_active %}checked{% endif %}>
-      Active (included in reachability checks and facts refresh)
+      {{ t(request, "machine.edit.active_label") }}
     </label>
 
     <details class="form-advanced">
-      <summary>Overwrite check intervals</summary>
+      <summary>{{ t(request, "machine.edit.overwrite_intervals") }}</summary>
       <p class="hint">
-        Leave blank to use the instance-wide default set in <code>.env</code>.
-        Only a <em>larger</em> value than the default actually changes
-        anything — both sweeps still run at the global cadence, a machine
-        with a longer interval is just skipped on ticks that come too soon.
+        {{ t(request, "machine.edit.overwrite_intervals_hint") | safe }}
       </p>
 
-      <label for="reachability_check_interval_seconds">Reachability check interval (seconds)</label>
+      <label for="reachability_check_interval_seconds">{{ t(request, "machine.edit.reachability_interval") }}</label>
       <input type="number" id="reachability_check_interval_seconds"
         name="reachability_check_interval_seconds" min="1"
-        placeholder="default: {{ global_settings.reachability_check_interval_seconds }}"
+        placeholder="{{ t(request, 'machine.edit.default_prefix') }}{{ global_settings.reachability_check_interval_seconds }}"
         value="{{ machine.reachability_check_interval_seconds or '' }}">
 
-      <label for="facts_refresh_interval_seconds">Facts refresh interval (seconds)</label>
+      <label for="facts_refresh_interval_seconds">{{ t(request, "machine.edit.facts_interval") }}</label>
       <input type="number" id="facts_refresh_interval_seconds"
         name="facts_refresh_interval_seconds" min="1"
-        placeholder="default: {{ global_settings.facts_refresh_interval_seconds }}"
+        placeholder="{{ t(request, 'machine.edit.default_prefix') }}{{ global_settings.facts_refresh_interval_seconds }}"
         value="{{ machine.facts_refresh_interval_seconds or '' }}">
 
-      <label for="monitoring_interval_seconds">Monitoring sample interval (seconds)</label>
+      <label for="monitoring_interval_seconds">{{ t(request, "machine.edit.monitoring_interval") }}</label>
       <input type="number" id="monitoring_interval_seconds"
         name="monitoring_interval_seconds" min="1"
-        placeholder="default: {{ global_settings.monitoring_interval_seconds }}"
+        placeholder="{{ t(request, 'machine.edit.default_prefix') }}{{ global_settings.monitoring_interval_seconds }}"
         value="{{ machine.monitoring_interval_seconds or '' }}">
 
-      <label for="monitoring_history_retention_days">Monitoring history retention (days)</label>
+      <label for="monitoring_history_retention_days">{{ t(request, "machine.edit.monitoring_retention") }}</label>
       <input type="number" id="monitoring_history_retention_days"
         name="monitoring_history_retention_days" min="1"
-        placeholder="default: {{ app_settings.monitoring_history_retention_days or 'keep forever' }}"
+        placeholder="{{ t(request, 'machine.edit.default_prefix') }}{{ app_settings.monitoring_history_retention_days or t(request, 'machine.edit.keep_forever') }}"
         value="{{ machine.monitoring_history_retention_days or '' }}">
       <p class="hint">
-        This one isn't a sweep interval — it just picks how long <em>this
-        machine's</em> samples are kept before the daily retention purge
-        deletes them, overriding the instance-wide default set in
-        <a href="/settings">Settings</a>.
+        {{ t(request, "machine.edit.monitoring_retention_hint_before") | safe }}
+        <a href="/settings">{{ t(request, "nav.settings") }}</a>{{ t(request, "machine.edit.monitoring_retention_hint_after") }}
       </p>
     </details>
 
-    <button type="submit" class="button">Save</button>
-    <a class="button button-secondary" href="/machines/{{ machine.id }}">Cancel</a>
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/machines/{{ machine.id }}">{{ t(request, "common.cancel") }}</a>
   </form>
 
   {% if machine.auth_method.value == 'password' %}
     <section class="panel">
-      <h2>Initial setup</h2>
+      <h2>{{ t(request, "machine.edit.initial_setup") }}</h2>
       {% if not machine.host_key_fingerprint %}
-        <p class="hint">Confirm the server's key fingerprint on the Overview tab first.</p>
+        <p class="hint">{{ t(request, "machine.edit.confirm_key_overview_first") }}</p>
       {% else %}
         <p class="hint">
-          Prepares this machine the same way the wiki page "Ansible Onboarding"'s
-          playbook would, run directly over SSH instead: creates a dedicated
-          "debcontrol" user, installs this app's own SSH public key into it,
-          grants it passwordless sudo scoped to <code>apt-get</code>/<code>shutdown</code>
-          (and <code>flatpak</code>/<code>snap</code>, if either is installed), and
-          installs <code>ncurses-term</code> (colors/box-drawing in the Terminal tab —
-          best-effort, never blocks the rest). <strong>The password above must belong
-          to root, or an account that already behaves like root</strong> — there is no
-          sudo escalation to fall back on here. On success this machine switches to
-          using debcontrol's own SSH key, and the password above is discarded.
+          {{ t(request, "machine.edit.onboarding_hint") | safe }}
         </p>
         {% if onboarding_error %}
           <div class="alert alert-error"><p>{{ onboarding_error }}</p></div>
         {% endif %}
         {% if onboarding_output %}
           <div class="alert alert-ok">
-            <p>Setup completed — this machine now uses debcontrol's own SSH key.</p>
+            <p>{{ t(request, "machine.edit.setup_completed") }}</p>
           </div>
           <details>
-            <summary>Setup script output</summary>
+            <summary>{{ t(request, "machine.edit.setup_script_output") }}</summary>
             <pre><code>{{ onboarding_output }}</code></pre>
           </details>
         {% endif %}
         <form method="post" action="/machines/{{ machine.id }}/run-onboarding"
               class="inline-form"
-              data-confirm="Create a &quot;debcontrol&quot; user, grant it scoped sudo, and switch this machine to debcontrol's own SSH key?">
+              data-confirm="{{ t(request, 'machine.edit.run_onboarding_confirm') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="button">Run initial setup</button>
+          <button type="submit" class="button">{{ t(request, "machine.edit.run_initial_setup") }}</button>
         </form>
       {% endif %}
     </section>
   {% endif %}
 
   <section class="panel">
-    <h2>Delete this machine</h2>
-    <p class="hint">This can't be undone.</p>
+    <h2>{{ t(request, "machine.edit.delete_heading") }}</h2>
+    <p class="hint">{{ t(request, "machine.edit.cannot_be_undone") }}</p>
     <form method="post" action="/machines/{{ machine.id }}/delete"
-          class="inline-form" data-confirm="Delete this machine?">
+          class="inline-form" data-confirm="{{ t(request, 'machine.edit.delete_confirm') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-danger">Delete machine</button>
+      <button type="submit" class="button button-danger">{{ t(request, "machine.edit.delete_machine") }}</button>
     </form>
   </section>
 {% endblock %}
