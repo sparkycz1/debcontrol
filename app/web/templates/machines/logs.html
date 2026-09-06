@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
-{% block title %}Logs — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machine.logs.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -17,35 +17,35 @@
   {% endif %}
 
   <form method="get" action="/machines/{{ machine.id }}/logs" class="search-form">
-    <input type="search" name="search" value="{{ search }}" placeholder="Search...">
-    <input type="number" name="lines" value="{{ lines }}" min="1" max="5000" title="Lines" style="width: 6em">
+    <input type="search" name="search" value="{{ search }}" placeholder="{{ t(request, 'machine.logs.search_placeholder') }}">
+    <input type="number" name="lines" value="{{ lines }}" min="1" max="5000" title="{{ t(request, 'machine.logs.lines') }}" style="width: 6em">
     {% if not path %}
-      <input type="text" name="since" value="{{ since }}" placeholder="Since (e.g. -1h, yesterday)">
-      <input type="text" name="until" value="{{ until }}" placeholder="Until">
+      <input type="text" name="since" value="{{ since }}" placeholder="{{ t(request, 'machine.logs.since_placeholder') }}">
+      <input type="text" name="until" value="{{ until }}" placeholder="{{ t(request, 'machine.logs.until_placeholder') }}">
     {% endif %}
     <input type="hidden" name="path" value="{{ path }}">
     <button type="submit" class="button">
-      {{ 'View file' if path else 'View journal' }}
+      {{ t(request, "machine.logs.view_file") if path else t(request, "machine.logs.view_journal") }}
     </button>
     {% if path %}
-      <a class="button button-secondary" href="/machines/{{ machine.id }}/logs">Back to journal</a>
+      <a class="button button-secondary" href="/machines/{{ machine.id }}/logs">{{ t(request, "machine.logs.back_to_journal") }}</a>
     {% endif %}
   </form>
 
   <details class="form-advanced">
-    <summary>View a specific file instead</summary>
+    <summary>{{ t(request, "machine.logs.view_specific_file") }}</summary>
     <p class="hint">
-      Restricted to: {% for prefix in allowed_paths %}<code>{{ prefix }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-      (configurable via <code>LOG_FILE_ALLOWED_PATHS</code>).
+      {{ t(request, "machine.logs.restricted_to") }} {% for prefix in allowed_paths %}<code>{{ prefix }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+      {{ t(request, "machine.logs.configurable_via") | safe }}
     </p>
     <form method="get" action="/machines/{{ machine.id }}/logs" class="search-form">
       <input type="text" name="path" placeholder="/var/log/nginx/access.log" value="{{ path }}" style="min-width: 24em">
       <input type="hidden" name="lines" value="{{ lines }}">
-      <button type="submit" class="button">Open</button>
+      <button type="submit" class="button">{{ t(request, "machine.logs.open") }}</button>
     </form>
   </details>
 
   {% if output is not none %}
-    <pre class="log-output">{{ output if output else '(no output)' }}</pre>
+    <pre class="log-output">{{ output if output else t(request, "machine.logs.no_output") }}</pre>
   {% endif %}
 {% endblock %}
