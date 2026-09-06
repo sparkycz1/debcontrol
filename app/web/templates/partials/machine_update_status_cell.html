@@ -2,12 +2,12 @@
 {% if machine.updates_checked_at is none %}
   <span class="hint">—</span>
 {% elif machine.upgradable_count is none %}
-  <span class="hint">unknown</span>
+  <span class="hint">{{ t(request, "groups.status.unknown") }}</span>
 {% elif machine.upgradable_count == 0 and other_count == 0 %}
-  <span class="badge badge-ok">up to date</span>
+  <span class="badge badge-ok">{{ t(request, "machine.up_to_date") }}</span>
 {% else %}
   <span class="badge badge-warn"
-    >{{ machine.upgradable_count }}{% if machine.security_upgradable_count %} ({{ machine.security_upgradable_count }} sec){% endif %}</span>
-  {% if other_count %}<span class="badge badge-warn">+{{ other_count }} flatpak/snap</span>{% endif %}
+    >{{ machine.upgradable_count }}{% if machine.security_upgradable_count %} {{ t(request, "machine.security_count", count=machine.security_upgradable_count) }}{% endif %}</span>
+  {% if other_count %}<span class="badge badge-warn">{{ t(request, "machine.other_updates", count=other_count) }}</span>{% endif %}
 {% endif %}
-{% if machine.reboot_required %}<span class="badge badge-error">reboot</span>{% endif %}
+{% if machine.reboot_required %}<span class="badge badge-error">{{ t(request, "machine.reboot") }}</span>{% endif %}

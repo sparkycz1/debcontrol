@@ -1,18 +1,16 @@
-{% from "partials/_packages_summary.html" import render as render_packages_summary %}
+{% from "partials/_packages_summary.html" import render as render_packages_summary with context %}
 {{ render_packages_summary(machine, package_counts, held_count, oob=True) }}
 
 <div id="packages-panel">
   {% if error %}
     <div class="alert alert-error">
-      <p>Could not refresh packages: {{ error }}</p>
+      <p>{{ t(request, "machine.packages.refresh_error", error=(error | e)) | safe }}</p>
     </div>
   {% endif %}
 
   {% if not machine.packages_updated_at %}
     <p class="hint">
-      Not gathered yet — this happens automatically once the host key
-      fingerprint is confirmed above, and refreshes periodically after that
-      (and right after any update run on this machine).
+      {{ t(request, "machine.packages.not_gathered_yet") }}
     </p>
   {% else %}
     <form
@@ -22,18 +20,18 @@
       class="search-form"
       id="package-filters"
     >
-      <input type="search" name="pkg_q" value="{{ pkg_q }}" placeholder="Search packages by name...">
+      <input type="search" name="pkg_q" value="{{ pkg_q }}" placeholder="{{ t(request, 'machine.packages.search_placeholder') }}">
       <select name="pkg_source">
-        <option value="" {% if not pkg_source %}selected{% endif %}>All sources</option>
+        <option value="" {% if not pkg_source %}selected{% endif %}>{{ t(request, "machine.packages.all_sources") }}</option>
         <option value="apt" {% if pkg_source == 'apt' %}selected{% endif %}>apt</option>
         <option value="flatpak" {% if pkg_source == 'flatpak' %}selected{% endif %}>flatpak</option>
         <option value="snap" {% if pkg_source == 'snap' %}selected{% endif %}>snap</option>
       </select>
       <label class="hint">
         <input type="checkbox" name="held_only" value="1" {% if held_only %}checked{% endif %}>
-        Held only
+        {{ t(request, "machine.packages.held_only") }}
       </label>
-      <button type="submit" class="button">Filter</button>
+      <button type="submit" class="button">{{ t(request, "machine.filter") }}</button>
       {% if pkg_q or pkg_source or held_only %}
         <a
           class="button button-secondary"
@@ -42,7 +40,7 @@
           hx-target="#packages-panel"
           hx-swap="outerHTML"
         >
-          Clear
+          {{ t(request, "machines.search.clear") }}
         </a>
       {% endif %}
     </form>
@@ -51,9 +49,9 @@
       <table class="data-table">
         <thead>
           <tr>
-            <th>Package</th>
-            <th>Version</th>
-            <th>Source</th>
+            <th>{{ t(request, "machine.packages.package") }}</th>
+            <th>{{ t(request, "machine.packages.version") }}</th>
+            <th>{{ t(request, "machine.packages.source") }}</th>
             <th></th>
           </tr>
         </thead>
@@ -63,13 +61,13 @@
               <td>{{ pkg.name }}</td>
               <td>{{ pkg.version }}</td>
               <td>{{ pkg.source.value }}</td>
-              <td>{% if pkg.held %}<span class="badge badge-warn">held</span>{% endif %}</td>
+              <td>{% if pkg.held %}<span class="badge badge-warn">{{ t(request, "machine.packages.held") }}</span>{% endif %}</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     {% else %}
-      <p class="hint">No packages match this filter.</p>
+      <p class="hint">{{ t(request, "machine.packages.no_match") }}</p>
     {% endif %}
   {% endif %}
 
@@ -82,9 +80,9 @@
     hx-swap="outerHTML"
     {% if not machine.host_key_fingerprint %}disabled{% endif %}
   >
-    Refresh packages now
+    {{ t(request, "machine.packages.refresh_now") }}
   </button>
   {% if not machine.host_key_fingerprint %}
-    <p class="hint">Confirm the server's key fingerprint above first.</p>
+    <p class="hint">{{ t(request, "machine.confirm_key_first") }}</p>
   {% endif %}
 </div>

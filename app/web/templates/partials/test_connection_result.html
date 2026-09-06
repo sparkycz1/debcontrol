@@ -1,14 +1,14 @@
 {% if error %}
   <div class="alert alert-error">
-    <p>Test failed: {{ error }}</p>
+    <p>{{ t(request, "machine.test_connection.failed", error=(error | e)) | safe }}</p>
   </div>
 {% elif result and result.ok %}
   <div class="alert alert-ok">
-    <p>Connection works. Output of <code>uname -a</code>:</p>
+    <p>{{ t(request, "machine.test_connection.works") | safe }}</p>
     <pre>{{ result.output }}</pre>
   </div>
 {% else %}
   <div class="alert alert-error">
-    <p>Test failed: {{ result.error if result else 'unknown error' }}</p>
+    <p>{{ t(request, "machine.test_connection.failed", error=((result.error if result else t(request, "machine.test_connection.unknown_error")) | e)) | safe }}</p>
   </div>
 {% endif %}

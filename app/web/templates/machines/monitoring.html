@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
-{% from "partials/_services_summary.html" import render as render_services_summary %}
+{% from "partials/_services_summary.html" import render as render_services_summary with context %}
 {% from "macros/charts.html" import trend_chart %}
 
 {% block title %}Monitoring — {{ machine.name }} — debcontrol{% endblock %}

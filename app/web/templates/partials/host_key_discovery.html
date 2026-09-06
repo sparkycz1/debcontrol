@@ -1,8 +1,8 @@
-<h2>SSH host key fingerprint</h2>
+<h2>{{ t(request, "machine.host_key_heading") }}</h2>
 
 {% if error %}
   <div class="alert alert-error">
-    <p>Could not determine the key fingerprint: {{ error }}</p>
+    <p>{{ t(request, "machine.host_key.discovery_error", error=(error | e)) | safe }}</p>
   </div>
   <button
     class="button"
@@ -11,25 +11,21 @@
     hx-target="#host-key-panel"
     hx-swap="innerHTML"
   >
-    Retry discovery
+    {{ t(request, "machine.host_key.retry") }}
   </button>
 {% elif fingerprint %}
   <div class="alert alert-warn">
-    <p><strong>The server presents this key fingerprint:</strong></p>
+    <p><strong>{{ t(request, "machine.host_key.presents") }}</strong></p>
     <p><code>{{ fingerprint }}</code></p>
     <p class="hint">
-      Before confirming it, verify it through a different, trusted channel —
-      e.g. directly on the hosting provider's console, or by running
-      <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> on the machine
-      itself. If it doesn't match, do NOT confirm — this could be a
-      Man-in-the-Middle attack.
+      {{ t(request, "machine.host_key.verify_hint") | safe }}
     </p>
     <form hx-post="/machines/{{ machine.id }}/trust-host-key">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
-      <button type="submit" class="button">Confirm, fingerprint matches</button>
+      <button type="submit" class="button">{{ t(request, "machine.host_key.confirm_match") }}</button>
     </form>
   </div>
 {% else %}
-  <p>Could not determine the fingerprint.</p>
+  <p>{{ t(request, "machine.host_key.could_not_determine") }}</p>
 {% endif %}

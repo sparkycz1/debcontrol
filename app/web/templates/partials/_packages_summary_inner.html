@@ -3,19 +3,16 @@
    (this section's own periodic poll, see detail.html) can render the same
    content without the poll response re-nesting the wrapping #packages-summary
    div inside itself. #}
-<h2>Installed packages</h2>
+<h2>{{ t(request, "machine.packages.heading") }}</h2>
 {% if not machine.packages_updated_at %}
   <p class="hint">
-    Not gathered yet — this happens automatically once the host key
-    fingerprint is confirmed above, and refreshes periodically after that
-    (and right after any update run on this machine).
+    {{ t(request, "machine.packages.not_gathered_yet") }}
   </p>
 {% else %}
   <p class="hint">
-    {{ package_counts.total }} package{{ 's' if package_counts.total != 1 else '' }} installed
-    ({{ package_counts.apt }} apt, {{ package_counts.flatpak }} flatpak,
-    {{ package_counts.snap }} snap){% if held_count %}, {{ held_count }} held back{% endif %}
-    — last refreshed {{ machine.packages_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
+    {{ t(request, "machine.packages.count_singular" if package_counts.total == 1 else "machine.packages.count_plural", total=package_counts.total, apt=package_counts.apt, flatpak=package_counts.flatpak, snap=package_counts.snap) }}
+    {% if held_count %}{{ t(request, "machine.packages.held_back", count=held_count) }}{% endif %}
+    {{ t(request, "machine.last_refreshed_at", when=(machine.packages_updated_at | local_time('%Y-%m-%d %H:%M %Z'))) }}
   </p>
 {% endif %}
 <button
@@ -26,5 +23,5 @@
   hx-target="#packages-panel"
   hx-swap="innerHTML"
 >
-  Show installed packages
+  {{ t(request, "machine.packages.show") }}
 </button>

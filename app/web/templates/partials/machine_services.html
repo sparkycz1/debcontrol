@@ -1,17 +1,16 @@
-{% from "partials/_services_summary.html" import render as render_services_summary %}
+{% from "partials/_services_summary.html" import render as render_services_summary with context %}
 {{ render_services_summary(machine, service_counts, oob=True) }}
 
 <div id="services-panel" class="modal-body">
   {% if error %}
     <div class="alert alert-error">
-      <p>Could not refresh services: {{ error }}</p>
+      <p>{{ t(request, "machine.services.refresh_error", error=(error | e)) | safe }}</p>
     </div>
   {% endif %}
 
   {% if not machine.services_updated_at %}
     <p class="hint">
-      Not gathered yet — this happens automatically once the host key
-      fingerprint is confirmed above, and refreshes periodically after that.
+      {{ t(request, "machine.facts.not_gathered_yet") }}
     </p>
   {% else %}
     <form
@@ -21,14 +20,14 @@
       class="search-form"
       id="service-filters"
     >
-      <input type="search" name="svc_q" value="{{ svc_q }}" placeholder="Search services by unit name...">
+      <input type="search" name="svc_q" value="{{ svc_q }}" placeholder="{{ t(request, 'machine.services.search_placeholder') }}">
       <select name="svc_state">
-        <option value="" {% if not svc_state %}selected{% endif %}>Any state</option>
+        <option value="" {% if not svc_state %}selected{% endif %}>{{ t(request, "machine.services.any_state") }}</option>
         <option value="active" {% if svc_state == 'active' %}selected{% endif %}>active</option>
         <option value="failed" {% if svc_state == 'failed' %}selected{% endif %}>failed</option>
         <option value="inactive" {% if svc_state == 'inactive' %}selected{% endif %}>inactive</option>
       </select>
-      <button type="submit" class="button">Filter</button>
+      <button type="submit" class="button">{{ t(request, "machine.filter") }}</button>
       {% if svc_q or svc_state %}
         <a
           class="button button-secondary"
@@ -37,7 +36,7 @@
           hx-target="#services-panel"
           hx-swap="outerHTML"
         >
-          Clear
+          {{ t(request, "machines.search.clear") }}
         </a>
       {% endif %}
     </form>
@@ -46,9 +45,9 @@
       <table class="data-table">
         <thead>
           <tr>
-            <th>Unit</th>
-            <th>State</th>
-            <th>Description</th>
+            <th>{{ t(request, "machine.services.unit") }}</th>
+            <th>{{ t(request, "machine.services.state") }}</th>
+            <th>{{ t(request, "roles.table.description") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -66,7 +65,7 @@
         </tbody>
       </table>
     {% else %}
-      <p class="hint">No services match this filter.</p>
+      <p class="hint">{{ t(request, "machine.services.no_match") }}</p>
     {% endif %}
   {% endif %}
 
@@ -79,9 +78,9 @@
     hx-swap="outerHTML"
     {% if not machine.host_key_fingerprint %}disabled{% endif %}
   >
-    Refresh services now
+    {{ t(request, "machine.services.refresh_now") }}
   </button>
   {% if not machine.host_key_fingerprint %}
-    <p class="hint">Confirm the server's key fingerprint above first.</p>
+    <p class="hint">{{ t(request, "machine.confirm_key_first") }}</p>
   {% endif %}
 </div>

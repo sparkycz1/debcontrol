@@ -3,21 +3,20 @@
    (this section's own periodic poll) can render the same content without
    the poll response re-nesting the wrapping #services-summary div inside
    itself — same convention as _packages_summary_inner.html. #}
-<h2>Services</h2>
+<h2>{{ t(request, "machine.services.heading") }}</h2>
 {% if not machine.services_updated_at %}
   <p class="hint">
-    Not gathered yet — this happens automatically once the host key
-    fingerprint is confirmed above, and refreshes periodically after that.
+    {{ t(request, "machine.facts.not_gathered_yet") }}
   </p>
 {% else %}
   <p class="hint">
-    {{ service_counts.total }} service{{ 's' if service_counts.total != 1 else '' }} found
+    {{ t(request, "machine.services.count_singular" if service_counts.total == 1 else "machine.services.count_plural", total=service_counts.total) }}
     {% if service_counts.failed %}
-      <span class="badge badge-error">{{ service_counts.failed }} failed</span>
+      <span class="badge badge-error">{{ t(request, "machine.services.failed_count", count=service_counts.failed) }}</span>
     {% else %}
-      <span class="badge badge-ok">none failed</span>
+      <span class="badge badge-ok">{{ t(request, "machine.services.none_failed") }}</span>
     {% endif %}
-    — last refreshed {{ machine.services_updated_at | local_time('%Y-%m-%d %H:%M %Z') }}.
+    {{ t(request, "machine.last_refreshed_at", when=(machine.services_updated_at | local_time('%Y-%m-%d %H:%M %Z'))) }}
   </p>
 {% endif %}
 <button
@@ -28,5 +27,5 @@
   hx-target="#services-panel"
   hx-swap="innerHTML"
 >
-  Show services
+  {{ t(request, "machine.services.show") }}
 </button>
