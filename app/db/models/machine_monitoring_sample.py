@@ -1,5 +1,5 @@
-"""One CPU/load/RAM/network/disk-I/O sample for a managed machine, taken
-on the Monitoring tab's own cadence (`MONITORING_INTERVAL_SECONDS`, see
+"""One CPU/load/RAM/network/disk-I/O/filesystem-usage sample for a managed
+machine, taken on the Monitoring tab's own cadence (`MONITORING_INTERVAL_SECONDS`, see
 `app.ssh.monitoring` and `app.tasks.jobs._sample_machine_monitoring`).
 
 Unlike `MachinePackage`/`MachineService`, this genuinely is a history, not
@@ -62,11 +62,16 @@ class MachineMonitoringSample(Base):
     # app.services.monitoring_history.
     network_io: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # Each {"device": ..., "read_bytes": ..., "write_bytes": ...} —
-    # cumulative counters since boot, one entry per whole disk found. Disk
-    # *usage* (how full a filesystem is) lives on `Machine.filesystems`
-    # (the Overview tab's Facts panel) instead — this is throughput, a
-    # different question with a different natural cadence.
+    # cumulative counters since boot, one entry per whole disk found. A
+    # different question from `filesystems` below (throughput vs. how
+    # full a mount is), sampled here for the same reason.
     disk_io: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Each {"mount": ..., "size_bytes": ..., "used_bytes": ..., "avail_bytes":
+    # ..., "use_percent": ...} — same shape as `Machine.filesystems` (the
+    # facts snapshot), but historized on this table's own shorter cadence
+    # so the Monitoring tab can chart usage *over time*, not just show the
+    # single most recent reading.
+    filesystems: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # None = couldn't tell (no `systemctl` — see app.ssh.monitoring), not
     # "zero failed services".
     failed_services_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

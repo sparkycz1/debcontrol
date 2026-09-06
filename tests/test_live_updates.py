@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import app.tasks.jobs as jobs
 from app.db.models.machine import AuthMethod, Machine
 from app.services import live_updates
+from app.ssh.reachability import ReachabilityResult
 
 
 class _FakePublishedRedis:
@@ -149,8 +150,8 @@ async def test_ping_all_machines_publishes_a_status_event_per_checked_machine(
 
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 
-    async def _fake_check_reachable(ip_address: str, port: int) -> bool:
-        return True
+    async def _fake_check_reachable(ip_address: str, port: int) -> ReachabilityResult:
+        return ReachabilityResult(reachable=True, latency_ms=1.0)
 
     monkeypatch.setattr(jobs, "check_reachable", _fake_check_reachable)
 

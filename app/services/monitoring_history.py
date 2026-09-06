@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.db.models.machine_reachability_sample import MachineReachabilitySample
 
 # Every option the Monitoring tab's range selector offers, and how far back
 # each looks. Kept as an ordered dict-like tuple so the template can render
@@ -115,6 +116,33 @@ def _cumulative_series(
     return keys, per_key
 
 
+def _filesystem_usage_series(
+    samples: list[MachineMonitoringSample],
+) -> tuple[list[str], dict[str, list[float | None]]]:
+    """`{mount: [use_percent per sample]}` — one series per mount seen
+    anywhere in the window, in first-seen order. Unlike network/disk I/O,
+    `use_percent` is already a gauge (a snapshot value, not a cumulative
+    counter), so this just reads it straight off each sample rather than
+    computing a rate — a gap (`None`) is a sample where that mount wasn't
+    reported at all (missing entirely, or unparseable), not zero usage."""
+    keys: list[str] = []
+    for s in samples:
+        for entry in s.filesystems or []:
+            mount = entry.get("mount")
+            if mount and mount not in keys:
+                keys.append(mount)
+
+    per_key: dict[str, list[float | None]] = {k: [] for k in keys}
+    for s in samples:
+        entries: dict[Any, dict[str, Any]] = {
+            e.get("mount"): e for e in (s.filesystems or [])
+        }
+        for mount in keys:
+            matched = entries.get(mount)
+            per_key[mount].append(matched.get("use_percent") if matched else None)
+    return keys, per_key
+
+
 def _combined_rate_series(
     entries: list[dict[str, Any] | None],
     timestamps: list[datetime],
@@ -166,6 +194,9 @@ class MonitoringHistory:
     # {device: [combined read+write bytes/sec, ...]} — one downsampled
     # series per whole disk seen anywhere in the window.
     disk_rate_by_device: dict[str, list[float | None]]
+    # {mount: [use_percent, ...]} — one downsampled series per filesystem
+    # mount seen anywhere in the window.
+    filesystem_usage_by_mount: dict[str, list[float | None]]
     latest_cpu_percent: float | None
     latest_load1: float | None
     latest_load5: float | None
@@ -177,6 +208,9 @@ class MonitoringHistory:
     # the rate graph (the graph itself needs a rate, not a running total).
     latest_network_io: dict[str, dict[str, int]]
     latest_disk_io: dict[str, dict[str, int]]
+    # {mount: {"size_bytes": ..., "used_bytes": ..., "avail_bytes": ...,
+    # "use_percent": ...}} — the most recent raw reading per mount.
+    latest_filesystems: dict[str, dict[str, Any]]
     latest_failed_services_count: int | None
     latest_sampled_at: datetime | None
 
@@ -222,12 +256,22 @@ def build_monitoring_history(
         for device in disk_keys
     }
 
+    fs_keys, fs_raw_by_mount = _filesystem_usage_series(samples)
+    filesystem_usage_by_mount = {
+        mount: _bucket_average(fs_raw_by_mount[mount], _TARGET_POINTS) for mount in fs_keys
+    }
+
     latest = samples[-1] if samples else None
     latest_network_io = {
         iface: entries[-1] for iface, entries in net_by_key.items() if entries and entries[-1]
     }
     latest_disk_io = {
         device: entries[-1] for device, entries in disk_by_key.items() if entries and entries[-1]
+    }
+    latest_filesystems = {
+        entry["mount"]: entry
+        for entry in ((latest.filesystems or []) if latest else [])
+        if entry.get("mount")
     }
 
     return MonitoringHistory(
@@ -242,6 +286,7 @@ def build_monitoring_history(
         load15=load15_series,
         network_rate_by_iface=network_rate_by_iface,
         disk_rate_by_device=disk_rate_by_device,
+        filesystem_usage_by_mount=filesystem_usage_by_mount,
         latest_cpu_percent=latest.cpu_percent if latest else None,
         latest_load1=latest.load1 if latest else None,
         latest_load5=latest.load5 if latest else None,
@@ -250,6 +295,66 @@ def build_monitoring_history(
         latest_ram_total_bytes=latest.ram_total_bytes if latest else None,
         latest_network_io=latest_network_io,
         latest_disk_io=latest_disk_io,
+        latest_filesystems=latest_filesystems,
         latest_failed_services_count=latest.failed_services_count if latest else None,
         latest_sampled_at=latest.sampled_at if latest else None,
+    )
+
+
+@dataclass
+class AvailabilityHistory:
+    """The "Availability" category's own history, built from
+    `MachineReachabilitySample` rows — a separate table and cadence from
+    `MonitoringHistory` above (see that model's own docstring for why: a
+    reachability check is written whether it succeeded or not, so it can
+    actually show an outage; a monitoring sample is skipped entirely when
+    SSH can't even connect)."""
+
+    range_key: str
+    sample_count: int
+    truncated: bool
+    bucket_timestamps: list[datetime]
+    # 0-100 — the percentage of checks in each bucket that succeeded. A gap
+    # (`None`) only happens if a bucket had zero samples at all, which
+    # `_bucket_average` already never produces here since every bucket by
+    # construction contains at least one row.
+    uptime_percent: list[float | None]
+    # Average connect latency of the *successful* checks in each bucket —
+    # a failed check contributes no latency value to average (see
+    # `ReachabilityResult.latency_ms`'s own docstring for why a failure
+    # has no meaningful connect time at all).
+    latency_ms: list[float | None]
+    latest_reachable: bool | None
+    latest_latency_ms: float | None
+    latest_checked_at: datetime | None
+
+
+def build_availability_history(
+    samples: list[MachineReachabilitySample], range_key: str
+) -> AvailabilityHistory:
+    """Pure function, no I/O — same shape as `build_monitoring_history`:
+    the caller does the DB query (oldest-first, capped at `MAX_RAW_SAMPLES`,
+    within the requested window) and hands the rows here."""
+    truncated = len(samples) >= MAX_RAW_SAMPLES
+    timestamps = [s.checked_at for s in samples]
+    bucket_timestamps = _bucket_timestamps(timestamps, _TARGET_POINTS)
+
+    uptime_raw: list[float | None] = [100.0 if s.reachable else 0.0 for s in samples]
+    uptime_series = _bucket_average(uptime_raw, _TARGET_POINTS)
+
+    latency_raw: list[float | None] = [s.latency_ms for s in samples]
+    latency_series = _bucket_average(latency_raw, _TARGET_POINTS)
+
+    latest = samples[-1] if samples else None
+
+    return AvailabilityHistory(
+        range_key=range_key,
+        sample_count=len(samples),
+        truncated=truncated,
+        bucket_timestamps=bucket_timestamps,
+        uptime_percent=uptime_series,
+        latency_ms=latency_series,
+        latest_reachable=latest.reachable if latest else None,
+        latest_latency_ms=latest.latency_ms if latest else None,
+        latest_checked_at=latest.checked_at if latest else None,
     )

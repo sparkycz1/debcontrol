@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.34.0"
+version = "0.35.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"

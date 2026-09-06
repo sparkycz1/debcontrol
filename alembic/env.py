@@ -20,6 +20,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     FleetSummary,
     Machine,
     MachineGroup,
+    MachineReachabilitySample,
     MachineUpdateRun,
     PendingMachine,
     Role,

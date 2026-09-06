@@ -1026,34 +1026,79 @@ one row per `systemctl list-units --type=service --all` unit
 any fresher than facts/packages do. No root needed: listing unit state is
 allowed for any account under systemd's default polkit policy.
 
-### Monitoring: CPU, RAM, load average, network and disk throughput
+### Monitoring: five categories — CPU, Memory, Network, Disk, Availability
 
-**Machines → a machine → Monitoring** — unlike every table above, this one
-(`MachineMonitoringSample`) genuinely is a history, not a replaced
-snapshot: one row appended per machine per `MONITORING_INTERVAL_SECONDS`
-tick (`app/tasks/jobs.monitor_all_machines` → `sample_machine_monitoring`,
-`app/ssh/monitoring.py`), purged per-machine by
-`purge_old_monitoring_samples` against `AppSettings.
-monitoring_history_retention_days` (or a per-machine override). CPU
-percent needs two `/proc/stat` reads a second apart, computed inside the
-one SSH round trip (`sleep 1`) rather than as two round trips. Each sample
-also carries the 1/5/15-minute load average, and cumulative counters for
+**Machines → a machine → Monitoring** is organized into five always-open
+categories, each its own `<section>`:
+
+- **CPU** — utilization (two `/proc/stat` reads a second apart, computed
+  inside the one SSH round trip's `sleep 1` rather than as two round
+  trips) and the 1/5/15-minute load average, together.
+- **Memory** — RAM utilization percent, plus used/available/total.
+- **Network** — a bytes/sec rate per interface, diffed from consecutive
+  cumulative counters.
+- **Disk** — I/O throughput per block device (same diffing as Network),
+  **and** filesystem usage percent per mount, historized (see below).
+- **Availability** — uptime percent and TCP connect latency, from a
+  wholly different table/cadence than the other four (see its own
+  subsection below).
+
+Unlike every table earlier in this document, `MachineMonitoringSample`
+genuinely is a history, not a replaced snapshot: one row appended per
+machine per `MONITORING_INTERVAL_SECONDS` tick
+(`app/tasks/jobs._sample_machine_monitoring`, `app/ssh/monitoring.py`),
+purged per-machine by `purge_old_monitoring_samples` against
+`AppSettings.monitoring_history_retention_days` (or a per-machine
+override). Each sample carries CPU/load/RAM, cumulative counters for
 every network interface and block device (`network_io`/`disk_io`, JSON
-columns of per-name byte counters) — the Monitoring tab diffs consecutive
-samples to turn those counters into a bytes/sec rate
-(`app/services/monitoring_history.py`), auto-enumerating whichever
-interfaces/devices a machine actually reports rather than assuming fixed
-names. Disk *usage* (not I/O) stays out of this tab — it's already on
-Overview's facts panel, sampled far less often, so repeating it here would
-just be noise. The Monitoring tab's graphs downsample a time range's raw
-rows to a target point count in Python — positional bucket-averaging, not
-time-aligned buckets, since neither Postgres nor the SQLite test backend
-gets a time-series extension for this — rendered by `macros/charts.html`'s
-`trend_chart` macro as an interactive, dependency-free inline SVG: hovering
-or dragging (`static/js/monitoring-chart.js`) scrubs a cursor across the
-chart and shows the exact value and timestamp under the pointer, unlike
-the plain, non-interactive `percent_sparkline` the Dashboard's trend charts
-still use.
+columns of per-name byte counters — the Monitoring tab diffs consecutive
+samples to turn those into a bytes/sec rate, in
+`app/services/monitoring_history.py`, auto-enumerating whichever
+interfaces/devices a machine actually reports), and — since v0.35.0 —
+**filesystem usage** (`filesystems`, same `df` command and JSON shape
+`app.ssh.facts`'s `Machine.filesystems` snapshot already used, just
+historized on this table's shorter cadence instead): the Overview Facts
+panel only ever showed the single most recent reading, with no trend, so
+usage-over-time moved here instead — a small addition to a round trip
+that already exists, not a new connection. The Monitoring tab's graphs
+downsample a time range's raw rows to a target point count in Python —
+positional bucket-averaging, not time-aligned buckets, since neither
+Postgres nor the SQLite test backend gets a time-series extension for
+this — rendered by `macros/charts.html`'s `trend_chart` macro as an
+interactive, dependency-free inline SVG: hovering or dragging
+(`static/js/monitoring-chart.js`) scrubs a cursor across the chart and
+shows the exact value and timestamp under the pointer, unlike the plain,
+non-interactive `percent_sparkline` the Dashboard's trend charts still
+use.
+
+### Availability: historized from the existing reachability sweep, not ICMP
+
+The per-minute reachability sweep (`app.tasks.jobs._ping_all_machines`,
+`app.ssh.reachability.check_reachable`) already updated
+`Machine.is_reachable`/`last_ping_at` every tick; it now *also* appends a
+`MachineReachabilitySample` (`checked_at`, `reachable`, `latency_ms`) —
+the exact same check, just kept instead of only ever overwriting those two
+columns with the latest value. No new SSH connection, no new probe, and
+still deliberately a plain TCP connect to the SSH port rather than ICMP
+ping — `app.ssh.reachability`'s module docstring's original reasoning
+(a host that blocks ICMP but serves SSH should still read as reachable,
+and vice versa) applies just as much to a history of the check as to its
+live value.
+
+This is a genuinely separate table from `MachineMonitoringSample`, not a
+column added to it, because the two have different failure semantics: a
+reachability sample is written whether the check succeeded *or failed* —
+the entire point of an uptime history is to capture an outage — while a
+monitoring sample is never even attempted when SSH can't connect (auth
+would fail before there's anything to sample). Shares
+`MachineMonitoringSample`'s retention setting rather than getting its own
+(`_purge_old_monitoring_samples` purges both tables per-machine, same
+cutoff) — one "how long does this fleet's own history stick around"
+knob, not two. `app.services.monitoring_history.build_availability_history`
+turns raw samples into an uptime-percent series (the average of 100/0
+per successful/failed check, bucketed the same positional way as every
+other graph on this tab) and a latency series (successful checks only —
+a failed check has no meaningful connect time to average in).
 
 ### Logs: no storage, gated behind `action.terminal`
 

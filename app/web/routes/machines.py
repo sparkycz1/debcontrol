@@ -32,6 +32,7 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -1135,6 +1136,18 @@ async def machine_monitoring(
     samples = list(result.scalars().all())
     history = monitoring_history.build_monitoring_history(samples, range_key)
 
+    reachability_result = await db.execute(
+        select(MachineReachabilitySample)
+        .where(
+            MachineReachabilitySample.machine_id == machine_id,
+            MachineReachabilitySample.checked_at >= since,
+        )
+        .order_by(MachineReachabilitySample.checked_at)
+        .limit(monitoring_history.MAX_RAW_SAMPLES)
+    )
+    reachability_samples = list(reachability_result.scalars().all())
+    availability = monitoring_history.build_availability_history(reachability_samples, range_key)
+
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -1145,6 +1158,7 @@ async def machine_monitoring(
             "active_tab": "monitoring",
             "csrf_token": csrf_token,
             "history": history,
+            "availability": availability,
             "time_ranges": monitoring_history.TIME_RANGES,
             "range_key": range_key,
             "service_counts": await _get_service_counts(machine_id, db),

@@ -1,17 +1,21 @@
-"""Gather one CPU/RAM/network/disk-I/O sample from a managed machine — the
-Monitoring tab's trend graphs. Read-only, no root needed for any of it
-(same convention as `app.ssh.facts`).
+"""Gather one CPU/RAM/network/disk-I/O/filesystem-usage sample from a
+managed machine — the Monitoring tab's trend graphs. Read-only, no root
+needed for any of it (same convention as `app.ssh.facts`).
 
 Deliberately its own, much lighter, round trip than `app.ssh.facts` — this
 runs on a much shorter cadence (`MONITORING_INTERVAL_SECONDS`, 2 minutes by
 default, vs. facts' default 10 minutes), so it only gathers what a
-frequent sample actually needs: CPU/load/RAM/network/disk-I/O right now,
-plus a cheap *count* of failed systemd services (the full unit list is
-`app.ssh.services`, on the facts cadence instead — see that module's own
-docstring for why). Disk *usage* percent (how full a filesystem is) is
-deliberately not gathered here — that changes slowly and already has its
-own home on the Overview tab's Facts panel (`app.ssh.facts`); this module
-is about what's changing *right now* (throughput, load), not capacity.
+frequent sample actually needs: CPU/load/RAM/network/disk-I/O/filesystem-
+usage right now, plus a cheap *count* of failed systemd services (the full
+unit list is `app.ssh.services`, on the facts cadence instead — see that
+module's own docstring for why).
+
+Filesystem usage (`df`, same command `app.ssh.facts` already runs) *is*
+gathered here too, on this shorter cadence, precisely so the Monitoring
+tab can show a *history* of how full a mount is over time — the Overview
+tab's Facts panel only ever showed the single most recent reading, no
+trend. It's a small, cheap addition to a round trip that already exists,
+not a separate connection.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from typing import Any, TypedDict
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
 
-_SECTION_MARKERS = ("CPU", "LOAD", "RAM_KB", "NET", "DISKIO", "FAILED_SERVICES")
+_SECTION_MARKERS = ("CPU", "LOAD", "RAM_KB", "NET", "DISKIO", "FILESYSTEMS", "FAILED_SERVICES")
 
 # CPU percent needs two samples of /proc/stat a moment apart — computed
 # entirely in the one round trip (a 1-second `sleep`) rather than as two
@@ -74,6 +78,9 @@ MONITORING_COMMAND = (
     "awk -v disks=\"$disks\" 'BEGIN { n = split(disks, arr, \" \"); "
     "for (i = 1; i <= n; i++) want[arr[i]] = 1 } "
     "$3 in want { print $3, $6*512, $10*512 }' /proc/diskstats 2>/dev/null; "
+    "echo ===FILESYSTEMS===; "
+    "df -B1 --output=target,size,used,avail,pcent "
+    "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
     "echo ===FAILED_SERVICES===; "
     "if command -v systemctl >/dev/null 2>&1; then "
     "systemctl --failed --plain --no-legend --no-pager 2>/dev/null | wc -l; "
@@ -97,6 +104,10 @@ class MonitoringSample(TypedDict):
     # Each {"device": ..., "read_bytes": ..., "write_bytes": ...} —
     # cumulative counters since boot, one entry per whole disk found.
     disk_io: list[dict[str, Any]]
+    # Each {"mount": ..., "size_bytes": ..., "used_bytes": ..., "avail_bytes":
+    # ..., "use_percent": ...} — same shape/exclusions (no tmpfs/devtmpfs/
+    # squashfs/overlay) as `app.ssh.facts.MachineFacts["filesystems"]`.
+    filesystems: list[dict[str, Any]]
     # None = couldn't tell (no systemd), not "zero failed".
     failed_services_count: int | None
 
@@ -153,6 +164,28 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
                 {"device": fields[0], "read_bytes": int(fields[1]), "write_bytes": int(fields[2])}
             )
 
+    filesystems: list[dict[str, Any]] = []
+    for line in sections.get("FILESYSTEMS", "").splitlines():
+        fields = line.split()
+        # target size used avail pcent — same parsing as
+        # app.ssh.facts.parse_facts_output (mount points rarely contain
+        # spaces, but the last four fields are unambiguous either way).
+        if len(fields) < 5:
+            continue
+        size, used, avail, pcent = fields[-4], fields[-3], fields[-2], fields[-1]
+        target = " ".join(fields[:-4])
+        if not (size.isdigit() and used.isdigit() and avail.isdigit()):
+            continue
+        filesystems.append(
+            {
+                "mount": target,
+                "size_bytes": int(size),
+                "used_bytes": int(used),
+                "avail_bytes": int(avail),
+                "use_percent": int(pcent.rstrip("%")) if pcent.rstrip("%").isdigit() else None,
+            }
+        )
+
     failed_services_count: int | None = None
     failed_line = sections.get("FAILED_SERVICES", "")
     if failed_line.isdigit():
@@ -167,6 +200,7 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
         ram_total_bytes=ram_total_bytes,
         network_io=network_io,
         disk_io=disk_io,
+        filesystems=filesystems,
         failed_services_count=failed_services_count,
     )
 

@@ -12,6 +12,7 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -48,6 +49,7 @@ __all__ = [
     "MachineGroup",
     "MachineMonitoringSample",
     "MachinePackage",
+    "MachineReachabilitySample",
     "MachineService",
     "MachineUpdateRun",
     "PendingActionStatus",

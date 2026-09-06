@@ -13,12 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models.machine import Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from tests.test_web import _create_machine, _pin_host_key
 
 
 async def _add_monitoring_sample(
-    db_session_factory: async_sessionmaker[AsyncSession], machine_id: uuid.UUID
+    db_session_factory: async_sessionmaker[AsyncSession],
+    machine_id: uuid.UUID,
+    *,
+    filesystems: list[dict[str, object]] | None = None,
 ) -> None:
     async with db_session_factory() as session:
         session.add(
@@ -33,12 +37,32 @@ async def _add_monitoring_sample(
                 ram_total_bytes=1_000_000_000,
                 network_io=[{"iface": "eth0", "rx_bytes": 1000, "tx_bytes": 500}],
                 disk_io=[{"device": "sda", "read_bytes": 2000, "write_bytes": 1000}],
+                filesystems=filesystems if filesystems is not None else [],
                 failed_services_count=1,
             )
         )
         machine = await session.get(Machine, machine_id)
         assert machine is not None
         machine.monitoring_updated_at = datetime.now(UTC)
+        await session.commit()
+
+
+async def _add_reachability_sample(
+    db_session_factory: async_sessionmaker[AsyncSession],
+    machine_id: uuid.UUID,
+    *,
+    reachable: bool = True,
+    latency_ms: float | None = 4.2,
+) -> None:
+    async with db_session_factory() as session:
+        session.add(
+            MachineReachabilitySample(
+                machine_id=machine_id,
+                checked_at=datetime.now(UTC) - timedelta(minutes=1),
+                reachable=reachable,
+                latency_ms=latency_ms,
+            )
+        )
         await session.commit()
 
 
@@ -81,10 +105,10 @@ async def test_monitoring_tab_renders_graphs_once_samples_exist(client, db_sessi
     # MachineService rows, only a monitoring sample).
     assert "No data in this range." not in response.text
     assert "<h2>CPU</h2>" in response.text
-    assert "<h2>Load average</h2>" in response.text
-    assert "<h2>RAM</h2>" in response.text
-    assert "<h2>Network throughput</h2>" in response.text
-    assert "<h2>Disk I/O</h2>" in response.text
+    assert "<h3>Load average</h3>" in response.text
+    assert "<h2>Memory</h2>" in response.text
+    assert "<h2>Network</h2>" in response.text
+    assert "<h2>Disk</h2>" in response.text
     assert "12.5" in response.text
     assert "eth0" in response.text
     assert "sda" in response.text
@@ -126,3 +150,74 @@ async def test_services_modal_panel_lists_services_and_supports_search(
     by_state = await client.get(f"/machines/{machine_id}/services", params={"svc_state": "failed"})
     assert "foo.service" in by_state.text
     assert "sshd.service" not in by_state.text
+
+
+async def test_monitoring_tab_shows_filesystem_usage_graph(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="fs-monitored")
+    await _pin_host_key(db_session_factory, machine_id)
+    await _add_monitoring_sample(
+        db_session_factory,
+        machine_id,
+        filesystems=[
+            {"mount": "/", "size_bytes": 1000, "used_bytes": 300, "avail_bytes": 700,
+             "use_percent": 30},
+        ],
+    )
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "<h3>Usage</h3>" in response.text
+    assert "<code>/</code>" in response.text
+    assert "30%" in response.text
+
+
+async def test_overview_no_longer_shows_filesystems_table(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="fs-overview")
+    await _pin_host_key(db_session_factory, machine_id)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.filesystems = [
+            {"mount": "/", "size_bytes": 1000, "used_bytes": 300, "avail_bytes": 700,
+             "use_percent": 30}
+        ]
+        machine.facts_updated_at = datetime.now(UTC)
+        await session.commit()
+
+    response = await client.get(f"/machines/{machine_id}")
+
+    assert response.status_code == 200
+    assert "<dt>Filesystems</dt>" not in response.text
+    assert f"/machines/{machine_id}/monitoring" in response.text
+
+
+async def test_monitoring_tab_shows_availability_section(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="available")
+    await _add_reachability_sample(db_session_factory, machine_id, reachable=True, latency_ms=3.5)
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "<h2>Availability</h2>" in response.text
+    assert "reachable" in response.text
+
+
+async def test_monitoring_tab_shows_unreachable_status(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="unreachable-machine")
+    await _add_reachability_sample(
+        db_session_factory, machine_id, reachable=False, latency_ms=None
+    )
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "unreachable" in response.text

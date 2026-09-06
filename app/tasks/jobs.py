@@ -43,6 +43,7 @@ from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.services.fleet_stats import compute_fleet_stats
@@ -65,7 +66,7 @@ from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
-from app.ssh.reachability import check_reachable
+from app.ssh.reachability import ReachabilityResult, check_reachable
 from app.ssh.readiness import DIRECT_FIX_COMMAND, missing_requirements
 from app.ssh.readiness import check_machine_readiness as run_readiness_probes
 from app.ssh.services import gather_services
@@ -560,11 +561,16 @@ def _due_machines[M](
 
 async def _ping_all_machines() -> None:
     """Cheap reachability sweep (TCP connect only, no auth) for the status
-    badge shown in the UI. Cadence is owned by Celery Beat
-    (`REACHABILITY_CHECK_INTERVAL_SECONDS`, see `app.tasks.celery_app`), and
-    a machine may additionally raise its own interval (never lower it below
-    the tick rate) via `Machine.reachability_check_interval_seconds` — this
-    job does the sweep, minus whichever machines aren't due yet, and returns."""
+    badge shown in the UI, and — appending one `MachineReachabilitySample`
+    row per machine actually checked — the Monitoring tab's "Availability"
+    history. No new probe: this is the exact same check that already ran
+    every tick to update `Machine.is_reachable`, just also kept instead of
+    only ever overwriting those two columns with the latest value. Cadence
+    is owned by Celery Beat (`REACHABILITY_CHECK_INTERVAL_SECONDS`, see
+    `app.tasks.celery_app`), and a machine may additionally raise its own
+    interval (never lower it below the tick rate) via
+    `Machine.reachability_check_interval_seconds` — this job does the
+    sweep, minus whichever machines aren't due yet, and returns."""
     async with db_session.AsyncSessionLocal() as session:
         result = await session.execute(select(Machine).where(Machine.is_active))
         machines = _due_machines(
@@ -580,19 +586,27 @@ async def _ping_all_machines() -> None:
             # fleet and the sweep interval.
             semaphore = asyncio.Semaphore(get_settings().reachability_check_concurrency)
 
-            async def _check(machine: Machine) -> tuple[Machine, bool]:
+            async def _check(machine: Machine) -> tuple[Machine, ReachabilityResult]:
                 async with semaphore:
-                    reachable = await check_reachable(machine.ip_address, machine.port)
-                    return machine, reachable
+                    outcome = await check_reachable(machine.ip_address, machine.port)
+                    return machine, outcome
 
             results = await asyncio.gather(*(_check(m) for m in machines))
 
             now = datetime.now(UTC)
-            for machine, reachable in results:
-                machine.is_reachable = reachable
+            for machine, outcome in results:
+                machine.is_reachable = outcome.reachable
                 machine.last_ping_at = now
+                session.add(
+                    MachineReachabilitySample(
+                        machine_id=machine.id,
+                        checked_at=now,
+                        reachable=outcome.reachable,
+                        latency_ms=outcome.latency_ms,
+                    )
+                )
             await session.commit()
-            for machine, _reachable in results:
+            for machine, _outcome in results:
                 await publish_machine_event(str(machine.id), KIND_STATUS)
 
 
@@ -851,6 +865,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
                 ram_total_bytes=sample["ram_total_bytes"],
                 network_io=sample["network_io"],
                 disk_io=sample["disk_io"],
+                filesystems=sample["filesystems"],
                 failed_services_count=sample["failed_services_count"],
             )
         )
@@ -902,14 +917,17 @@ _MONITORING_SAMPLE_PURGE_ACTOR = "retention policy (automatic)"
 
 
 async def _purge_old_monitoring_samples() -> None:
-    """Delete `MachineMonitoringSample` rows older than each machine's
-    effective retention — `Machine.monitoring_history_retention_days` if
-    set, else `AppSettings.monitoring_history_retention_days` (`None` on
-    both = keep that machine's samples forever). One `DELETE` per machine
-    rather than a single global cutoff (unlike `_purge_old_machine_update_
-    runs`) since retention can differ per machine — acceptable for a
-    once-a-day job; see wiki/Host-Requirements.md if this ever needs to
-    scale further."""
+    """Delete `MachineMonitoringSample` **and** `MachineReachabilitySample`
+    rows older than each machine's effective retention —
+    `Machine.monitoring_history_retention_days` if set, else
+    `AppSettings.monitoring_history_retention_days` (`None` on both = keep
+    that machine's samples forever). One retention setting covers both
+    tables — they're the same "how long does this fleet's own history
+    stick around" question, not two knobs to configure. One `DELETE` per
+    machine per table rather than a single global cutoff (unlike
+    `_purge_old_machine_update_runs`) since retention can differ per
+    machine — acceptable for a once-a-day job; see
+    wiki/Host-Requirements.md if this ever needs to scale further."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         default_retention_days = app_settings.monitoring_history_retention_days
@@ -926,18 +944,34 @@ async def _purge_old_monitoring_samples() -> None:
             if not retention_days:
                 continue
             cutoff = now - timedelta(days=retention_days)
-            due_filter = (
+
+            monitoring_filter = (
                 MachineMonitoringSample.machine_id == machine_id,
                 MachineMonitoringSample.sampled_at < cutoff,
             )
             count_result = await session.execute(
-                select(func.count()).select_from(MachineMonitoringSample).where(*due_filter)
+                select(func.count()).select_from(MachineMonitoringSample).where(*monitoring_filter)
             )
             machine_deleted = count_result.scalar_one()
-            if not machine_deleted:
-                continue
-            await session.execute(delete(MachineMonitoringSample).where(*due_filter))
-            total_deleted += machine_deleted
+            if machine_deleted:
+                await session.execute(delete(MachineMonitoringSample).where(*monitoring_filter))
+                total_deleted += machine_deleted
+
+            reachability_filter = (
+                MachineReachabilitySample.machine_id == machine_id,
+                MachineReachabilitySample.checked_at < cutoff,
+            )
+            count_result = await session.execute(
+                select(func.count())
+                .select_from(MachineReachabilitySample)
+                .where(*reachability_filter)
+            )
+            reachability_deleted = count_result.scalar_one()
+            if reachability_deleted:
+                await session.execute(
+                    delete(MachineReachabilitySample).where(*reachability_filter)
+                )
+                total_deleted += reachability_deleted
 
         if not total_deleted:
             return
