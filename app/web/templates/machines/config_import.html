@@ -1,30 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}Import configuration — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machine.config_import.title") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Import machine &amp; group configuration</h1>
+  <h1>{{ t(request, "machine.config_import.heading") }}</h1>
 
   <p class="hint">
-    Paste JSON exported from <a href="/machines">Machines</a> ("Export
-    config (JSON)"). This creates real machines and groups directly — it is
-    <strong>not</strong> the pending-review queue bulk import uses, so it's
-    meant for restoring/migrating already-known configuration, not
-    discovering unknown hosts.
+    {{ t(request, "machine.config_import.hint1_before") }}
+    <a href="/machines">{{ t(request, "nav.machines") }}</a>{{ t(request, "machine.config_import.hint1_after") | safe }}
   </p>
   <p class="hint">
-    This is a structural export/import, not a credentials backup: it never
-    contains (or restores) a machine's password/key material or its pinned
-    SSH host-key fingerprint. A machine originally using password
-    authentication is imported with "SSH key" instead (there's nothing to
-    re-import) — its name is called out below so you can revisit its
-    credentials. Every imported machine starts with no pinned host key,
-    exactly like a freshly hand-added one — use "Discover key fingerprint"
-    and confirm it before anything connects to it.
+    {{ t(request, "machine.config_import.hint2") }}
   </p>
   <p class="hint">
-    A machine whose name already exists is skipped, not overwritten — this
-    never changes an existing machine's connection details.
+    {{ t(request, "machine.config_import.hint3") }}
   </p>
 
   {% if errors %}
@@ -36,11 +25,10 @@
   {% if result %}
     <div class="alert alert-ok">
       <p>
-        Created {{ result.created_machines | length }} machine(s) and
-        {{ result.created_groups | length }} group(s).
+        {{ t(request, "machine.config_import.created", machines=(result.created_machines | length), groups=(result.created_groups | length)) }}
       </p>
       {% if result.skipped_machines %}
-        <p>Skipped {{ result.skipped_machines | length }} machine(s) (name already exists):</p>
+        <p>{{ t(request, "machine.config_import.skipped", count=(result.skipped_machines | length)) }}</p>
         <ul>
           {% for skipped in result.skipped_machines %}
             <li>{{ skipped.name }} — {{ skipped.reason }}</li>
@@ -51,8 +39,7 @@
     {% if result.auth_method_warnings %}
       <div class="alert alert-warn">
         <p>
-          These machine(s) originally used password authentication and were
-          imported as "SSH key" instead — revisit their credentials:
+          {{ t(request, "machine.config_import.auth_warning") }}
         </p>
         <ul>
           {% for name in result.auth_method_warnings %}<li>{{ name }}</li>{% endfor %}
@@ -68,9 +55,9 @@
 
   <form method="post" action="/machines/config/import" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="json_text">Configuration JSON</label>
+    <label for="json_text">{{ t(request, "machine.config_import.json_label") }}</label>
     <textarea id="json_text" name="json_text" rows="16" required
               placeholder='{"machines": [...], "groups": [...]}'></textarea>
-    <button type="submit" class="button">Import</button>
+    <button type="submit" class="button">{{ t(request, "machine.import.submit") }}</button>
   </form>
 {% endblock %}

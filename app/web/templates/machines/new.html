@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}Add machine — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machines.actions.add") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Add machine</h1>
+  <h1>{{ t(request, "machines.actions.add") }}</h1>
 
   {% if errors %}
     <div class="alert alert-error">
@@ -14,72 +14,69 @@
   <form method="post" action="/machines" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="name">Name</label>
+    <label for="name">{{ t(request, "machines.table.name") }}</label>
     <input type="text" id="name" name="name" required maxlength="255"
            placeholder="e.g. web1, db-primary"
            value="{{ form.name or '' }}">
 
-    <label for="ip_address">IP address</label>
+    <label for="ip_address">{{ t(request, "machines.table.ip") }}</label>
     <input type="text" id="ip_address" name="ip_address" required maxlength="255"
            placeholder="e.g. 192.0.2.10"
            value="{{ form.ip_address or '' }}">
     <p class="hint">
-      The machine's own hostname is discovered automatically once its SSH
-      host key is confirmed — no need to enter it here.
+      {{ t(request, "machine.new.hostname_hint") }}
     </p>
 
-    <label for="port">SSH port</label>
+    <label for="port">{{ t(request, "machine.edit.ssh_port") }}</label>
     <input type="number" id="port" name="port" min="1" max="65535"
            value="{{ form.port or 22 }}">
 
-    <label for="username">Username</label>
+    <label for="username">{{ t(request, "groups.detail.user") }}</label>
     <input type="text" id="username" name="username" required maxlength="255"
            value="{{ form.username or '' }}">
 
-    <label for="auth_method">Authentication method</label>
+    <label for="auth_method">{{ t(request, "machine.edit.auth_method") }}</label>
     <select id="auth_method" name="auth_method">
       {% for method in auth_methods %}
         <option value="{{ method.value }}" {% if form.auth_method == method %}selected{% endif %}>
-          {{ 'SSH key (recommended)' if method.value == 'ssh_key' else 'Password (not recommended)' }}
+          {{ t(request, "machine.edit.auth_ssh_key") if method.value == 'ssh_key' else t(request, "machine.edit.auth_password") }}
         </option>
       {% endfor %}
     </select>
     <p class="hint">
-      <strong>SSH key</strong> uses debcontrol's own shared identity — see
-      <a href="/settings">Settings</a> for the public key to add to the
-      machine's <code>~/.ssh/authorized_keys</code>. <strong>Password</strong>
-      is only there as a fallback; prefer the key above whenever possible.
+      {{ t(request, "machine.new.auth_hint_before") | safe }}
+      <a href="/settings">{{ t(request, "nav.settings") }}</a>{{ t(request, "machine.new.auth_hint_after") | safe }}
     </p>
 
-    <label for="secret">Password</label>
+    <label for="secret">{{ t(request, "login.password") }}</label>
     <textarea id="secret" name="secret" rows="2"
-      placeholder="Only used if 'Password' is selected above. Stored encrypted."></textarea>
+      placeholder="{{ t(request, 'machine.new.password_placeholder') }}"></textarea>
 
-    <label for="group_id">Group</label>
+    <label for="group_id">{{ t(request, "machines.table.group") }}</label>
     <select id="group_id" name="group_id">
-      <option value="">— none —</option>
+      <option value="">{{ t(request, "machine.edit.none_option") }}</option>
       {% for group in groups %}
         <option value="{{ group.id }}">{{ group.name }}</option>
       {% endfor %}
     </select>
 
-    <label for="description">Notes</label>
+    <label for="description">{{ t(request, "machine.notes") }}</label>
     <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
 
-    <label for="tags">Tags</label>
+    <label for="tags">{{ t(request, "machine.tags") }}</label>
     <input type="text" id="tags" name="tags" list="tag-suggestions"
            placeholder="prod, web, praha-dc1" value="{{ form.tags or '' }}">
-    <p class="hint">Comma-separated. Independent of the group above — a machine can carry any number.</p>
+    <p class="hint">{{ t(request, "machine.edit.tags_hint") }}</p>
     <datalist id="tag-suggestions">
       {% for existing_tag in all_tags %}<option value="{{ existing_tag.name }}">{% endfor %}
     </datalist>
 
-    <label for="runbook">Runbook</label>
+    <label for="runbook">{{ t(request, "machine.runbook") }}</label>
     <textarea id="runbook" name="runbook" rows="8"
-              placeholder="How to deal with this server, who owns it, anything worth knowing…">{{ form.runbook or '' }}</textarea>
-    <p class="hint">Markdown supported. Shown on the Overview tab.</p>
+              placeholder="{{ t(request, 'machine.edit.runbook_placeholder') }}">{{ form.runbook or '' }}</textarea>
+    <p class="hint">{{ t(request, "machine.edit.runbook_hint") }}</p>
 
-    <button type="submit" class="button">Save</button>
-    <a class="button button-secondary" href="/machines">Cancel</a>
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/machines">{{ t(request, "common.cancel") }}</a>
   </form>
 {% endblock %}

@@ -1,17 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Bulk import — debcontrol{% endblock %}
+{% block title %}{{ t(request, "machines.actions.bulk_import") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Bulk import machines</h1>
+  <h1>{{ t(request, "machine.import.heading") }}</h1>
 
   <p class="hint">
-    Paste CSV with a header row — <code>ip_address</code> is required,
-    <code>hostname</code> is optional and anything else is ignored. Rows
-    become pending machines in the same review queue self-registration
-    uses (see <a href="/machines">Machines</a>) — no credentials or host
-    keys are set here, so each one still needs the normal add-machine form
-    and host-key confirmation before debcontrol connects to it.
+    {{ t(request, "machine.import.csv_hint_before") | safe }}
+    <a href="/machines">{{ t(request, "nav.machines") }}</a>{{ t(request, "machine.import.csv_hint_after") }}
   </p>
 
   {% if errors %}
@@ -23,8 +19,8 @@
   {% if result %}
     <div class="alert alert-ok">
       <p>
-        Added {{ result.created }} pending machine(s).
-        {% if result.skipped %}Skipped {{ result.skipped }} row(s) with no ip_address.{% endif %}
+        {{ t(request, "machine.import.added", count=result.created) }}
+        {% if result.skipped %}{{ t(request, "machine.import.skipped_rows", count=result.skipped) }}{% endif %}
       </p>
     </div>
   {% endif %}
@@ -34,6 +30,6 @@
     <label for="csv_text">CSV</label>
     <textarea id="csv_text" name="csv_text" rows="10" required
               placeholder="ip_address,hostname&#10;10.0.0.11,web1&#10;10.0.0.12,web2"></textarea>
-    <button type="submit" class="button">Import</button>
+    <button type="submit" class="button">{{ t(request, "machine.import.submit") }}</button>
   </form>
 {% endblock %}
