@@ -1,28 +1,25 @@
 {% extends "base.html" %}
 
-{% block title %}Enable two-factor authentication — debcontrol{% endblock %}
+{% block title %}{{ t(request, "account.totp.enable_button") }} — debcontrol{% endblock %}
 
 {% block content %}
-  <h1>Enable two-factor authentication</h1>
+  <h1>{{ t(request, "account.totp.enable_button") }}</h1>
 
   {% if required_by_role %}
     <div class="alert alert-error">
       <p>
-        Your role requires two-factor authentication. You won't be able to
-        use debcontrol until you finish enrolling it here.
+        {{ t(request, "totp_enroll.required_by_role") }}
       </p>
     </div>
   {% endif %}
 
   <div class="panel">
     <p class="hint">
-      Scan this with an authenticator app (Google Authenticator, Authy,
-      1Password, ...), or enter the setup key manually, then confirm with a
-      code it generates.
+      {{ t(request, "totp_enroll.scan_hint") }}
     </p>
 
     <div class="totp-qr">{{ qr_svg | safe }}</div>
-    <p><strong>Setup key:</strong> <code>{{ secret }}</code></p>
+    <p><strong>{{ t(request, "totp_enroll.setup_key") }}</strong> <code>{{ secret }}</code></p>
 
     {% if error %}
       <div class="alert alert-error"><p>{{ error }}</p></div>
@@ -31,11 +28,11 @@
     <form method="post" action="/account/totp/enroll" class="form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="secret" value="{{ secret }}">
-      <label for="code">Code from your app</label>
+      <label for="code">{{ t(request, "totp_enroll.code_from_app") }}</label>
       <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
              autofocus required>
-      <button type="submit" class="button">Enable two-factor authentication</button>
+      <button type="submit" class="button">{{ t(request, "account.totp.enable_button") }}</button>
     </form>
-    <p class="stack-gap"><a href="/account">Cancel</a></p>
+    <p class="stack-gap"><a href="/account">{{ t(request, "common.cancel") }}</a></p>
   </div>
 {% endblock %}

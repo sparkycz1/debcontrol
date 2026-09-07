@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ request.state.locale.code }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Two-factor authentication — debcontrol</title>
+  <title>{{ t(request, "totp_challenge.title") }} — debcontrol</title>
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="auth-body">
   <main class="auth-page">
     <span class="brand">debcontrol</span>
     <div class="panel">
-      <h2>Verify it's you</h2>
+      <h2>{{ t(request, "totp_challenge.heading") }}</h2>
 
       {% if error %}
         <div class="alert alert-error"><p>{{ error }}</p></div>
@@ -18,15 +18,14 @@
 
       {% if show_totp_form %}
         <p class="hint">
-          Enter the 6-digit code from your authenticator app, or one of your
-          recovery codes if you've lost access to it.
+          {{ t(request, "totp_challenge.code_hint") }}
         </p>
         <form method="post" action="/login/totp" class="form" autocomplete="off">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="next" value="{{ next }}">
-          <label for="code">Code</label>
+          <label for="code">{{ t(request, "totp_challenge.code") }}</label>
           <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
-          <button type="submit" class="button">Verify</button>
+          <button type="submit" class="button">{{ t(request, "totp_challenge.verify") }}</button>
         </form>
       {% endif %}
 
@@ -35,12 +34,12 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="next" value="{{ next }}">
           {% if show_totp_form %}
-            <p class="hint">Or, use a security key or your device's biometrics instead:</p>
+            <p class="hint">{{ t(request, "totp_challenge.or_use_key") }}</p>
           {% else %}
-            <p class="hint">Sign in with a security key or your device's biometrics.</p>
+            <p class="hint">{{ t(request, "totp_challenge.sign_in_with_key") }}</p>
           {% endif %}
           <button type="button" class="button button-secondary" data-webauthn-login-button>
-            Use a passkey
+            {{ t(request, "totp_challenge.use_passkey") }}
           </button>
           <p class="hint" data-webauthn-status></p>
         </form>
