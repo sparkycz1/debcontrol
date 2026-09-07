@@ -25,7 +25,10 @@ class _RecordingSend:
 
 
 def _make_middleware(
-    *, trust_all: bool = True, trusted_networks: list[Any] | None = None
+    *,
+    trust_all: bool = True,
+    trusted_networks: list[Any] | None = None,
+    trust_forwarded_for: bool = False,
 ) -> tuple[ProxyHeadersMiddleware, dict[str, Any]]:
     seen_scope: dict[str, Any] = {}
 
@@ -33,7 +36,10 @@ def _make_middleware(
         seen_scope.update(scope)
 
     middleware = ProxyHeadersMiddleware(
-        inner_app, trust_all=trust_all, trusted_networks=trusted_networks or []
+        inner_app,
+        trust_all=trust_all,
+        trusted_networks=trusted_networks or [],
+        trust_forwarded_for=trust_forwarded_for,
     )
     return middleware, seen_scope
 
@@ -113,3 +119,47 @@ async def test_a_bogus_client_ip_is_treated_as_untrusted_not_a_crash() -> None:
     scope["client"] = ("not-an-ip", 1234)
     await middleware(scope, _noop_receive, _RecordingSend())
     assert seen["scheme"] == "http"
+
+
+async def test_forwarded_for_is_ignored_by_default_even_from_a_trusted_peer() -> None:
+    middleware, seen = _make_middleware(trust_all=True, trust_forwarded_for=False)
+    scope = _scope("http", proto=None)
+    scope["headers"] = [(b"x-forwarded-for", b"203.0.113.9")]
+    await middleware(scope, _noop_receive, _RecordingSend())
+    assert seen["client"] == ("10.0.0.5", 54321)
+
+
+async def test_forwarded_for_rewrites_client_when_enabled_and_trusted() -> None:
+    middleware, seen = _make_middleware(trust_all=True, trust_forwarded_for=True)
+    scope = _scope("http", proto=None)
+    scope["headers"] = [(b"x-forwarded-for", b"203.0.113.9")]
+    await middleware(scope, _noop_receive, _RecordingSend())
+    assert seen["client"] == ("203.0.113.9", 54321)
+
+
+async def test_forwarded_for_uses_the_leftmost_entry_of_a_chain() -> None:
+    middleware, seen = _make_middleware(trust_all=True, trust_forwarded_for=True)
+    scope = _scope("http", proto=None)
+    scope["headers"] = [(b"x-forwarded-for", b"203.0.113.9, 172.20.0.4")]
+    await middleware(scope, _noop_receive, _RecordingSend())
+    assert seen["client"] == ("203.0.113.9", 54321)
+
+
+async def test_forwarded_for_is_not_applied_from_an_untrusted_peer_even_when_enabled() -> None:
+    middleware, seen = _make_middleware(
+        trust_all=False,
+        trusted_networks=[ipaddress.ip_network("172.20.0.0/16")],
+        trust_forwarded_for=True,
+    )
+    scope = _scope("http", client=("203.0.113.9", 1234), proto=None)
+    scope["headers"] = [(b"x-forwarded-for", b"198.51.100.1")]
+    await middleware(scope, _noop_receive, _RecordingSend())
+    assert seen["client"] == ("203.0.113.9", 1234)
+
+
+async def test_a_bogus_forwarded_for_value_leaves_client_untouched() -> None:
+    middleware, seen = _make_middleware(trust_all=True, trust_forwarded_for=True)
+    scope = _scope("http", proto=None)
+    scope["headers"] = [(b"x-forwarded-for", b"not-an-ip")]
+    await middleware(scope, _noop_receive, _RecordingSend())
+    assert seen["client"] == ("10.0.0.5", 54321)

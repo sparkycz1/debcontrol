@@ -23,12 +23,23 @@ _SEARCH_COLUMNS = (
 
 def machine_search_clause(query: str) -> ColumnElement[bool]:
     """A SQLAlchemy filter matching `query` (case-insensitive, substring)
-    against name, IP, discovered hostname, OS/kernel version, username, or
-    notes. `.ilike()` is used rather than `.like()` since it's portable —
-    it compiles to native `ILIKE` on Postgres and a `lower(...)`-based
-    equivalent elsewhere (e.g. SQLite, used in tests)."""
+    against name, IP, discovered hostname, OS/kernel version, username,
+    notes, or a tag name. `.ilike()` is used rather than `.like()` since
+    it's portable — it compiles to native `ILIKE` on Postgres and a
+    `lower(...)`-based equivalent elsewhere (e.g. SQLite, used in tests).
+
+    Tag names are matched here (loosely, substring, same as everything
+    else this checks) rather than only through the dedicated exact-match
+    `apply_tag_filter` below, so the plain search box alone is enough to
+    find "machines tagged prod" without a separate tag picker control —
+    the machine list's own UI relies on exactly this to fold tag search
+    into its one search field; see partials/machine_search_form.html.
+    """
     pattern = f"%{query.strip()}%"
-    return or_(*(column.ilike(pattern) for column in _SEARCH_COLUMNS))
+    return or_(
+        *(column.ilike(pattern) for column in _SEARCH_COLUMNS),
+        Machine.tags.any(Tag.name.ilike(pattern)),
+    )
 
 
 def apply_tag_filter[S: Select[tuple[Machine]]](query: S, tags: list[str], tag_mode: str) -> S:

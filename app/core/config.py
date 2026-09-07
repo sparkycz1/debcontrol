@@ -182,6 +182,21 @@ class Settings(BaseSettings):
             networks.append(ipaddress.ip_network(part, strict=False))
         return networks
 
+    # Whether to also trust `X-Forwarded-For` from a `trusted_proxy_ips`
+    # peer, to correct `request.client.host` (the audit log's `ip_address`
+    # column, and the login/TOTP rate limiter's per-source bucket key —
+    # app/auth/rate_limit.py) to the real client behind a reverse proxy
+    # instead of the proxy's own address. Off by default, unlike scheme
+    # trust above: this one *is* a real risk to default on — a client that
+    # can set an arbitrary X-Forwarded-For on each request (true of anyone
+    # reaching this app directly, bypassing your real proxy, e.g. if this
+    # app's port is also exposed) could make every login/TOTP attempt look
+    # like a different source and defeat the rate limiter entirely if this
+    # were trusted from just anyone. Turn this on only once you've also
+    # narrowed `TRUSTED_PROXY_IPS` above to your actual proxy's own
+    # address/subnet (not the default "*") — see app.core.proxy_headers.
+    trust_forwarded_for: bool = Field(default=False, alias="TRUST_FORWARDED_FOR")
+
     # IANA timezone name (e.g. "Europe/Prague") the UI renders timestamps
     # in — audit log entries, "last refreshed"/"last run" times, etc.
     # Falls back to UTC if unset or not a recognized zone. Data is always

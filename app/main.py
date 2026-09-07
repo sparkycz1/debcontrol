@@ -180,6 +180,7 @@ def create_app() -> FastAPI:
         ProxyHeadersMiddleware,
         trust_all=settings.trust_all_proxies,
         trusted_networks=settings.trusted_proxy_networks,
+        trust_forwarded_for=settings.trust_forwarded_for,
     )
 
     # Starlette's own session middleware — used *only* to carry OIDC's

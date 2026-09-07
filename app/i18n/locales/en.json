@@ -26,6 +26,8 @@
     "common.cancel": "Cancel",
 
     "footer.tagline": "debcontrol — manage Debian machines over SSH",
+    "footer.commit": "Commit: {commit}",
+    "footer.commit_unknown": "unknown",
 
     "login.username": "Username",
     "login.password": "Password",
@@ -697,9 +699,6 @@
     "ai.chat.answers_can_take_a_while": "Answers can take a little while for anything involving several machines.",
     "ai.chat.send": "Send",
 
-    "settings.general.version": "Version",
-    "settings.general.commit": "Commit",
-    "settings.general.commit_unknown": "unknown (not a git checkout, and no GIT_COMMIT baked into this image)",
     "settings.general.ssh_identity": "App SSH identity",
     "settings.general.ssh_identity_hint": "debcontrol connects to machines using this one shared key when \"SSH key\" is chosen as the authentication method — there's no key upload/generation to do per machine. To let it manage a machine, append the public key below to that machine's <code>~/.ssh/authorized_keys</code> for the user debcontrol will connect as. Adding it to an already-managed machine can be done for you — see \"Push pending key to all machines\" below once you've generated a replacement key.",
     "settings.general.fingerprint": "Fingerprint",

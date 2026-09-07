@@ -430,6 +430,35 @@ async def test_machine_list_filters_by_multiple_tags_or_mode(client):
     assert "or-neither" not in response.text
 
 
+async def test_machine_list_has_no_separate_tag_picker(client):
+    """Regression guard: the machine list used to have a <select multiple>
+    tag picker alongside the plain search box; it's gone now in favor of
+    folding tag search into that one field (see the test above) — a
+    machine group's own pages keep their one-tag <select>, unaffected."""
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="has-a-tag", tags="prod")
+
+    response = await client.get("/machines")
+
+    assert '<select name="tag"' not in response.text
+
+
+async def test_plain_search_box_also_matches_a_tag_name(client):
+    """The machine list folds tag search into its one plain search field
+    rather than a separate picker control — see machine_search_clause's
+    own docstring and partials/machine_search_form.html."""
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="tagged-prod", tags="prod")
+    await _create_machine(client, csrf_token, name="untagged", ip_address="10.0.4.9")
+
+    response = await client.get("/machines", params={"q": "prod"})
+
+    assert "tagged-prod" in response.text
+    assert "untagged" not in response.text
+
+
 async def test_machine_list_filters_by_multiple_tags_and_mode(client):
     await client.get("/machines/new")
     csrf_token = client.cookies.get("csrftoken")

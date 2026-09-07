@@ -112,6 +112,7 @@ running `scripts/setup.py`.
 | `APP_PORT` | web | Host port the app is published on. Default 8080. |
 | `APP_BIND_ADDRESS` | web | Host interface the port above is published on. Default `0.0.0.0` (every interface); set to `127.0.0.1` to only allow local connections, no `docker-compose.yml` edit needed. |
 | `TRUSTED_PROXY_IPS` | app | Which reverse proxy peers to trust `X-Forwarded-Proto` from, to fix WebAuthn/passkeys and OIDC login behind any TLS-terminating proxy (bundled Caddy or your own) — see the `[!WARNING]` above. Default `*` (any peer); narrow to a comma-separated IP/CIDR list to restrict it. |
+| `TRUST_FORWARDED_FOR` | app | Also trust `X-Forwarded-For` from a `TRUSTED_PROXY_IPS` peer, so the audit log and the login/TOTP rate limiter see the real client's IP instead of the proxy's — needed any time your proxy runs as its own separate host/container rather than sharing this app's own network namespace (e.g. Traefik or nginx on a different machine). Default `false` — turn on only once `TRUSTED_PROXY_IPS` is also narrowed to your real proxy's address, not left at `*`; see `app/core/proxy_headers.py`. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
@@ -198,6 +199,15 @@ address — see the relevant guide for details.
 > and breaks OIDC login the same way. This is what `TRUSTED_PROXY_IPS`
 > (see the table below, default `*`) fixes — already on by default for
 > every setup described above.
+>
+> **Audit log / rate limiter showing the proxy's IP instead of the real
+> client's?** That's a separate correction (`X-Forwarded-For`, not
+> `X-Forwarded-Proto`) with a different, off-by-default setting —
+> `TRUST_FORWARDED_FOR` (see the table below) — precisely because
+> trusting it from just anyone would let an attacker defeat the login
+> rate limiter by spoofing a different "source" on every attempt. Turn
+> it on once `TRUSTED_PROXY_IPS` is narrowed to your real proxy's address
+> (not `*`).
 
 ### With the bundled Caddy (automatic HTTPS)
 

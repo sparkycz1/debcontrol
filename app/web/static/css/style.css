@@ -365,6 +365,9 @@ p { margin: 0 0 var(--space-3); }
   font-size: 0.85rem;
   padding: var(--space-6) var(--space-4);
 }
+.site-footer p { margin: 0.2em 0; }
+.site-footer-meta a { color: var(--color-muted); }
+.site-footer-meta a:hover { color: var(--color-text); }
 
 .page-header {
   display: flex;
@@ -514,12 +517,31 @@ p { margin: 0 0 var(--space-3); }
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  display: block;
-  overflow-x: auto;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   margin-bottom: var(--space-4);
+}
+
+/* `display: block` on a <table> (needed for `overflow-x: auto` to let it
+   scroll rather than forcing the whole page body wider — see CLAUDE.md's
+   own "wide content must scroll in its own container" rule) drops out of
+   the normal table-layout algorithm entirely, so `width: 100%` stops
+   meaning anything: the table shrinks to its content's width instead of
+   filling its container, no matter how wide that container is. That's
+   the real cause a bordered table visibly hugging its own columns
+   (leaving empty space before the container's right edge) rather than
+   stretching — not a sizing/spacing tweak anywhere else. A genuinely
+   too-wide table only actually risks that on a narrow viewport, so the
+   block+scroll form is scoped to the same mobile breakpoint the rest of
+   this file already uses; a normal desktop table instead relies on cell
+   content wrapping (the default table-layout algorithm) to stay within
+   its container without ever needing to overflow. */
+@media (max-width: 820px) {
+  .data-table {
+    display: block;
+    overflow-x: auto;
+  }
 }
 
 .data-table th, .data-table td {

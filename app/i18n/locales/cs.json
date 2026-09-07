@@ -26,6 +26,8 @@
     "common.cancel": "Zrušit",
 
     "footer.tagline": "debcontrol — správa Debian zařízení přes SSH",
+    "footer.commit": "Commit: {commit}",
+    "footer.commit_unknown": "neznámý",
 
     "login.username": "Uživatelské jméno",
     "login.password": "Heslo",
@@ -697,9 +699,6 @@
     "ai.chat.answers_can_take_a_while": "Odpovědi mohou chvíli trvat u všeho, co zahrnuje více zařízení.",
     "ai.chat.send": "Odeslat",
 
-    "settings.general.version": "Verze",
-    "settings.general.commit": "Commit",
-    "settings.general.commit_unknown": "neznámý (není git checkout a v tomto image není zapečený GIT_COMMIT)",
     "settings.general.ssh_identity": "SSH identita aplikace",
     "settings.general.ssh_identity_hint": "debcontrol se připojuje k zařízením pomocí tohoto jednoho sdíleného klíče, když je jako metoda ověření zvoleno \"SSH key\" — není potřeba nahrávat/generovat klíč pro každé zařízení zvlášť. Aby mohl spravovat zařízení, přidej veřejný klíč níže do souboru <code>~/.ssh/authorized_keys</code> daného zařízení pro uživatele, pod kterým se debcontrol připojuje. Přidání k už spravovanému zařízení lze udělat za tebe — viz \"Odeslat čekající klíč na všechna zařízení\" níže, jakmile vygeneruješ náhradní klíč.",
     "settings.general.fingerprint": "Otisk",

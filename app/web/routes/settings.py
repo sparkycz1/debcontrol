@@ -28,7 +28,6 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
-from app.core.version import APP_VERSION, commit_url, get_git_commit
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 from app.db.models.app_settings import (
@@ -99,16 +98,12 @@ async def _render_settings(
     # singleton-row idea as `get_or_create_app_settings` above.
     ai_configs = await get_or_create_ai_provider_configs(db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
-    git_commit = get_git_commit()
     context: dict[str, object] = {
         "identity": identity,
         "settings": get_settings(),
         "app_settings": app_settings,
         "csrf_token": csrf_token,
         "errors": errors,
-        "app_version": APP_VERSION,
-        "git_commit": git_commit,
-        "commit_url": commit_url(git_commit) if git_commit else None,
         "syslog_protocols": list(SyslogProtocol),
         # Ordered by the enum, so the panel always renders the same five
         # blocks in the same order.

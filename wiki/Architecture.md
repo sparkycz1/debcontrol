@@ -1332,6 +1332,21 @@ member list all gained a **tag** filter (`?tag=...`) alongside the
 existing free-text search, and the REST API's `GET /api/v1/machines`
 accepts the same `?tag=` filter.
 
+**The machine list's own free-text search also matches a tag name**
+(`app.web.machine_search.machine_search_clause` includes
+`Machine.tags.any(Tag.name.ilike(...))` alongside its other columns) —
+typing a tag into the one search box the page already has finds machines
+carrying it, without a separate picker control. The machine list used to
+also show a `<select multiple>` tag picker + an AND/OR mode dropdown next
+to that search box; it's gone from the UI now in favor of the plain
+field doing double duty, but everything it drove still works exactly as
+before by URL: a machine's own tag badges (`tag_chips` in
+`machines/list.html`) still link to an exact `?tag=name`, saved views
+still capture `tag`/`tag_mode`, and the REST API is unchanged — only the
+dedicated picker control itself was removed. "All machines"/group pages
+keep their own single-tag `<select>`, unaffected — a much shorter,
+per-group tag list where a dropdown still pulls its weight.
+
 **The machine list specifically** (not "All machines"/group pages, which
 keep the single-tag filter above) can filter by *several* tags at once —
 `?tag=prod&tag=web&tag_mode=and|or` (repeated `tag`, `tag_mode` defaulting

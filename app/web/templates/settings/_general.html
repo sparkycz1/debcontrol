@@ -1,19 +1,4 @@
   <section class="panel">
-    <h2>{{ t(request, "settings.general.version") }}</h2>
-    <dl class="detail-list">
-      <dt>{{ t(request, "settings.general.version") }}</dt><dd>{{ app_version }}</dd>
-      <dt>{{ t(request, "settings.general.commit") }}</dt>
-      <dd>
-        {% if git_commit %}
-          <a href="{{ commit_url }}" target="_blank" rel="noopener noreferrer"><code>{{ git_commit[:12] }}</code></a>
-        {% else %}
-          {{ t(request, "settings.general.commit_unknown") }}
-        {% endif %}
-      </dd>
-    </dl>
-  </section>
-
-  <section class="panel">
     <h2>{{ t(request, "settings.general.ssh_identity") }}</h2>
     <p class="hint">
       {{ t(request, "settings.general.ssh_identity_hint") | safe }}
