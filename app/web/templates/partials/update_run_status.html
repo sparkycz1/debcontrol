@@ -7,24 +7,24 @@
   {% endif %}
 >
   <p>
-    Status:
+    {{ t(request, "machine.update_run.status") }}
     {% if run.status.value == 'pending' %}
-      <span class="badge badge-warn">pending</span>
+      <span class="badge badge-warn">{{ t(request, "machine.update_run.pending") }}</span>
     {% elif run.status.value == 'running' %}
-      <span class="badge badge-warn">running</span>
+      <span class="badge badge-warn">{{ t(request, "machine.update_run.running") }}</span>
     {% elif run.status.value == 'succeeded' %}
-      <span class="badge badge-ok">succeeded</span>
+      <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
     {% else %}
-      <span class="badge badge-error">failed</span>
+      <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
     {% endif %}
-    — strategy: <code>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
+    {{ t(request, "machine.update_run.strategy_label") }} <code>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
   </p>
 
   {% if run.started_at %}
-    <p class="hint">Started: {{ run.started_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</p>
+    <p class="hint">{{ t(request, "machine.update_run.started", when=(run.started_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) }}</p>
   {% endif %}
   {% if run.finished_at %}
-    <p class="hint">Finished: {{ run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</p>
+    <p class="hint">{{ t(request, "machine.update_run.finished", when=(run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) }}</p>
   {% endif %}
 
   {% if run.error %}
@@ -34,7 +34,7 @@
   {% if run.output %}
     <pre>{{ run.output }}</pre>
   {% elif run.status.value in ('pending', 'running') %}
-    <p class="hint">Waiting for output — this refreshes automatically.</p>
+    <p class="hint">{{ t(request, "machine.update_run.waiting_for_output") }}</p>
   {% endif %}
 
   {% if run.status.value == 'failed' and request.state.user.has_permission('ai.access') %}
@@ -43,7 +43,7 @@
       <input type="hidden" name="kind" value="update_run">
       <input type="hidden" name="machine_id" value="{{ run.machine_id }}">
       <input type="hidden" name="run_id" value="{{ run.id }}">
-      <button type="submit" class="button button-secondary">Ask AI why</button>
+      <button type="submit" class="button button-secondary">{{ t(request, "machine.edit.ask_ai_why") }}</button>
     </form>
   {% endif %}
 </div>

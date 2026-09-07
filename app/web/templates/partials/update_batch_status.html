@@ -9,9 +9,9 @@
   <table class="data-table">
     <thead>
       <tr>
-        <th>Machine</th>
-        <th>Strategy</th>
-        <th>Status</th>
+        <th>{{ t(request, "nav.machines") }}</th>
+        <th>{{ t(request, "machine.updates.strategy") }}</th>
+        <th>{{ t(request, "machines.table.status") }}</th>
         <th></th>
       </tr>
     </thead>
@@ -24,12 +24,12 @@
             {% if run.status.value in ('pending', 'running') %}
               <span class="badge badge-warn">{{ run.status.value }}</span>
             {% elif run.status.value == 'succeeded' %}
-              <span class="badge badge-ok">succeeded</span>
+              <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
             {% else %}
-              <span class="badge badge-error">failed</span>
+              <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
             {% endif %}
           </td>
-          <td><a href="/machines/{{ run.machine_id }}/updates/{{ run.id }}">Details</a></td>
+          <td><a href="/machines/{{ run.machine_id }}/updates/{{ run.id }}">{{ t(request, "machine.updates.details") }}</a></td>
         </tr>
       {% endfor %}
     </tbody>
