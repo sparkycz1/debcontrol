@@ -111,6 +111,7 @@ running `scripts/setup.py`.
 | `TZ` | db, redis, app, worker, beat, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container's own clock, **and used by the app to display every timestamp in the UI** (audit log, "last refreshed"/"last run" times, etc.) in that timezone instead of UTC. Data is always stored as UTC regardless of this, and Scheduling's cron expressions are always interpreted as UTC regardless of this too. Defaults to UTC if unset. |
 | `APP_PORT` | web | Host port the app is published on. Default 8080. |
 | `APP_BIND_ADDRESS` | web | Host interface the port above is published on. Default `0.0.0.0` (every interface); set to `127.0.0.1` to only allow local connections, no `docker-compose.yml` edit needed. |
+| `TRUSTED_PROXY_IPS` | app | Which reverse proxy peers to trust `X-Forwarded-Proto` from, to fix WebAuthn/passkeys and OIDC login behind any TLS-terminating proxy (bundled Caddy or your own) — see the `[!WARNING]` above. Default `*` (any peer); narrow to a comma-separated IP/CIDR list to restrict it. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
@@ -188,6 +189,15 @@ address — see the relevant guide for details.
 > local CA on each client (`docker compose exec caddy caddy trust` prints
 > where to find it) — optional, purely cosmetic, WebAuthn/clipboard work
 > either way once the page has loaded over `https://`.
+>
+> **Already have HTTPS via a reverse proxy (bundled Caddy, your own, or one
+> on a different host) and still seeing this?** The app itself also needs
+> to know the request arrived as HTTPS — otherwise it builds/verifies
+> URLs and origins as if it were still plain HTTP even though the browser
+> used HTTPS, which fails WebAuthn with "Unexpected client data origin"
+> and breaks OIDC login the same way. This is what `TRUSTED_PROXY_IPS`
+> (see the table below, default `*`) fixes — already on by default for
+> every setup described above.
 
 ### With the bundled Caddy (automatic HTTPS)
 

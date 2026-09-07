@@ -479,6 +479,17 @@ options/results around `app.db.models.webauthn_credential.WebAuthnCredential`
 signature counter, device type, `backed_up`). Available to `local`/`ldap`
 accounts only, same restriction as TOTP.
 
+Both the RP origin above and OIDC's redirect URI depend on
+`request.url.scheme` being correct, which needs
+`app.core.proxy_headers.ProxyHeadersMiddleware` (registered outermost in
+`app.main`) to have corrected it from `X-Forwarded-Proto` first when the
+app sits behind a TLS-terminating reverse proxy — otherwise both derive
+"http" no matter what the browser actually used, and WebAuthn fails with
+"Unexpected client data origin". See that module's own docstring and
+`Settings.trusted_proxy_ips` for why trusting it by default is safe, and
+[Installation](Installation.md#environment-variables) for the
+`TRUSTED_PROXY_IPS` setting.
+
 Both ceremonies (registration under "My account", authentication as a
 login-time second factor) follow the same shape: a `GET .../options` route
 generates a challenge, hands it back as browser-ready JSON

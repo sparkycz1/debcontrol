@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.auth.middleware import require_auth
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.proxy_headers import ProxyHeadersMiddleware
 from app.core.version import APP_VERSION
 from app.db.session import AsyncSessionLocal
 from app.scheduling.builtin_actions import register_builtin_actions
@@ -167,6 +168,18 @@ def create_app() -> FastAPI:
     app.openapi = lambda: _custom_openapi(app)  # type: ignore[method-assign]
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    # Registered first so it ends up outermost (see the `_require_auth`
+    # comment below for why registration order maps to layering here) —
+    # every other middleware, and every route/WebSocket handler, needs to
+    # see the corrected scheme, not just the ones that happen to run after
+    # some other check. See app.core.proxy_headers's own module docstring
+    # for what this fixes and why trusting it is safe.
+    app.add_middleware(
+        ProxyHeadersMiddleware,
+        trust_all=settings.trust_all_proxies,
+        trusted_networks=settings.trusted_proxy_networks,
+    )
 
     # Starlette's own session middleware — used *only* to carry OIDC's
     # `state`/`nonce` across the redirect to/from the provider (Authlib

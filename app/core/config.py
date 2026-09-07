@@ -7,6 +7,7 @@ committed — see `.env.example`.
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
@@ -129,6 +130,47 @@ class Settings(BaseSettings):
     )
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # Which reverse proxies to trust `X-Forwarded-Proto` from, for deriving
+    # the *scheme* (http/https, ws/wss) a request actually arrived as —
+    # nothing else (host/port already come through correctly from a
+    # forwarded Host header, which every reverse proxy passes through
+    # untouched by default). Without this, a TLS-terminating proxy leaves
+    # the app seeing plain "http" for every request no matter what the
+    # browser actually used, which breaks WebAuthn/passkeys (the verified
+    # origin has to match exactly what the browser sent) and OIDC login
+    # (the redirect_uri built from the request would have the wrong
+    # scheme). Comma-separated IPs/CIDRs, or the default "*" to trust any
+    # peer — safe here even from an untrusted direct client, since the
+    # only things derived from the corrected scheme are values a forged
+    # header can only cause to *mismatch* a cryptographic check elsewhere
+    # (WebAuthn's browser-signed origin, an OIDC provider's own registered
+    # redirect_uri) and fail closed, never one it can forge a match for.
+    # Narrow this to your actual proxy's IP/subnet if you'd rather not rely
+    # on that reasoning. See app.core.proxy_headers.
+    trusted_proxy_ips: str = Field(default="*", alias="TRUSTED_PROXY_IPS")
+
+    @property
+    def trust_all_proxies(self) -> bool:
+        return self.trusted_proxy_ips.strip() == "*"
+
+    @property
+    def trusted_proxy_networks(
+        self,
+    ) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        """Parsed `trusted_proxy_ips` as `ipaddress` networks — empty when
+        `trust_all_proxies` is True (that case is checked separately, since
+        "*" isn't a valid network literal). A bare IP (no `/prefix`) is
+        accepted via `ip_network(..., strict=False)`, same as a /32 or /128."""
+        if self.trust_all_proxies:
+            return []
+        networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for part in self.trusted_proxy_ips.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            networks.append(ipaddress.ip_network(part, strict=False))
+        return networks
 
     # IANA timezone name (e.g. "Europe/Prague") the UI renders timestamps
     # in — audit log entries, "last refreshed"/"last run" times, etc.
