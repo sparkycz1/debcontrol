@@ -63,7 +63,9 @@ _PUBLIC_PATHS = frozenset(
 # `/static/`: CSS/JS/the vendored htmx build — the login page needs these
 # too. `/api/`: machine-to-machine endpoints (currently just self-registration)
 # authenticated with their own bearer token, not a user session at all.
-_PUBLIC_PREFIXES = ("/static/", "/api/")
+# `/branding/`: a deployer's custom logo/favicon (app.web.routes.branding) —
+# same reasoning as `/static/`, the login page needs these too.
+_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/")
 
 
 # Reachable with a valid session even while a role's `require_totp` block is

@@ -34,6 +34,7 @@ from app.web.routes import (
     api_v1_users,
     audit,
     auth,
+    branding,
     dashboard,
     inform,
     live_ws,
@@ -222,6 +223,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(api_docs.router)
+    app.include_router(branding.router)
     app.include_router(auth.router)
     app.include_router(dashboard.router)
     app.include_router(machines.router)

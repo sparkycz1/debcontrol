@@ -255,6 +255,35 @@ Open the app (via whichever reverse proxy / port you configured) and check
 `/healthz` returns `{"status": "ok"}`. `/login` should be the only page
 reachable without a session.
 
+## 🎨 Custom branding
+
+Replace the built-in icon+wordmark (header, browser tab favicon, login
+page) with your own via `CUSTOM_LOGO`/`CUSTOM_FAVICON` in `.env` — see
+the table above and `app/web/branding.py`'s own docstring for the full
+URL-vs-local-path rule. A local file needs to actually be reachable
+inside the container; bind-mount a directory holding it, e.g. add this
+to `docker-compose.yml`'s `web` service (or an override file, so it
+survives a `git pull`):
+
+```yaml
+services:
+  web:
+    volumes:
+      - ./branding:/app/branding:ro
+```
+
+then put your files in `./branding/` on the host and point at them:
+
+```bash
+CUSTOM_LOGO=/app/branding/logo.svg
+CUSTOM_FAVICON=/app/branding/favicon.png
+```
+
+`docker compose up -d` (no rebuild needed — only `.env` and the mount
+changed) picks it up. Any image format a browser renders works (SVG,
+PNG, ICO, ...); there's no resizing/processing, so pick something
+already sized sensibly for a header logo and a favicon respectively.
+
 ## Updating
 
 ```bash

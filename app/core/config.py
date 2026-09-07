@@ -131,6 +131,16 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Replace the built-in icon+wordmark (header, favicon, login page) with
+    # your own branding — each value is either a URL (http(s):// or a
+    # data: URI, used as-is) or a local filesystem path this app reads and
+    # serves itself (mount it into the container, e.g. via a Docker
+    # volume) — see app.web.branding for exactly how a value is told
+    # apart, and app/web/routes/branding.py for the routes a local path is
+    # served at. Unset (default) keeps the built-in default for either.
+    custom_logo: str | None = Field(default=None, alias="CUSTOM_LOGO")
+    custom_favicon: str | None = Field(default=None, alias="CUSTOM_FAVICON")
+
     # Which reverse proxies to trust `X-Forwarded-Proto` from, for deriving
     # the *scheme* (http/https, ws/wss) a request actually arrived as —
     # nothing else (host/port already come through correctly from a

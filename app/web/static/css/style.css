@@ -136,14 +136,26 @@ p { margin: 0 0 var(--space-3); }
   white-space: nowrap;
 }
 
-.site-header .brand-mark {
-  display: inline-flex;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--color-accent), #8b5bff);
+/* --- Brand (header logo, and the same markup reused on the standalone
+   login/TOTP pages via partials/_brand.html) --- */
+.brand-icon {
   flex-shrink: 0;
+  /* The equalizer-slider glyph is drawn with `currentColor` (see
+     _brand.html) specifically so it follows the theme text color — the
+     ring itself is a fixed brand red, correct in both themes without
+     help. */
+  color: var(--color-text);
 }
+.brand-icon-header { width: 1.6rem; height: 1.6rem; }
+.brand-icon-auth { width: 2.4rem; height: 2.4rem; }
+.brand-word-deb { color: #c8102e; }
+.brand-word-control { color: var(--color-text); }
+.brand-logo-custom {
+  display: block;
+  object-fit: contain;
+}
+.brand-logo-header { max-height: 1.8rem; max-width: 10rem; }
+.brand-logo-auth { max-height: 3rem; max-width: 16rem; }
 
 /* Checkbox-driven mobile nav toggle — no JS needed, works with the CSP here.
    Visually hidden rather than display:none, so it stays keyboard-focusable

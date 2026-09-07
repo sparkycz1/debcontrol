@@ -4,11 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ t(request, "totp_challenge.title") }} — debcontrol</title>
+  <link rel="icon" href="{{ favicon_href() or '/static/img/favicon.svg' }}">
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="auth-body">
+  {% from "partials/_brand.html" import render as render_brand %}
   <main class="auth-page">
-    <span class="brand">debcontrol</span>
+    <span class="brand">{{ render_brand('auth') }}</span>
     <div class="panel">
       <h2>{{ t(request, "totp_challenge.heading") }}</h2>
 

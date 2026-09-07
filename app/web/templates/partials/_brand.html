@@ -1,0 +1,34 @@
+{# The header/login-page logo — a macro so both base.html and the
+   standalone auth pages (login.html, totp_challenge.html; they don't
+   extend base.html, see their own top-of-file comments) render the exact
+   same thing. `size` picks a CSS size class only — the markup is
+   identical either way.
+
+   Renders `<img>` from CUSTOM_LOGO (app.web.branding.logo_src) when a
+   deployer has configured one, else the built-in inline SVG icon +
+   two-tone wordmark. Inline, not a static file, specifically so the
+   equalizer-slider glyph can use `currentColor` and follow the site's
+   own light/dark theme (`--color-text`) — a static image file baked to
+   one fixed color can't do that; see app.web.branding's own docstring. #}
+{% macro render(size='header') %}
+  {% set custom = logo_src() %}
+  {% if custom %}
+    <img src="{{ custom }}" alt="debcontrol" class="brand-logo-custom brand-logo-{{ size }}">
+  {% else %}
+    <svg class="brand-icon brand-icon-{{ size }}" viewBox="0 0 200 200" role="img" aria-label="debcontrol" xmlns="http://www.w3.org/2000/svg">
+      <path d="M138 46 A62 62 0 1 1 96 168" fill="none" stroke="#c8102e" stroke-width="16" stroke-linecap="round"/>
+      <path d="M96 168 Q88 172 84 164" fill="none" stroke="#c8102e" stroke-width="8" stroke-linecap="round"/>
+      <g stroke="currentColor" stroke-width="8" stroke-linecap="round">
+        <line x1="72" y1="80" x2="72" y2="130"/>
+        <line x1="100" y1="60" x2="100" y2="140"/>
+        <line x1="128" y1="85" x2="128" y2="130"/>
+      </g>
+      <g fill="currentColor">
+        <circle cx="72" cy="100" r="10"/>
+        <circle cx="100" cy="88" r="10"/>
+        <circle cx="128" cy="108" r="10"/>
+      </g>
+    </svg>
+    <span class="brand-word"><span class="brand-word-deb">deb</span><span class="brand-word-control">control</span></span>
+  {% endif %}
+{% endmacro %}
