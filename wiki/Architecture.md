@@ -652,13 +652,24 @@ Wired in three places:
   default" rather than rejected, the same fallback `get_locale` itself
   applies everywhere else.
 
-**Coverage today** is the site-wide chrome (header/nav/footer), the login
-page, the Account page, and the **Machines list** — not yet every page in
-the app, which would be a large, ongoing translation effort rather than an
-infrastructure one. Every other page's strings are still plain English in
-the template source; translating one is exactly "wrap the string in
-`t(request, "new.key")`, add that key to every `locales/*.json` file" —
-see [Development](Development.md) for the checklist.
+**Coverage today** is the entire app — every template under
+`app/web/templates/` either calls `t(request, "some.key")` for its
+literal strings or contains none of its own (a pure macro/wrapper, e.g.
+`macros/charts.html`, `partials/_tabnav.html`). Both shipped locales
+(`en.json`, `cs.json`) translate every key this covers. A new
+user-facing string still needs the same treatment going forward — wrap
+it in `t(request, "new.key")` and add that key to every `locales/*.json`
+file, per the i18n-parity rule in the top-level CLAUDE.md — see
+[Development](Development.md) for the checklist. One page renders only
+in English regardless of any account's chosen locale, by design rather
+than oversight: `auth/totp_challenge.html` (reached before a session
+resolves to an account, so `request.state.locale` is always the
+middleware's anonymous-request default — the same reason `login.html`
+always renders in English) — its markup is translated the same as every
+other page's, it just never sees a non-default locale in practice.
+`auth/totp_enroll.html`, by contrast, is reached from the already-
+authenticated Account page and does render in the account's own chosen
+language.
 
 > [!WARNING]
 > A translated string that itself contains literal quote marks or other
