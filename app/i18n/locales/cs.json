@@ -114,6 +114,7 @@
     "machines.actions.export_csv": "Export konfigurace (CSV)",
     "machines.actions.import_config": "Import konfigurace",
     "machines.actions.add": "Přidat zařízení",
+    "machines.actions.more": "Další akce",
 
     "machines.pending.heading": "Čekající zařízení",
     "machines.pending.description": "Zaregistrováno samo přes POST /api/inform — ještě nepřidáno, zatím nedůvěryhodné. Každý záznam buď přidej (i tak projdeš normální potvrzení klíče hostitele), nebo zamítni.",

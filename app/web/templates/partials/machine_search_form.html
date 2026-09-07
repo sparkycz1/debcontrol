@@ -1,7 +1,7 @@
 <form method="get" class="search-form">
   <input type="search" name="q" value="{{ q }}"
          placeholder="{{ t(request, 'machines.search.placeholder') }}">
-  {% if all_tags is defined %}
+  {% if all_tags is defined and all_tags %}
     {% if tag_mode is defined %}
       {# The machine list: multiple tags at once, AND/OR — `tag` is a list. #}
       <select name="tag" multiple aria-label="{{ t(request, 'machines.tag.filter_label') }}"

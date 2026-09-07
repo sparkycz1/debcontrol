@@ -50,13 +50,16 @@
   <div class="page-header">
     <h1>{{ t(request, 'machines.title') }}</h1>
     <div class="page-header-actions">
-      <a class="button button-secondary" href="/machines/package-search">{{ t(request, 'machines.actions.package_search') }}</a>
-      <a class="button button-secondary" href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
-      <a class="button button-secondary"
-         href="/machines/config/export?format=json">{{ t(request, 'machines.actions.export_json') }}</a>
-      <a class="button button-secondary"
-         href="/machines/config/export?format=csv">{{ t(request, 'machines.actions.export_csv') }}</a>
-      <a class="button button-secondary" href="/machines/config/import">{{ t(request, 'machines.actions.import_config') }}</a>
+      <details class="actions-menu">
+        <summary class="button button-secondary">{{ t(request, 'machines.actions.more') }}</summary>
+        <div class="actions-menu-list">
+          <a href="/machines/package-search">{{ t(request, 'machines.actions.package_search') }}</a>
+          <a href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
+          <a href="/machines/config/export?format=json">{{ t(request, 'machines.actions.export_json') }}</a>
+          <a href="/machines/config/export?format=csv">{{ t(request, 'machines.actions.export_csv') }}</a>
+          <a href="/machines/config/import">{{ t(request, 'machines.actions.import_config') }}</a>
+        </div>
+      </details>
       <a class="button" href="/machines/new">{{ t(request, 'machines.actions.add') }}</a>
     </div>
   </div>

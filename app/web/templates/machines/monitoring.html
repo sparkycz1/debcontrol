@@ -26,7 +26,7 @@
     </section>
   {% else %}
     <form method="get" action="/machines/{{ machine.id }}/monitoring" class="search-form">
-      <select name="range_key" onchange="this.form.submit()">
+      <select name="range_key" data-autosubmit>
         {% for key, label, _delta in time_ranges %}
           <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ label }}</option>
         {% endfor %}

@@ -652,6 +652,55 @@ p { margin: 0 0 var(--space-3); }
   font-size: 0.95rem;
 }
 
+/* --- A small "More actions" dropdown (native <details>/<summary>, no JS)
+   for a page-header's secondary actions, so the primary button doesn't
+   drown in a wrapping row of 5-6 equally-weighted buttons. Overrides the
+   generic `details` block styling above — this one floats as a menu, not
+   an inline expandable panel. Doesn't auto-close on an outside click
+   (no JS attached); acceptable for an admin-tooling menu that's rare to
+   open and always next to the button that opened it. --- */
+.actions-menu {
+  position: relative;
+  display: inline-block;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+}
+.actions-menu > summary {
+  list-style: none;
+}
+.actions-menu > summary::-webkit-details-marker { display: none; }
+.actions-menu > summary::after {
+  content: "▾";
+  margin-left: 0.4em;
+  font-size: 0.75em;
+}
+.actions-menu[open] > summary { margin-bottom: 0; }
+.actions-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 13rem;
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.actions-menu-list a {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  color: var(--color-text);
+  text-decoration: none;
+}
+.actions-menu-list a:hover { background: var(--color-surface-raised); }
+
 /* --- The machine list's combined search/filter/display-mode toolbar —
    one visually distinct bar instead of loose floating controls. --- */
 .machines-toolbar {

@@ -114,6 +114,7 @@
     "machines.actions.export_csv": "Export config (CSV)",
     "machines.actions.import_config": "Import config",
     "machines.actions.add": "Add machine",
+    "machines.actions.more": "More actions",
 
     "machines.pending.heading": "Pending machines",
     "machines.pending.description": "Self-registered via POST /api/inform — not yet added, not trusted for anything. Review each entry and either add it (you'll still go through the normal host-key confirmation flow) or dismiss it.",

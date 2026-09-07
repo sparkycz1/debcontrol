@@ -155,6 +155,20 @@ If your reverse proxy runs in its own separate Docker Compose project, it
 needs to join this project's network instead of using the loopback
 address — see the relevant guide for details.
 
+> [!WARNING]
+> Two features are browser-disabled outright on plain HTTP, for any origin
+> other than `http://localhost` — not just restricted, entirely absent from
+> `window`/`navigator`, with no server-side workaround: **WebAuthn/passkeys**
+> (My account → Passkeys shows "This browser doesn't support passkeys" even
+> in a browser that does, once it notices) and **the web terminal's
+> clipboard copy/paste** (Ctrl+C/Ctrl+V and right-click copy; native
+> Ctrl+V paste still works, since that doesn't go through the Clipboard
+> API). Both need a real "secure context" — reached over HTTPS (an
+> `https://` reverse proxy, Caddy or otherwise) or accessed as
+> `http://localhost` on the machine debcontrol itself runs on. A plain HTTP
+> LAN IP/hostname (e.g. `http://192.168.1.x:8080`) satisfies neither, no
+> matter how the app itself or its host firewall is configured.
+
 ### With the bundled Caddy (automatic HTTPS)
 
 Set `DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's DNS A/AAAA

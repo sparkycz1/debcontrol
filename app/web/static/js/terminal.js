@@ -127,9 +127,30 @@
 
   // --- Clipboard -------------------------------------------------------
 
+  // `navigator.clipboard` is entirely undefined — not just permission-
+  // denied — outside a "secure context" (HTTPS, or http://localhost). A
+  // self-hosted instance reached over plain HTTP on a LAN IP/hostname (a
+  // very common setup for this app) hits exactly this, and previously got
+  // no feedback at all: `copySelection`/`pasteFromClipboard` bailed out
+  // silently before ever reaching the code that explains why. This gives
+  // the actionable reason instead, same diagnosis webauthn.js's passkey
+  // buttons make for the same underlying cause.
+  function clipboardUnavailableReason() {
+    if (navigator.clipboard) return null;
+    if (!window.isSecureContext) {
+      return "Clipboard access needs HTTPS (or http://localhost) — this page is loaded over plain HTTP. Put debcontrol behind a reverse proxy with TLS (see the wiki's Installation page), or use Ctrl+Shift+C/V manually via the terminal's own keyboard shortcuts once it is.";
+    }
+    return "This browser doesn't support clipboard access.";
+  }
+
   function copySelection() {
     const text = term.getSelection();
-    if (!text || !navigator.clipboard) return false;
+    if (!text) return false;
+    const reason = clipboardUnavailableReason();
+    if (reason) {
+      setStatus(reason);
+      return false;
+    }
     navigator.clipboard.writeText(text).catch(() => {
       setStatus("Couldn't copy — clipboard access needs HTTPS (or localhost).");
     });
@@ -137,7 +158,12 @@
   }
 
   function pasteFromClipboard() {
-    if (!navigator.clipboard || !navigator.clipboard.readText) {
+    const reason = clipboardUnavailableReason();
+    if (reason) {
+      setStatus(reason);
+      return;
+    }
+    if (!navigator.clipboard.readText) {
       setStatus("Use Ctrl+V (or right-click → Paste) — this browser doesn't allow reading the clipboard programmatically.");
       return;
     }

@@ -115,11 +115,26 @@
     if (el) el.textContent = message;
   }
 
+  // `navigator.credentials`/`PublicKeyCredential` are only exposed in a
+  // "secure context" — HTTPS, or http://localhost — never plain HTTP on a
+  // LAN IP/hostname, regardless of how capable the browser otherwise is.
+  // That's the far more common reason this comes back unsupported for a
+  // self-hosted instance than an actually-old browser, so it gets its own,
+  // actionable message instead of the generic one.
+  function unsupportedReason() {
+    if (window.PublicKeyCredential) return null;
+    if (!window.isSecureContext) {
+      return "Passkeys need HTTPS (or http://localhost) — this page is loaded over plain HTTP. Put debcontrol behind a reverse proxy with TLS (see the wiki's Installation page) to use them.";
+    }
+    return "This browser doesn't support passkeys.";
+  }
+
   async function registerPasskey(trigger) {
     const form = trigger.closest("form");
     const statusEl = form ? form.querySelector("[data-webauthn-status]") : null;
-    if (!window.PublicKeyCredential) {
-      setStatus(statusEl, "This browser doesn't support passkeys.");
+    const reason = unsupportedReason();
+    if (reason) {
+      setStatus(statusEl, reason);
       return;
     }
     setStatus(statusEl, "Follow your browser/device's prompt…");
@@ -141,8 +156,9 @@
   async function signInWithPasskey(trigger) {
     const form = trigger.closest("form") || document.querySelector("form[data-webauthn-login]");
     const statusEl = document.querySelector("[data-webauthn-status]");
-    if (!window.PublicKeyCredential) {
-      setStatus(statusEl, "This browser doesn't support passkeys.");
+    const reason = unsupportedReason();
+    if (reason) {
+      setStatus(statusEl, reason);
       return;
     }
     setStatus(statusEl, "Follow your browser/device's prompt…");
