@@ -120,6 +120,54 @@ async def test_disabling_ldap_tls_verify_persists(client, db_session_factory):
     assert 'name="ldap_tls_verify" checked' not in response.text
 
 
+async def test_saving_oidc_provider_name_persists(client, db_session_factory):
+    from sqlalchemy import select
+
+    from app.db.models.app_settings import AppSettings
+
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/settings/oidc",
+        data={
+            "csrf_token": csrf_token,
+            "oidc_provider_name": "Entra ID",
+            "oidc_username_claim": "preferred_username",
+            "oidc_scopes": "openid profile",
+        },
+        follow_redirects=False,
+    )
+
+    async with db_session_factory() as db:
+        result = await db.execute(select(AppSettings))
+        app_settings = result.scalar_one()
+        assert app_settings.oidc_provider_name == "Entra ID"
+
+    response = await client.get("/settings?tab=integrations")
+    assert 'value="Entra ID"' in response.text
+
+
+async def test_login_button_shows_the_configured_oidc_provider_name(
+    anonymous_client, db_session_factory
+):
+    from app.db.models.app_settings import AppSettings
+
+    async with db_session_factory() as db:
+        db.add(
+            AppSettings(
+                oidc_enabled=True,
+                oidc_provider_name="Entra ID",
+                oidc_issuer_url="https://idp.example.com",
+                oidc_client_id="client-id",
+            )
+        )
+        await db.commit()
+
+    response = await anonymous_client.get("/login")
+    assert "Log in with Entra ID" in response.text
+    assert "Log in with OIDC" not in response.text
+
+
 async def test_saving_ai_limits_redirects_back_to_ai_tab(client):
     await client.get("/settings")
     csrf_token = client.cookies.get("csrftoken")

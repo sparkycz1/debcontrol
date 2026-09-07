@@ -94,7 +94,7 @@
     submitForm.action = actionUrl;
     submitForm.style.display = "none";
     for (const el of form.elements) {
-      if (el.name === "csrf_token" || el.name === "next" || el.name === "name") {
+      if (el.name === "csrf_token" || el.name === "next" || el.name === "name" || el.name === "username") {
         const hidden = document.createElement("input");
         hidden.type = "hidden";
         hidden.name = el.name;
@@ -163,7 +163,17 @@
     }
     setStatus(statusEl, "Follow your browser/device's prompt…");
     try {
-      const optionsResponse = await fetch("/login/webauthn/options");
+      // On the two-step login's password/passkey screen, the account
+      // hasn't been verified yet — `username` (from that screen's own
+      // hidden field, if present) tells the server which account's
+      // passkeys to challenge. Absent entirely on the post-password 2FA
+      // page, which instead identifies the account via its own pending-
+      // login cookie — see _resolve_webauthn_login_user's docstring.
+      const usernameField = form ? form.querySelector("[name='username']") : null;
+      const optionsUrl = usernameField && usernameField.value
+        ? "/login/webauthn/options?username=" + encodeURIComponent(usernameField.value)
+        : "/login/webauthn/options";
+      const optionsResponse = await fetch(optionsUrl);
       if (!optionsResponse.ok) {
         setStatus(statusEl, "Couldn't start passkey sign-in — reload and try again.");
         return;

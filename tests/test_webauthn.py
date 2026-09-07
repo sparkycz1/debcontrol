@@ -281,6 +281,117 @@ async def test_login_webauthn_options_requires_pending_login(anonymous_client):
     assert response.status_code == 400
 
 
+# --- Two-step login: passkey as a full first-factor replacement, not ------
+# --- only a second factor after a password ---------------------------------
+
+
+async def test_get_login_has_no_password_field(anonymous_client):
+    """Step one is username-only — see auth/login.html; the password field
+    (and the passkey option) only appear on step two, /login/password."""
+    response = await anonymous_client.get("/login")
+    assert response.status_code == 200
+    assert 'name="username"' in response.text
+    assert 'name="password"' not in response.text
+
+
+async def test_login_password_screen_offers_passkey_and_password(anonymous_client):
+    response = await anonymous_client.get("/login/password", params={"username": "anyone"})
+    assert response.status_code == 200
+    assert "data-webauthn-login-button" in response.text
+    assert 'name="password"' in response.text
+
+
+async def test_login_password_without_a_username_redirects_to_login(anonymous_client):
+    response = await anonymous_client.get(
+        "/login/password", follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+async def test_passwordless_webauthn_login_succeeds_without_a_password(
+    anonymous_client, db_session_factory, monkeypatch
+):
+    """The whole point of the two-step login: a passkey signs an account
+    in directly from /login/password, no password ever submitted."""
+    user = await create_local_user(
+        db_session_factory, username="passwordless", password="a-very-good-password-123"
+    )
+    await _add_webauthn_credential(db_session_factory, user.id, credential_id=b"passwordless-cred")
+
+    monkeypatch.setattr(
+        webauthn_module,
+        "credential_id_from_authentication_json",
+        lambda credential: b"passwordless-cred",
+    )
+    monkeypatch.setattr(
+        webauthn_module, "verify_authentication", lambda **kwargs: _FakeAuthResult(new_sign_count=3)
+    )
+
+    await anonymous_client.get("/login/password", params={"username": "passwordless"})
+
+    options_response = await anonymous_client.get(
+        "/login/webauthn/options", params={"username": "passwordless"}
+    )
+    assert options_response.status_code == 200
+    assert "webauthn_challenge" in anonymous_client.cookies
+    # No pending_totp cookie at any point — this never went through
+    # password/LDAP verification at all.
+    assert "totp_pending" not in anonymous_client.cookies
+
+    csrf_token = anonymous_client.cookies.get("csrftoken")
+    verify_response = await anonymous_client.post(
+        "/login/webauthn/verify",
+        data={"credential": "{}", "username": "passwordless", "csrf_token": csrf_token},
+    )
+    assert verify_response.status_code == 303
+    assert verify_response.headers["location"] == "/"
+    assert "session" in anonymous_client.cookies
+
+
+async def test_login_webauthn_options_gives_the_same_error_for_unknown_username(
+    anonymous_client,
+):
+    """Enumeration-resistance: a nonexistent account and a real one with no
+    passkey get an identical response — see
+    _resolve_webauthn_login_user's own docstring."""
+    response = await anonymous_client.get(
+        "/login/webauthn/options", params={"username": "no-such-account"}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "No passkeys are registered for this account."
+
+
+async def test_failed_passwordless_webauthn_login_shows_password_screen_again(
+    anonymous_client, db_session_factory, monkeypatch
+):
+    user = await create_local_user(
+        db_session_factory, username="passwordless-fail", password="a-very-good-password-123"
+    )
+    await _add_webauthn_credential(db_session_factory, user.id, credential_id=b"registered")
+
+    monkeypatch.setattr(
+        webauthn_module,
+        "credential_id_from_authentication_json",
+        lambda credential: b"some-other-credential",
+    )
+
+    await anonymous_client.get("/login/password", params={"username": "passwordless-fail"})
+    await anonymous_client.get("/login/webauthn/options", params={"username": "passwordless-fail"})
+    csrf_token = anonymous_client.cookies.get("csrftoken")
+
+    response = await anonymous_client.post(
+        "/login/webauthn/verify",
+        data={"credential": "{}", "username": "passwordless-fail", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 401
+    assert "session" not in anonymous_client.cookies
+    # Falls back to the password screen (not the post-password TOTP one —
+    # this account never got that far) with the failure surfaced there.
+    assert "Passkey sign-in failed." in response.text
+    assert 'name="password"' in response.text
+
+
 # --- Account management ----------------------------------------------------
 
 

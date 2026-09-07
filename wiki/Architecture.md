@@ -297,12 +297,34 @@ who it is:
   flow); on callback the account is matched by comparing `username` against
   a claim from the validated ID token — which claim is configurable
   (`AppSettings.oidc_username_claim`, default `email`). No account is
-  created or updated from provider claims.
+  created or updated from provider claims. The login page's OIDC button
+  reads "Log in with OIDC" unless `AppSettings.oidc_provider_name` names
+  the actual provider (e.g. "Entra ID") — purely cosmetic, set on the
+  Settings → Integrations tab alongside the rest of the OIDC config.
 
 `/login` is shared by `local` and `ldap` accounts;
 `app.auth.login.check_password` looks the username up and branches
 internally. An `oidc` account attempting the password form is rejected with
 the same generic message as a wrong password.
+
+**Login is two steps**, not one form: `GET /login` collects only the
+username (plus the OIDC button, if enabled — see below), then `GET
+/login/password?username=...` offers a passkey *or* a password for that
+account — a passkey there signs straight in with no password ever
+submitted, exactly like GitHub's/Google's own "next screen" login shape.
+`username` travels between the two as a plain query param, the same way
+`next` already does everywhere else — it isn't a secret, and nothing
+trusts it for anything beyond "whose passkeys to offer"; the real
+authentication (password, still checked by the unchanged `POST /login`
+that screen two's password form submits to; or WebAuthn) is what
+actually verifies the account. The passkey button is always shown on
+step two regardless of whether the named account actually has one or
+even exists — `app.web.routes.auth._resolve_webauthn_login_user`'s own
+docstring covers why that's deliberate (enumeration-resistance: a
+nonexistent username and a real one with no passkey get an identical
+error). A passkey used this way needs no further second factor — it
+already *is* one — so it goes straight to `_finish_login`, the same
+function a post-password TOTP/passkey confirmation ends at.
 
 ### Sessions are server-side rows, not a signed cookie
 
@@ -507,12 +529,23 @@ authenticators both permanently at count 0 — common for platform passkeys
 that don't implement a counter — is accepted, since py_webauthn only
 flags a **decrease or non-increase from a previously nonzero count**.
 
-At login, `POST /login` sends an account with TOTP enabled **or** at least
-one registered passkey to the same `/login/totp` second-factor page
-(reusing the pending-2FA ticket — see below); that page renders the TOTP
-code form only if TOTP is actually enabled, and a "use a passkey" button
-whenever the account has one, so an account with only passkeys skips
-straight to that option.
+A passkey now works two ways, both ending at the same `_finish_login`:
+as the **primary** method, from `GET /login/password` (step two of login
+— see the two-step-login note above), before any password is checked at
+all; or as a **second factor**, when `POST /login` sends an account with
+TOTP enabled **or** at least one registered passkey to `/login/totp`
+(reusing the pending-2FA ticket — see below) instead of finishing the
+login directly — that page renders the TOTP code form only if TOTP is
+actually enabled, and a "use a passkey" button whenever the account has
+one, so an account with only passkeys skips straight to that option.
+`app.web.routes.auth._resolve_webauthn_login_user` is what tells these
+two contexts apart for `GET /login/webauthn/options`/
+`POST /login/webauthn/verify` (both routes are shared by both contexts,
+not duplicated) — a `pending_totp` ticket present means second-factor
+(the account already passed password/LDAP); its absence plus a
+`username` form/query value means primary (nothing about the account
+verified yet, which is fine: WebAuthn's own cryptographic proof is what
+actually establishes identity either way).
 
 ### Role-enforced TOTP: real-time, not just a login-time redirect
 

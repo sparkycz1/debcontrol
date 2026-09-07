@@ -477,6 +477,7 @@ async def update_oidc_settings(
     request: Request,
     db: AsyncSession = Depends(get_db),
     oidc_enabled: str = Form(""),
+    oidc_provider_name: str = Form(""),
     oidc_issuer_url: str = Form(""),
     oidc_client_id: str = Form(""),
     # Blank = keep the existing client secret unchanged.
@@ -503,6 +504,7 @@ async def update_oidc_settings(
         return await _render_settings(request, db, errors, tab="integrations")
 
     app_settings.oidc_enabled = bool(oidc_enabled)
+    app_settings.oidc_provider_name = oidc_provider_name.strip() or None
     app_settings.oidc_issuer_url = issuer_url or None
     app_settings.oidc_client_id = oidc_client_id.strip() or None
     if oidc_client_secret:

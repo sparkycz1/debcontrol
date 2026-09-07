@@ -114,6 +114,29 @@ def _safe_next(value: str | None) -> str:
     return "/"
 
 
+async def _render_login_password(
+    request: Request,
+    *,
+    username: str,
+    next_url: str,
+    error: str | None,
+    passkey_error: str | None = None,
+    status_code: int = status.HTTP_200_OK,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "auth/login_password.html",
+        {
+            "csrf_token": request.state.csrf_token,
+            "next": next_url,
+            "username": username,
+            "error": error,
+            "passkey_error": passkey_error,
+        },
+        status_code=status_code,
+    )
+
+
 def _render_login(
     request: Request,
     app_settings: AppSettings,
@@ -185,6 +208,37 @@ async def login_form(
     )
 
 
+@router.get("/login/password")
+async def login_password_form(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    username: str = "",
+    next: str = "",
+    passkey_error: str = "",
+) -> Response:
+    """Step two of login: the account named on `GET /login` (step one,
+    username only) chooses a passkey or a password here — see
+    auth/login.html and auth/login_password.html. `username` travels as a
+    plain query param, the same way `next` already does: it isn't a
+    secret, and nothing here trusts it for anything beyond "whose
+    passkeys to offer" — the actual authentication (password, checked by
+    the unchanged `POST /login` this page's password form still submits
+    to; or WebAuthn, checked by `POST /login/webauthn/verify`) still
+    verifies the account for real either way."""
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if raw_token and await get_valid_session(db, raw_token) is not None:
+        return RedirectResponse(url=_safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
+    if not username.strip():
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return await _render_login_password(
+        request,
+        username=username,
+        next_url=_safe_next(next),
+        error=None,
+        passkey_error=passkey_error or None,
+    )
+
+
 async def _within_rate_limit(request: Request, *, bucket: str, limit: int) -> bool:
     redis = request.app.state.redis
     key = f"rate_limit:{bucket}:{client_ip(request) or 'unknown'}"
@@ -210,12 +264,11 @@ async def login_submit(
             summary=f'Blocked login attempt for "{username}": too many attempts from this network',
             outcome=AuditOutcome.DENIED,
         )
-        return _render_login(
+        return await _render_login_password(
             request,
-            app_settings,
+            username=username,
             next_url=next_url,
             error=_RATE_LIMIT_MESSAGE,
-            username=username,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
@@ -229,12 +282,11 @@ async def login_submit(
             summary=f'Login attempt for "{username}" failed: the LDAP directory is unavailable',
             outcome=AuditOutcome.FAILURE,
         )
-        return _render_login(
+        return await _render_login_password(
             request,
-            app_settings,
+            username=username,
             next_url=next_url,
             error="The directory server is currently unavailable — try again shortly.",
-            username=username,
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
@@ -255,12 +307,11 @@ async def login_submit(
             if result.locked_until is not None
             else "Too many failed attempts — try again shortly."
         )
-        return _render_login(
+        return await _render_login_password(
             request,
-            app_settings,
+            username=username,
             next_url=next_url,
             error=message,
-            username=username,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
@@ -276,12 +327,11 @@ async def login_submit(
             target_id=target.id if target else None,
             target_label=target.username if target else None,
         )
-        return _render_login(
+        return await _render_login_password(
             request,
-            app_settings,
+            username=username,
             next_url=next_url,
             error="Invalid username or password.",
-            username=username,
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -424,26 +474,51 @@ async def totp_challenge_submit(
     )
 
 
-@router.get("/login/webauthn/options")
-async def login_webauthn_options(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    """Called by `webauthn.js` right before `navigator.credentials.get()` —
-    same pending-2FA ticket as the TOTP challenge, so this only ever hands
-    out an authentication challenge for the account that already passed
-    step one (password/LDAP)."""
+async def _resolve_webauthn_login_user(
+    request: Request, db: AsyncSession, username: str
+) -> tuple[User | None, bool]:
+    """Which account to challenge/verify a login-time passkey against, and
+    whether this is a second-factor ceremony — a `pending_totp` ticket
+    already names the account that passed password/LDAP, same as the TOTP
+    challenge (`True`) — or a first-factor one, the account named directly
+    by `username` from `GET /login/password`, before any password has
+    been checked at all (`False`). The latter is safe despite sounding
+    backwards: WebAuthn's own cryptographic proof (a signature only the
+    real private key could produce) is what actually establishes identity
+    here, exactly the way a plain password form's username field is also
+    unverified until the password itself checks out — accepting it
+    unauthenticated doesn't weaken anything downstream.
+
+    Returns `(None, ...)` if neither resolves to a usable (existing,
+    active) account — callers give the same generic error either way
+    (a nonexistent username vs. a real account with no passkey) so this
+    can't be used to enumerate accounts."""
     ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
-    user_id = read_pending_totp_ticket(ticket) if ticket else None
-    if user_id is None:
+    pending_user_id = read_pending_totp_ticket(ticket) if ticket else None
+    if pending_user_id is not None:
+        user = await db.get(User, pending_user_id)
+        return (user if user is not None and user.is_active else None), True
+    user = await find_user_for_login(db, username) if username.strip() else None
+    return (user if user is not None and user.is_active else None), False
+
+
+@router.get("/login/webauthn/options")
+async def login_webauthn_options(
+    request: Request, db: AsyncSession = Depends(get_db), username: str = ""
+) -> Response:
+    """Called by `webauthn.js` right before `navigator.credentials.get()` —
+    either as a second factor (a `pending_totp` ticket already names the
+    account that passed password/LDAP) or, now, as the primary sign-in
+    method from `GET /login/password` (`username` names the account
+    directly, nothing about it verified yet — see
+    `_resolve_webauthn_login_user`)."""
+    user, _is_second_factor = await _resolve_webauthn_login_user(request, db, username)
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Your login session has expired — start over.",
+            detail="No passkeys are registered for this account.",
         )
-    user = await db.get(User, user_id)
-    if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Your login session has expired — start over.",
-        )
-    credentials = await _user_webauthn_credentials(db, user_id)
+    credentials = await _user_webauthn_credentials(db, user.id)
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -452,7 +527,7 @@ async def login_webauthn_options(request: Request, db: AsyncSession = Depends(ge
     options, challenge = webauthn_module.generate_authentication(request, credentials=credentials)
     response = Response(content=options_to_json(options), media_type="application/json")
     challenge_ticket = create_webauthn_challenge_ticket(
-        user_id=user_id, challenge=challenge, purpose="authenticate"
+        user_id=user.id, challenge=challenge, purpose="authenticate"
     )
     set_webauthn_challenge_cookie(response, challenge_ticket)
     return response
@@ -463,74 +538,72 @@ async def login_webauthn_verify(
     request: Request,
     db: AsyncSession = Depends(get_db),
     credential: str = Form(...),
+    username: str = Form(""),
     next: str = Form("/"),
 ) -> Response:
     next_url = _safe_next(next)
-    pending_ticket = request.cookies.get(PENDING_TOTP_COOKIE_NAME)
+    user, is_second_factor = await _resolve_webauthn_login_user(request, db, username)
     challenge_ticket = request.cookies.get(WEBAUTHN_CHALLENGE_COOKIE_NAME)
-    pending_user_id = read_pending_totp_ticket(pending_ticket) if pending_ticket else None
     challenge_info = (
         read_webauthn_challenge_ticket(challenge_ticket, purpose="authenticate")
         if challenge_ticket
         else None
     )
-    if (
-        pending_user_id is None
-        or challenge_info is None
-        or challenge_info[0] != pending_user_id
-    ):
+    if user is None or challenge_info is None or challenge_info[0] != user.id:
         response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-        clear_pending_totp_cookie(response)
+        if is_second_factor:
+            clear_pending_totp_cookie(response)
         clear_webauthn_challenge_cookie(response)
         return response
     _, challenge = challenge_info
 
-    user = await db.get(User, pending_user_id)
-    if user is None or not user.is_active:
-        response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-        clear_pending_totp_cookie(response)
-        clear_webauthn_challenge_cookie(response)
-        return response
-
-    if not await _within_rate_limit(request, bucket="totp", limit=_TOTP_RATE_LIMIT):
+    async def _failure(
+        *, error: str, status_code: int, action: str, summary: str
+    ) -> Response:
         await log_event(
             db,
             request=request,
-            action="auth.rate_limited",
-            summary=(
-                f'Blocked passkey sign-in attempt for "{user.username}": '
-                "too many attempts from this IP"
-            ),
+            action=action,
+            summary=summary,
             outcome=AuditOutcome.DENIED,
             target_type="user",
             target_id=user.id,
             target_label=user.username,
         )
-        context = await _totp_challenge_context(
-            request, db, pending_user_id, next_url=next_url, error=_RATE_LIMIT_MESSAGE
-        )
-        assert context is not None
-        return templates.TemplateResponse(
+        if is_second_factor:
+            context = await _totp_challenge_context(
+                request, db, user.id, next_url=next_url, error=error
+            )
+            assert context is not None
+            return templates.TemplateResponse(
+                request, "auth/totp_challenge.html", context, status_code=status_code
+            )
+        return await _render_login_password(
             request,
-            "auth/totp_challenge.html",
-            context,
+            username=user.username,
+            next_url=next_url,
+            error=None,
+            passkey_error=error,
+            status_code=status_code,
+        )
+
+    if not await _within_rate_limit(request, bucket="totp", limit=_TOTP_RATE_LIMIT):
+        return await _failure(
+            error=_RATE_LIMIT_MESSAGE,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            action="auth.rate_limited",
+            summary=(
+                f'Blocked passkey sign-in attempt for "{user.username}": '
+                "too many attempts from this IP"
+            ),
         )
 
     if user.is_locked_out:
-        context = await _totp_challenge_context(
-            request,
-            db,
-            pending_user_id,
-            next_url=next_url,
+        return await _failure(
             error="Too many failed attempts — try again shortly.",
-        )
-        assert context is not None
-        return templates.TemplateResponse(
-            request,
-            "auth/totp_challenge.html",
-            context,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            action="auth.rate_limited",
+            summary=f'Blocked passkey sign-in for "{user.username}": account temporarily locked',
         )
 
     verified = None
@@ -549,25 +622,11 @@ async def login_webauthn_verify(
         verified = None
 
     if stored is None or verified is None:
-        await log_event(
-            db,
-            request=request,
-            action="user.login.totp",
-            summary=f'Failed passkey sign-in attempt for "{user.username}"',
-            outcome=AuditOutcome.DENIED,
-            target_type="user",
-            target_id=user.id,
-            target_label=user.username,
-        )
-        context = await _totp_challenge_context(
-            request, db, pending_user_id, next_url=next_url, error="Passkey sign-in failed."
-        )
-        assert context is not None
-        return templates.TemplateResponse(
-            request,
-            "auth/totp_challenge.html",
-            context,
+        return await _failure(
+            error="Passkey sign-in failed.",
             status_code=status.HTTP_401_UNAUTHORIZED,
+            action="user.login.totp" if is_second_factor else "user.login",
+            summary=f'Failed passkey sign-in attempt for "{user.username}"',
         )
 
     stored.sign_count = verified.new_sign_count

@@ -103,6 +103,11 @@
         {{ t(request, "settings.integrations.enabled") }}
       </label>
 
+      <label for="oidc_provider_name">{{ t(request, "settings.integrations.provider_name") }}</label>
+      <input type="text" id="oidc_provider_name" name="oidc_provider_name" placeholder="Entra ID"
+             value="{{ app_settings.oidc_provider_name or '' }}">
+      <p class="hint">{{ t(request, "settings.integrations.provider_name_hint") }}</p>
+
       <label for="oidc_issuer_url">{{ t(request, "settings.integrations.issuer_url") }}</label>
       <input type="text" id="oidc_issuer_url" name="oidc_issuer_url" placeholder="https://idp.example.com"
              value="{{ app_settings.oidc_issuer_url or '' }}">

@@ -51,6 +51,7 @@ from app.i18n import get_locale
 _PUBLIC_PATHS = frozenset(
     {
         "/login",
+        "/login/password",
         "/login/totp",
         "/login/webauthn/options",
         "/login/webauthn/verify",

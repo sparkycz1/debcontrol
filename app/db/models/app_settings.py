@@ -197,6 +197,11 @@ class AppSettings(Base):
     oidc_scopes: Mapped[str] = mapped_column(
         String(255), default=DEFAULT_OIDC_SCOPES, nullable=False
     )
+    # Shown on the login button ("Log in with {name}") instead of the
+    # generic "OIDC" — purely cosmetic, e.g. "Entra ID"/"Authentik"/"Google
+    # Workspace". Blank (the default) falls back to the generic label; see
+    # login.html.
+    oidc_provider_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # --- Syslog forwarding of audit log entries (app.audit_syslog), e.g. to
     # a SIEM. Best-effort/fire-and-forget: the DB row is always the source

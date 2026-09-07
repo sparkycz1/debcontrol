@@ -19,19 +19,25 @@
         <div class="alert alert-error"><p>{{ error }}</p></div>
       {% endif %}
 
-      <form method="post" action="/login" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {# Step one of two: just the account, no password field here — see
+         GET /login/password (step two) for the passkey/password choice.
+         A plain GET (no server-side lookup, nothing to rate-limit or
+         audit-log) straight to that route, `username` carried as an
+         ordinary query param the same way `next` already is elsewhere in
+         this app — see login_password_form's own docstring for why that's
+         fine even though it's the account's own username. #}
+      <form method="get" action="/login/password" class="form" autocomplete="off">
         <input type="hidden" name="next" value="{{ next }}">
         <label for="username">{{ t(request, "login.username") }}</label>
         <input type="text" id="username" name="username" value="{{ form.username or '' }}"
                autocomplete="username" autofocus required>
-        <label for="password">{{ t(request, "login.password") }}</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required>
-        <button type="submit" class="button">{{ t(request, "login.submit") }}</button>
+        <button type="submit" class="button">{{ t(request, "login.continue") }}</button>
       </form>
 
       {% if app_settings.oidc_enabled %}
-        <a href="/auth/oidc/login" class="button button-secondary stack-gap">{{ t(request, "login.oidc_button") }}</a>
+        <a href="/auth/oidc/login" class="button button-secondary stack-gap">
+          {{ t(request, "login.oidc_button_named", name=app_settings.oidc_provider_name) if app_settings.oidc_provider_name else t(request, "login.oidc_button") }}
+        </a>
       {% endif %}
     </div>
   </main>
