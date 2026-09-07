@@ -87,10 +87,11 @@ openssl s_client -connect your-domain.example.com:443 -tls1_3 </dev/null
   open on any firewall/cloud security group in front of this host — it's
   easy to forget the UDP rule since most setups only think about TCP.
 - **Local/LAN-only use, no public domain**: this bundled config assumes a
-  public domain reachable by Let's Encrypt. For LAN-only deployments,
-  replace the site address with `tls internal` in `./Caddyfile` (Caddy
-  will mint its own local CA and self-signed certs); browsers/clients will
-  need to trust that internal CA manually.
+  public domain reachable by Let's Encrypt — see
+  [Installation](Installation.md)'s `tls internal` steps for a LAN-only
+  self-signed alternative (also needed to make WebAuthn/passkeys and the
+  web terminal's clipboard copy/paste work at all on a plain-HTTP LAN
+  deployment, which browsers disable outright regardless of app config).
 
 ## 🔧 Option B — your own standalone Caddy instance
 

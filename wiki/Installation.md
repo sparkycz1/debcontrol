@@ -168,6 +168,26 @@ address — see the relevant guide for details.
 > `http://localhost` on the machine debcontrol itself runs on. A plain HTTP
 > LAN IP/hostname (e.g. `http://192.168.1.x:8080`) satisfies neither, no
 > matter how the app itself or its host firewall is configured.
+>
+> **No public domain needed to fix this on a LAN-only deployment.** A
+> browser treats any `https://` origin as a secure context regardless of
+> whether the certificate is trusted — a self-signed one is enough, at the
+> cost of a one-time "this connection isn't private, proceed anyway"
+> click per client. The bundled Caddy (below) can mint one itself: in
+> `./Caddyfile`, replace the site address with `tls internal` —
+> ```
+> :443 {
+>     tls internal
+>     reverse_proxy web:8080
+> }
+> ```
+> then `docker compose -f docker-compose.yml -f docker-compose.caddy.yml up
+> -d --build` and open `https://<this-host's-LAN-IP>`. `DOMAIN`/`ACME_EMAIL`
+> aren't needed for this path. To make the browser warning go away
+> permanently instead of clicking through it every time, install Caddy's
+> local CA on each client (`docker compose exec caddy caddy trust` prints
+> where to find it) — optional, purely cosmetic, WebAuthn/clipboard work
+> either way once the page has loaded over `https://`.
 
 ### With the bundled Caddy (automatic HTTPS)
 
