@@ -22,6 +22,7 @@ from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
+from app.db.models.scheduled_task_run import ScheduledTaskRun
 from app.db.models.user import User
 from app.db.session import get_db
 from app.scheduling.actions import all_actions, get_action
@@ -41,6 +42,8 @@ router = APIRouter(
     prefix="/scheduling", dependencies=[Depends(require_permission(Permission.SCHEDULING_VIEW))]
 )
 _manage = Depends(require_permission(Permission.SCHEDULING_MANAGE))
+
+_HISTORY_PAGE_SIZE = 50
 
 
 async def _get_task_or_404(task_id: uuid.UUID, db: AsyncSession, user: User) -> ScheduledTask:
@@ -189,6 +192,45 @@ async def list_scheduled_tasks(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.get("/{task_id}/history")
+async def scheduled_task_history(
+    request: Request,
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    page: int = 1,
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Every past firing of this task, newest first — the full history
+    behind the one-line `last_run_at`/`last_run_summary` the task list
+    itself shows. Same offset/limit-plus-one-extra-row pagination as
+    `/audit` and the update-run history."""
+    task = await _get_task_or_404(task_id, db, current_user)
+    page = max(page, 1)
+
+    offset = (page - 1) * _HISTORY_PAGE_SIZE
+    result = await db.execute(
+        select(ScheduledTaskRun)
+        .where(ScheduledTaskRun.scheduled_task_id == task.id)
+        .order_by(ScheduledTaskRun.started_at.desc())
+        .offset(offset)
+        .limit(_HISTORY_PAGE_SIZE + 1)
+    )
+    runs = list(result.scalars().all())
+    has_older = len(runs) > _HISTORY_PAGE_SIZE
+    runs = runs[:_HISTORY_PAGE_SIZE]
+
+    return templates.TemplateResponse(
+        request,
+        "scheduling/history.html",
+        {
+            "task": task,
+            "runs": runs,
+            "page": page,
+            "has_older": has_older,
+        },
+    )
 
 
 @router.get("/new")

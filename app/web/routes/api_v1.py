@@ -1008,6 +1008,67 @@ async def machine_logs_api(
     return {"output": output or ""}
 
 
+@router.get("/machines/{machine_id}/logs/browse", dependencies=[_action_terminal])
+async def machine_logs_browse_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    path: str = "",
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The API equivalent of `GET /machines/{id}/logs/browse` — lists what's
+    directly inside an allowed directory (defaulting to the first configured
+    `LOG_FILE_ALLOWED_PATHS` entry) so a script doesn't need a file's exact
+    path already known either. Gated behind `ACTION_TERMINAL`, same as the
+    rest of the Logs API. Never stored anywhere."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    settings = get_settings()
+    allowed_paths = settings.log_file_allowed_path_list
+    current_path = path.strip() or (allowed_paths[0] if allowed_paths else "")
+
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint before browsing logs.",
+        )
+    if not current_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No allowed log paths are configured.",
+        )
+
+    entries: list[dict[str, object]] = []
+    error: str | None = None
+    try:
+        async_result = tasks.browse_machine_log_directory.delay(str(machine.id), path=current_path)
+        result = await asyncio.to_thread(
+            async_result.get, timeout=settings.ssh_connect_timeout + 15
+        )
+        if isinstance(result, dict):
+            if result.get("ok"):
+                entries = list(result.get("entries") or [])
+            else:
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The command did not finish in time."
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.logs.browse",
+        summary=f'Browsed "{current_path}" on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"path": current_path, "entries": entries}
+
+
 # --- Bulk actions (ad-hoc selection from the machine list) ------------------
 
 

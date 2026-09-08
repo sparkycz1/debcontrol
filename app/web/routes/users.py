@@ -130,6 +130,31 @@ async def _log_group_access_change(
     )
 
 
+async def _get_users_by_ids(
+    db: AsyncSession, user_ids: list[uuid.UUID], *, exclude: uuid.UUID
+) -> list[User]:
+    """The submitted selection, minus the acting admin's own account —
+    silently dropped, the same "never let a bulk action touch the actor's
+    own row" rule `update_user` enforces one at a time (you can't change
+    your own role, deactivate yourself, ...). Client-submitted ids beyond
+    that are trusted as-is: unlike the machine list's bulk actions, the
+    user list has no per-account visibility scoping to re-check here.
+
+    This is also why none of the bulk actions below need their own
+    "would this remove the last admin" check the way `update_user`/
+    `delete_user` do for a single account: every route in this router
+    already requires `user.manage` (see the router's own dependency), so
+    the acting account always holds it — and since that account's own row
+    is never in the batch, at least one active `user.manage` holder (the
+    actor) is always left standing no matter what the batch does to
+    everyone else."""
+    ids = [uid for uid in user_ids if uid != exclude]
+    if not ids:
+        return []
+    result = await db.execute(select(User).options(selectinload(User.role)).where(User.id.in_(ids)))
+    return list(result.scalars().all())
+
+
 async def _would_remove_last_admin(db: AsyncSession, target: User) -> bool:
     if not target.has_permission(Permission.USER_MANAGE):
         return False
@@ -146,7 +171,12 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)) -> Re
     return templates.TemplateResponse(
         request,
         "users/list.html",
-        {"users": users, "csrf_token": request.state.csrf_token},
+        {
+            "users": users,
+            "roles": await _get_roles(db),
+            "csrf_token": request.state.csrf_token,
+            "bulk_error": request.query_params.get("bulk_error"),
+        },
     )
 
 
@@ -622,5 +652,145 @@ async def delete_user(
         target_type="user",
         target_id=user_id,
         target_label=username,
+    )
+    return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Bulk actions (ad-hoc selection from the user list) --------------------
+#
+# Same "one selection, several possible actions, one shared form" shape as
+# `app/web/routes/machines.py`'s bulk actions — with one addition none of
+# those need: the acting admin's own row is always dropped from the
+# selection first (see `_get_users_by_ids`, whose own docstring is also why
+# none of these need their own "last admin" guard). Deliberately no bulk
+# delete here: unlike deactivate (fully reversible from this same page) a
+# bulk delete is destructive and irreversible, and the existing
+# single-account delete already needs its own confirmation dialog for
+# exactly that reason — a bulk version would need the same
+# typed-confirmation treatment `machines.py`'s bulk power actions get,
+# which is more than this round adds.
+
+_NO_OTHER_USERS_ERROR = "Select+at+least+one+other+user."
+
+
+@router.post("/bulk/deactivate", dependencies=[Depends(verify_csrf)])
+async def bulk_deactivate_users(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_ids: list[uuid.UUID] = Form(default=[]),
+) -> Response:
+    selected = await _get_users_by_ids(db, user_ids, exclude=current_user.id)
+    users = [u for u in selected if u.is_active]
+    if not users:
+        return RedirectResponse(
+            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    for user in users:
+        user.is_active = False
+    await db.commit()
+    for user in users:
+        # Cut access immediately, same as the single-account version —
+        # don't wait for existing sessions to expire on their own.
+        await revoke_all_sessions_for_user(db, user.id)
+
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.deactivate",
+        summary=f"Deactivated {len(users)} selected user(s)",
+        details={"usernames": [u.username for u in users]},
+    )
+    return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/activate", dependencies=[Depends(verify_csrf)])
+async def bulk_activate_users(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_ids: list[uuid.UUID] = Form(default=[]),
+) -> Response:
+    users = [
+        u for u in await _get_users_by_ids(db, user_ids, exclude=current_user.id) if not u.is_active
+    ]
+    if not users:
+        return RedirectResponse(
+            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    for user in users:
+        user.is_active = True
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.activate",
+        summary=f"Activated {len(users)} selected user(s)",
+        details={"usernames": [u.username for u in users]},
+    )
+    return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/sign-out", dependencies=[Depends(verify_csrf)])
+async def bulk_sign_out_users(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_ids: list[uuid.UUID] = Form(default=[]),
+) -> Response:
+    users = await _get_users_by_ids(db, user_ids, exclude=current_user.id)
+    if not users:
+        return RedirectResponse(
+            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    for user in users:
+        await revoke_all_sessions_for_user(db, user.id)
+
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.sign_out",
+        summary=f"Force-logged-out {len(users)} selected user(s)",
+        details={"usernames": [u.username for u in users]},
+    )
+    return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/role", dependencies=[Depends(verify_csrf)])
+async def bulk_set_role(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_ids: list[uuid.UUID] = Form(default=[]),
+    role_id: str = Form(...),
+) -> Response:
+    users = await _get_users_by_ids(db, user_ids, exclude=current_user.id)
+    if not users:
+        return RedirectResponse(
+            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    try:
+        role = await db.get(Role, uuid.UUID(role_id))
+    except ValueError:
+        role = None
+    if role is None:
+        return RedirectResponse(
+            url="/users?bulk_error=Selected+role+no+longer+exists.",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    for user in users:
+        user.role_id = role.id
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.role",
+        summary=f'Set role "{role.name}" for {len(users)} selected user(s)',
+        details={"role": role.name, "usernames": [u.username for u in users]},
     )
     return RedirectResponse(url="/users", status_code=status.HTTP_303_SEE_OTHER)

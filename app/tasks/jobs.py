@@ -61,7 +61,7 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.identity import get_or_create_identity
-from app.ssh.logs import LogAccessError, view_file, view_journal
+from app.ssh.logs import LogAccessError, list_directory, view_file, view_journal
 from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
@@ -266,6 +266,44 @@ async def _view_machine_log_file(
 )
 def view_machine_log_file(machine_id: str, *, path: str, lines: int, search: str) -> dict[str, Any]:
     return asyncio.run(_view_machine_log_file(machine_id, path=path, lines=lines, search=search))
+
+
+async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:
+    """The Logs tab's "browse" picker — list what's directly inside an
+    allowed directory instead of requiring the exact file path to already be
+    known. Same `LOG_FILE_ALLOWED_PATHS` restriction as `view_file`, checked
+    inside `list_directory` itself (never reaches the machine at all for a
+    disallowed path)."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            entries = await list_directory(
+                machine, secret, settings.ssh_connect_timeout, path=path
+            )
+        except LogAccessError as exc:
+            return {"ok": False, "error": str(exc)}
+        except SSHConnectionError as exc:
+            logger.warning("browse_machine_log_directory failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "entries": [{"name": n, "is_dir": d} for n, d in entries]}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.browse_machine_log_directory",
+    time_limit=get_settings().ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+)
+def browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:
+    return asyncio.run(_browse_machine_log_directory(machine_id, path=path))
 
 
 async def _push_pending_ssh_key(machine_id: str) -> dict[str, Any]:

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "machine.logs.browse") }} — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  {% if error %}
+    <div class="alert alert-error">
+      <p>{{ error }}</p>
+    </div>
+  {% endif %}
+
+  <p class="hint">
+    {{ t(request, "machine.logs.restricted_to") }} {% for prefix in allowed_paths %}<code>{{ prefix }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+  </p>
+
+  {% if current_path %}
+    <p><code>{{ current_path }}</code></p>
+
+    <ul class="log-browse-list">
+      {% if parent_path is not none %}
+        <li class="log-browse-entry log-browse-dir">
+          <a href="/machines/{{ machine.id }}/logs/browse?path={{ parent_path | urlencode }}">.. ({{ t(request, "machine.logs.parent_directory") }})</a>
+        </li>
+      {% endif %}
+      {% for entry in entries %}
+        <li class="log-browse-entry {{ 'log-browse-dir' if entry.is_dir else 'log-browse-file' }}">
+          {% if entry.is_dir %}
+            <a href="/machines/{{ machine.id }}/logs/browse?path={{ entry.path | urlencode }}">{{ entry.name }}/</a>
+          {% else %}
+            <a href="/machines/{{ machine.id }}/logs?path={{ entry.path | urlencode }}">{{ entry.name }}</a>
+          {% endif %}
+        </li>
+      {% else %}
+        {% if not error %}
+          <li class="hint">{{ t(request, "machine.logs.browse_empty") }}</li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <p><a href="/machines/{{ machine.id }}/logs">{{ t(request, "machine.logs.back_to_journal") }}</a></p>
+{% endblock %}

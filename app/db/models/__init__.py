@@ -18,8 +18,10 @@ from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission, Role, RolePermission
+from app.db.models.saved_audit_view import SavedAuditView
 from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
+from app.db.models.scheduled_task_run import ScheduledTaskRun, ScheduledTaskRunStatus
 from app.db.models.ssh_identity import SSHIdentity
 from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
 from app.db.models.totp_recovery_code import TotpRecoveryCode
@@ -58,9 +60,12 @@ __all__ = [
     "Permission",
     "Role",
     "RolePermission",
+    "SavedAuditView",
     "SavedMachineView",
     "ScheduleTargetType",
     "ScheduledTask",
+    "ScheduledTaskRun",
+    "ScheduledTaskRunStatus",
     "SSHIdentity",
     "Tag",
     "TemporaryPermissionGrant",

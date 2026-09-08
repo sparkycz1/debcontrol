@@ -74,6 +74,30 @@ def build_journal_command(*, lines: int, search: str, since: str, until: str) ->
     return " ".join(parts)
 
 
+def build_list_directory_command(path: str) -> str:
+    """`ls -1p` — one name per line, with a trailing `/` on directories (and
+    nothing appended to files) — enough for the Logs tab's "browse" picker to
+    tell the two apart and build the next link, without an operator needing
+    to already know a file's exact path. Restricted to
+    `LOG_FILE_ALLOWED_PATHS` the same way `build_file_command` is — see
+    `list_directory` below."""
+    return f"ls -1p -- {shlex.quote(path)} 2>/dev/null"
+
+
+def parse_directory_listing(raw: str) -> list[tuple[str, bool]]:
+    """`(name, is_dir)` pairs from `build_list_directory_command`'s output,
+    hidden (dotfile) entries dropped — a log directory's own hidden files
+    are never useful to browse to."""
+    entries: list[tuple[str, bool]] = []
+    for line in raw.splitlines():
+        name = line.strip()
+        if not name or name.startswith("."):
+            continue
+        is_dir = name.endswith("/")
+        entries.append((name[:-1] if is_dir else name, is_dir))
+    return entries
+
+
 def build_file_command(*, path: str, lines: int, search: str) -> str:
     """`tail`, or `grep | tail` when searching — the *last* N matches
     within an allowed file, not the first N, so a search against a huge
@@ -128,3 +152,26 @@ async def view_file(
         result = await conn.run(command, check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
     return stdout if isinstance(stdout, str) else stdout.decode()
+
+
+async def list_directory(
+    machine: Machine,
+    secret: str | None,
+    timeout_seconds: int,
+    *,
+    path: str,
+) -> list[tuple[str, bool]]:
+    """Connect to a machine and return `(name, is_dir)` for each entry
+    directly inside `path` — the Logs tab's "browse" picker, so an operator
+    doesn't have to already know a file's exact name/path to view it. Same
+    `LOG_FILE_ALLOWED_PATHS` restriction and `LogAccessError` as `view_file`.
+    Requires a pinned host key."""
+    settings = get_settings()
+    if not is_path_allowed(path, settings.log_file_allowed_path_list):
+        raise LogAccessError(f'"{path}" is outside the allowed log paths.')
+
+    command = build_list_directory_command(path)
+    async with await open_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(command, check=False, timeout=timeout_seconds)
+    stdout = result.stdout or ""
+    return parse_directory_listing(stdout if isinstance(stdout, str) else stdout.decode())

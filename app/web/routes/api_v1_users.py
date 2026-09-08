@@ -212,6 +212,131 @@ async def update_user_api(
     return _user_to_dict(user)
 
 
+# --- Bulk actions (ad-hoc selection from the user list) --------------------
+#
+# Mirrors `app/web/routes/users.py`'s "Bulk actions" section, including why
+# none of these need their own "last admin" guard: `_manage` already
+# requires the caller to hold `user.manage`, and that account's own id is
+# always dropped from the batch (see `_bulk_user_ids`), so at least one
+# active `user.manage` holder is always left standing.
+
+
+class _BulkUserIds(BaseModel):
+    user_ids: list[uuid.UUID] = Field(min_length=1)
+
+
+class _BulkSetRole(_BulkUserIds):
+    role_id: uuid.UUID
+
+
+def _bulk_user_ids(payload: _BulkUserIds, actor: User) -> list[uuid.UUID]:
+    return [uid for uid in payload.user_ids if uid != actor.id]
+
+
+async def _get_users_by_ids_api(db: AsyncSession, user_ids: list[uuid.UUID]) -> list[User]:
+    if not user_ids:
+        return []
+    result = await db.execute(
+        select(User).options(selectinload(User.role)).where(User.id.in_(user_ids))
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/bulk/deactivate", dependencies=[_manage])
+async def bulk_deactivate_users_api(
+    request: Request,
+    payload: _BulkUserIds,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_api_permission(Permission.USER_MANAGE)),
+) -> dict[str, object]:
+    ids = _bulk_user_ids(payload, current_user)
+    users = [u for u in await _get_users_by_ids_api(db, ids) if u.is_active]
+    for user in users:
+        user.is_active = False
+    await db.commit()
+    for user in users:
+        await revoke_all_sessions_for_user(db, user.id)
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.deactivate",
+        summary=f"Deactivated {len(users)} selected user(s)",
+        details={"usernames": [u.username for u in users]},
+    )
+    return {"deactivated": len(users)}
+
+
+@router.post("/bulk/activate", dependencies=[_manage])
+async def bulk_activate_users_api(
+    request: Request,
+    payload: _BulkUserIds,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_api_permission(Permission.USER_MANAGE)),
+) -> dict[str, object]:
+    ids = _bulk_user_ids(payload, current_user)
+    users = [u for u in await _get_users_by_ids_api(db, ids) if not u.is_active]
+    for user in users:
+        user.is_active = True
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.activate",
+        summary=f"Activated {len(users)} selected user(s)",
+        details={"usernames": [u.username for u in users]},
+    )
+    return {"activated": len(users)}
+
+
+@router.post("/bulk/sessions/revoke-all", dependencies=[_manage])
+async def bulk_revoke_user_sessions_api(
+    request: Request,
+    payload: _BulkUserIds,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_api_permission(Permission.USER_MANAGE)),
+) -> dict[str, object]:
+    ids = _bulk_user_ids(payload, current_user)
+    users = await _get_users_by_ids_api(db, ids)
+    for user in users:
+        await revoke_all_sessions_for_user(db, user.id)
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.sign_out",
+        summary=f"Force-logged-out {len(users)} selected user(s)",
+        details={"usernames": [u.username for u in users]},
+    )
+    return {"signed_out": len(users)}
+
+
+@router.post("/bulk/role", dependencies=[_manage])
+async def bulk_set_role_api(
+    request: Request,
+    payload: _BulkSetRole,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_api_permission(Permission.USER_MANAGE)),
+) -> dict[str, object]:
+    role = await db.get(Role, payload.role_id)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Selected role does not exist.",
+        )
+    ids = _bulk_user_ids(payload, current_user)
+    users = await _get_users_by_ids_api(db, ids)
+    for user in users:
+        user.role_id = role.id
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="users.bulk.role",
+        summary=f'Set role "{role.name}" for {len(users)} selected user(s)',
+        details={"role": role.name, "usernames": [u.username for u in users]},
+    )
+    return {"updated": len(users)}
+
+
 @router.post("/{user_id}/deactivate", dependencies=[_manage])
 async def deactivate_user_api(
     request: Request,

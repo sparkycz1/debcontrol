@@ -27,6 +27,7 @@ from app.audit import log_event
 from app.db import session as db_session
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.scheduled_task import ScheduledTask
+from app.db.models.scheduled_task_run import ScheduledTaskRun, ScheduledTaskRunStatus
 from app.scheduling.actions import get_action
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.scheduling.cron import compute_next_run
@@ -93,6 +94,8 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
     Records only a short summary, not a full run log — the underlying
     action's own task (e.g. `MachineUpdateRun`) already records what
     actually happened on each machine."""
+    started_at = datetime.now(UTC)
+
     async with db_session.AsyncSessionLocal() as session:
         task = await session.get(ScheduledTask, uuid.UUID(task_id))
         if task is None:
@@ -100,8 +103,21 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
 
         action = get_action(task.action)
         if action is None:
-            task.last_run_at = datetime.now(UTC)
+            finished_at = datetime.now(UTC)
+            task.last_run_at = finished_at
             task.last_run_summary = f'Unknown action "{task.action}" — nothing was run.'
+            session.add(
+                ScheduledTaskRun(
+                    scheduled_task_id=task.id,
+                    action=task.action,
+                    status=ScheduledTaskRunStatus.FAILED,
+                    summary=task.last_run_summary,
+                    attempted=0,
+                    skipped=0,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+            )
             await session.commit()
             logger.warning("run_scheduled_task(%s): %s", task.id, task.last_run_summary)
             await log_event(
@@ -125,8 +141,21 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
                 f"Triggered for {result.attempted} machine(s), "
                 f"{result.skipped} skipped (no pinned host key)."
             )
-        task.last_run_at = datetime.now(UTC)
+        finished_at = datetime.now(UTC)
+        task.last_run_at = finished_at
         task.last_run_summary = summary
+        session.add(
+            ScheduledTaskRun(
+                scheduled_task_id=task.id,
+                action=task.action,
+                status=ScheduledTaskRunStatus.SUCCEEDED,
+                summary=summary,
+                attempted=result.attempted,
+                skipped=result.skipped,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
         await session.commit()
 
         await log_event(

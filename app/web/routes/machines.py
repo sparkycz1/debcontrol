@@ -2404,6 +2404,109 @@ async def machine_logs(
     return response
 
 
+def _join_log_path(directory: str, name: str) -> str:
+    return name if directory in ("", "/") else f"{directory.rstrip('/')}/{name}"
+
+
+@router.get("/{machine_id}/logs/browse", dependencies=[_terminal])
+async def machine_logs_browse(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    path: str = "",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The Logs tab's "browse" picker — lists what's directly inside an
+    allowed directory so an operator can navigate to a file rather than
+    already knowing its exact path. Starts at the first configured
+    `LOG_FILE_ALLOWED_PATHS` prefix when no `path` is given. Same live SSH
+    round trip / `action.terminal` gate as the rest of the Logs tab; see
+    `app.ssh.logs`'s module docstring."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+    allowed_paths = settings.log_file_allowed_path_list
+    current_path = path.strip() or (allowed_paths[0] if allowed_paths else "")
+
+    entries: list[dict[str, object]] = []
+    error: str | None = None
+    if not machine.host_key_fingerprint:
+        error = "Confirm the server's key fingerprint on the Overview tab first."
+    elif not current_path:
+        error = "No allowed log paths are configured — set LOG_FILE_ALLOWED_PATHS first."
+    else:
+        try:
+            async_result = tasks.browse_machine_log_directory.delay(
+                str(machine.id), path=current_path
+            )
+            result = await asyncio.to_thread(
+                async_result.get, timeout=settings.ssh_connect_timeout + 15
+            )
+            if isinstance(result, dict):
+                if result.get("ok"):
+                    raw_entries = result.get("entries") or []
+                    entries = sorted(
+                        (
+                            {
+                                "name": e["name"],
+                                "is_dir": e["is_dir"],
+                                "path": _join_log_path(current_path, e["name"]),
+                            }
+                            for e in raw_entries
+                        ),
+                        key=lambda e: (not e["is_dir"], str(e["name"]).lower()),
+                    )
+                else:
+                    error = str(result.get("error") or "Unknown error.")
+        except CeleryTimeoutError:
+            error = "The command did not finish in time."
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            error = str(exc)
+
+    # Never offer a parent link above whichever allowed root contains
+    # `current_path` — that would just error out server-side anyway (see
+    # `app.ssh.logs.is_path_allowed`), but there's no reason to dangle a
+    # link that can only fail.
+    parent_path: str | None = None
+    matched_root = next(
+        (
+            root
+            for root in allowed_paths
+            if current_path == root or current_path.startswith(f"{root}/")
+        ),
+        None,
+    )
+    if matched_root and current_path != matched_root:
+        candidate = current_path.rstrip("/").rsplit("/", 1)[0] or "/"
+        parent_path = candidate if len(candidate) >= len(matched_root) else matched_root
+
+    if current_path:
+        await log_event(
+            db,
+            request=request,
+            action="machine.logs.browse",
+            summary=f'Browsed "{current_path}" on "{machine.name}"',
+            outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "machines/logs_browse.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(machine, current_user),
+            "active_tab": "logs",
+            "current_path": current_path,
+            "parent_path": parent_path,
+            "entries": entries,
+            "error": error,
+            "allowed_paths": allowed_paths,
+        },
+    )
+
+
 @router.get("/{machine_id}/power")
 async def power_tab(
     request: Request,

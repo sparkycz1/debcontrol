@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "scheduling.history.title") }} — {{ task.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ task.name }}</h1>
+    <a class="button button-secondary" href="/scheduling">{{ t(request, "scheduling.history.back") }}</a>
+  </div>
+
+  <h2>{{ t(request, "scheduling.history.title") }}</h2>
+
+  {% if runs %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "machine.updates.started") }}</th>
+          <th>{{ t(request, "audit.table.action") }}</th>
+          <th>{{ t(request, "machines.table.status") }}</th>
+          <th>{{ t(request, "scheduling.history.attempted") }}</th>
+          <th>{{ t(request, "scheduling.history.skipped") }}</th>
+          <th>{{ t(request, "audit.table.summary") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td>{{ run.started_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
+            <td>{{ run.action }}</td>
+            <td>
+              {% if run.status.value == 'succeeded' %}
+                <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
+              {% else %}
+                <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
+              {% endif %}
+            </td>
+            <td>{{ run.attempted }}</td>
+            <td>{{ run.skipped }}</td>
+            <td>{{ run.summary }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="page-header-actions">
+      {% if page > 1 %}
+        <a class="button button-secondary" href="/scheduling/{{ task.id }}/history?page={{ page - 1 }}">
+          {{ t(request, "audit.newer") }}
+        </a>
+      {% endif %}
+      {% if has_older %}
+        <a class="button button-secondary" href="/scheduling/{{ task.id }}/history?page={{ page + 1 }}">
+          {{ t(request, "audit.older") }}
+        </a>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <p>{{ t(request, "scheduling.history.empty") }}</p>
+    </div>
+  {% endif %}
+{% endblock %}

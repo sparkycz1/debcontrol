@@ -28,10 +28,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.auth.dependencies import get_api_token_user
+from app.db.models.saved_audit_view import SavedAuditView
 from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.user import User
 from app.db.session import get_db
 from app.i18n import Locale, available_locales, get_locale
+from app.services.saved_audit_views import (
+    DuplicateViewNameError as DuplicateAuditViewNameError,
+)
+from app.services.saved_audit_views import (
+    build_query_string as build_audit_query_string,
+)
+from app.services.saved_audit_views import (
+    create_saved_view as create_saved_audit_view,
+)
+from app.services.saved_audit_views import (
+    delete_saved_view as delete_saved_audit_view,
+)
+from app.services.saved_audit_views import (
+    list_saved_views as list_saved_audit_views,
+)
 from app.services.saved_views import (
     DuplicateViewNameError,
     build_query_string,
@@ -183,6 +199,89 @@ async def delete_saved_view_api(
             action="user.saved_view.delete",
             summary=f'"{user.username}" deleted a saved machine-list view',
             target_type="saved_machine_view",
+            target_id=view_id,
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _saved_audit_view_to_dict(view: SavedAuditView) -> dict[str, object]:
+    return {
+        "id": str(view.id),
+        "name": view.name,
+        "query_string": view.query_string,
+        "created_at": view.created_at.isoformat(),
+    }
+
+
+@router.get("/account/saved-audit-views")
+async def list_saved_audit_views_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """The API equivalent of the Audit log's "Saved views" chips — see
+    `app.services.saved_audit_views`. Per-account: this only ever lists
+    the token owner's own."""
+    views = await list_saved_audit_views(db, user.id)
+    return [_saved_audit_view_to_dict(v) for v in views]
+
+
+class _SavedAuditViewCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    q: str = ""
+    outcome: str = ""
+    target_type: str = ""
+    target_id: str = ""
+
+
+@router.post("/account/saved-audit-views", status_code=status.HTTP_201_CREATED)
+async def create_saved_audit_view_api(
+    request: Request,
+    payload: _SavedAuditViewCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    query_string = build_audit_query_string(
+        {
+            "q": payload.q,
+            "outcome": payload.outcome,
+            "target_type": payload.target_type,
+            "target_id": payload.target_id,
+        }
+    )
+    try:
+        view = await create_saved_audit_view(db, user.id, payload.name, query_string)
+    except DuplicateAuditViewNameError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'A saved view named "{payload.name}" already exists.',
+        ) from None
+    await log_event(
+        db,
+        request=request,
+        action="user.saved_audit_view.create",
+        summary=f'"{user.username}" saved an audit log view ("{view.name}")',
+        target_type="saved_audit_view",
+        target_id=view.id,
+        target_label=view.name,
+    )
+    return _saved_audit_view_to_dict(view)
+
+
+@router.delete("/account/saved-audit-views/{view_id}")
+async def delete_saved_audit_view_api(
+    request: Request,
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    deleted = await delete_saved_audit_view(db, user.id, view_id)
+    if deleted:
+        await log_event(
+            db,
+            request=request,
+            action="user.saved_audit_view.delete",
+            summary=f'"{user.username}" deleted a saved audit log view',
+            target_type="saved_audit_view",
             target_id=view_id,
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

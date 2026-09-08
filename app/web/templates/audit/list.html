@@ -23,6 +23,21 @@
     </p>
   {% endif %}
 
+  {% if saved_views %}
+    <div class="saved-views">
+      {% for view in saved_views %}
+        <span class="saved-view-chip">
+          <a href="/audit?{{ view.query_string }}">{{ view.name }}</a>
+          <form method="post" action="/audit/saved-views/{{ view.id }}/delete" class="inline-form"
+                data-confirm="{{ t(request, 'audit.save_view.delete_confirm', name=(view.name | e)) | safe }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="link-button" aria-label="{{ t(request, 'audit.save_view.delete', name=view.name) }}">&times;</button>
+          </form>
+        </span>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   <form method="get" class="search-form">
     <input type="search" name="q" value="{{ q }}"
            placeholder="{{ t(request, 'audit.search.placeholder') }}">
@@ -46,6 +61,23 @@
        href="/audit/export?format=json&q={{ q | urlencode }}&outcome={{ outcome | urlencode }}&target_type={{ target_type | urlencode }}&target_id={{ target_id | urlencode }}">{{ t(request, "audit.export_json") }}</a>
   </form>
   <p class="hint">{{ t(request, "audit.export_hint") }}</p>
+
+  {% if q or outcome or target_type %}
+    <form method="post" action="/audit/saved-views" class="inline-form stack-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="q" value="{{ q }}">
+      <input type="hidden" name="outcome" value="{{ outcome }}">
+      <input type="hidden" name="target_type" value="{{ target_type }}">
+      <input type="hidden" name="target_id" value="{{ target_id }}">
+      <input type="text" name="name" class="inline-text-input"
+             placeholder="{{ t(request, 'audit.save_view.placeholder') }}" maxlength="100" required>
+      <button type="submit" class="button button-secondary">{{ t(request, "audit.save_view.submit") }}</button>
+    </form>
+  {% endif %}
+
+  {% if view_error == 'duplicate_name' %}
+    <div class="alert alert-error"><p>{{ t(request, "audit.save_view.duplicate") }}</p></div>
+  {% endif %}
 
   {% if entries %}
     <table class="data-table">

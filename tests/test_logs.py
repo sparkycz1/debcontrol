@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from app.ssh.logs import build_file_command, build_journal_command, is_path_allowed
+from app.ssh.logs import (
+    build_file_command,
+    build_journal_command,
+    build_list_directory_command,
+    is_path_allowed,
+    parse_directory_listing,
+)
 
 _ALLOWED = ["/var/log", "/var/lib/docker/containers"]
 
@@ -74,3 +80,33 @@ def test_build_file_command_quotes_untrusted_search_term():
     command = build_file_command(path="/var/log/syslog", lines=10, search="$(whoami)")
 
     assert "'$(whoami)'" in command
+
+
+def test_build_list_directory_command_quotes_the_path():
+    command = build_list_directory_command("/var/log/my app")
+
+    assert command == "ls -1p -- '/var/log/my app' 2>/dev/null"
+
+
+def test_parse_directory_listing_splits_dirs_from_files():
+    raw = "nginx/\nsyslog\nsyslog.1\ndocker/\n"
+
+    entries = parse_directory_listing(raw)
+
+    assert entries == [
+        ("nginx", True),
+        ("syslog", False),
+        ("syslog.1", False),
+        ("docker", True),
+    ]
+
+
+def test_parse_directory_listing_drops_hidden_entries():
+    entries = parse_directory_listing(".hidden\n..\nvisible\n")
+
+    assert entries == [("visible", False)]
+
+
+def test_parse_directory_listing_handles_empty_output():
+    assert parse_directory_listing("") == []
+    assert parse_directory_listing("\n\n") == []

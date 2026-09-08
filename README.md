@@ -1,4 +1,8 @@
-# 🖥️ debcontrol
+<p align="center">
+  <img src="app/web/static/img/favicon.svg" alt="debcontrol" width="88">
+</p>
+
+# debcontrol
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)

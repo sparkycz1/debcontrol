@@ -43,6 +43,9 @@
       <input type="hidden" name="lines" value="{{ lines }}">
       <button type="submit" class="button">{{ t(request, "machine.logs.open") }}</button>
     </form>
+    <p class="hint">
+      <a href="/machines/{{ machine.id }}/logs/browse">{{ t(request, "machine.logs.browse") }}</a>
+    </p>
   </details>
 
   {% if output is not none %}

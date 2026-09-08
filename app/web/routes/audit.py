@@ -8,18 +8,29 @@ from __future__ import annotations
 import csv
 import io
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Form, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_current_user, require_permission
+from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.role import Permission
+from app.db.models.user import User
 from app.db.session import get_db
+from app.services.saved_audit_views import (
+    DuplicateViewNameError,
+    build_query_string,
+    create_saved_view,
+    delete_saved_view,
+    list_saved_views,
+)
 from app.web.audit_search import apply_audit_filters
 from app.web.templating import templates
 
@@ -84,6 +95,7 @@ def _entry_to_export_row(entry: AuditLogEntry) -> dict[str, Any]:
 async def list_audit_log(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     q: str = "",
     outcome: str = "",
     target_type: str = "",
@@ -110,7 +122,8 @@ async def list_audit_log(
     # target just doesn't get the banner, no worse than before this existed).
     target_label = entries[0].target_label if entries and target_type and target_id else None
 
-    return templates.TemplateResponse(
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
         request,
         "audit/list.html",
         {
@@ -123,8 +136,54 @@ async def list_audit_log(
             "target_label": target_label,
             "page": page,
             "has_older": has_older,
+            "saved_views": await list_saved_views(db, current_user.id),
+            "csrf_token": csrf_token,
+            "view_error": request.query_params.get("view_error"),
         },
     )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/saved-views", dependencies=[Depends(verify_csrf)])
+async def save_audit_view(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    name: str = Form(...),
+    q: str = Form(""),
+    outcome: str = Form(""),
+    target_type: str = Form(""),
+    target_id: str = Form(""),
+) -> Response:
+    """"Save this view" on the audit log — captures only the known filter
+    fields (never an arbitrary querystring, see
+    `app.services.saved_audit_views`), so a saved view always replays as
+    exactly the same filtered `GET /audit` request."""
+    query_string = build_query_string(
+        {"q": q, "outcome": outcome, "target_type": target_type, "target_id": target_id}
+    )
+    if not name.strip():
+        return RedirectResponse(url=f"/audit?{query_string}", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        await create_saved_view(db, current_user.id, name, query_string)
+    except DuplicateViewNameError:
+        return RedirectResponse(
+            url=f"/audit?{query_string}&view_error=duplicate_name",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url=f"/audit?{query_string}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/saved-views/{view_id}/delete", dependencies=[Depends(verify_csrf)])
+async def delete_audit_view(
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    await delete_saved_view(db, current_user.id, view_id)
+    return RedirectResponse(url="/audit", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/export")

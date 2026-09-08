@@ -3,6 +3,7 @@
 {% block title %}{{ t(request, "users.title") }} — debcontrol{% endblock %}
 
 {% block content %}
+  {% set current_user = request.state.user %}
   <div class="page-header">
     <h1>{{ t(request, "users.title") }}</h1>
     <div class="page-header-actions">
@@ -11,38 +12,72 @@
     </div>
   </div>
 
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>{{ t(request, "users.table.username") }}</th>
-        <th>{{ t(request, "users.table.role") }}</th>
-        <th>{{ t(request, "users.table.login_method") }}</th>
-        <th>{{ t(request, "users.table.two_fa") }}</th>
-        <th>{{ t(request, "users.table.api_access") }}</th>
-        <th>{{ t(request, "users.table.status") }}</th>
-        <th>{{ t(request, "users.table.last_login") }}</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
+  {% if bulk_error %}
+    <div class="alert alert-error"><p>{{ bulk_error }}</p></div>
+  {% endif %}
+
+  <form method="post" class="form form-wide" id="bulk-actions-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <table class="data-table">
+      <thead>
         <tr>
-          <td>{{ u.display_name or u.username }}</td>
-          <td>{{ u.role.name }}</td>
-          <td>{{ u.auth_provider.value }}</td>
-          <td>{{ 'on' if u.totp_enabled else '—' }}</td>
-          <td>{{ 'on' if u.api_access_enabled else '—' }}</td>
-          <td>
-            {% if u.is_active %}
-              <span class="badge badge-ok">{{ t(request, "users.status.active") }}</span>
-            {% else %}
-              <span class="badge badge-error">{{ t(request, "users.status.disabled") }}</span>
-            {% endif %}
-          </td>
-          <td>{{ u.last_login_at | local_time('%Y-%m-%d %H:%M %Z') if u.last_login_at else t(request, "users.never") }}</td>
-          <td><a href="/users/{{ u.id }}/edit">{{ t(request, "users.edit") }}</a></td>
+          <th><input type="checkbox" data-select-all aria-label="{{ t(request, 'users.bulk.select_all') }}"></th>
+          <th>{{ t(request, "users.table.username") }}</th>
+          <th>{{ t(request, "users.table.role") }}</th>
+          <th>{{ t(request, "users.table.login_method") }}</th>
+          <th>{{ t(request, "users.table.two_fa") }}</th>
+          <th>{{ t(request, "users.table.api_access") }}</th>
+          <th>{{ t(request, "users.table.status") }}</th>
+          <th>{{ t(request, "users.table.last_login") }}</th>
+          <th></th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for u in users %}
+          <tr>
+            <td>
+              {% if u.id != current_user.id %}
+                <input type="checkbox" name="user_ids" value="{{ u.id }}" aria-label="{{ t(request, 'users.bulk.select_one', name=(u.display_name or u.username)) }}">
+              {% endif %}
+            </td>
+            <td>{{ u.display_name or u.username }}</td>
+            <td>{{ u.role.name }}</td>
+            <td>{{ u.auth_provider.value }}</td>
+            <td>{{ 'on' if u.totp_enabled else '—' }}</td>
+            <td>{{ 'on' if u.api_access_enabled else '—' }}</td>
+            <td>
+              {% if u.is_active %}
+                <span class="badge badge-ok">{{ t(request, "users.status.active") }}</span>
+              {% else %}
+                <span class="badge badge-error">{{ t(request, "users.status.disabled") }}</span>
+              {% endif %}
+            </td>
+            <td>{{ u.last_login_at | local_time('%Y-%m-%d %H:%M %Z') if u.last_login_at else t(request, "users.never") }}</td>
+            <td><a href="/users/{{ u.id }}/edit">{{ t(request, "users.edit") }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="page-header-actions" id="bulk-actions-bar">
+      <span class="hint">{{ t(request, "users.bulk.with_selected") }}</span>
+      <button type="submit" formaction="/users/bulk/deactivate" class="button button-secondary">
+        {{ t(request, "users.bulk.deactivate") }}
+      </button>
+      <button type="submit" formaction="/users/bulk/activate" class="button button-secondary">
+        {{ t(request, "users.bulk.activate") }}
+      </button>
+      <button type="submit" formaction="/users/bulk/sign-out" class="button button-secondary">
+        {{ t(request, "users.bulk.sign_out") }}
+      </button>
+      <select name="role_id" aria-label="{{ t(request, 'users.bulk.role_for') }}">
+        {% for role in roles %}
+          <option value="{{ role.id }}">{{ role.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" formaction="/users/bulk/role" class="button">
+        {{ t(request, "users.bulk.set_role") }}
+      </button>
+    </div>
+  </form>
 {% endblock %}

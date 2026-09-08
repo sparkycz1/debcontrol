@@ -255,6 +255,43 @@ async def test_scheduling_crud_via_api(client, db_session_factory):
         assert await db.get(ScheduledTask, uuid.UUID(task_id)) is None
 
 
+async def test_scheduling_run_history_via_api(
+    client, db_session_factory, celery_calls, monkeypatch
+):
+    from app.scheduling.jobs import _run_scheduled_task
+
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
+    headers = await _api_token(client)
+
+    create = await client.post(
+        "/api/v1/scheduling",
+        json={
+            "name": "api-schedule-history",
+            "action": "check_updates",
+            "target_type": "all_machines",
+            "cron_expression": "0 3 * * *",
+            "is_enabled": True,
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    task_id = create.json()["id"]
+
+    empty = await client.get(f"/api/v1/scheduling/{task_id}/runs", headers=headers)
+    assert empty.status_code == 200
+    assert empty.json() == []
+
+    result = await _run_scheduled_task(task_id)
+    assert result["ok"] is True
+
+    runs = await client.get(f"/api/v1/scheduling/{task_id}/runs", headers=headers)
+    assert runs.status_code == 200
+    body = runs.json()
+    assert len(body) == 1
+    assert body[0]["action"] == "check_updates"
+    assert body[0]["status"] == "succeeded"
+
+
 async def test_user_crud_via_api(client, db_session_factory):
     headers = await _api_token(client)
 
@@ -611,6 +648,44 @@ async def test_logs_api_requires_terminal_permission(client, db_session_factory,
     headers = await _api_token(client)
 
     response = await client.get(f"/api/v1/machines/{machine_id}/logs", headers=headers)
+
+    assert response.status_code == 403
+
+
+async def test_logs_browse_api_defaults_to_the_first_allowed_path(
+    client, db_session_factory, celery_calls
+):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    headers = await _api_token(client)
+    celery_calls.result_for["app.tasks.jobs.browse_machine_log_directory"] = {
+        "ok": True,
+        "entries": [{"name": "syslog", "is_dir": False}],
+    }
+
+    response = await client.get(
+        f"/api/v1/machines/{machine_id}/logs/browse", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert celery_calls.names == ["app.tasks.jobs.browse_machine_log_directory"]
+    assert celery_calls[0][2]["path"] == "/var/log"
+    body = response.json()
+    assert body["path"] == "/var/log"
+    assert body["entries"] == [{"name": "syslog", "is_dir": False}]
+
+
+async def test_logs_browse_api_requires_terminal_permission(client, db_session_factory, login_as):
+    from tests.test_onboarding import _make_machine
+
+    machine_id = await _make_machine(db_session_factory)
+    await login_as(client, permissions={Permission.MACHINE_VIEW}, api_access_enabled=True)
+    headers = await _api_token(client)
+
+    response = await client.get(
+        f"/api/v1/machines/{machine_id}/logs/browse", headers=headers
+    )
 
     assert response.status_code == 403
 

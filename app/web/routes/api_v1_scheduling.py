@@ -19,6 +19,7 @@ from app.audit import log_event
 from app.auth.dependencies import get_api_token_user, require_api_permission
 from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
+from app.db.models.scheduled_task_run import ScheduledTaskRun
 from app.db.models.user import User
 from app.db.session import get_db
 from app.scheduling.cron import compute_next_run
@@ -224,6 +225,38 @@ async def disable_scheduled_task_api(
         target_label=task.name,
     )
     return _task_to_dict(task)
+
+
+@router.get("/{task_id}/runs", dependencies=[_view])
+async def list_scheduled_task_runs_api(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """The API equivalent of `GET /scheduling/{id}/history` — every past
+    firing of this task, newest first. Not paginated: this app's own web
+    UI paginates for display, but a script fetching its own task's history
+    can reasonably want it all in one call; this table only grows one row
+    per firing of one schedule, not per machine."""
+    task = await _get_task_or_404(task_id, db, user)
+    result = await db.execute(
+        select(ScheduledTaskRun)
+        .where(ScheduledTaskRun.scheduled_task_id == task.id)
+        .order_by(ScheduledTaskRun.started_at.desc())
+    )
+    return [
+        {
+            "id": str(run.id),
+            "action": run.action,
+            "status": run.status.value,
+            "summary": run.summary,
+            "attempted": run.attempted,
+            "skipped": run.skipped,
+            "started_at": _isoformat(run.started_at),
+            "finished_at": _isoformat(run.finished_at),
+        }
+        for run in result.scalars().all()
+    ]
 
 
 @router.post("/{task_id}/run-now", dependencies=[_manage])
