@@ -126,7 +126,12 @@ def _machine_tabs(machine: Machine, user: User) -> list[tuple[str, str, str]]:
         # Logs shares Terminal's permission gate rather than plain
         # `machine.view` — see the "Logs" route's own docstring for why.
         tabs.append(("logs", "Logs", f"{base}/logs"))
-    tabs.append(("power", "Power", f"{base}/power"))
+    # No separate "Power" tab any more — reboot/shut down live directly on
+    # Overview now (see `machine_detail`'s own template), the same one-page
+    # placement a machine's few other one-off actions (test connection,
+    # discover host key) already have, rather than a whole tab for two
+    # buttons. `GET /{id}/power` itself still redirects there for anyone
+    # with the old URL bookmarked/linked — see `power_tab`.
     tabs.append(("settings", "Settings", f"{base}/edit"))
     return tabs
 
@@ -1096,6 +1101,10 @@ async def machine_detail(
             # GET /machines/{id}/packages below).
             "package_counts": await _get_package_counts(machine_id, db),
             "held_count": await _get_held_count(machine_id, db),
+            # One-time notice after a power action redirect — not persisted
+            # anywhere, just echoed back from the query string (see
+            # `power_action`'s own redirect).
+            "power_sent": request.query_params.get("power_sent"),
         },
     )
     if new_cookie:
@@ -2509,26 +2518,16 @@ async def machine_logs_browse(
 
 @router.get("/{machine_id}/power")
 async def power_tab(
-    request: Request,
-    machine_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    """The "Power" tab landing page — description plus the two confirm-flow
-    links; the actual double-confirmation happens on the dedicated pages
-    below (`GET/POST /{machine_id}/power/{action}`)."""
+    """The old "Power" tab's URL — reboot/shut down moved to Overview (see
+    `machine_detail`), so this just redirects there instead of 404ing on
+    whatever still links or is bookmarked here."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    return templates.TemplateResponse(
-        request,
-        "machines/power.html",
-        {
-            "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
-            "active_tab": "power",
-            # One-time notice after a power action redirect — not persisted
-            # anywhere, just echoed back from the query string.
-            "power_sent": request.query_params.get("power_sent"),
-        },
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(
+        url=f"/machines/{machine.id}{query}", status_code=status.HTTP_301_MOVED_PERMANENTLY
     )
 
 
@@ -2626,7 +2625,7 @@ async def power_action(
     )
 
     return RedirectResponse(
-        url=f"/machines/{machine.id}/power?power_sent={action.value}",
+        url=f"/machines/{machine.id}?power_sent={action.value}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

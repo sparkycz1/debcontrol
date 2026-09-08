@@ -1579,11 +1579,28 @@ if any) the machine's configured account has:
   terminal bytes in both directions; text frames carry small JSON control
   messages — a client-sent `resize` (cols/rows) and a server-sent `error`
   for a failure before there's a PTY.
-- **xterm.js, vendored locally** (MIT-licensed) with its `addon-fit` —
-  `app/web/static/js/xterm.min.js` / `xterm-addon-fit.min.js`,
+- **xterm.js, vendored locally** (MIT-licensed) with its `addon-fit` and
+  `addon-canvas` — `app/web/static/js/xterm.min.js` /
+  `xterm-addon-fit.min.js` / `xterm-addon-canvas.min.js`,
   `app/web/static/css/xterm.css`; never a CDN.
   `app/web/static/js/terminal.js` is this app's own CSP-safe wiring script
   (external file, no inline `<script>`).
+  **`addon-canvas` specifically fixes a CSP-caused bug, not just a
+  performance nicety**: xterm.js's default DOM renderer draws every ANSI
+  color by injecting a `<style>` element with the whole palette as CSS
+  rules — `style-src 'self'` (no `unsafe-inline`) silently blocks that, so
+  `ls --color`, a colored prompt, `htop`, etc. all rendered as plain
+  foreground-only text, with nothing visible anywhere except a CSP
+  violation in the browser console — a CSP violation is silent at the
+  Python layer (route returns 200, tests pass), exactly the class of bug
+  CLAUDE.md's "verify anything CSP-adjacent in a real browser, not just by
+  reading the code" rule exists for. The canvas addon draws glyph
+  colors straight onto a `<canvas>` (a `fillStyle` assignment, not a
+  stylesheet), which CSP's `style-src` has no say over at all —
+  `term.loadAddon(new CanvasAddon.CanvasAddon())` right after `term.open()`,
+  wrapped in try/catch so a browser with no 2D canvas support just keeps
+  the (colorless, under this CSP) DOM renderer instead of breaking the
+  whole terminal.
 - **CSP: `connect-src 'self'`**, spelled out explicitly (it previously fell
   back to `default-src 'self'`); a same-origin `ws`/`wss` upgrade is
   covered by `'self'`.

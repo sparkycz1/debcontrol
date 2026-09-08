@@ -72,6 +72,23 @@
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(container);
+
+  // xterm.js's default renderer draws each cell's colors by injecting a
+  // <style> element with the whole theme/ANSI palette as CSS rules — this
+  // app's CSP (`style-src 'self'`, no `unsafe-inline`) silently blocks
+  // that, so every ANSI color code (an `ls --color`, a colored prompt,
+  // htop, ...) rendered as plain foreground-only text with no error
+  // anywhere. The canvas addon draws glyphs and their colors straight onto
+  // a <canvas> instead — a `fillStyle` assignment, not a stylesheet — which
+  // CSP's style-src has no say over at all. Wrapped in try/catch: a
+  // browser with no 2D canvas support (essentially none in practice) just
+  // keeps the default DOM renderer instead of breaking the whole terminal.
+  try {
+    term.loadAddon(new CanvasAddon.CanvasAddon());
+  } catch (err) {
+    // Fall through to the (colorless, under this CSP) DOM renderer.
+  }
+
   fitAddon.fit();
   term.focus();
 

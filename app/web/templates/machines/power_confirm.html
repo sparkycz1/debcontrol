@@ -28,6 +28,6 @@
     <button type="submit" class="button button-danger">
       {{ t(request, "groups.power_confirm.yes", action=(t(request, "groups.power_confirm.reboot_lower") if action.value == 'reboot' else t(request, "groups.power_confirm.shutdown_lower")), target=machine.name) }}
     </button>
-    <a class="button button-secondary" href="/machines/{{ machine.id }}/power">{{ t(request, "common.cancel") }}</a>
+    <a class="button button-secondary" href="/machines/{{ machine.id }}">{{ t(request, "common.cancel") }}</a>
   </form>
 {% endblock %}

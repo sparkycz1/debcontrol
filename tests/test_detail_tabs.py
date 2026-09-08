@@ -44,7 +44,6 @@ async def test_machine_pages_all_show_the_same_tabs(client, db_session_factory):
         "updates": f"/machines/{machine_id}/updates",
         "terminal": f"/machines/{machine_id}/terminal",
         "logs": f"/machines/{machine_id}/logs",
-        "power": f"/machines/{machine_id}/power",
         "settings": f"/machines/{machine_id}/edit",
     }
     for active, url in pages.items():
@@ -80,16 +79,43 @@ async def test_machine_updates_tab_has_the_trigger_form_and_history(client, db_s
     assert f'hx-post="/machines/{machine_id}/check-updates"' in response.text
 
 
-async def test_machine_power_tab_has_reboot_and_shutdown_links(client, db_session_factory):
+async def test_machine_overview_has_reboot_and_shutdown_links(client, db_session_factory):
+    """Reboot/shut down live directly on Overview — there's no separate
+    "Power" tab any more (see `machines._machine_tabs`)."""
     await client.get("/machines/new")
     csrf_token = client.cookies.get("csrftoken")
     machine_id = await _create_machine(client, csrf_token, name="powertab")
     await _pin_host_key(db_session_factory, machine_id)
 
-    response = await client.get(f"/machines/{machine_id}/power")
+    response = await client.get(f"/machines/{machine_id}")
     assert response.status_code == 200
     assert f'href="/machines/{machine_id}/power/reboot"' in response.text
     assert f'href="/machines/{machine_id}/power/shutdown"' in response.text
+
+
+async def test_machine_overview_hides_power_without_permission(
+    client, login_as, db_session_factory
+):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="nopowertab")
+    await _pin_host_key(db_session_factory, machine_id)
+
+    await login_as(client, permissions={Permission.MACHINE_VIEW})
+    response = await client.get(f"/machines/{machine_id}")
+    assert response.status_code == 200
+    assert f'href="/machines/{machine_id}/power/reboot"' not in response.text
+
+
+async def test_old_power_tab_url_redirects_to_overview(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="oldpowerurl")
+    await _pin_host_key(db_session_factory, machine_id)
+
+    response = await client.get(f"/machines/{machine_id}/power", follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == f"/machines/{machine_id}"
 
 
 async def test_machine_settings_tab_has_edit_form_and_delete_button(client, db_session_factory):

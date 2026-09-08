@@ -674,7 +674,7 @@ async def test_power_action_requires_matching_confirmation(client, db_session_fa
         data={"action": "reboot", "confirm_name": "power-me", "csrf_token": csrf_token},
     )
     assert right.status_code == 303
-    assert right.headers["location"] == f"/machines/{machine_id}/power?power_sent=reboot"
+    assert right.headers["location"] == f"/machines/{machine_id}?power_sent=reboot"
     assert "app.tasks.jobs.send_machine_power_command" in app.state.celery_calls.names
 
 
