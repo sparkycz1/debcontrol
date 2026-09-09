@@ -154,8 +154,15 @@ def clear_session_cookie(response: Response) -> None:
 
 
 def _pending_totp_serializer() -> URLSafeTimedSerializer:
+    # digest_method=sha256, not itsdangerous's own default (HMAC-SHA1) — see
+    # wiki/Architecture.md's "FIPS alignment" section. HMAC-SHA1 is itself
+    # still FIPS-approved for a MAC, so this isn't fixing a real weakness,
+    # just removing the one non-approved-looking default in this app's
+    # otherwise SHA-2-everywhere signing.
     return URLSafeTimedSerializer(
-        get_settings().secret_key.get_secret_value(), salt=_PENDING_TOTP_SALT
+        get_settings().secret_key.get_secret_value(),
+        salt=_PENDING_TOTP_SALT,
+        signer_kwargs={"digest_method": hashlib.sha256},
     )
 
 
@@ -194,8 +201,11 @@ def clear_pending_totp_cookie(response: Response) -> None:
 
 
 def _webauthn_challenge_serializer() -> URLSafeTimedSerializer:
+    # See the digest_method comment on `_pending_totp_serializer` above.
     return URLSafeTimedSerializer(
-        get_settings().secret_key.get_secret_value(), salt=_WEBAUTHN_CHALLENGE_SALT
+        get_settings().secret_key.get_secret_value(),
+        salt=_WEBAUTHN_CHALLENGE_SALT,
+        signer_kwargs={"digest_method": hashlib.sha256},
     )
 
 

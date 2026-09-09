@@ -463,3 +463,21 @@ first, never silently discarded). Requires typing `restore` to confirm
 `ssh_data`, replaces `.env`, then starts the stack back up. Restore onto a
 checkout already on the version the backup was taken from — run
 `upgrade.sh` afterward if you need to move it forward.
+
+## Upgrading stored secrets to AES-256-GCM
+
+Every secret this app stores (machine passwords, its own SSH key, TOTP
+secrets, third-party API keys) has used AES-256-GCM since debcontrol
+0.45.0 — see [Architecture → FIPS alignment](Architecture.md#fips-alignment).
+A value encrypted by an older version is still read transparently forever
+(nothing breaks by doing nothing), but a deployment that would rather not
+carry any of the older AES-128 ciphertext going forward can upgrade every
+remaining one in a single optional pass:
+
+```bash
+docker compose exec web python scripts/reencrypt_secrets.py --dry-run  # see what would change
+docker compose exec web python scripts/reencrypt_secrets.py            # actually upgrade it
+```
+
+Re-encrypts under the same `ENCRYPTION_KEY` — this is a format upgrade,
+not a key rotation, and it's safe to run repeatedly (idempotent).

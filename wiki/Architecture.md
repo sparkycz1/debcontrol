@@ -904,12 +904,77 @@ more resources, each with its own conflict policy suited to what it holds:
 
 ### Secrets at rest
 
-Machine passwords and the app's own SSH private key are encrypted in
-Postgres using Fernet (AES + HMAC, from the `cryptography` package). The
-encryption key lives only in the `ENCRYPTION_KEY` environment variable —
-never in the database or the repo. This does **not** replace user
-authentication; it protects SSH credentials from a database-only
-compromise (a leaked backup, a misconfigured read replica).
+Machine passwords, the app's own SSH private key, TOTP secrets, and every
+third-party API key stored for the [AI assistant](AI-Assistant.md) or
+LDAP/OIDC login are encrypted in Postgres with **AES-256-GCM**
+(`app.core.security`) — a fresh random nonce per value, keyed by the full
+32 raw bytes behind `ENCRYPTION_KEY`. The encryption key lives only in
+that environment variable — never in the database or the repo. This does
+**not** replace user authentication; it protects these secrets from a
+database-only compromise (a leaked backup, a misconfigured read replica).
+See "FIPS alignment" below for why AES-256-GCM specifically, and for what
+happens to a value still stored in the older Fernet/AES-128 format.
+
+### FIPS alignment
+
+debcontrol does not claim FIPS 140-2/140-3 **certification** — that means
+running against a NIST-validated cryptographic module (a CMVP
+certificate), which is a build/deployment decision (which OpenSSL build,
+which base image) no amount of application code can grant on its own. The
+stock `python:3.14-slim` base image, the `cryptography` package's own
+vendored (Rust-built) OpenSSL, and Caddy's Go `crypto/tls` are all
+**not** FIPS-validated modules as shipped.
+
+What the app *can* control — and does — is never relying on an algorithm
+FIPS wouldn't approve, so that a deployment that needs the real
+certification only has to swap the underlying crypto module (a RHEL UBI
+base image with a validated OpenSSL provider, or a FIPS-mode load balancer
+in front of Caddy), not rewrite anything here:
+
+- **Secrets at rest**: AES-256-GCM (see above), not Fernet's AES-128 —
+  both are FIPS-approved ciphers, this is "prefer the stronger modern
+  default" rather than fixing a real weakness. `decrypt_secret` still
+  transparently reads a value left in the legacy Fernet format (nothing
+  is forcibly migrated), and `scripts/reencrypt_secrets.py` proactively
+  upgrades every remaining one in a single optional pass.
+- **Signed tickets** (`app.auth.sessions`'s pending-TOTP and WebAuthn
+  challenge tickets, `itsdangerous`) — explicit `digest_method=hashlib.sha256`
+  rather than `itsdangerous`'s own HMAC-SHA1 default. HMAC-SHA1 is itself
+  still FIPS-approved for a MAC, so again not a real weakness fixed, just
+  one non-approved-*looking* default removed from an otherwise SHA-2-only
+  app.
+- **Session tokens and the SSH host-key fingerprint** already used
+  SHA-256 from the start (`app.auth.sessions`, `app.ssh.client.
+  FINGERPRINT_HASH`) — nothing to change there.
+- **SSH connections to managed machines** (`app.ssh.client.open_connection`)
+  restrict key exchange, encryption, and MAC algorithms to an
+  approved subset — NIST-curve ECDH (P-256/384/521) or ≥2048-bit
+  finite-field DH with SHA-2, AES-GCM/AES-CTR, and HMAC-SHA-2 — excluding
+  AsyncSSH's own broader defaults (`curve25519`/`curve448` key exchange,
+  `chacha20-poly1305`, legacy ciphers, SHA-1/MD5 MACs). Deliberately
+  **not** applied to `discover_host_key_fingerprint` (the unauthenticated
+  probe that exists to *learn* whatever host key type a machine has — it
+  must stay unrestricted) or to the server host-key algorithm a connection
+  will accept (this app pins a host key by its exact fingerprint, not its
+  algorithm; narrowing that list could lock out a machine already pinned
+  on an Ed25519 key, whose signature algorithm isn't FIPS-approved but
+  whose key fingerprint is verified out-of-band regardless).
+- **TOTP** (HMAC-SHA1 per RFC 6238) and **WebAuthn/passkeys**
+  (ECDSA P-256 / RSA) already only use approved algorithms — nothing
+  changed for either.
+
+**The one deliberate exception: Argon2id for password hashing**
+(`argon2-cffi`, `app.auth.security`). FIPS/SP 800-132 only approves
+PBKDF2 for password-based key derivation — Argon2id isn't on that list at
+all. This app keeps Argon2id anyway: it's memory-hard, meaningfully more
+resistant to GPU/ASIC cracking than PBKDF2, and that resistance is exactly
+what protects an account if the password hash table itself ever leaks.
+Swapping it for PBKDF2 would trade a real security property for a
+checkbox, so treat this as a considered trade-off, not an oversight, in
+any FIPS gap assessment of this app — the goal here is to be at least as
+strong as FIPS everywhere it's free to be, and stronger than FIPS where
+that's a genuine improvement, not to match the letter of the standard at
+a real cost.
 
 ### One shared SSH identity, not one key per machine
 

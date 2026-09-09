@@ -50,6 +50,44 @@ FINGERPRINT_HASH = "sha256"
 # See the module docstring for why this specific value, not `None`.
 _NO_TRUSTED_KNOWN_HOSTS: tuple[list[object], list[object], list[object]] = ([], [], [])
 
+# Restricts every *authenticated* connection (`open_connection`, below) to
+# algorithms NIST SP 800-52/SP 800-56A/FIPS 197 approve — see
+# wiki/Architecture.md's "FIPS alignment" section for the full reasoning.
+# AsyncSSH's own (much broader) default negotiation still applies to
+# `discover_host_key_fingerprint` above, deliberately: that probe exists
+# specifically to *learn* whatever host key type a machine actually has,
+# so it must not filter any out.
+#
+# `server_host_key_algs` is intentionally left at AsyncSSH's default rather
+# than narrowed here too — this app already pins host keys by their exact
+# fingerprint, not their algorithm, and a machine already pinned on an
+# Ed25519 key (EdDSA isn't yet on the approved list) would otherwise
+# immediately fail to connect. Narrowing the channel's own key exchange/
+# encryption/MAC is the real FIPS-relevant boundary; which signature
+# algorithm authenticated a host key already pinned out-of-band is a
+# smaller concern than that.
+_FIPS_KEX_ALGS = (
+    "ecdh-sha2-nistp256",
+    "ecdh-sha2-nistp384",
+    "ecdh-sha2-nistp521",
+    "diffie-hellman-group18-sha512",
+    "diffie-hellman-group16-sha512",
+    "diffie-hellman-group14-sha256",
+)
+_FIPS_ENCRYPTION_ALGS = (
+    "aes256-gcm@openssh.com",
+    "aes128-gcm@openssh.com",
+    "aes256-ctr",
+    "aes192-ctr",
+    "aes128-ctr",
+)
+_FIPS_MAC_ALGS = (
+    "hmac-sha2-512-etm@openssh.com",
+    "hmac-sha2-256-etm@openssh.com",
+    "hmac-sha2-512",
+    "hmac-sha2-256",
+)
+
 
 class _PinnedSSHClient(asyncssh.SSHClient):
     """Accepts the connection only if the server's key matches the pinned fingerprint."""
@@ -111,6 +149,9 @@ def _build_connect_kwargs(
         "known_hosts": _NO_TRUSTED_KNOWN_HOSTS,
         "client_factory": client_factory,
         "client_keys": [],
+        "kex_algs": _FIPS_KEX_ALGS,
+        "encryption_algs": _FIPS_ENCRYPTION_ALGS,
+        "mac_algs": _FIPS_MAC_ALGS,
     }
     if machine.auth_method == AuthMethod.PASSWORD:
         kwargs["password"] = secret

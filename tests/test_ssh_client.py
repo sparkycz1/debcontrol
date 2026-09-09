@@ -1,16 +1,52 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from typing import cast
 
 import asyncssh
 import pytest
 
 from app.db.models.machine import AuthMethod, Machine
-from app.ssh.client import discover_host_key_fingerprint, open_connection
+from app.ssh.client import _build_connect_kwargs, discover_host_key_fingerprint, open_connection
 from app.ssh.exceptions import HostKeyMismatchError, UnknownHostKeyError
 
 FINGERPRINT_HASH = "sha256"
+
+
+# --- FIPS-aligned channel algorithms — see wiki/Architecture.md's "FIPS
+# alignment" section for the reasoning. `test_open_connection_succeeds_
+# with_the_correct_pinned_fingerprint` above already proves these are
+# accepted by a real AsyncSSH server; this pins down exactly *which*
+# algorithms every authenticated connection offers, so a future edit can't
+# silently widen it back out.
+
+
+def test_build_connect_kwargs_only_offers_fips_approved_algorithms():
+    machine = Machine(
+        name="fips-check",
+        ip_address="203.0.113.20",
+        port=22,
+        username="admin",
+        auth_method=AuthMethod.PASSWORD,
+        host_key_fingerprint="SHA256:fake",
+    )
+
+    def factory() -> asyncssh.SSHClient:
+        return asyncssh.SSHClient()
+
+    kwargs = _build_connect_kwargs(machine, "secret", factory)
+
+    kex_algs = cast("Sequence[str]", kwargs["kex_algs"])
+    encryption_algs = cast("Sequence[str]", kwargs["encryption_algs"])
+    mac_algs = cast("Sequence[str]", kwargs["mac_algs"])
+
+    for name in kex_algs:
+        assert "curve25519" not in name and "curve448" not in name and "sha1" not in name
+    for name in encryption_algs:
+        assert name.startswith("aes") and "cbc" not in name and "chacha" not in name
+    for name in mac_algs:
+        assert "sha2" in name and "sha1" not in name and "md5" not in name
 
 
 async def test_open_connection_refuses_without_pinned_fingerprint():
