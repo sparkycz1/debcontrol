@@ -2,8 +2,8 @@
   <img src="app/web/static/img/favicon.svg" alt="debcontrol" width="88">
 </p>
 
-<p align="center">
-# debcontrol
+<p align="center" style="font-size: 24px; font-weight: bold;">
+  debcontrol
 </p>
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
