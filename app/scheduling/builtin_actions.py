@@ -32,6 +32,8 @@ from app.services.machine_actions import (
     run_custom_command_on_machines,
     send_power_to_machines,
     trigger_check_updates,
+    trigger_facts_refresh,
+    trigger_monitoring_sample,
     trigger_updates,
 )
 from app.ssh.power import PowerAction
@@ -49,6 +51,20 @@ async def _run_check_updates(
     db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
     skipped = await trigger_check_updates(machines)
+    return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_force_facts_refresh(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    skipped = await trigger_facts_refresh(machines)
+    return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_force_monitoring_sample(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    skipped = await trigger_monitoring_sample(machines)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
@@ -108,6 +124,30 @@ def register_builtin_actions() -> None:
             label="Check for updates",
             description="Dry run — counts available updates without installing anything.",
             run=_run_check_updates,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="force_facts_refresh",
+            label="Force facts/packages/services refresh now",
+            description=(
+                "Enqueues the same four checks a machine's own \"Refresh now\" "
+                "buttons do (facts, packages, services, readiness) right away, "
+                "instead of waiting out FACTS_REFRESH_INTERVAL_SECONDS — for "
+                "verifying a fix or debugging without waiting."
+            ),
+            run=_run_force_facts_refresh,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="force_monitoring_sample",
+            label="Force monitoring sample now",
+            description=(
+                "Takes one CPU/RAM/disk/failed-services Monitoring-tab sample "
+                "right away, instead of waiting out MONITORING_INTERVAL_SECONDS."
+            ),
+            run=_run_force_monitoring_sample,
         )
     )
     register_action(

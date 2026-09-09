@@ -95,6 +95,22 @@ def test_system_update_action_has_strategy_param():
     assert param_keys == {"strategy"}
 
 
+def test_force_facts_refresh_and_monitoring_sample_actions_are_registered():
+    """Debug actions for forcing a fleet-wide sweep on demand, instead of
+    waiting out its own interval — see app.services.machine_actions.
+    trigger_facts_refresh/trigger_monitoring_sample."""
+    register_builtin_actions()
+
+    facts_action = get_action("force_facts_refresh")
+    monitoring_action = get_action("force_monitoring_sample")
+    assert facts_action is not None
+    assert monitoring_action is not None
+    assert facts_action.destructive is False
+    assert monitoring_action.destructive is False
+    assert facts_action.extra_permission is None
+    assert monitoring_action.extra_permission is None
+
+
 def test_run_command_action_is_registered_and_gated():
     register_builtin_actions()
 

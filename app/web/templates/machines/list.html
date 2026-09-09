@@ -243,7 +243,7 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th><input type="checkbox" data-select-all aria-label="Select all machines"></th>
+              <th><input type="checkbox" data-select-all="machine_ids" aria-label="{{ t(request, 'machines.bulk.select_all') }}"></th>
               <th>{{ t(request, 'machines.table.name') }}</th>
               <th>{{ t(request, 'machines.table.ip') }}</th>
               <th>{{ t(request, 'machines.table.hostname') }}</th>
@@ -290,7 +290,7 @@
         <button type="submit" formaction="/machines/bulk/check-updates" class="button button-secondary">
           {{ t(request, 'machines.bulk.check_updates') }}
         </button>
-        <select name="strategy" aria-label="Upgrade strategy for bulk update">
+        <select name="strategy" aria-label="{{ t(request, 'machines.bulk.strategy_aria') }}">
           <option value="dist_upgrade">dist-upgrade</option>
           <option value="full_upgrade">full-upgrade</option>
         </select>
@@ -302,7 +302,7 @@
           {{ t(request, 'machines.bulk.shutdown') }}
         </button>
         <input type="text" name="tags" class="inline-text-input" placeholder="{{ t(request, 'machines.bulk.tags_placeholder') }}"
-               aria-label="Tags for the buttons below">
+               aria-label="{{ t(request, 'machines.bulk.tags_aria') }}">
         <button type="submit" formaction="/machines/bulk/tags/add" class="button button-secondary">
           {{ t(request, 'machines.bulk.add_tags') }}
         </button>

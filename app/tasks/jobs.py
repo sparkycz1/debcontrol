@@ -1038,6 +1038,11 @@ def refresh_all_machine_packages() -> None:
     asyncio.run(_refresh_all_machine_packages())
 
 
+@celery_app.task(name="app.tasks.jobs.refresh_all_machine_services")
+def refresh_all_machine_services() -> None:
+    asyncio.run(_refresh_all_machine_services())
+
+
 def _truncate_output(output: str) -> str:
     if len(output) <= _MAX_STORED_OUTPUT_CHARS:
         return output

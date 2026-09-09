@@ -106,7 +106,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label for="message">{{ t(request, "ai.chat.message") }}</label>
       <textarea id="message" name="message" rows="4"
-                placeholder="e.g. nainstaluj apache2 na skupině web-servers"
+                placeholder="{{ t(request, 'ai.chat.message_placeholder') }}"
                 {% if awaiting_reply %}disabled{% endif %}></textarea>
       {% if awaiting_reply %}
         <p class="hint">{{ t(request, "ai.chat.waiting_for_reply") }}</p>

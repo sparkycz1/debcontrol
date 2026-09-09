@@ -1615,17 +1615,25 @@ machines" on a cron expression.
 - **An action registry, not a hardcoded list.** `app.scheduling.actions`
   defines a `ScheduledActionSpec` (key, label, description, optional
   per-action params, a `run` function) and `register_action()`.
-  `app.scheduling.builtin_actions.register_builtin_actions()` registers the
-  four that exist today by wrapping the same functions the manual buttons
-  use; a fifth needs only one more `register_action()` call. It's
-  idempotent and called from `app.main`, from `app.scheduling.jobs` at
-  import time, and again in each forked Celery worker child.
+  `app.scheduling.builtin_actions.register_builtin_actions()` registers
+  every action that exists today (`system_update`, `check_updates`,
+  `force_facts_refresh`, `force_monitoring_sample` — the last two force a
+  fleet-wide sweep on demand instead of waiting out its own interval, for
+  debugging — `reboot`, `shutdown`, `run_command`) by wrapping the same
+  functions the manual buttons use; a new one needs only one more
+  `register_action()` call — see this file's own action count drifting
+  out of sync with the code exactly once already as the reason this list
+  is spelled out rather than just "N actions." It's idempotent and called
+  from `app.main`, from `app.scheduling.jobs` at import time, and again in
+  each forked Celery worker child.
 - **One shared implementation for "trigger this against N machines".**
-  `_trigger_updates` / `_trigger_check_updates` / `_send_power_to_machines`
-  live in `app.services.machine_actions`, which takes no `Request` and no
-  queue handle — Celery tasks are importable objects, so it just calls
+  `trigger_updates` / `trigger_check_updates` / `trigger_facts_refresh` /
+  `trigger_monitoring_sample` / `send_power_to_machines` live in
+  `app.services.machine_actions`, which takes no `Request` and no queue
+  handle — Celery tasks are importable objects, so it just calls
   `some_task.delay(...)`. A scheduled run and a human clicking "Update now"
-  take the exact same path, including skip-unpinned-machines behavior.
+  (or a machine's own per-tab "Refresh now") take the exact same path,
+  including skip-unpinned-machines behavior.
 - **A fixed one-minute tick.** Cron expressions are minute-grained, so
   `run_due_scheduled_tasks` is a plain `crontab()` Beat entry.
   (`ping_all_machines`'s reachability sweep has its own configurable

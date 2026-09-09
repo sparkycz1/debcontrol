@@ -147,7 +147,7 @@
       <form class="form stack-gap" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="webauthn_name">{{ t(request, "account.passkeys.name_label") }}</label>
-        <input type="text" id="webauthn_name" name="name" maxlength="100" placeholder="Passkey">
+        <input type="text" id="webauthn_name" name="name" maxlength="100" placeholder="{{ t(request, 'account.passkeys.name_placeholder') }}">
         <button type="button" class="button" data-webauthn-register>{{ t(request, "account.passkeys.add") }}</button>
         <p class="hint" data-webauthn-status></p>
       </form>
@@ -208,7 +208,7 @@
       <form method="post" action="/account/api-tokens" class="form stack-gap" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="token_name">{{ t(request, "roles.table.name") }}</label>
-        <input type="text" id="token_name" name="name" maxlength="100" placeholder="monitoring script" required>
+        <input type="text" id="token_name" name="name" maxlength="100" placeholder="{{ t(request, 'account.api_tokens.name_placeholder') }}" required>
         <label for="expires_in_days">{{ t(request, "account.api_tokens.expires_in_days") }}</label>
         <input type="number" id="expires_in_days" name="expires_in_days" min="1" step="1">
         <button type="submit" class="button">{{ t(request, "account.api_tokens.create") }}</button>

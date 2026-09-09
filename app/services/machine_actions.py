@@ -21,9 +21,14 @@ from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
 from app.ssh.power import PowerAction
 from app.tasks.jobs import (
+    check_machine_readiness,
     check_machine_updates,
+    refresh_machine_facts,
+    refresh_machine_packages,
+    refresh_machine_services,
     run_machine_update,
     run_remote_ssh_command,
+    sample_machine_monitoring,
     send_machine_power_command,
 )
 
@@ -58,6 +63,36 @@ async def trigger_check_updates(machines: list[Machine]) -> int:
     eligible = [m for m in machines if m.host_key_fingerprint]
     for machine in eligible:
         check_machine_updates.delay(str(machine.id))
+    return len(machines) - len(eligible)
+
+
+async def trigger_facts_refresh(machines: list[Machine]) -> int:
+    """Enqueue the same four tasks a machine's own "Refresh now" buttons
+    do (facts, packages, services, readiness) for every eligible (pinned)
+    machine — the fleet-wide/on-demand version of the periodic sweep
+    Celery Beat already runs on `FACTS_REFRESH_INTERVAL_SECONDS`. For
+    debugging/verifying a fix without waiting out that interval — see
+    `app.scheduling.builtin_actions`'s "force_facts_refresh" action.
+    Returns skipped count."""
+    eligible = [m for m in machines if m.host_key_fingerprint]
+    for machine in eligible:
+        machine_id = str(machine.id)
+        refresh_machine_facts.delay(machine_id)
+        refresh_machine_packages.delay(machine_id)
+        refresh_machine_services.delay(machine_id)
+        check_machine_readiness.delay(machine_id)
+    return len(machines) - len(eligible)
+
+
+async def trigger_monitoring_sample(machines: list[Machine]) -> int:
+    """Enqueue a `sample_machine_monitoring` task for every eligible
+    (pinned) machine — the fleet-wide/on-demand version of the periodic
+    sweep Celery Beat already runs on `MONITORING_INTERVAL_SECONDS`, kept
+    separate from `trigger_facts_refresh` since it's on its own,
+    independently configurable cadence. Returns skipped count."""
+    eligible = [m for m in machines if m.host_key_fingerprint]
+    for machine in eligible:
+        sample_machine_monitoring.delay(str(machine.id))
     return len(machines) - len(eligible)
 
 

@@ -336,6 +336,24 @@ Postgres, Redis, and Caddy are pinned to exact versions in
 never silently bumps any of them. Bumping one is a deliberate, separate
 step: edit the tag, test against it, and commit that change on its own.
 
+## Stopping / starting the stack
+
+```bash
+./scripts/stop.sh
+./scripts/start.sh
+```
+
+`docker compose stop`/`start` on whatever's actually running — containers,
+volumes, and networks all stay in place, nothing is rebuilt or removed;
+`start.sh` brings back exactly what `stop.sh` took down. Both auto-detect
+the bundled Caddy the same way `upgrade.sh` does (`stop.sh` checks for a
+*running* Caddy container; `start.sh` checks every container for the
+project, running or not, since everything's stopped by the time you'd run
+it) and include `docker-compose.caddy.yml` automatically if so — one
+command regardless of which overlay(s) this deployment runs, same as
+`upgrade.sh`. Equivalent by hand: `docker compose stop` / `docker compose
+start` (add `-f docker-compose.caddy.yml` if running Caddy).
+
 ### If `db` refuses to start with a "pg_ctlcluster" / "unused mount/volume" error
 
 Only affects a checkout from before the `db` volume mount was corrected —
