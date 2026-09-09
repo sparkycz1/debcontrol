@@ -61,6 +61,29 @@ class MachineUpdateRun(Base):
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
+    # A JSON object of {package_name: installed_version}, captured via
+    # `dpkg-query` right before the upgrade step of a real (non-rollback)
+    # run — the basis for "Roll back this update" (see
+    # `app.ssh.updates.capture_package_snapshot` /
+    # `app.tasks.jobs._rollback_machine_update`). NULL for a run whose
+    # snapshot capture itself failed (logged, never fatal to the update
+    # itself) or one predating this feature — "Roll back" simply isn't
+    # offered for those. Never populated on a rollback run itself, since a
+    # rollback isn't something you roll back further (see
+    # `rollback_of_run_id` below).
+    package_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Set only on a rollback run, pointing at the original update run whose
+    # `package_snapshot` it was rolled back to. `ON DELETE SET NULL` rather
+    # than CASCADE: the retention purge (`app.tasks.jobs.
+    # purge_old_machine_update_runs`) or a machine deletion may remove the
+    # source run first — the rollback run's own history (what it did, to
+    # which machine) stays meaningful without it, it just loses the
+    # "rollback of run X" cross-reference.
+    rollback_of_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machine_update_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "scheduling.config_import.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "scheduling.config_import.heading") }}</h1>
+
+  <p class="hint">
+    {{ t(request, "scheduling.config_import.hint1_before") }}
+    <a href="/scheduling">{{ t(request, "nav.scheduling") }}</a>{{ t(request, "scheduling.config_import.hint1_after") | safe }}
+  </p>
+  <p class="hint">
+    {{ t(request, "scheduling.config_import.hint2") }}
+  </p>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if result %}
+    <div class="alert alert-ok">
+      <p>{{ t(request, "scheduling.config_import.created", count=(result.created_tasks | length)) }}</p>
+      {% if result.skipped_tasks %}
+        <p>{{ t(request, "scheduling.config_import.skipped", count=(result.skipped_tasks | length)) }}</p>
+        <ul>
+          {% for skipped in result.skipped_tasks %}
+            <li>{{ skipped.name }} — {{ skipped.reason }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/scheduling/config/import" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="json_text">{{ t(request, "scheduling.config_import.json_label") }}</label>
+    <textarea id="json_text" name="json_text" rows="16" required
+              placeholder='{"scheduled_tasks": [...]}'></textarea>
+    <button type="submit" class="button">{{ t(request, "scheduling.config_import.submit") }}</button>
+  </form>
+{% endblock %}

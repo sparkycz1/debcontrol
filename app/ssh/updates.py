@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TypedDict
@@ -493,3 +494,75 @@ async def preview_update(
         to_install_or_upgrade=upgrade_installed,
         to_remove=list(to_remove_by_name.values()),
     )
+
+
+# --- Rollback: snapshot installed dpkg versions, then re-install exactly
+# those versions later if an update turns out to be a mistake. Never
+# root-required to *read* (dpkg's own database is world-readable); only the
+# rollback install itself needs it, same as any other apt write. See
+# `app.tasks.jobs._run_machine_update` (captures the snapshot) and
+# `_rollback_machine_update` (uses it).
+_SNAPSHOT_COMMAND = r"dpkg-query -W -f='${Package}\t${Version}\n' 2>/dev/null"
+
+
+def parse_package_snapshot(raw: str) -> dict[str, str]:
+    """`{package_name: installed_version}` from `_SNAPSHOT_COMMAND`'s
+    tab-separated output. Pure function, no I/O, same reasoning
+    `parse_packages_output` is split out for."""
+    snapshot: dict[str, str] = {}
+    for line in raw.splitlines():
+        name, sep, version = line.strip().partition("\t")
+        if name and sep and version:
+            snapshot[name] = version
+    return snapshot
+
+
+async def capture_package_snapshot(
+    machine: Machine, secret: str | None, timeout_seconds: int
+) -> dict[str, str]:
+    """Connect and list every installed apt package with its exact current
+    version — the "before" picture a later rollback diffs against."""
+    async with await open_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(_SNAPSHOT_COMMAND, check=False, timeout=timeout_seconds)
+    stdout = result.stdout or ""
+    raw = stdout if isinstance(stdout, str) else stdout.decode()
+    return parse_package_snapshot(raw)
+
+
+def build_rollback_command(target_versions: dict[str, str]) -> str:
+    """`apt-get install` pinned to `target_versions`' exact
+    `package=version` specs, allowing a downgrade. Each `package=version`
+    spec is shell-quoted as one token (not that dpkg names/versions
+    typically need it — this is defense in depth, not a response to any
+    known injection vector: both come straight out of `dpkg-query` against
+    the machine's own package database, never from user input). Requires
+    those exact old versions to still be resolvable from a configured apt
+    source (the local cache, an unchanged mirror, or a snapshot/pinning
+    repo) — if the old `.deb` is gone, apt fails with its own clear "unable
+    to locate package version" error, surfaced in the run's stored output
+    like any other apt failure."""
+    specs = " ".join(
+        shlex.quote(f"{package}={version}") for package, version in sorted(target_versions.items())
+    )
+    return f"{{ {_apt(f'{_DPKG_NONINTERACTIVE_FLAGS} --allow-downgrades install {specs}')}; }} 2>&1"
+
+
+async def run_rollback(
+    machine: Machine,
+    secret: str | None,
+    target_versions: dict[str, str],
+    connect_timeout_seconds: int,
+    run_timeout_seconds: int,
+) -> UpdateResult:
+    """Connect and re-install exactly `target_versions`. Buffered (not
+    streamed like `run_system_update`) — a rollback installs only the
+    packages that actually changed, so it's normally much quicker than a
+    full update run, and doesn't warrant the extra complexity of live
+    progress."""
+    script = build_rollback_command(target_versions)
+    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
+        result = await conn.run(script, check=False, timeout=run_timeout_seconds)
+    stdout = result.stdout or ""
+    output = stdout if isinstance(stdout, str) else stdout.decode()
+    exit_status = result.exit_status if result.exit_status is not None else -1
+    return UpdateResult(exit_status=exit_status, output=output)

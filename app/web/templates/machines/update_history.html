@@ -64,7 +64,10 @@
         {% for run in runs %}
           <tr>
             <td>{{ run.created_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
-            <td>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</td>
+            <td>
+              {{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}
+              {% if run.rollback_of_run_id %}<span class="badge">{{ t(request, "machine.update_run.rollback_badge") }}</span>{% endif %}
+            </td>
             <td>
               {% if run.status.value in ('pending', 'running') %}
                 <span class="badge badge-warn">{{ run.status.value }}</span>

@@ -26,6 +26,8 @@ from app.scheduling.cron import compute_next_run
 from app.scheduling.jobs import run_scheduled_task
 from app.scheduling.targets import target_within_scope, task_within_scope
 from app.schemas.scheduled_task import ScheduledTaskCreate
+from app.schemas.scheduling_config import SchedulingConfigExport
+from app.services.scheduling_config import export_scheduling_config, import_scheduling_config
 
 router = APIRouter(prefix="/api/v1/scheduling")
 
@@ -91,6 +93,39 @@ async def _require_target_in_scope(
                 'isn\'t available ("all_machines" never is).'
             ),
         )
+
+
+@router.get("/config/export", dependencies=[_view])
+async def export_scheduling_config_api(
+    db: AsyncSession = Depends(get_db),
+) -> SchedulingConfigExport:
+    """The API equivalent of `GET /scheduling/config/export` — see
+    `app.services.scheduling_config`. Not scoped to `user`, same as the
+    web route: reaching this at all already requires `scheduling.view`
+    fleet-wide."""
+    return await export_scheduling_config(db)
+
+
+@router.post("/config/import", dependencies=[_manage])
+async def import_scheduling_config_api(
+    request: Request,
+    payload: SchedulingConfigExport,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The API equivalent of `POST /scheduling/config/import` — each task
+    checked against `user`'s machine-group scope and per-action permission,
+    same as `create_scheduled_task_api`. See
+    `app.services.scheduling_config` for the full skip policy."""
+    result = await import_scheduling_config(db, payload, user)
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.config_import",
+        summary=result.summary(),
+        details=result.to_dict(),
+    )
+    return result.to_dict()
 
 
 @router.get("", dependencies=[_view])

@@ -379,3 +379,87 @@ throwaway container with the `pg_data` volume mounted at
 `/var/lib/postgresql`, and inside it `mkdir -p 18 && mv data 18/docker`
 (adjust if you'd already customized `PGDATA`/cluster name), then bring the
 stack back up with the corrected `docker-compose.yml`.
+
+## Backups
+
+```bash
+./scripts/backup.sh
+```
+
+Writes one timestamped directory under `./backups/` (override with
+`BACKUP_DIR` in `.env`) holding everything needed to rebuild this instance
+from nothing on a fresh host:
+
+- `db.sql.gz` — a `pg_dump` of the whole database, taken live via
+  Postgres's own MVCC snapshot (the stack does **not** need to be stopped
+  for this).
+- `ssh_data.tar.gz` — the app's own SSH identity keypair (the `ssh_data`
+  Docker volume). Without this, restoring the database alone leaves
+  debcontrol unable to SSH into a single machine in the fleet — every host
+  has this key's *old* public half in its `authorized_keys`, and a restore
+  with a fresh key can't reach any of them until you re-push it, or
+  restore this file back.
+- `env.backup` — a copy of `.env`. In particular `ENCRYPTION_KEY`: every
+  `AuthMethod.PASSWORD` machine's stored credential is `Fernet`-encrypted
+  with it, so a database restored under a *different* `ENCRYPTION_KEY`
+  turns those into permanently unreadable ciphertext — there is no way to
+  recover them after the fact, not even by hand.
+
+Old backup directories are pruned automatically — anything older than
+`BACKUP_RETENTION_DAYS` (default 14, override in `.env`) is deleted at the
+end of every run, so this is safe to leave running unattended forever
+without slowly filling the disk.
+
+**The backup directory holds secrets in the clear** (`env.backup`, and the
+private key inside `ssh_data.tar.gz`) — it's created `chmod 600`-ish
+(group/other access stripped) but that only protects against other local
+accounts on the same host. Copy it somewhere access-controlled and
+ideally off this host (object storage, another server's own backup job
+pulling over `rsync`/`scp`, ...) rather than trusting a local disk alone;
+losing the host and its `./backups/` directory together is the same as
+never having backed up at all.
+
+### Automating it with cron
+
+Run it daily at, say, 03:15 server time — as the same user that normally
+runs `docker compose` here (needs Docker socket access), with output
+mailed/logged rather than silently discarded so a failure doesn't go
+unnoticed:
+
+```bash
+crontab -e
+```
+
+```cron
+15 3 * * * cd /path/to/debcontrol && ./scripts/backup.sh >> /var/log/debcontrol-backup.log 2>&1
+```
+
+Adjust `/path/to/debcontrol` to the actual checkout path (`pwd` from
+inside it), and make sure `/var/log/` (or wherever you point the log) is
+writable by that user — `touch /var/log/debcontrol-backup.log && chown
+that-user /var/log/debcontrol-backup.log` if it isn't yet. Check the log
+after the first scheduled run to confirm it actually succeeded, and
+periodically after that — a cron job that silently stopped working is
+worse than no backup job, since it looks like there's one until the day
+you need it.
+
+If you'd rather ship backups straight off the host instead of relying on
+someone to sync `./backups/` separately, append a second line to the same
+cron entry (or a follow-up cron job a few minutes later) that
+`rsync`/`scp`/`aws s3 sync`s the freshly-created directory (or the whole
+`BACKUP_DIR`) to wherever your off-host storage is.
+
+### Restoring
+
+```bash
+./scripts/restore.sh backups/20260909T031500Z
+```
+
+**Destructive** — replaces the current database, the `ssh_data` volume,
+and `.env` outright (the current `.env` is saved as `.env.pre-restore`
+first, never silently discarded). Requires typing `restore` to confirm
+(`--yes` skips that, for a scripted DR runbook). Stops `web`/`worker`/
+`beat`, drops and recreates the database from `db.sql.gz`, replaces
+`ssh_data`, replaces `.env`, then starts the stack back up. Restore onto a
+checkout already on the version the backup was taken from — run
+`upgrade.sh` afterward if you need to move it forward.

@@ -7,9 +7,11 @@ jobs that evaluate and fire these.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -35,7 +37,9 @@ from app.scheduling.targets import (
     task_within_scope,
 )
 from app.schemas.scheduled_task import ScheduledTaskCreate
+from app.schemas.scheduling_config import SchedulingConfigExport
 from app.services.access_scope import groups_visible_to, is_restricted, machines_visible_to
+from app.services.scheduling_config import export_scheduling_config, import_scheduling_config
 from app.web.templating import templates
 
 router = APIRouter(
@@ -192,6 +196,103 @@ async def list_scheduled_tasks(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.get("/config/export")
+async def export_scheduling_config_endpoint(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """Config-as-code export of every scheduled task, targets resolved to
+    machine/group **names** so the file is portable across deployments —
+    see `app.services.scheduling_config`. Same convenience `GET
+    /machines/config/export` and `GET /roles/config/export` already give."""
+    export = await export_scheduling_config(db)
+
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.config_export",
+        summary=f"Exported configuration for {len(export.scheduled_tasks)} scheduled task(s)",
+        details={"task_count": len(export.scheduled_tasks)},
+    )
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return Response(
+        content=export.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="scheduling-config-{timestamp}.json"'
+        },
+    )
+
+
+@router.get("/config/import")
+async def import_scheduling_config_form(request: Request) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "scheduling/config_import.html",
+        {"csrf_token": csrf_token, "errors": [], "result": None},
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/config/import", dependencies=[_manage, Depends(verify_csrf)])
+async def import_scheduling_config_submit(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    json_text: str = Form(""),
+) -> Response:
+    """Create real `ScheduledTask` rows from a pasted JSON export (see `GET
+    /scheduling/config/export`) — each one checked against `current_user`'s
+    machine-group scope and per-action permission exactly like the manual
+    "New scheduled task" form, and skipped (not silently created) if either
+    fails. See `app.services.scheduling_config` for the full skip policy,
+    including unresolved targets and an unknown action."""
+    text = json_text.strip()
+    if not text:
+        return templates.TemplateResponse(
+            request,
+            "scheduling/config_import.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "errors": ["Paste some exported JSON text first."],
+                "result": None,
+            },
+        )
+
+    try:
+        payload = SchedulingConfigExport.model_validate_json(text)
+    except ValidationError as exc:
+        return templates.TemplateResponse(
+            request,
+            "scheduling/config_import.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "errors": [f"Invalid configuration JSON: {exc}"],
+                "result": None,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    result = await import_scheduling_config(db, payload, current_user)
+
+    await log_event(
+        db,
+        request=request,
+        action="scheduled_task.config_import",
+        summary=result.summary(),
+        details=result.to_dict(),
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "scheduling/config_import.html",
+        {"csrf_token": request.state.csrf_token, "errors": [], "result": result},
+    )
 
 
 @router.get("/{task_id}/history")

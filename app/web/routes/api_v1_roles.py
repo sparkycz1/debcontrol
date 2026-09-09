@@ -18,10 +18,36 @@ from app.auth.login import count_active_users_with_permission
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.session import get_db
 from app.schemas.role import RoleSave
+from app.schemas.role_config import RoleConfigExport
+from app.services.role_config import export_role_config, import_role_config
 
 router = APIRouter(prefix="/api/v1/roles")
 
 _manage = Depends(require_api_permission(Permission.USER_MANAGE))
+
+
+@router.get("/config/export", dependencies=[_manage])
+async def export_role_config_api(db: AsyncSession = Depends(get_db)) -> RoleConfigExport:
+    """The API equivalent of `GET /roles/config/export` — see
+    `app.services.role_config` for the conflict-handling policy import
+    uses."""
+    return await export_role_config(db)
+
+
+@router.post("/config/import", dependencies=[_manage])
+async def import_role_config_api(
+    request: Request, payload: RoleConfigExport, db: AsyncSession = Depends(get_db)
+) -> dict[str, object]:
+    """The API equivalent of `POST /roles/config/import`."""
+    result = await import_role_config(db, payload)
+    await log_event(
+        db,
+        request=request,
+        action="role.config_import",
+        summary=result.summary(),
+        details=result.to_dict(),
+    )
+    return result.to_dict()
 
 
 def _role_to_dict(role: Role) -> dict[str, object]:

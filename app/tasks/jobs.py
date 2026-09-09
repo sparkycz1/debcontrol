@@ -24,6 +24,7 @@ keep pointing at the parent's connection pool.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shlex
 import time
@@ -70,7 +71,13 @@ from app.ssh.reachability import ReachabilityResult, check_reachable
 from app.ssh.readiness import DIRECT_FIX_COMMAND, missing_requirements
 from app.ssh.readiness import check_machine_readiness as run_readiness_probes
 from app.ssh.services import gather_services
-from app.ssh.updates import check_updates, preview_update, run_system_update
+from app.ssh.updates import (
+    capture_package_snapshot,
+    check_updates,
+    preview_update,
+    run_rollback,
+    run_system_update,
+)
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -1085,6 +1092,23 @@ async def _run_machine_update(run_id: str) -> None:
 
         secret = await resolve_machine_credential(machine, session)
 
+        # Captured before the upgrade itself starts — the "before" picture
+        # "Roll back this update" (`_rollback_machine_update` below) later
+        # diffs against. A failure here (unreachable machine, timeout) is
+        # logged and never fails the update run itself — it only means
+        # rollback won't be offered for this particular run, same as a run
+        # from before this feature existed.
+        try:
+            snapshot = await capture_package_snapshot(machine, secret, settings.ssh_connect_timeout)
+            run.package_snapshot = json.dumps(snapshot)
+        except (SSHConnectionError, TimeoutError) as exc:
+            logger.warning(
+                "Package snapshot capture failed for %s before update run %s: %s",
+                machine.name,
+                run.id,
+                exc,
+            )
+
         # Persists apt's output as it arrives, so the update-run page (which
         # polls `partials/update_run_status.html` every 3s) shows it live
         # instead of only once the whole run has finished. Throttled to at
@@ -1135,6 +1159,96 @@ async def _run_machine_update(run_id: str) -> None:
 )
 def run_machine_update(run_id: str) -> None:
     asyncio.run(_run_machine_update(run_id))
+
+
+async def _rollback_machine_update(run_id: str) -> None:
+    """Execute one rollback `MachineUpdateRun` (`rollback_of_run_id` set) —
+    re-install every package whose version changed since the source run's
+    `package_snapshot`, back to exactly what it was. See
+    `app.ssh.updates.build_rollback_command` for the caveat this depends
+    on (the old `.deb` still being resolvable from a configured apt
+    source) and `app/web/routes/machines.py`'s `rollback_machine_update_endpoint`
+    for how this run gets created.
+
+    Diffs against a **freshly captured** current snapshot rather than
+    blindly replaying every package in the source snapshot — only
+    packages whose version actually differs are touched, so a rollback
+    run days later doesn't also revert something *else* that was updated
+    in the meantime for unrelated reasons, and a rollback with nothing
+    left to undo (e.g. run twice) is a fast no-op instead of a full apt
+    invocation."""
+    settings = get_settings()
+
+    async with db_session.AsyncSessionLocal() as session:
+        run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
+        if run is None:
+            return
+
+        machine = await session.get(Machine, run.machine_id)
+        source_run = (
+            await session.get(MachineUpdateRun, run.rollback_of_run_id)
+            if run.rollback_of_run_id
+            else None
+        )
+        if machine is None or source_run is None or not source_run.package_snapshot:
+            run.status = UpdateRunStatus.FAILED
+            run.error = "The source update run's package snapshot is no longer available."
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        run.status = UpdateRunStatus.RUNNING
+        run.started_at = datetime.now(UTC)
+        await session.commit()
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            snapshot: dict[str, str] = json.loads(source_run.package_snapshot)
+            current = await capture_package_snapshot(machine, secret, settings.ssh_connect_timeout)
+            target_versions = {
+                package: version
+                for package, version in snapshot.items()
+                if package in current and current[package] != version
+            }
+            if not target_versions:
+                run.output = (
+                    "Nothing to roll back — every snapshotted package's installed version "
+                    "already matches the pre-update snapshot."
+                )
+                run.status = UpdateRunStatus.SUCCEEDED
+            else:
+                result = await run_rollback(
+                    machine,
+                    secret,
+                    target_versions,
+                    settings.ssh_connect_timeout,
+                    settings.update_timeout_seconds,
+                )
+                run.output = _truncate_output(result.output)
+                if result.exit_status == 0:
+                    run.status = UpdateRunStatus.SUCCEEDED
+                else:
+                    run.status = UpdateRunStatus.FAILED
+                    run.error = f"apt exited with status {result.exit_status}."
+        except (SSHConnectionError, TimeoutError) as exc:
+            logger.warning("rollback_machine_update failed for %s: %s", machine.name, exc)
+            run.status = UpdateRunStatus.FAILED
+            run.error = str(exc)
+
+        run.finished_at = datetime.now(UTC)
+        await session.commit()
+
+    refresh_machine_packages.delay(str(run.machine_id))
+    check_machine_updates.delay(str(run.machine_id))
+
+
+@celery_app.task(
+    name="app.tasks.jobs.rollback_machine_update",
+    time_limit=get_settings().update_timeout_seconds,
+)
+def rollback_machine_update(run_id: str) -> None:
+    asyncio.run(_rollback_machine_update(run_id))
 
 
 async def _check_machine_updates(machine_id: str) -> dict[str, Any]:

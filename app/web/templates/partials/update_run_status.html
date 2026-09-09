@@ -20,6 +20,13 @@
     {{ t(request, "machine.update_run.strategy_label") }} <code>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
   </p>
 
+  {% if run.rollback_of_run_id %}
+    <p class="hint">
+      {{ t(request, "machine.update_run.is_rollback") }}
+      <a href="/machines/{{ run.machine_id }}/updates/{{ run.rollback_of_run_id }}">{{ t(request, "machine.updates.details") }}</a>
+    </p>
+  {% endif %}
+
   {% if run.started_at %}
     <p class="hint">{{ t(request, "machine.update_run.started", when=(run.started_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) }}</p>
   {% endif %}
@@ -35,6 +42,15 @@
     <pre>{{ run.output }}</pre>
   {% elif run.status.value in ('pending', 'running') %}
     <p class="hint">{{ t(request, "machine.update_run.waiting_for_output") }}</p>
+  {% endif %}
+
+  {% if run.status.value == 'succeeded' and run.package_snapshot and not run.rollback_of_run_id and request.state.user.has_permission('action.updates') %}
+    <form method="post" action="/machines/{{ run.machine_id }}/updates/{{ run.id }}/rollback"
+          class="inline-form" data-confirm="{{ t(request, 'machine.update_run.rollback_confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+      <button type="submit" class="button button-secondary">{{ t(request, "machine.update_run.rollback") }}</button>
+    </form>
+    <p class="hint">{{ t(request, "machine.update_run.rollback_hint") }}</p>
   {% endif %}
 
   {% if run.status.value == 'failed' and request.state.user.has_permission('ai.access') %}

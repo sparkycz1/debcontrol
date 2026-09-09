@@ -877,6 +877,31 @@ creates directly into `Machine`/`MachineGroup` — unlike CSV bulk-import
 `PendingMachine` review queue because those inputs describe genuinely
 unknown hosts.
 
+The same config-as-code convenience — export as JSON, import elsewhere,
+same "one service function, two doors" web+API pattern — extends to two
+more resources, each with its own conflict policy suited to what it holds:
+
+- **Roles** (`app.services.role_config`, `GET`/`POST
+  /roles/config/{export,import}`): a full, lossless round-trip of every
+  `Role` and its exact permission set — no credentials involved, unlike
+  machines. An existing role name is **skipped**; a permission string this
+  instance doesn't recognize (an export from a newer version) is dropped
+  from the imported role and called out, rather than failing the import.
+- **Scheduling** (`app.services.scheduling_config`, `GET`/`POST
+  /scheduling/config/{export,import}`): every `ScheduledTask`, its
+  machine/group target resolved to a **name**, not an id, so the file is
+  portable to a different deployment. Import re-resolves that name against
+  the destination instance and **skips** the task (never partially, never
+  against the wrong same-named machine) if it isn't found there, or if the
+  action key isn't registered on this instance. Unlike machines/roles, a
+  task name isn't unique in the data model, so this is always create-only
+  — re-importing the same file twice creates two identical schedules.
+  Every imported task is also checked against the importing account's own
+  machine-group scope and, for an action like `run_command` with an
+  `extra_permission`, that permission too — exactly what the manual "New
+  scheduled task" form already enforces, so import can't be used to plant
+  a task outside what that account could create by hand.
+
 ### Secrets at rest
 
 Machine passwords and the app's own SSH private key are encrypted in
@@ -1003,6 +1028,46 @@ permission, same pinned-fingerprint check, same audit action code
   `_CHECK_UPDATES_COMMAND`, and `parse_apt_simulated_changes`
   (`app/ssh/updates.py`) is a pure, I/O-free sibling of
   `parse_apt_upgradable_packages`, parsing `Inst `/`Remv `-prefixed lines.
+
+### Rolling back an update
+
+Every real update run captures a "before" picture — `dpkg-query -W`'s
+`{package: version}` output — right before the upgrade step, stored as
+`MachineUpdateRun.package_snapshot` (`app.ssh.updates.
+capture_package_snapshot`, called from `_run_machine_update`). A failure
+to capture it (unreachable machine, timeout) is logged and never fails the
+update run itself — it just means "Roll back this update" isn't offered
+for that particular run, same as any run from before this feature existed.
+
+`POST /machines/{id}/updates/{run_id}/rollback` (needs the same
+`action.updates` permission running an update itself does — undoing one
+isn't a higher trust level) creates a **new** `MachineUpdateRun` row with
+`rollback_of_run_id` pointing at the source run, then
+`app.tasks.jobs._rollback_machine_update`:
+
+1. Captures a **fresh** snapshot of the machine's current package versions
+   — not a blind replay of the old one.
+2. Diffs it against the source run's stored snapshot, keeping only
+   packages whose version has actually changed since. A package updated by
+   something else entirely (a different run, a manual `apt` command
+   outside debcontrol) between the original run and the rollback is left
+   alone — the diff only ever undoes what this specific run appears to
+   have changed, and running the same rollback twice is a fast no-op the
+   second time.
+3. If anything's left to revert, re-installs exactly those old
+   `package=version` specs via `apt-get install --allow-downgrades`
+   (`app.ssh.updates.build_rollback_command`) — this requires the old
+   `.deb` to still be resolvable from a configured apt source (the local
+   cache, an unchanged mirror, or a pinning/snapshot repo); if it isn't,
+   apt fails with its own clear error, surfaced in the run's output like
+   any other apt failure.
+
+The rollback run is a first-class row in the same update-run history (with
+a "rollback" badge), not an edit to the original — both stay exactly as
+they happened. A rollback of a rollback is refused (`400`) to avoid
+building a chain; roll back to a specific earlier state by rolling back
+*that* run directly. `POST /api/v1/machines/{id}/updates/{run_id}/rollback`
+mirrors the web route.
 
 ### Checking for updates without installing them
 

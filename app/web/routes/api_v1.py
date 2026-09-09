@@ -99,7 +99,12 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.tasks import jobs as tasks
-from app.tasks.jobs import preview_machine_update, run_machine_update, send_machine_power_command
+from app.tasks.jobs import (
+    preview_machine_update,
+    rollback_machine_update,
+    run_machine_update,
+    send_machine_power_command,
+)
 from app.web.machine_search import apply_tag_filter
 
 router = APIRouter(prefix="/api/v1")
@@ -202,6 +207,11 @@ def _update_run_to_dict(run: MachineUpdateRun) -> dict[str, object]:
         "status": run.status.value,
         "output": run.output,
         "error": run.error,
+        # Not the raw snapshot (a full package list per run is a lot to hand
+        # back for something most callers only need as a yes/no) — just
+        # whether "Roll back this update" is available for this run.
+        "has_package_snapshot": run.package_snapshot is not None,
+        "rollback_of_run_id": str(run.rollback_of_run_id) if run.rollback_of_run_id else None,
         "started_at": _isoformat(run.started_at),
         "finished_at": _isoformat(run.finished_at),
         "created_at": _isoformat(run.created_at),
@@ -1306,6 +1316,52 @@ async def trigger_machine_update_api(
         details={"strategy": payload.strategy.value, "run_id": str(run.id)},
     )
     return _update_run_to_dict(run)
+
+
+@router.post("/machines/{machine_id}/updates/{run_id}/rollback", dependencies=[_action_updates])
+async def rollback_machine_update_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The API equivalent of `POST /machines/{id}/updates/{run_id}/rollback`
+    — see `app/web/routes/machines.py`'s `rollback_machine_update_endpoint`
+    and `app.tasks.jobs._rollback_machine_update`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    source_run = await db.get(MachineUpdateRun, run_id)
+    if source_run is None or source_run.machine_id != machine.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
+    if source_run.status != UpdateRunStatus.SUCCEEDED or not source_run.package_snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This update run has no captured package snapshot to roll back to.",
+        )
+    if source_run.rollback_of_run_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Can't roll back a rollback."
+        )
+
+    rollback_run = MachineUpdateRun(
+        machine_id=machine.id, strategy=source_run.strategy, rollback_of_run_id=source_run.id
+    )
+    db.add(rollback_run)
+    await db.commit()
+    await db.refresh(rollback_run)
+    rollback_machine_update.delay(str(rollback_run.id))
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.updates.rollback",
+        summary=f'Triggered rollback of update run {source_run.id} on "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"source_run_id": str(source_run.id), "rollback_run_id": str(rollback_run.id)},
+    )
+    return _update_run_to_dict(rollback_run)
 
 
 @router.post("/machines/{machine_id}/check-updates", dependencies=[_action_updates])

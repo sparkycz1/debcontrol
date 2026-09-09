@@ -12,9 +12,11 @@ leave nobody able to manage users (see
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +25,13 @@ from sqlalchemy.orm import selectinload
 from app.audit import log_event
 from app.auth.dependencies import require_permission
 from app.auth.login import count_active_users_with_permission
-from app.core.csrf import verify_csrf
+from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.session import get_db
 from app.schemas.role import RoleSave
+from app.schemas.role_config import RoleConfigExport
+from app.services.role_config import export_role_config, import_role_config
 from app.web.templating import templates
 
 router = APIRouter(
@@ -155,6 +159,95 @@ async def create_role(request: Request, db: AsyncSession = Depends(get_db)) -> R
         target_label=role.name,
     )
     return RedirectResponse(url="/roles", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/config/export")
+async def export_role_config_endpoint(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """Config-as-code export of every role and its permissions — same
+    "structural config, JSON round-trip" convenience `GET
+    /machines/config/export` gives machines/groups. See
+    `app.services.role_config`."""
+    export = await export_role_config(db)
+
+    await log_event(
+        db,
+        request=request,
+        action="role.config_export",
+        summary=f"Exported configuration for {len(export.roles)} role(s)",
+        details={"role_count": len(export.roles)},
+    )
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return Response(
+        content=export.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="role-config-{timestamp}.json"'},
+    )
+
+
+@router.get("/config/import")
+async def import_role_config_form(request: Request) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "roles/config_import.html",
+        {"csrf_token": csrf_token, "errors": [], "result": None},
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/config/import", dependencies=[Depends(verify_csrf)])
+async def import_role_config_submit(
+    request: Request, db: AsyncSession = Depends(get_db), json_text: str = Form("")
+) -> Response:
+    """Create real `Role`/`RolePermission` rows from a pasted JSON export
+    (see `GET /roles/config/export`). See `app.services.role_config` for
+    the conflict-handling policy."""
+    text = json_text.strip()
+    if not text:
+        return templates.TemplateResponse(
+            request,
+            "roles/config_import.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "errors": ["Paste some exported JSON text first."],
+                "result": None,
+            },
+        )
+
+    try:
+        payload = RoleConfigExport.model_validate_json(text)
+    except ValidationError as exc:
+        return templates.TemplateResponse(
+            request,
+            "roles/config_import.html",
+            {
+                "csrf_token": request.state.csrf_token,
+                "errors": [f"Invalid configuration JSON: {exc}"],
+                "result": None,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    result = await import_role_config(db, payload)
+
+    await log_event(
+        db,
+        request=request,
+        action="role.config_import",
+        summary=result.summary(),
+        details=result.to_dict(),
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "roles/config_import.html",
+        {"csrf_token": request.state.csrf_token, "errors": [], "result": result},
+    )
 
 
 @router.get("/{role_id}/edit")

@@ -5,7 +5,11 @@
 {% block content %}
   <div class="page-header">
     <h1>{{ t(request, "nav.scheduling") }}</h1>
-    <a class="button" href="/scheduling/new">{{ t(request, "scheduling.new") }}</a>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/scheduling/config/export">{{ t(request, "scheduling.config_import.export") }}</a>
+      <a class="button button-secondary" href="/scheduling/config/import">{{ t(request, "scheduling.config_import.import") }}</a>
+      <a class="button" href="/scheduling/new">{{ t(request, "scheduling.new") }}</a>
+    </div>
   </div>
 
   {% if ran %}

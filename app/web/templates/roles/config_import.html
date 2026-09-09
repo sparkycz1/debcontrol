@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "role.config_import.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "role.config_import.heading") }}</h1>
+
+  <p class="hint">
+    {{ t(request, "role.config_import.hint1_before") }}
+    <a href="/roles">{{ t(request, "roles.title") }}</a>{{ t(request, "role.config_import.hint1_after") | safe }}
+  </p>
+  <p class="hint">
+    {{ t(request, "role.config_import.hint2") }}
+  </p>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if result %}
+    <div class="alert alert-ok">
+      <p>{{ t(request, "role.config_import.created", count=(result.created_roles | length)) }}</p>
+      {% if result.skipped_roles %}
+        <p>{{ t(request, "role.config_import.skipped", count=(result.skipped_roles | length)) }}</p>
+        <ul>
+          {% for skipped in result.skipped_roles %}
+            <li>{{ skipped.name }} — {{ skipped.reason }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+    {% if result.unknown_permission_warnings %}
+      <div class="alert alert-warn">
+        <p>{{ t(request, "role.config_import.unknown_permission_warning") }}</p>
+        <ul>
+          {% for permission in result.unknown_permission_warnings %}<li>{{ permission }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post" action="/roles/config/import" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="json_text">{{ t(request, "role.config_import.json_label") }}</label>
+    <textarea id="json_text" name="json_text" rows="16" required
+              placeholder='{"roles": [...]}'></textarea>
+    <button type="submit" class="button">{{ t(request, "role.config_import.submit") }}</button>
+  </form>
+{% endblock %}
