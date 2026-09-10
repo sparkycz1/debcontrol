@@ -1,5 +1,7 @@
 # 🛠️ Development
 
+*Ruff, mypy, pytest, one alembic head — the gate that keeps main green, and CI runs the exact same one.*
+
 ## 📦 Setup
 
 ```bash

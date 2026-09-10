@@ -1,5 +1,7 @@
 # 🤖 Ansible onboarding
 
+*Machine Requirements, but you never had to type any of it yourself.*
+
 Everything in [Machine Requirements](Machine-Requirements.md)
 done by hand, in one playbook run: installs/enables `sshd`, creates a
 dedicated non-root user with debcontrol's SSH public key, grants that user

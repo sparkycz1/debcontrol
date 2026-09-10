@@ -1,5 +1,7 @@
 # 🖥️ Host requirements & scaling to a large fleet
 
+*Sizing the thing that watches your fleet, not the fleet itself.*
+
 This page is about **debcontrol's own host(s)** — the machine(s) running
 the Docker Compose stack (web, worker, beat, Postgres, Redis) — not the
 Debian/Ubuntu machines it manages. For those, see

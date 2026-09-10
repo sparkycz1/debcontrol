@@ -1,5 +1,7 @@
 # 🏗️ Architecture
 
+*The deep-dive reference — every "why", including the ones learned the hard way. Start at [Home](Home.md) if you just want the map.*
+
 ## 🧱 Stack
 
 | Layer | Choice | Notes |

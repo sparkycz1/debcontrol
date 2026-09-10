@@ -1,5 +1,7 @@
 # 🔑 SSH host key verification
 
+*Paranoid by design — a stranger with a keyboard between you and your server never gets the benefit of the doubt.*
+
 ## ⚠️ No trust on first use
 
 Most SSH tooling trusts whatever host key a server presents the first time

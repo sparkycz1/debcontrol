@@ -1,5 +1,7 @@
 # 🖥️ Machine requirements
 
+*Good news: a stock Debian install is already 90% of the way there.*
+
 What a **managed machine** — the Debian/Ubuntu machines debcontrol
 connects to over SSH, not debcontrol's own host — needs network-wise,
 account-wise, and package-wise to be added and managed. Short version: a

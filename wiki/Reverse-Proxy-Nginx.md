@@ -1,5 +1,7 @@
 # 🔒 Reverse proxy: nginx
 
+*You already have nginx running everything else on this box — fine, it can have this too.*
+
 Use this if you already run nginx on the host where debcontrol's
 `docker compose up -d --build` (the base file, without
 `docker-compose.caddy.yml`) is running, exposing the app on

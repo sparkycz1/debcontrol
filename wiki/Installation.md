@@ -1,5 +1,7 @@
 # 📦 Installation
 
+*One `docker compose up`, and the fleet-herding begins.*
+
 debcontrol ships as a Docker Compose stack: PostgreSQL 18.6, Redis 8.10.1,
 the web app, a **Celery worker**, a **Celery Beat scheduler**, and an
 optional Caddy reverse proxy.

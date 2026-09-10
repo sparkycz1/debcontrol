@@ -1,5 +1,7 @@
 # 🔒 Reverse proxy: Caddy
 
+*HTTPS with zero certificate ceremony — Caddy just handles it.*
+
 There are two ways to use Caddy with debcontrol:
 
 - **Bundled**: `docker-compose.caddy.yml` in this repo runs Caddy for you,
