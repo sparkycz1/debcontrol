@@ -187,17 +187,15 @@ module must not silently orphan queued messages. The names are a contract.
 #### Fork safety: the DB engine is rebuilt in every worker child
 
 > [!IMPORTANT]
-> This bug **never shows up in the test suite** — tests run against
-> in-memory SQLite in a single process. It only bites a real Postgres
-> deployment.
+> Never shows up in the test suite (in-memory SQLite, single process) —
+> only a real Postgres deployment.
 
-Celery's default worker pool is **prefork**. The parent imports the entire
-application — including `app/db/session.py`, which builds its async engine
-and session factory as module-level singletons at import time — and *then*
-forks, so every child would inherit the same asyncpg pool and the same open
-TCP sockets to Postgres. Symptoms: sporadic
-`InterfaceError`/`InternalClientError`, results arriving for the wrong
-query, or a wedged worker.
+Celery's default worker pool is **prefork**: the parent imports the whole
+app — including `app/db/session.py`'s module-level async engine — and
+*then* forks, so every child would otherwise inherit the same asyncpg
+pool and open TCP sockets. Symptoms: sporadic
+`InterfaceError`/`InternalClientError`, results for the wrong query, a
+wedged worker.
 
 `app/tasks/celery_app.py` connects a **`worker_process_init`** signal
 handler that builds a fresh engine and session factory inside each forked
