@@ -2,96 +2,74 @@
 
 *Machine Requirements, but you never had to type any of it yourself.*
 
-Everything in [Machine Requirements](Machine-Requirements.md)
-done by hand, in one playbook run: installs/enables `sshd`, creates a
-dedicated non-root user with debcontrol's SSH public key, grants that user
-passwordless sudo scoped to exactly what debcontrol needs, and
-self-registers the machine so it shows up as **pending** in the
-**Machines** tab. Lives in [`ansible/`](../ansible/) at the repo root:
+Everything in [Machine Requirements](Machine-Requirements.md) done by
+hand, in one playbook run: installs/enables `sshd`, creates a dedicated
+non-root user with debcontrol's SSH public key, grants scoped
+passwordless sudo, self-registers the machine as **pending**. Lives in
+[`ansible/`](../ansible/):
 
 - [`debcontrol-onboard.yml`](../ansible/debcontrol-onboard.yml) — the playbook
 - [`inventory.example.ini`](../ansible/inventory.example.ini) — copy to `inventory.ini`
 - [`group_vars/all.yml.example`](../ansible/group_vars/all.yml.example) — copy to `group_vars/all.yml`
 
-It's safe to re-run — every task is idempotent (Ansible's
-`apt`/`user`/`copy`/`authorized_key` modules all are).
+Safe to re-run — every task is idempotent.
 
 > [!TIP]
-> **Don't want to run Ansible yourself?** debcontrol can do the equivalent
-> setup itself, from the web UI, over the one-time root credential you'd
-> otherwise hand to this playbook: add the machine normally (**Machines →
-> Add machine**) with that root login, confirm its host key fingerprint as
-> usual, then use **Run initial setup** on the machine's Settings tab. It
-> creates the same dedicated user, installs debcontrol's own SSH public
-> key, and grants the same scoped sudo — directly over the SSH connection
-> this app already has, not by shelling out to `ansible-playbook` (no
-> Ansible dependency to add to the worker image for it) — and switches the
-> machine to that new identity on success. The one difference: it doesn't
-> self-register as *pending* first, since the machine already exists by
-> the time you run it. See `app/ssh/onboarding.py`.
+> **No Ansible? No problem.** debcontrol does the equivalent itself, from
+> the web UI, over the one-time root credential you'd otherwise hand to
+> this playbook: add the machine (**Machines → Add machine**), confirm
+> its host key, then **Run initial setup** on Settings. Same dedicated
+> user, same key, same scoped sudo — direct over the connection this app
+> already has, no Ansible dependency needed. Only difference: no
+> self-register-as-pending step, since the machine already exists. See
+> `app/ssh/onboarding.py`.
 
-**It never creates a manageable machine by itself.** The playbook's last
-step is the same `POST /api/inform` self-registration described in
-[Machine Requirements](Machine-Requirements.md#self-registration-optional-for-future-automation) —
-it only creates a *pending* entry. Approving it (pinning the host key
-fingerprint, confirming it's really the machine you meant) is still a
-separate, deliberate step a human does in the **Machines** tab. See
-[Architecture](Architecture.md#self-registration-is-not-the-same-as-trust).
+**It never creates a manageable machine by itself.** The last step is
+the same `POST /api/inform` self-registration
+[Machine Requirements](Machine-Requirements.md#self-registration-optional-for-future-automation)
+describes — a *pending* entry only. Pinning the host key and confirming
+it's really your machine is still a deliberate human step in
+**Machines**. See [Architecture](Architecture.md#self-registration-is-not-the-same-as-trust).
 
 ## ✅ Requirements
 
-- Ansible on the machine you run the playbook from (not on the target) —
-  `ansible-core` plus the `ansible.posix` collection for the
-  `authorized_key` module (bundled if you installed the full `ansible`
-  package; otherwise `ansible-galaxy collection install ansible.posix`).
-- SSH access to the target *before* running this — your own key or a cloud
-  image's default account, since this playbook is what installs
-  debcontrol's own key. Set `ansible_user` (and `ansible_ssh_private_key_file`
-  if needed) in the inventory for that account.
-- `become: true` is set in the playbook — the account Ansible connects as
-  needs to become root (directly, or via passwordless/interactive sudo,
-  whichever your `ansible.cfg`/inventory already assumes for this host).
-  This is separate from — and only needed once, up front — the
-  passwordless sudo the playbook then sets up *for debcontrol's own user*.
+- Ansible on the machine you run *from* (not the target) —
+  `ansible-core` + the `ansible.posix` collection for `authorized_key`
+  (`ansible-galaxy collection install ansible.posix` if not bundled).
+- SSH access to the target *before* running this (your own key, or a
+  cloud image's default account) — this playbook is what installs
+  debcontrol's key. Set `ansible_user`
+  (+`ansible_ssh_private_key_file` if needed) in the inventory.
+- `become: true` — the connecting account needs root, once, up front.
+  Separate from the passwordless sudo the playbook then sets up *for
+  debcontrol's own user*.
 
 ## ⚙️ Setup
 
-1. Copy the two example files and fill them in:
+1. Copy the two example files (both gitignored — the inventory can hold
+   real hostnames, the vars file a bearer token; prefer `--extra-vars`/
+   `ansible-vault` over the file if several people share this checkout):
    ```bash
    cd ansible
    cp inventory.example.ini inventory.ini
    cp group_vars/all.yml.example group_vars/all.yml
    ```
-   Both `inventory.ini` and `group_vars/all.yml` are gitignored — the
-   inventory can list real internal hostnames and the vars file holds a
-   bearer token. Prefer `--extra-vars` or `ansible-vault` over
-   `group_vars/all.yml` for the token if several people share this
-   checkout.
-
-2. Fill in `inventory.ini` with the machine(s) to onboard, and whichever
-   account Ansible should connect as *initially* (see Requirements above).
-
-3. Fill in `group_vars/all.yml`:
-   - `debcontrol_ssh_public_key` — debcontrol's **Settings** page, "SSH
-     identity" panel. Paste it exactly as shown, one line, quoted.
-   - `debcontrol_url` — your debcontrol instance's base URL, no trailing
-     slash (e.g. `https://debcontrol.example.com`).
-   - `debcontrol_inform_token` — either the shared `INFORM_TOKEN` from
-     debcontrol's `.env`, or (recommended, since it's attributable and
-     individually revocable) a per-user API token from **My account**,
-     created by a user whose role has "Manage machines". See
-     [Architecture](Architecture.md#per-user-api-tokens-gated-by-a-separate-account-level-flag-inheriting-the-role-live)
-     for how these tokens work.
-
+2. Fill `inventory.ini`: the machine(s), and the account to connect as
+   *initially* (see Requirements).
+3. Fill `group_vars/all.yml`:
+   - `debcontrol_ssh_public_key` — **Settings** → SSH identity, pasted exactly.
+   - `debcontrol_url` — base URL, no trailing slash.
+   - `debcontrol_inform_token` — the shared `INFORM_TOKEN`, or
+     (recommended — attributable, individually revocable) a per-user API
+     token from **My account** (role needs "Manage machines"). See
+     [Architecture](Architecture.md#per-user-api-tokens-gated-by-a-separate-account-level-flag-inheriting-the-role-live).
 4. Run it:
    ```bash
    ansible-playbook -i inventory.ini debcontrol-onboard.yml
    ```
-
-5. Go to debcontrol's **Machines** tab — the machine is now listed under
-   **Pending**. Review it, then add it properly (confirm/pin its SSH host
-   key fingerprint — still a manual, deliberate step; see
-   [SSH Host Key Verification](SSH-Host-Key-Verification.md)).
+5. **Machines** tab → **Pending**. Review, then confirm/pin its host key
+   fingerprint — still a manual step; see
+   [SSH Host Key Verification](SSH-Host-Key-Verification.md).
 
 ## 🧭 What it does, and what it deliberately doesn't
 

@@ -2,14 +2,10 @@
 
 *Good news: a stock Debian install is already 90% of the way there.*
 
-What a **managed machine** — the Debian/Ubuntu machines debcontrol
-connects to over SSH, not debcontrol's own host — needs network-wise,
-account-wise, and package-wise to be added and managed. Short version: a
-stock Debian install already satisfies almost all of this. Doing all of it
-by hand is the point of this page; see
-[Ansible Onboarding](Ansible-Onboarding.md) for a playbook that does it
-for you. For debcontrol's own host requirements, see
-[Host Requirements](Host-Requirements.md).
+What a **managed machine** — the Debian/Ubuntu box debcontrol SSHes into,
+not debcontrol's own host — needs network/account/package-wise. Doing it
+by hand is the point of this page; [Ansible Onboarding](Ansible-Onboarding.md)
+automates it. For debcontrol's *own* host, see [Host Requirements](Host-Requirements.md).
 
 ## 🌐 Network
 
@@ -24,18 +20,13 @@ for you. For debcontrol's own host requirements, see
 
 ## OS
 
-- **Officially supported: Debian and its derivatives (e.g. Ubuntu), for as
-  long as each is supported by its own upstream/developer.** The policy is
-  "any currently-supported deb-based release" rather than a fixed list of
-  version numbers. Nothing in debcontrol is Debian-version-specific:
-  everything it runs (`dpkg`, `apt`, `systemd`'s `shutdown`, and optionally
-  `flatpak`/`snap`) is standard tooling any Debian-based distribution ships
-  or can install.
-- `sshd` (the `openssh-server` package) installed and running. This is
-  included by default on most Debian installation profiles (it's an
-  explicit checkbox in the graphical installer, ticked by default when
-  "SSH server" is selected) but is worth double-checking on a minimal /
-  debootstrap-based image:
+- **Officially supported: Debian and its derivatives (e.g. Ubuntu), for
+  as long as each is supported upstream** — any currently-supported
+  deb-based release, not a fixed version list. Nothing here is
+  Debian-version-specific: `dpkg`, `apt`, `systemd`'s `shutdown`, and
+  optionally `flatpak`/`snap` are all standard tooling.
+- `sshd` (`openssh-server`) installed and running — on by default in
+  most installer profiles, worth double-checking on a minimal/debootstrap image:
   ```bash
   sudo apt install openssh-server
   sudo systemctl enable --now ssh
@@ -43,23 +34,20 @@ for you. For debcontrol's own host requirements, see
 
 ## 👤 Account
 
-- A user for debcontrol to connect as. A dedicated non-root user with
-  passwordless sudo scoped to `apt-get` (see "System updates" below) is
-  recommended over connecting as `root` directly.
-- **SSH key auth (recommended):** append the public key shown on
-  debcontrol's **Settings** page to that user's
-  `~/.ssh/authorized_keys`:
+- A user for debcontrol to connect as — dedicated, non-root, scoped
+  passwordless sudo (see "System updates" below), rather than raw `root`.
+- **SSH key auth (recommended):** append the public key from
+  debcontrol's **Settings** page:
   ```bash
   echo 'ssh-ed25519 AAAA... debcontrol' >> ~/.ssh/authorized_keys
   chmod 600 ~/.ssh/authorized_keys
   ```
-  This is a manual step today — debcontrol uses
+  Manual today — debcontrol uses
   [one shared SSH identity](Architecture.md#one-shared-ssh-identity-not-one-key-per-machine),
   not a key per machine.
-- **Password auth:** supported as a fallback (the UI marks it as not
-  recommended). Make sure `PasswordAuthentication yes` is set in
-  `/etc/ssh/sshd_config` if you go this route — many hardened Debian
-  images disable it by default.
+- **Password auth:** a supported fallback (marked not-recommended in the
+  UI). Needs `PasswordAuthentication yes` in `/etc/ssh/sshd_config` —
+  many hardened images disable it by default.
 
 ## 🔍 Fact gathering — no agent, no extra packages
 
@@ -85,35 +73,26 @@ the exact command:
 | Filesystem usage (used/free/%) | `df -B1 --output=...` | `coreutils` |
 | Network interfaces + IPv4 addresses | `ip -4 -o addr show` | `iproute2` |
 
-None of these need root — including "reboot required," which is worked
-out by comparing the running kernel (`uname -r`) against the newest
-`linux-image-*` package `dpkg` knows is installed; if they differ, a
-reboot would pick up the newer one — **except RAM speed**, which is the
-one fact that genuinely can't be read without root (there's no
-`/proc`/`/sys` entry for memory clock speed; only SMBIOS type 17 via
-`dmidecode` has it). debcontrol tries `sudo -n dmidecode -t 17` first,
-falling back to a plain `dmidecode -t 17` for a `root`-connected account,
-and simply leaves `ram_speed_mhz` unknown if neither works — this one fact
-is optional, not a reason to grant broader root access just for it.
-**Machines onboarded through this app (either onboarding path) already
-have this** — the sudoers rule below is bundled into the same
-`/etc/sudoers.d/debcontrol` file "System updates and power actions" below
-describes, not a separate step. Add it by hand only for a machine that was
-onboarded before this was added, or one set up outside either onboarding
-path entirely — the app's own **Machines → a machine → Overview** page
-flags this (and anything else missing) with a banner and an in-app fix, so
-reaching for a manual `visudo` is rarely necessary:
+None of these need root — including "reboot required" (compares running
+kernel vs. the newest `linux-image-*` `dpkg` knows about) — **except RAM
+speed**, the one fact genuinely unreadable without it (only SMBIOS type
+17 via `dmidecode` has it; no `/proc`/`/sys` entry exists). Tries
+`sudo -n dmidecode -t 17`, falls back to plain `dmidecode -t 17` for a
+root-connected account, leaves `ram_speed_mhz` unknown if neither works
+— optional, not worth broader root access for. **Machines onboarded
+through this app already have this** (bundled into the same sudoers file
+"System updates" below describes) — add it by hand only for a
+pre-existing or externally-provisioned machine; **Overview** flags
+what's missing with an in-app fix, so manual `visudo` is rarely needed:
 
 ```
 # /etc/sudoers.d/debcontrol
 debcontrol ALL=(root) NOPASSWD: /usr/sbin/dmidecode
 ```
 
-If a command is missing (e.g. a container-like minimal rootfs without
-`util-linux` or `iproute2`), that one fact is simply left empty/unknown
-rather than failing the whole refresh. Filesystem usage excludes
-pseudo-filesystems (`tmpfs`, `devtmpfs`, `squashfs`, `overlay`) — only
-real, sized mounts are shown.
+Missing command (e.g. a minimal rootfs without `util-linux`/`iproute2`)?
+That one fact is left empty, not a failed refresh. Filesystem usage
+excludes pseudo-filesystems (`tmpfs`, `devtmpfs`, `squashfs`, `overlay`).
 
 ## 📦 Installed packages — also no agent, no root
 
@@ -129,187 +108,115 @@ after any update run on that machine. Also no root needed:
 | snap | `snap list` | skipped if `snap` isn't installed |
 | apt held/pinned | `apt-mark showhold` | marks matching apt entries above |
 
-Neither flatpak nor snap is required — each is simply omitted from the
-list (and from "System updates" below) when absent. See
+Neither flatpak nor snap is required — simply omitted when absent. See
 `app/ssh/packages.py`.
 
-A package apt has been told to hold (`apt-mark hold <package>`) shows a
-"held" badge in the list — held packages are still installed and listed
-normally, they're just excluded from `dist-upgrade`/`full-upgrade` until
-unheld, which is worth knowing when a machine's upgrade count doesn't
-match your expectations.
+A held package (`apt-mark hold`) shows a "held" badge — still listed
+normally, just excluded from `dist-upgrade`/`full-upgrade` until unheld
+(worth knowing when an upgrade count looks off).
 
-**Fleet-wide search**: **Machines → Package search** looks across every
-machine's most recent package snapshot at once — e.g. after a CVE
-announcement, to find every machine still running a vulnerable version.
+**Fleet-wide search**: **Machines → Package search** checks every
+machine's latest snapshot at once — handy right after a CVE announcement.
 
 ## ⚡ System updates and power actions — require root
 
-Running updates (**Machines → a machine → System updates**: `apt-get
-update`, then `dist-upgrade` or `full-upgrade`, then
-`autoremove`/`autoclean`, then `flatpak update` and `snap refresh` if
-installed) and reboot/shutdown (**Machines → a machine → Power**,
-`shutdown -r now` / `shutdown -h now`) always need root. Checking what's
-available without installing anything (the same panel's "Check for
-updates now") needs root only for the apt part (`apt-get update`) —
-flatpak's `flatpak remote-ls --updates` and snap's `snap refresh --list`
-are both read-only and don't. See `app/ssh/updates.py` and
-`app/ssh/power.py` for the exact commands. Two ways to satisfy the root
-requirement:
+Running updates (`apt-get update` → `dist-upgrade`/`full-upgrade` →
+`autoremove`/`autoclean` → `flatpak update`/`snap refresh` if present)
+and reboot/shutdown always need root. "Check for updates now" needs root
+only for the apt part — flatpak/snap listing is read-only. See
+`app/ssh/updates.py` / `app/ssh/power.py`. Two ways to get root:
 
-- Connect as `root` directly (simplest, least isolated — many hardened
-  Debian images disable direct root SSH login by policy, so this may not
-  even be available).
-- **(Recommended)** Connect as a non-root user with passwordless sudo
-  scoped to just what's needed:
+- Connect as `root` directly (simplest, least isolated — often disabled
+  by policy on hardened images).
+- **(Recommended)** Non-root user, scoped passwordless sudo:
   ```
   # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
   debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
-  # Add these two only if flatpak/snap are installed and you want debcontrol
-  # to keep them updated too:
+  # Only if flatpak/snap are installed and you want them kept updated too:
   debcontrol ALL=(root) NOPASSWD: /usr/bin/flatpak, /usr/bin/snap
   ```
-  (replace `debcontrol` with whatever username you configured; on a
-  pre-usrmerge system the paths are `/sbin/shutdown` instead — check with
-  `which shutdown`). debcontrol always calls sudo as `sudo -n ...`
-  (non-interactive) — if passwordless sudo isn't set up correctly, the
-  action fails immediately with a clear error instead of hanging on a
-  password prompt. Without the flatpak/snap sudoers lines, the apt part of
-  an update run still succeeds — the flatpak/snap steps just fail
-  individually (visible in the run's stored output) rather than blocking
-  the rest.
+  (pre-usrmerge: `/sbin/shutdown` — check `which shutdown`). Always
+  `sudo -n` (non-interactive) — broken sudo fails fast and clearly rather
+  than hanging on a password prompt. Missing the flatpak/snap lines just
+  fails those two steps individually, doesn't block apt.
 
-Connecting as `root` directly needs none of the above — every privileged
-command tries `sudo -n` first and, if that fails, just runs directly
-instead, which is exactly what happens for an account that's already
-root. This also means a root-connected machine's readiness check (below)
-never asks for a sudo grant it doesn't need: the one thing it can still be
-missing is `ncurses-term`, which the "Install now" button on that page
-installs directly with the credential already on file — no password
-prompt, since there's nothing left to escalate.
+Root directly needs none of the above — every privileged command tries
+`sudo -n` first, falls straight through if that fails. A root-connected
+machine's readiness check only ever flags `ncurses-term`, fixable with
+one click (no password prompt — nothing left to escalate).
 
-Reboot and shutdown are double-confirmed in the UI (a dedicated warning
-page, then typing the machine's — or group's — name exactly); there's no
-undo once sent. All three actions — update, check for
-updates, reboot/shutdown — can also be put on a cron schedule (see
-**Scheduling** in the nav); a schedule someone deliberately created doesn't
-get a second confirmation prompt each time it fires, but destructive
-actions are clearly flagged when setting one up. There's no scheduled
-"power on" — the app has no way to turn on a machine that's already off.
+Reboot/shutdown are double-confirmed (a warning page, then typing the
+machine/group name exactly) — no undo. All three actions can be put on a
+cron schedule (**Scheduling**) — a deliberately-created schedule skips
+the per-fire confirmation, but destructive ones are flagged clearly at
+setup time. No scheduled "power on" exists — can't turn on what's already off.
 
-All three can also be triggered against an ad-hoc selection right from
-the **Machines** list — tick the checkboxes you want (a "select all" box
-in the header ticks every visible row) and use the action bar below the
-table — without first having to put those machines in a group. Power
-still requires typing a fixed confirmation phrase (`SELECTED MACHINES`),
-same double-confirmation as everywhere else. This is on top of, not
-instead of, the existing group and "All machines" versions of the same
-actions.
+All three also work against an ad-hoc selection straight from the
+**Machines** list (checkboxes + action bar), no group required — Power
+still needs the typed confirmation phrase (`SELECTED MACHINES`). On top
+of, not instead of, the group/"All machines" versions.
 
-Config-file conflicts during an upgrade are resolved automatically in
-favor of keeping your existing config (`--force-confdef --force-confold`)
-rather than prompting — the standard safe default for unattended Debian
-upgrades. A run's full output (stdout+stderr combined) is stored and
-shown in the UI so you can review exactly what happened.
+Config-file conflicts during an upgrade resolve in favor of your
+existing config (`--force-confdef --force-confold`), the standard
+unattended-Debian-upgrade default. Full stdout+stderr is stored and shown.
 
 ### Which packages, not just how many
 
-The update-availability panel also shows *which* apt packages, flatpak
-apps, and snaps are pending (name and version, under a "Which ... ?"
-disclosure), not just the counts. This comes from whichever "check for
-updates" run happened most recently for that machine: the automatic
-periodic sweep (same cadence as facts), the "Check for updates now"
-button, or a **scheduled task** using the "check_updates" action (see
-**Scheduling** in the nav). There's no separate history — whatever ran
-last is what's shown.
+The availability panel also shows *which* packages are pending (name +
+version), from whichever "check for updates" ran most recently —
+periodic sweep, the manual button, or a scheduled `check_updates` task.
+No separate history; whatever ran last is what's shown.
 
 ## 🖧 Interactive terminal
 
-**Machines → a machine → Terminal** (if your role has been granted the
-`action.terminal` permission) needs nothing beyond ordinary SSH access —
-the same account and key/password auth already set up above, and a shell
-configured for that account. It doesn't need root, sudo, or any extra
-package: whatever the connecting account can do at an interactive SSH
-prompt is exactly what the browser terminal can do, since it's the same
-shell.
+**Terminal** (needs `action.terminal`) needs nothing beyond ordinary SSH
+access — same account, no extra root/sudo/package. Whatever that account
+can do at a shell prompt is exactly what the browser terminal can do.
 
-**Full 256-color output, colors, and box-drawing (htop, less, vim, ...)**:
+**Full 256-color (htop, less, vim, ...)**: xterm.js negotiates
+`TERM=xterm-256color`, needing the `ncurses-term` terminfo entry (not in
+a minimal install by default — only base entries are guaranteed).
+Missing it doesn't error, it just silently degrades to a near-blank,
+flat rendering. **This app's own onboarding installs it automatically**;
+anything onboarded another way needs:
+```sh
+sudo apt-get install -y ncurses-term
+```
+Also requests `LANG`/`LC_ALL=C.UTF-8` for proper Unicode box-drawing
+(minimal servers often default to the POSIX "C" locale) — best-effort,
+works as long as sshd's `AcceptEnv`/`SetEnv` allows it (Debian/Ubuntu's default).
 
-- The browser terminal (xterm.js) can render the full 256-color palette,
-  so it negotiates `TERM=xterm-256color` — which needs the terminfo entry
-  `ncurses-term` ships, an *extra* package a minimal install doesn't have
-  by default (only the base `ncurses-base` entries — `xterm`, `vt100`,
-  `screen`, `linux`, ... — are guaranteed present). Requesting a `TERM`
-  the remote can't look up doesn't fail loudly; ncurses silently falls
-  back to a near-blank capability set instead, which is what a flat
-  monochrome/ASCII-only `htop` actually is. **This app's own onboarding**
-  (both the [Ansible playbook](Ansible-Onboarding.md) and the web UI's
-  **Run initial setup**) **installs `ncurses-term` automatically,
-  best-effort** — a machine onboarded through this app gets full color
-  out of the box; one that wasn't needs it installed by hand:
-  ```sh
-  sudo apt-get install -y ncurses-term
-  ```
-  Its absence isn't a hard failure either way — colors/box-drawing just
-  degrade to a flatter rendering, same as any terminal asking for a
-  terminfo entry the remote doesn't have.
-- The session also requests `LANG`/`LC_ALL=C.UTF-8`, so ncurses apps draw
-  meters/borders with proper Unicode block/box-drawing characters instead
-  of falling back to plain ASCII (`|` instead of a colored block) — a
-  minimal, non-interactively-provisioned server commonly defaults its
-  login shell to the POSIX/"C" locale otherwise. This is a best-effort SSH
-  environment request: it works as long as sshd's `AcceptEnv`/`SetEnv`
-  allows `LANG`/`LC_*`, which is Debian/Ubuntu's own sshd_config default.
-
-**Copy/paste** works both directions via the system clipboard —
-Ctrl/Cmd+Shift+C copies the current selection, Ctrl/Cmd+Shift+V pastes,
-and right-click does whichever makes sense (copies if there's a selection,
-otherwise pastes), the same convention PuTTY and most native terminal
-emulators use. This needs nothing on the managed machine's side — it's
-entirely a browser-side (Clipboard API) feature, which in turn needs a
-secure context: the debcontrol web UI itself reached over HTTPS (or
-`localhost`) — see the reverse-proxy wiki pages if it currently isn't.
+**Copy/paste** — system clipboard both ways (Ctrl/Cmd+Shift+C/V, or
+right-click), PuTTY-style. Entirely browser-side (Clipboard API), needs a
+secure context (HTTPS or `localhost`) — see the reverse-proxy pages if
+that's not yet true for you. Nothing needed on the machine's side.
 
 ## 📜 Logs
 
-**Machines → a machine → Logs** — gated behind the same `action.terminal`
-permission as the interactive terminal above (see that permission's own
-docstring in `app/db/models/role.py` for why: reading journal/log content
-is a materially different trust level than a plain fact, even though it
-needs no root, and this app doesn't grant it any capability the terminal
-didn't already have).
+Gated behind the same `action.terminal` permission — reading logs is a
+materially different trust level than a plain fact, even without root.
 
-- **The systemd journal** (the default view) needs no root — `journalctl`
-  is readable by any account in the `systemd-journal`/`adm` group, which
-  covers the default `debconrol` onboarding account and most distributions'
-  default interactive-user setup. If the connecting account genuinely can't
-  read the journal, the tab reports that plainly rather than silently
-  showing nothing.
-- **Viewing a specific file** is restricted to a configurable allowlist of
-  path prefixes (`LOG_FILE_ALLOWED_PATHS`, default `/var/log,/var/lib/
-  docker/containers`) — a scope guardrail in the app's own UI, not a
-  permission the connecting SSH account needs; whatever that account can
-  already read via `tail`/`grep` at a shell prompt is what this can show,
-  same "no new capability beyond the terminal" reasoning as above.
+- **Journal** (default view) needs no root — `journalctl` is readable by
+  the `systemd-journal`/`adm` group (covers the default onboarding
+  account). Can't read it? The tab says so plainly, doesn't just go blank.
+- **A specific file** is restricted to a configurable allowlist
+  (`LOG_FILE_ALLOWED_PATHS`, default `/var/log,/var/lib/docker/containers`)
+  — an app-side scope guardrail, not an SSH permission; shows whatever
+  that account could already `tail`/`grep` at a prompt anyway.
 
 ## Self-registration (optional, for future automation)
 
-A machine can announce itself to debcontrol during first boot /
-provisioning by POSTing to `/api/inform` with a shared bearer token
-(`INFORM_TOKEN`, set in debcontrol's `.env`). This only creates a
-*pending* entry for a human to review in the **Machines** tab — it grants
-no access on its own (see
+A machine can announce itself during first boot by POSTing to
+`/api/inform` with a shared bearer token (`INFORM_TOKEN` in `.env`) — a
+*pending* entry only, no access granted (see
 [Architecture](Architecture.md#self-registration-is-not-the-same-as-trust)).
 
-The shell script below is the manual, minimal version of this. If you'd
-rather not write it yourself — and want the account/sudo/SSH-key setup
-above done at the same time — see
-[Ansible Onboarding](Ansible-Onboarding.md) for a playbook that does all
-of it, including this POST, in one run.
+The script below is the manual, minimal version. Want the
+account/sudo/key setup done at the same time? See
+[Ansible Onboarding](Ansible-Onboarding.md) — one playbook, one run.
 
-This needs `curl` (or an equivalent HTTP client), which — unlike the
-fact-gathering tools above — is **not** always present on a minimal
-Debian install:
+Needs `curl` — unlike the fact-gathering tools above, **not** guaranteed
+on a minimal Debian install:
 
 ```bash
 sudo apt install curl
@@ -340,10 +247,9 @@ curl -sf -X POST "$DEBCONTROL_URL/api/inform" \
   }"
 ```
 
-Treat `DEBCONTROL_INFORM_TOKEN` like a password: anyone who has it can
-create pending entries (though, again, not manage anything). Bake it into
-a golden image or secrets-injected cloud-init template rather than a
-shell history.
+Treat `DEBCONTROL_INFORM_TOKEN` like a password — anyone with it can
+create pending entries (not manage anything). Bake it into a golden
+image or secrets-injected cloud-init template, not shell history.
 
 ## ✅ Summary checklist
 

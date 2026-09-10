@@ -8,14 +8,11 @@
 uv sync
 ```
 
-Installs the project's dependencies into `.venv`, needed for the tests,
-linting, and type-checking below. There is no supported way to run the
-app itself outside Docker — see [Installation](Installation.md) to bring
-up the full stack (web, worker, beat, Postgres, Redis) with
-`python scripts/setup.py` or `docker compose up -d --build`. Iterate by
-editing code and re-running `docker compose up -d --build`, or add a
-volume mount + `--reload` to `docker-compose.yml`'s `web` service yourself
-for faster turnaround.
+Installs deps into `.venv` for the tests/linting/type-checking below.
+No supported way to run the app itself outside Docker — see
+[Installation](Installation.md) for the full stack. Iterate by
+re-running `docker compose up -d --build`, or add a volume mount +
+`--reload` to `web` in `docker-compose.yml` yourself for faster turnaround.
 
 ## ✅ Tests
 
@@ -24,11 +21,10 @@ uv run pytest
 ```
 
 Tests never touch real Postgres, Redis, **or a Celery broker**:
-`tests/conftest.py` sets dummy config values before `app.main` is imported,
-overrides the `get_db` dependency with an isolated in-memory SQLite session
-per test, and monkeypatches `celery.app.task.Task.apply_async` (what
-`.delay()` calls underneath) so no message is ever published. The suite is
-independent of `docker compose` being up at all.
+`tests/conftest.py` sets dummy config before `app.main` imports,
+overrides `get_db` with an isolated in-memory SQLite session per test,
+and monkeypatches `Task.apply_async` (what `.delay()` calls) so nothing
+is ever published. Independent of `docker compose` being up at all.
 
 Two fixtures exist specifically for background work:
 
@@ -94,10 +90,9 @@ Models live in `app/db/models/`. After changing one:
 uv run alembic revision --autogenerate -m "describe the change"
 ```
 
-Then **read the generated migration** — autogenerate is a good first
-draft, not a guarantee of correctness (it can miss things like
-check-constraint changes, or get column-type changes on Postgres wrong).
-Apply it locally:
+Then **read the generated migration** — a good first draft, not a
+guarantee (check-constraint changes, Postgres column-type changes can
+come out wrong). Apply it locally:
 
 ```bash
 uv run alembic upgrade head
@@ -295,13 +290,10 @@ design. Two separate things:
 > [!TIP]
 > **Anything CSP-adjacent must be verified in a real browser, not just by
 > reading the code.** Vendored JS/CSS, a new inline `style=`/`<script>`, a
-> third-party bundle's boot sequence — CSP violations and missing-file/
-> wrong-global mistakes are silent at the Python layer (routes return 200,
-> tests pass) and only show up as a blank widget and a console error in an
-> actual browser. Two real examples from this codebase: an inline `style=`
-> attribute on the SSH terminal's container was silently dropped under this
-> app's strict CSP, collapsing it to zero height; and Swagger UI
-> (`GET /api`) needs *two* vendored bundles — loading only
-> `swagger-ui-bundle.js` renders a bare, chrome-less widget with a
-> `Could not find component: StandaloneLayout` console warning, because the
-> topbar/layout chrome ships in `swagger-ui-standalone-preset.js`.
+> third-party bundle's boot sequence — CSP violations are silent at the
+> Python layer (routes return 200, tests pass), only showing up as a
+> blank widget + console error in an actual browser. Two real examples
+> here: an inline `style=` on the terminal's container got silently
+> dropped, collapsing it to zero height; Swagger UI needs *two* vendored
+> bundles, or it renders chrome-less with a `Could not find component:
+> StandaloneLayout` warning.

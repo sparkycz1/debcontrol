@@ -8,13 +8,10 @@ optional Caddy reverse proxy.
 
 ## ✅ Prerequisites
 
-- Docker and Docker Compose v2 (the `docker compose` subcommand, not the
-  old standalone `docker-compose`).
-- A domain name pointing at this host, **only if** you want to use the
-  bundled Caddy for automatic HTTPS. Not needed if you already have a
-  reverse proxy, or you're just trying this out over plain HTTP locally.
-- Python 3 on the host, **only for the automated setup below** (stdlib
-  only — nothing else to install first).
+- Docker + Docker Compose v2 (`docker compose`, not the old standalone `docker-compose`).
+- A domain name — **only** for the bundled Caddy's automatic HTTPS. Skip
+  it with your own reverse proxy, or plain HTTP locally.
+- Python 3 on the host — **only** for the automated setup below (stdlib only).
 
 ## 🚀 Option A — automated setup (recommended)
 
@@ -24,47 +21,32 @@ cd debcontrol
 python scripts/setup.py
 ```
 
-One interactive wizard does everything: copies `.env.example` to `.env`
-and fills in every secret with a freshly generated random value
-(`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
-`INFORM_TOKEN`), then asks:
+One interactive wizard does everything: copies `.env.example` to `.env`,
+fills every secret with a fresh random value (`SECRET_KEY`,
+`ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `INFORM_TOKEN`),
+then asks:
 
-1. **Timezone** (IANA name, e.g. `Europe/Prague`) — used both for every
-   container's own clock and for how the app displays timestamps in the
-   UI. Defaults to UTC.
-2. **Whether to use the bundled Caddy** reverse proxy for automatic HTTPS
-   — if yes, the domain name and an email address for Let's Encrypt.
-3. **Whether the app's own port should only accept local connections**
-   (`APP_BIND_ADDRESS=127.0.0.1`) — defaults to yes if you chose Caddy
-   above (it reaches the app over the internal compose network either
-   way, so there's rarely a reason to also expose the app's own port),
-   and no otherwise (your browser needs to reach it directly with no
-   reverse proxy in front yet).
-4. **The facts-refresh and reachability-check intervals**, in seconds
-   (defaults 600 and 60).
-5. **The Administrator account's password** — leave it empty and one is
-   generated and printed once at the end.
-6. **The host port** to publish the app on (default 8080).
+1. **Timezone** (IANA, e.g. `Europe/Prague`) — container clocks + UI timestamps. Default UTC.
+2. **Bundled Caddy?** — if yes, domain name + Let's Encrypt email.
+3. **App port local-only?** (`APP_BIND_ADDRESS=127.0.0.1`) — defaults yes
+   with Caddy (reaches it internally either way), no otherwise.
+4. **Facts-refresh / reachability-check intervals**, seconds (defaults 600/60).
+5. **Administrator password** — blank = generated + printed once at the end.
+6. **Host port** (default 8080).
 
-It then writes `.env`, runs `docker compose up -d --build` (adding
-`docker-compose.caddy.yml` too if Caddy was chosen), waits for the app to
-report healthy, and creates the `admin` account with the password from
-step 5. The final output prints the URL, username, and password (if one
-was generated) — save that password now, it's shown once.
+Then writes `.env`, `docker compose up -d --build` (+ Caddy overlay if
+chosen), waits healthy, creates `admin`. Prints URL/username/password —
+save it now, shown once.
 
-Re-running it on an existing `.env` asks before overwriting it:
-- **Yes** — regenerates every secret and asks every question above again,
-  then also runs `docker compose down -v` before starting the stack back
-  up. A fresh `POSTGRES_PASSWORD` means nothing if the old `pg_data`
-  volume is still around with the *previous* password baked into it
-  (Postgres only ever applies that variable while initializing an empty
-  data directory), so replacing `.env`'s secrets and keeping the old
-  volume would otherwise leave every container failing to connect with
-  "password authentication failed" the moment `migrate` runs.
-- **No** — tops `.env` up instead (adds whatever `.env.example` variables
-  it's missing, touching nothing already there — see "Updating" below)
-  and just starts the stack against the existing file, no secrets
-  regenerated and no new admin account created.
+Re-running on an existing `.env`:
+- **Yes, overwrite** — regenerates every secret, asks everything again,
+  **and runs `docker compose down -v` first**. Necessary: a fresh
+  `POSTGRES_PASSWORD` means nothing against the *old* `pg_data` volume
+  (Postgres only applies that variable to an empty data directory) —
+  otherwise every container fails with "password authentication failed"
+  the moment `migrate` runs.
+- **No** — just tops `.env` up (adds missing `.env.example` vars, touches
+  nothing existing) and starts the stack as-is. No secrets regenerated, no new admin.
 
 ## 🔧 Option B — manual setup
 
@@ -74,23 +56,20 @@ python scripts/generate_secrets.py
 ```
 
 Copy the printed `SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, and
-`REDIS_PASSWORD` values into `.env`. Each password is written once — the app
-builds its Postgres/Redis connection URLs from these values itself. Set
-`DATABASE_URL`/`REDIS_URL` directly instead only if you need a URL these
-parts can't express (a different host/port, a managed database).
+`REDIS_PASSWORD` into `.env` — the app builds its connection URLs from
+these. Set `DATABASE_URL`/`REDIS_URL` directly only for something these
+parts can't express (different host/port, a managed database).
 
-Also set `TZ` (IANA name, e.g. `Europe/Prague` — defaults to UTC) and, if
-you want the bundled Caddy reverse proxy, `DOMAIN` and `ACME_EMAIL`.
-`FACTS_REFRESH_INTERVAL_SECONDS`, `REACHABILITY_CHECK_INTERVAL_SECONDS`,
-and `APP_PORT` all have working defaults and only need changing if you
-want something other than 600s/60s/8080.
+Also set `TZ` (default UTC), and `DOMAIN`/`ACME_EMAIL` if using the
+bundled Caddy. `FACTS_REFRESH_INTERVAL_SECONDS`,
+`REACHABILITY_CHECK_INTERVAL_SECONDS`, `APP_PORT` all have working
+defaults (600s/60s/8080).
 
-The app validates configuration at startup and **refuses to start** if any
-secret still looks like a placeholder from `.env.example`.
+The app **refuses to start** if any secret still looks like a
+`.env.example` placeholder.
 
-Then start the stack and create the first admin account yourself — see
-"2. Run" and "3. Create the first administrator" below — instead of
-running `scripts/setup.py`.
+Then start the stack and create the first admin yourself — "2. Run" and
+"3. Create the first administrator" below — instead of `scripts/setup.py`.
 
 ### 🗂️ Environment variables
 
@@ -118,11 +97,8 @@ running `scripts/setup.py`.
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
-Not every setting lives here: the audit log's retention policy (how many
-days of entries to keep before a daily purge), and LDAP/OIDC login
-configuration (server, bind account, search filter / issuer, client
-credentials), are set from the **Settings** page in the app itself, not
-environment variables — see
+Not everything lives here: audit-log retention and LDAP/OIDC login
+config are set from the app's own **Settings** page, not env vars — see
 [Architecture](Architecture.md#audit-log-retention-the-first-setting-editable-through-the-ui)
 and [Architecture](Architecture.md#authentication--rbac).
 
@@ -134,15 +110,12 @@ and [Architecture](Architecture.md#authentication--rbac).
 docker compose up -d --build
 ```
 
-This starts Postgres, Redis, runs migrations once (`migrate` service), then
-starts `web`, `worker`, and `beat`. The app listens on `APP_PORT` (default
-8080) — plain HTTP, published on every interface by default
-(`APP_BIND_ADDRESS=0.0.0.0`). Set `APP_BIND_ADDRESS=127.0.0.1` in `.env` if
-you don't want it reachable directly (no `docker-compose.yml` edit
-needed), or block the port at the firewall instead. If you have your own
-nginx/Traefik/Caddy already running on this host, point it at
-`127.0.0.1:${APP_PORT}`; see: [nginx](Reverse-Proxy-Nginx.md),
-[Traefik](Reverse-Proxy-Traefik.md), [Caddy](Reverse-Proxy-Caddy.md).
+Starts Postgres, Redis, runs migrations once (`migrate`), then `web`/
+`worker`/`beat`. Listens on `APP_PORT` (default 8080), plain HTTP, every
+interface by default. Set `APP_BIND_ADDRESS=127.0.0.1` in `.env` to stop
+that (no compose edit needed), or firewall the port. Own nginx/Traefik/
+Caddy already running? Point it at `127.0.0.1:${APP_PORT}` — see:
+[nginx](Reverse-Proxy-Nginx.md), [Traefik](Reverse-Proxy-Traefik.md), [Caddy](Reverse-Proxy-Caddy.md).
 
 > [!IMPORTANT]
 > The `beat` service is the periodic scheduler, and **exactly one instance
@@ -160,63 +133,44 @@ needs to join this project's network instead of using the loopback
 address — see the relevant guide for details.
 
 > [!WARNING]
-> Two features are browser-disabled outright on plain HTTP, for any origin
-> other than `http://localhost` — not just restricted, entirely absent from
-> `window`/`navigator`, with no server-side workaround: **WebAuthn/passkeys**
-> (My account → Passkeys shows "This browser doesn't support passkeys" even
-> in a browser that does, once it notices) and **the web terminal's
-> clipboard copy/paste** (Ctrl+C/Ctrl+V and right-click copy; native
-> Ctrl+V paste still works, since that doesn't go through the Clipboard
-> API). Both need a real "secure context" — reached over HTTPS (an
-> `https://` reverse proxy, Caddy or otherwise) or accessed as
-> `http://localhost` on the machine debcontrol itself runs on. A plain HTTP
-> LAN IP/hostname (e.g. `http://192.168.1.x:8080`) satisfies neither, no
-> matter how the app itself or its host firewall is configured.
+> Two features are browser-disabled outright on plain HTTP (any origin
+> but `http://localhost`) — not restricted, entirely absent, no
+> workaround: **WebAuthn/passkeys** and **web terminal clipboard**
+> copy/paste (native Ctrl+V still works). Both need a real secure
+> context — HTTPS, or `http://localhost` on debcontrol's own host. A
+> plain LAN IP (`http://192.168.1.x:8080`) satisfies neither.
 >
-> **No public domain needed to fix this on a LAN-only deployment.** A
-> browser treats any `https://` origin as a secure context regardless of
-> whether the certificate is trusted — a self-signed one is enough, at the
-> cost of a one-time "this connection isn't private, proceed anyway"
-> click per client. The bundled Caddy (below) can mint one itself: in
-> `./Caddyfile`, replace the site address with `tls internal` —
+> **No public domain needed on a LAN-only deployment.** Any `https://`
+> origin counts as secure even with an untrusted cert — one "proceed
+> anyway" click per client. Bundled Caddy can self-sign: in `./Caddyfile`,
 > ```
 > :443 {
 >     tls internal
 >     reverse_proxy web:8080
 > }
 > ```
-> then `docker compose -f docker-compose.yml -f docker-compose.caddy.yml up
-> -d --build` and open `https://<this-host's-LAN-IP>`. `DOMAIN`/`ACME_EMAIL`
-> aren't needed for this path. To make the browser warning go away
-> permanently instead of clicking through it every time, install Caddy's
-> local CA on each client (`docker compose exec caddy caddy trust` prints
-> where to find it) — optional, purely cosmetic, WebAuthn/clipboard work
-> either way once the page has loaded over `https://`.
+> then `docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build`,
+> open `https://<LAN-IP>`. No `DOMAIN`/`ACME_EMAIL` needed. Install
+> Caddy's local CA on clients (`docker compose exec caddy caddy trust`)
+> to stop the browser warning permanently — purely cosmetic, everything
+> already works once the page loads over `https://`.
 >
-> **Already have HTTPS via a reverse proxy (bundled Caddy, your own, or one
-> on a different host) and still seeing this?** The app itself also needs
-> to know the request arrived as HTTPS — otherwise it builds/verifies
-> URLs and origins as if it were still plain HTTP even though the browser
-> used HTTPS, which fails WebAuthn with "Unexpected client data origin"
-> and breaks OIDC login the same way. This is what `TRUSTED_PROXY_IPS`
-> (see the table below, default `*`) fixes — already on by default for
-> every setup described above.
+> **Already have HTTPS and still seeing this?** The app also needs to
+> *know* the request arrived as HTTPS, or it builds/verifies origins as
+> if still plain HTTP — breaking WebAuthn ("Unexpected client data
+> origin") and OIDC the same way. `TRUSTED_PROXY_IPS` (default `*`) fixes
+> this, already on for every setup above.
 >
 > **Audit log / rate limiter showing the proxy's IP instead of the real
-> client's?** That's a separate correction (`X-Forwarded-For`, not
-> `X-Forwarded-Proto`) with a different, off-by-default setting —
-> `TRUST_FORWARDED_FOR` (see the table below) — precisely because
-> trusting it from just anyone would let an attacker defeat the login
-> rate limiter by spoofing a different "source" on every attempt. Turn
-> it on once `TRUSTED_PROXY_IPS` is narrowed to your real proxy's address
-> (not `*`).
+> client?** A separate, off-by-default fix — `TRUST_FORWARDED_FOR` —
+> because trusting it from just anyone lets an attacker spoof a fresh
+> "source" per login attempt and dodge the rate limiter. Turn on only
+> once `TRUSTED_PROXY_IPS` is narrowed to your real proxy (not `*`).
 
 ### With the bundled Caddy (automatic HTTPS)
 
-Set `DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's DNS A/AAAA
-record at this host's public IP, and make sure ports `80/tcp`, `443/tcp`,
-and `443/udp` are reachable from the internet (443/udp is required for
-HTTP/3). Then:
+Set `DOMAIN`/`ACME_EMAIL` in `.env`, point DNS A/AAAA at this host, open
+`80/tcp`/`443/tcp`/`443/udp` (the last for HTTP/3). Then:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
@@ -227,34 +181,26 @@ TLS/HTTP-3 verification, and troubleshooting.
 
 ## 👤 3. Create the first administrator (manual setup only)
 
-Every debcontrol account is created inside the app itself — there's no
-auto-provisioning from LDAP or OIDC, and every page requires a login — so
-this is the one way into a brand new deployment:
+No auto-provisioning from LDAP/OIDC, every page needs a login — so this
+is the one way into a brand new deployment:
 
 ```bash
 docker compose exec web python scripts/create_admin.py --username admin
 ```
 
-It prompts for a password (at least 12 characters; typed twice to confirm)
-and creates an "Administrator" role with every permission if one doesn't
-exist yet. You'll be asked to change that password on first login. See
-[Architecture](Architecture.md#authentication--rbac) for how login, roles,
-and permissions work, and [Development](Development.md) for adding a new
-permission.
+Prompts for a password (12+ chars, twice), creates an "Administrator"
+role with every permission if none exists yet. Password change forced on
+first login. See [Architecture](Architecture.md#authentication--rbac).
 
-If any account (including this one) later gets locked out with no way in at
-all — a forgotten password, a lost TOTP device — `scripts/reset_account.py`
-is the same kind of console-only tool, but for an existing account instead
-of creating a new one:
+Locked out later (forgotten password, lost TOTP device)?
+`scripts/reset_account.py` is the same idea for an existing account:
 
 ```bash
 docker compose exec web python scripts/reset_account.py --username admin --disable-totp
 ```
 
-Always resets the password (prompted, or `DEBCONTROL_RESET_PASSWORD` in the
-environment) and clears any lockout; `--disable-totp` additionally turns off
-two-factor. See the script's own `--help`/module docstring for the full
-set of options.
+Resets the password (prompted, or `DEBCONTROL_RESET_PASSWORD`) and
+clears lockout; `--disable-totp` also turns off 2FA. See `--help` for the rest.
 
 ## 🔎 4. Verify
 
@@ -263,19 +209,15 @@ docker compose ps
 docker compose logs -f web
 ```
 
-Open the app (via whichever reverse proxy / port you configured) and check
-`/healthz` returns `{"status": "ok"}`. `/login` should be the only page
-reachable without a session.
+Open the app, check `/healthz` returns `{"status": "ok"}`. `/login`
+should be the only page reachable without a session.
 
 ## 🎨 Custom branding
 
-Replace the built-in icon+wordmark (header, browser tab favicon, login
-page) with your own via `CUSTOM_LOGO`/`CUSTOM_FAVICON` in `.env` — see
-the table above and `app/web/branding.py`'s own docstring for the full
-URL-vs-local-path rule. A local file needs to actually be reachable
-inside the container; bind-mount a directory holding it, e.g. add this
-to `docker-compose.yml`'s `web` service (or an override file, so it
-survives a `git pull`):
+Swap the built-in icon+wordmark for your own via `CUSTOM_LOGO`/
+`CUSTOM_FAVICON` in `.env` — see `app/web/branding.py` for the
+URL-vs-local-path rule. A local file needs to be reachable inside the
+container — bind-mount it (an override file, so it survives `git pull`):
 
 ```yaml
 services:
@@ -291,10 +233,9 @@ CUSTOM_LOGO=/app/branding/logo.svg
 CUSTOM_FAVICON=/app/branding/favicon.png
 ```
 
-`docker compose up -d` (no rebuild needed — only `.env` and the mount
-changed) picks it up. Any image format a browser renders works (SVG,
-PNG, ICO, ...); there's no resizing/processing, so pick something
-already sized sensibly for a header logo and a favicon respectively.
+`docker compose up -d` (no rebuild — just `.env`/mount changed) picks it
+up. Any browser-renderable format (SVG/PNG/ICO/...) — no
+resizing/processing, so size it sensibly yourself.
 
 ## Updating
 
@@ -302,22 +243,15 @@ already sized sensibly for a header logo and a favicon respectively.
 ./scripts/upgrade.sh
 ```
 
-Does the whole thing: refuses to run with uncommitted local changes or
-outside a git checkout, `git fetch`/`git pull --ff-only` on the current
-branch (fails loudly rather than merging or silently diverging), tops up
-`.env` with whatever new variables the pulled version's `.env.example`
-added that this deployment's `.env` predates (`scripts/env_sync.py` —
-never touches a line already there, only ever appends what's missing),
-detects whether the bundled Caddy is currently running and includes
-`docker-compose.caddy.yml` automatically if so, then `docker compose build`
-+ `docker compose up -d` and prints `docker compose ps` at the end. Safe to
-run again if something looks off partway through — every step it takes is
-already idempotent.
+Does the whole thing: refuses on uncommitted changes or outside a git
+checkout, `git fetch`/`pull --ff-only` (fails loudly rather than merging
+or diverging), tops up `.env` with new `.env.example` vars
+(`scripts/env_sync.py` — only ever appends, never touches an existing
+line), auto-includes `docker-compose.caddy.yml` if Caddy's running, then
+`build` + `up -d`. Idempotent — safe to re-run if something looks off.
 
-`scripts/setup.py` does the same `.env` top-up if you run it again on a
-deployment that already has one and answer "no" to overwriting it — useful
-if you'd rather re-run the interactive installer than switch to
-`upgrade.sh`.
+`scripts/setup.py` does the same `.env` top-up if re-run on an existing
+deployment and you answer "no" to overwriting — an alternative to `upgrade.sh`.
 
 Equivalent by hand, if you'd rather see each step yourself:
 
@@ -328,15 +262,12 @@ docker compose up -d --build
 docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 ```
 
-Either way, the `migrate` service re-runs on every `up`, applying any new
-Alembic migrations before `web`/`worker`/`beat` start — there's no separate
-"run migrations" step.
+Either way, `migrate` re-runs on every `up`, applying new migrations
+before `web`/`worker`/`beat` start — no separate migration step.
 
-Postgres, Redis, and Caddy are pinned to exact versions in
-`docker-compose.yml`/`docker-compose.caddy.yml` (`postgres:18.6`,
-`redis:8.10.1`, `caddy:2.11.4`), so an upgrade — scripted or by hand —
-never silently bumps any of them. Bumping one is a deliberate, separate
-step: edit the tag, test against it, and commit that change on its own.
+Postgres/Redis/Caddy are pinned to exact versions
+(`postgres:18.6`/`redis:8.10.1`/`caddy:2.11.4`) — an upgrade never
+silently bumps them. Bumping one is its own deliberate, tested, committed step.
 
 ## Stopping / starting the stack
 
@@ -345,28 +276,19 @@ step: edit the tag, test against it, and commit that change on its own.
 ./scripts/start.sh
 ```
 
-`docker compose stop`/`start` on whatever's actually running — containers,
-volumes, and networks all stay in place, nothing is rebuilt or removed;
-`start.sh` brings back exactly what `stop.sh` took down. Both auto-detect
-the bundled Caddy the same way `upgrade.sh` does (`stop.sh` checks for a
-*running* Caddy container; `start.sh` checks every container for the
-project, running or not, since everything's stopped by the time you'd run
-it) and include `docker-compose.caddy.yml` automatically if so — one
-command regardless of which overlay(s) this deployment runs, same as
-`upgrade.sh`. Equivalent by hand: `docker compose stop` / `docker compose
-start` (add `-f docker-compose.caddy.yml` if running Caddy).
+`docker compose stop`/`start` on whatever's running — nothing rebuilt or
+removed, `start.sh` brings back exactly what `stop.sh` took down. Both
+auto-detect Caddy like `upgrade.sh` does. By hand: `docker compose stop`
+/ `start` (+ `-f docker-compose.caddy.yml` if running Caddy).
 
 ### If `db` refuses to start with a "pg_ctlcluster" / "unused mount/volume" error
 
-Only affects a checkout from before the `db` volume mount was corrected —
-current `docker-compose.yml` already mounts it right. The `postgres:18`
-image expects its volume mounted at `/var/lib/postgresql` (it manages a
-major-version-specific subdirectory itself, `/var/lib/postgresql/18/docker`)
-rather than directly at `/var/lib/postgresql/data`, the older convention.
-An old checkout that initialized its `pg_data` volume the old way leaves
-real data sitting at the legacy path once you update, and the image
-refuses to start. If that volume has nothing worth keeping (a fresh test
-deployment), the fix is a reset:
+Only affects a checkout from before the `db` volume mount was corrected
+— current `docker-compose.yml` is fine. `postgres:18` expects its volume
+at `/var/lib/postgresql` (manages `/var/lib/postgresql/18/docker` itself)
+rather than directly at `.../data`, the older convention — an old volume
+initialized the old way leaves data at the legacy path and refuses to
+start. Nothing worth keeping (fresh test deployment)? Reset:
 
 ```bash
 docker compose down -v   # drops pg_data (and redis_data, ssh_data) entirely
@@ -374,13 +296,11 @@ git pull                 # picks up the corrected mount
 docker compose up -d --build
 ```
 
-If it holds real data you need to keep, don't run the above — instead
-move the volume's existing contents into the layout the image now expects
-(no `pg_upgrade` needed, it's still the same 18.6): stop the stack, run a
-throwaway container with the `pg_data` volume mounted at
-`/var/lib/postgresql`, and inside it `mkdir -p 18 && mv data 18/docker`
-(adjust if you'd already customized `PGDATA`/cluster name), then bring the
-stack back up with the corrected `docker-compose.yml`.
+Real data to keep? Don't run that — instead move the volume's contents
+into the new layout (still 18.6, no `pg_upgrade` needed): stop the
+stack, run a throwaway container with `pg_data` mounted at
+`/var/lib/postgresql`, `mkdir -p 18 && mv data 18/docker` inside it
+(adjust for a customized `PGDATA`/cluster name), bring the stack back up.
 
 ## Backups
 
@@ -388,45 +308,31 @@ stack back up with the corrected `docker-compose.yml`.
 ./scripts/backup.sh
 ```
 
-Writes one timestamped directory under `./backups/` (override with
-`BACKUP_DIR` in `.env`) holding everything needed to rebuild this instance
-from nothing on a fresh host:
+One timestamped directory under `./backups/` (`BACKUP_DIR` overrides),
+holding everything to rebuild this instance from nothing:
 
-- `db.sql.gz` — a `pg_dump` of the whole database, taken live via
-  Postgres's own MVCC snapshot (the stack does **not** need to be stopped
-  for this).
-- `ssh_data.tar.gz` — the app's own SSH identity keypair (the `ssh_data`
-  Docker volume). Without this, restoring the database alone leaves
-  debcontrol unable to SSH into a single machine in the fleet — every host
-  has this key's *old* public half in its `authorized_keys`, and a restore
-  with a fresh key can't reach any of them until you re-push it, or
-  restore this file back.
-- `env.backup` — a copy of `.env`. In particular `ENCRYPTION_KEY`: every
-  `AuthMethod.PASSWORD` machine's stored credential is `Fernet`-encrypted
-  with it, so a database restored under a *different* `ENCRYPTION_KEY`
-  turns those into permanently unreadable ciphertext — there is no way to
-  recover them after the fact, not even by hand.
+- `db.sql.gz` — a live `pg_dump` via Postgres's own MVCC snapshot — no need to stop the stack.
+- `ssh_data.tar.gz` — the app's SSH identity keypair. Without it, a
+  restored debcontrol can't SSH into a single machine — every host has
+  this key's *old* public half in `authorized_keys`.
+- `env.backup` — a copy of `.env`. In particular `ENCRYPTION_KEY`: a
+  database restored under a *different* one turns every
+  `AuthMethod.PASSWORD` credential into permanently unreadable
+  ciphertext — no recovery, not even by hand.
 
-Old backup directories are pruned automatically — anything older than
-`BACKUP_RETENTION_DAYS` (default 14, override in `.env`) is deleted at the
-end of every run, so this is safe to leave running unattended forever
-without slowly filling the disk.
+Pruned automatically — older than `BACKUP_RETENTION_DAYS` (default 14)
+gets deleted every run, safe to leave unattended forever.
 
-**The backup directory holds secrets in the clear** (`env.backup`, and the
-private key inside `ssh_data.tar.gz`) — it's created `chmod 600`-ish
-(group/other access stripped) but that only protects against other local
-accounts on the same host. Copy it somewhere access-controlled and
-ideally off this host (object storage, another server's own backup job
-pulling over `rsync`/`scp`, ...) rather than trusting a local disk alone;
-losing the host and its `./backups/` directory together is the same as
+**Holds secrets in the clear** (`chmod 600`-ish, protects only against
+other local accounts). Copy it somewhere access-controlled and ideally
+off-host — losing the host and `./backups/` together is the same as
 never having backed up at all.
 
 ### Automating it with cron
 
-Run it daily at, say, 03:15 server time — as the same user that normally
-runs `docker compose` here (needs Docker socket access), with output
-mailed/logged rather than silently discarded so a failure doesn't go
-unnoticed:
+Daily at, say, 03:15 — as the user that normally runs `docker compose`
+(needs Docker socket access), logged rather than silently discarded so a
+failure doesn't go unnoticed:
 
 ```bash
 crontab -e
@@ -436,20 +342,14 @@ crontab -e
 15 3 * * * cd /path/to/debcontrol && ./scripts/backup.sh >> /var/log/debcontrol-backup.log 2>&1
 ```
 
-Adjust `/path/to/debcontrol` to the actual checkout path (`pwd` from
-inside it), and make sure `/var/log/` (or wherever you point the log) is
-writable by that user — `touch /var/log/debcontrol-backup.log && chown
-that-user /var/log/debcontrol-backup.log` if it isn't yet. Check the log
-after the first scheduled run to confirm it actually succeeded, and
-periodically after that — a cron job that silently stopped working is
-worse than no backup job, since it looks like there's one until the day
-you need it.
+Adjust the path (`pwd` from inside the checkout), make sure the log path
+is writable by that user. Check the log after the first run and
+periodically after — a silently-broken cron job is worse than no backup
+job at all, since it looks fine right up until the day you need it.
 
-If you'd rather ship backups straight off the host instead of relying on
-someone to sync `./backups/` separately, append a second line to the same
-cron entry (or a follow-up cron job a few minutes later) that
-`rsync`/`scp`/`aws s3 sync`s the freshly-created directory (or the whole
-`BACKUP_DIR`) to wherever your off-host storage is.
+Want backups shipped off-host automatically? Append an `rsync`/`scp`/
+`aws s3 sync` of the fresh directory (or the whole `BACKUP_DIR`) to the
+same cron line or a follow-up one.
 
 ### Restoring
 
@@ -457,14 +357,11 @@ cron entry (or a follow-up cron job a few minutes later) that
 ./scripts/restore.sh backups/20260909T031500Z
 ```
 
-**Destructive** — replaces the current database, the `ssh_data` volume,
-and `.env` outright (the current `.env` is saved as `.env.pre-restore`
-first, never silently discarded). Requires typing `restore` to confirm
-(`--yes` skips that, for a scripted DR runbook). Stops `web`/`worker`/
-`beat`, drops and recreates the database from `db.sql.gz`, replaces
-`ssh_data`, replaces `.env`, then starts the stack back up. Restore onto a
-checkout already on the version the backup was taken from — run
-`upgrade.sh` afterward if you need to move it forward.
+**Destructive** — replaces the database, `ssh_data`, and `.env` outright
+(current `.env` saved as `.env.pre-restore` first, never discarded).
+Types `restore` to confirm (`--yes` skips it, for a scripted DR
+runbook). Stops `web`/`worker`/`beat`, restores everything, restarts.
+Restore onto a checkout at the version the backup was taken from — `upgrade.sh` afterward if needed.
 
 ## Upgrading stored secrets to AES-256-GCM
 

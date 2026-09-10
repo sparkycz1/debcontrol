@@ -2,32 +2,23 @@
 
 *HTTPS with zero certificate ceremony — Caddy just handles it.*
 
-There are two ways to use Caddy with debcontrol:
+Two ways to use it:
 
-- **Bundled**: `docker-compose.caddy.yml` in this repo runs Caddy for you,
-  wired to the `web` service automatically. Use this unless you already
-  run a reverse proxy on this host.
-- **Standalone**: you already run your own Caddy instance (for other
-  sites, or because you prefer managing it outside this repo). Point it at
-  debcontrol's `127.0.0.1:8080` (or whatever `APP_PORT` you set in
-  `.env`). Once this is working, consider also setting
-  `APP_BIND_ADDRESS=127.0.0.1` in debcontrol's own `.env` (no
-  `docker-compose.yml` edit needed) so the app is only reachable through
-  this proxy, never directly on its own port.
+- **Bundled** — `docker-compose.caddy.yml` runs Caddy for you, wired to
+  `web` automatically. Default choice.
+- **Standalone** — you already run your own Caddy. Point it at
+  `127.0.0.1:8080` (or your `APP_PORT`), then set
+  `APP_BIND_ADDRESS=127.0.0.1` in `.env` so the app is only reachable
+  through the proxy.
 
 ## 📦 Option A — the bundled Caddy
 
 ### Requirements
 
 - `DOMAIN` and `ACME_EMAIL` set in `.env`.
-- DNS: an A (and/or AAAA) record for `DOMAIN` pointing at this host's
-  public IP.
-- Ports `80/tcp`, `443/tcp`, and `443/udp` open and reachable from the
-  internet:
-  - `80/tcp` — used for the ACME HTTP-01 challenge and to redirect plain
-    HTTP to HTTPS.
-  - `443/tcp` — HTTPS (HTTP/1.1 and HTTP/2).
-  - `443/udp` — HTTP/3 (QUIC).
+- DNS: an A/AAAA record for `DOMAIN` pointing at this host.
+- Reachable from the internet: `80/tcp` (ACME challenge + HTTP→HTTPS
+  redirect), `443/tcp` (HTTPS), `443/udp` (HTTP/3).
 
 ### Run it
 
@@ -42,18 +33,12 @@ over the internal Docker network.
 
 ### What's configured (`./Caddyfile`)
 
-- **TLS 1.3 only** — `tls { protocols tls1.3 tls1.3 }` on the site block;
-  TLS 1.2 and older are rejected outright.
-- **HTTP/3** — enabled via the global `servers { protocols h1 h2 h3 }`
-  option.
-- **HSTS** — `Strict-Transport-Security` with a two-year max-age. The
-  `preload` directive is included; remove it until you've confirmed
-  everything works correctly over HTTPS, since preload-list submission is
-  hard to undo.
-- **Hardened headers** — `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer`, and the `Server` header is stripped.
-- **Request/idle timeouts** — conservative defaults under
-  `servers { timeouts { ... } }`.
+- **TLS 1.3 only** — 1.2 and older rejected outright.
+- **HTTP/3** enabled.
+- **HSTS**, two-year max-age. `preload` is included — strip it until
+  you've confirmed HTTPS works, since preload-list submission is hard to undo.
+- Hardened headers (`nosniff`, `no-referrer`, `Server` stripped) and
+  conservative request/idle timeouts.
 
 ### Verifying it worked
 
@@ -61,47 +46,32 @@ over the internal Docker network.
 curl -sIv https://your-domain.example.com/healthz 2>&1 | grep -Ei 'HTTP/|strict-transport|server:'
 ```
 
-You should see `HTTP/2` or `HTTP/3` in the response line (curl needs
-HTTP/3 support compiled in to show `HTTP/3`; otherwise it'll negotiate
-HTTP/2, which is still correct), an `HTTP/1.1 200`/`200` status, and the
-`Strict-Transport-Security` header. To confirm HTTP/3 specifically:
+Look for `HTTP/2`/`HTTP/3`, a `200`, and `Strict-Transport-Security`.
+Confirm HTTP/3 and TLS 1.3-only directly:
 
 ```bash
 curl --http3 -sI https://your-domain.example.com/healthz
-```
 
-To confirm only TLS 1.3 is accepted:
-
-```bash
-openssl s_client -connect your-domain.example.com:443 -tls1_2 </dev/null
-# should fail to negotiate
-openssl s_client -connect your-domain.example.com:443 -tls1_3 </dev/null
-# should succeed
+openssl s_client -connect your-domain.example.com:443 -tls1_2 </dev/null   # should fail
+openssl s_client -connect your-domain.example.com:443 -tls1_3 </dev/null   # should succeed
 ```
 
 ### Troubleshooting
 
-- **Certificate not issued**: check `docker compose logs caddy`. Common
-  causes: DNS not yet propagated, port 80 blocked by a firewall or another
-  process already bound to it, or `ACME_EMAIL`/`DOMAIN` left as the
-  `.env.example` placeholders.
-- **Works on 443/tcp but not HTTP/3**: check that `443/udp` is actually
-  open on any firewall/cloud security group in front of this host — it's
-  easy to forget the UDP rule since most setups only think about TCP.
-- **Local/LAN-only use, no public domain**: this bundled config assumes a
-  public domain reachable by Let's Encrypt — see
-  [Installation](Installation.md)'s `tls internal` steps for a LAN-only
-  self-signed alternative (also needed to make WebAuthn/passkeys and the
-  web terminal's clipboard copy/paste work at all on a plain-HTTP LAN
-  deployment, which browsers disable outright regardless of app config).
+- **No certificate**: `docker compose logs caddy`. Usual suspects — DNS
+  not propagated yet, port 80 blocked/taken, or `ACME_EMAIL`/`DOMAIN`
+  still at their `.env.example` placeholders.
+- **443/tcp works, HTTP/3 doesn't**: `443/udp` is almost always the one
+  firewall rule people forget.
+- **LAN-only, no public domain**: this config needs Let's Encrypt to
+  reach you — see [Installation](Installation.md)'s `tls internal` steps
+  instead (also what makes WebAuthn/passkeys and terminal clipboard
+  copy/paste work at all over plain HTTP on a LAN).
 
 ## 🔧 Option B — your own standalone Caddy instance
 
-If you run Caddy separately (not via this repo's compose files), add a
-site block pointing at wherever debcontrol's `web` service is reachable
-from your Caddy host — typically `127.0.0.1:8080` if Caddy runs directly
-on the same machine as `docker compose up -d --build` (the base file,
-without `docker-compose.caddy.yml`):
+Add a site block pointing at wherever `web` is reachable — typically
+`127.0.0.1:8080` if Caddy runs on the same host:
 
 ```caddyfile
 your-domain.example.com {
@@ -122,8 +92,6 @@ your-domain.example.com {
 }
 ```
 
-If your Caddy instance is itself a container in a different Compose
-project, join it to debcontrol's Docker network so it can resolve the
-`web` service by name rather than going through the published `8080` port
-— the base `docker-compose.yml` publishes that port on every interface,
-so joining the network is the more locked-down option.
+Running Caddy as a container in a different Compose project? Join it to
+debcontrol's Docker network and resolve `web` by name instead of going
+through the published (all-interfaces) `8080` port — more locked-down.

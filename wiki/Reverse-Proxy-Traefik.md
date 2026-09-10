@@ -2,18 +2,14 @@
 
 *Docker labels doing the routing — because typing config files is for people without Traefik.*
 
-Use this if you already run Traefik on the host where debcontrol's
-`docker compose up -d --build` (the base file, without
-`docker-compose.caddy.yml`) is running, exposing the app on
-`127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`). Once this is
-working, consider also setting `APP_BIND_ADDRESS=127.0.0.1` in
-debcontrol's own `.env` (no `docker-compose.yml` edit needed) so the app
-is only reachable through this proxy, never directly on its own port.
+For when debcontrol (base `docker-compose.yml`, no Caddy overlay) exposes
+`127.0.0.1:8080` and Traefik already runs on the same host. Once
+working, set `APP_BIND_ADDRESS=127.0.0.1` in `.env` so the app is only
+reachable through the proxy.
 
-Two ways to wire Traefik up to a service: a static **file provider** entry
-pointing at an address, or **Docker labels** read via Traefik's Docker
-provider. The file provider is simpler when debcontrol and Traefik aren't
-in the same Compose project (the default here).
+Two ways to wire it up: a static **file provider** entry, or **Docker
+labels** via Traefik's Docker provider. File provider is simpler when
+debcontrol and Traefik aren't in the same Compose project (the default here).
 
 ## ⚙️ Static config (`traefik.yml`)
 
@@ -90,19 +86,15 @@ http:
           - url: "http://127.0.0.1:8080"
 ```
 
-If Traefik itself runs inside Docker, `127.0.0.1` from its point of view
-is the Traefik *container*, not the host — either run Traefik with
-`network_mode: host`, or use the host's Docker-bridge gateway address
-(commonly `172.17.0.1`, verify with `ip addr show docker0`) instead of
-`127.0.0.1` in the service URL above.
+Traefik running inside Docker? `127.0.0.1` there means the Traefik
+*container*, not the host — use `network_mode: host`, or the Docker-bridge
+gateway address (`ip addr show docker0`, commonly `172.17.0.1`) instead.
 
 ## 🏷️ Alternative: Docker label-based discovery
 
-If you'd rather use Traefik's Docker provider (labels on the `web`
-container) instead of the file provider above, `web` and Traefik need to
-share a Docker network — add an external network to both
-`docker-compose.yml` (on the `web` service) and Traefik's compose file,
-then label `web`:
+Prefer Traefik's Docker provider over the file provider? `web` and
+Traefik need a shared Docker network — add an external network to both
+compose files, then label `web`:
 
 ```yaml
 labels:
@@ -114,10 +106,9 @@ labels:
   - traefik.http.services.debcontrol.loadbalancer.server.port=8080
 ```
 
-This requires exposing the Docker socket to the Traefik container, which
-is a meaningfully larger trust boundary than the file-provider approach
-above — only do this if you already accept that trade-off for your other
-services.
+Needs exposing the Docker socket to Traefik — a meaningfully larger trust
+boundary than the file provider. Only worth it if you already accept
+that trade-off for your other services.
 
 ## 🔎 Verifying
 

@@ -2,23 +2,18 @@
 
 *You already have nginx running everything else on this box — fine, it can have this too.*
 
-Use this if you already run nginx on the host where debcontrol's
-`docker compose up -d --build` (the base file, without
-`docker-compose.caddy.yml`) is running, exposing the app on
-`127.0.0.1:8080` (or whatever `APP_PORT` you set in `.env`). Once this is
-working, consider also setting `APP_BIND_ADDRESS=127.0.0.1` in
-debcontrol's own `.env` (no `docker-compose.yml` edit needed) so the app
-is only reachable through this proxy, never directly on its own port.
+For when debcontrol (base `docker-compose.yml`, no Caddy overlay) exposes
+`127.0.0.1:8080` and nginx already runs on the same host. Once working,
+set `APP_BIND_ADDRESS=127.0.0.1` in `.env` so the app is only reachable
+through the proxy.
 
 ## ✅ Prerequisites
 
-- A certificate for your domain. Easiest via
-  [certbot](https://certbot.eff.org/) (webroot or nginx plugin). HTTP/3
-  additionally requires nginx built with `--with-http_v3_module` — check
-  with `nginx -V 2>&1 | grep -o with-http_v3_module`. This ships in nginx
-  mainline releases; some distro-packaged builds omit it, in which case
-  TLS 1.3 over HTTP/2 (below, without the HTTP/3 section) works fine and
-  is much simpler to set up.
+A certificate — easiest via [certbot](https://certbot.eff.org/). HTTP/3
+needs nginx built with `--with-http_v3_module`
+(`nginx -V 2>&1 | grep -o with-http_v3_module`) — ships in mainline, some
+distro packages omit it. Without it, TLS 1.3 over plain HTTP/2 (skip the
+HTTP/3 section below) is simpler and works fine.
 
 ## ⚙️ Base config: TLS 1.3 only, reverse proxy to debcontrol
 
@@ -94,10 +89,9 @@ server {
 }
 ```
 
-The `Alt-Svc` header is what tells browsers an HTTP/3 endpoint is
-available so they can upgrade on a subsequent request. Directive names
-for QUIC/HTTP-3 have shifted across nginx releases — if `http3 on;` isn't
-recognized, check `nginx -v` and the changelog for your specific version.
+`Alt-Svc` tells browsers an HTTP/3 endpoint exists so they can upgrade
+next request. Directive names shift across nginx releases — if
+`http3 on;` isn't recognized, check your version's changelog.
 
 ## 🔎 Verifying
 
@@ -109,8 +103,8 @@ openssl s_client -connect your-domain.example.com:443 -tls1_3 </dev/null  # shou
 
 ## 🔄 Certificate renewal
 
-If using certbot, its systemd timer/cron job handles renewal; add a
-post-renewal hook to reload nginx:
+certbot's own systemd timer/cron handles renewal — add a post-renewal
+hook to reload nginx:
 
 ```bash
 echo "systemctl reload nginx" | sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
