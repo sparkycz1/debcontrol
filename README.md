@@ -8,12 +8,15 @@
 
 </div>
 
+[![CI](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/web-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Task queue](https://img.shields.io/badge/task%20queue-Celery-37814A?logo=celery&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/db-PostgreSQL%2018-336791?logo=postgresql&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)
+![Dependabot](https://img.shields.io/badge/dependabot-enabled-025E8C?logo=dependabot&logoColor=white)
+![Security: bandit rules via ruff](https://img.shields.io/badge/security-ruff%20%2B%20pip--audit-4B8BBE)
 
 A web application for managing Debian machines over SSH. Officially
 supported: Debian and its derivatives (e.g. Ubuntu), for as long as each

@@ -1,0 +1,80 @@
+name: CI
+
+# The exact gate wiki/Development.md documents for a local commit — ruff,
+# mypy, the full test suite (in-memory SQLite, no real Postgres/Redis/
+# Celery broker needed, see tests/conftest.py), and a single-alembic-head
+# check — now also enforced here so a PR can't merge without it.
+#
+# No Postgres/Redis service containers: nothing in the gate needs a real
+# one. `app.core.config.Settings` still validates on import, though (every
+# module that touches it, including alembic/env.py for a plain `alembic
+# heads`), so the env vars below are dummy-but-valid values, never secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  SECRET_KEY: ci-dummy-secret-key-not-a-real-value
+  ENCRYPTION_KEY: IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=
+  POSTGRES_PASSWORD: ci-dummy-postgres-password
+  REDIS_PASSWORD: ci-dummy-redis-password
+  INFORM_TOKEN: ci-dummy-inform-token-not-a-real-value
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install Python 3.14
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy app alembic tests
+
+      - name: pytest
+        run: uv run pytest -q
+
+      - name: alembic — exactly one head
+        run: |
+          heads="$(uv run alembic heads)"
+          echo "$heads"
+          count="$(grep -c '(head)' <<< "$heads")"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly one alembic head, found $count — see wiki/Development.md."
+            exit 1
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install Python 3.14
+        run: uv python install 3.14
+
+      # Known-CVE scan of exactly what uv.lock would actually install —
+      # separate from Dependabot (which watches for *newer* fixed versions
+      # existing at all) in that this fails the build the moment a
+      # vulnerable version is pinned, rather than waiting for a PR.
+      - name: Export locked dependencies
+        run: uv export --frozen --no-hashes --no-dev -o requirements-audit.txt
+
+      # `uvx` runs pip-audit in its own throwaway environment — never
+      # touches uv.lock or this project's own venv.
+      - name: pip-audit (known CVEs in locked dependencies)
+        run: uvx pip-audit --strict -r requirements-audit.txt
