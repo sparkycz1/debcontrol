@@ -6,21 +6,15 @@ name: CI
 # check — now also enforced here so a PR can't merge without it.
 #
 # No Postgres/Redis service containers: nothing in the gate needs a real
-# one. `app.core.config.Settings` still validates on import, though (every
-# module that touches it, including alembic/env.py for a plain `alembic
-# heads`), so the env vars below are dummy-but-valid values, never secrets.
+# one — pytest bootstraps its own dummy-but-valid env vars for
+# `app.core.config.Settings` (see tests/conftest.py), so this workflow
+# only needs to supply them itself for the one other step that imports
+# Settings outside of pytest: a plain `alembic heads`.
 
 on:
   push:
     branches: [main]
   pull_request:
-
-env:
-  SECRET_KEY: ci-dummy-secret-key-not-a-real-value
-  ENCRYPTION_KEY: IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=
-  POSTGRES_PASSWORD: ci-dummy-postgres-password
-  REDIS_PASSWORD: ci-dummy-redis-password
-  INFORM_TOKEN: ci-dummy-inform-token-not-a-real-value
 
 jobs:
   gate:
@@ -47,6 +41,15 @@ jobs:
         run: uv run pytest -q
 
       - name: alembic — exactly one head
+        env:
+          # Only this step imports app.core.config.Settings outside of
+          # pytest (which bootstraps its own matching values — see
+          # tests/conftest.py) — dummy-but-valid, never real secrets.
+          SECRET_KEY: ci-dummy-secret-key-not-a-real-value
+          ENCRYPTION_KEY: IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=
+          POSTGRES_PASSWORD: ci-dummy-postgres-password
+          REDIS_PASSWORD: ci-dummy-redis-password
+          INFORM_TOKEN: ci-dummy-inform-token-not-a-real-value
         run: |
           heads="$(uv run alembic heads)"
           echo "$heads"
