@@ -660,6 +660,45 @@ def ping_all_machines() -> None:
     asyncio.run(_ping_all_machines())
 
 
+async def _check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
+    """The single-machine equivalent of `_ping_all_machines` — same TCP
+    connect check, same `MachineReachabilitySample` history row, same
+    `Machine.is_reachable`/`last_ping_at` update, just for one machine
+    right now rather than every machine that happens to be due. Backs the
+    Monitoring tab's "Refresh now" button (`app.web.routes.machines.
+    refresh_machine_monitoring_endpoint`), run alongside
+    `sample_machine_monitoring` so one click refreshes both of that tab's
+    history sources instead of only the CPU/RAM/disk/services one."""
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+
+        outcome = await check_reachable(machine.ip_address, machine.port)
+        now = datetime.now(UTC)
+        machine.is_reachable = outcome.reachable
+        machine.last_ping_at = now
+        session.add(
+            MachineReachabilitySample(
+                machine_id=machine.id,
+                checked_at=now,
+                reachable=outcome.reachable,
+                latency_ms=outcome.latency_ms,
+            )
+        )
+        await session.commit()
+        await publish_machine_event(str(machine.id), KIND_STATUS)
+        return {"ok": True, "reachable": outcome.reachable}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.check_machine_reachability_now",
+    time_limit=get_settings().ssh_connect_timeout + 15,
+)
+def check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_check_machine_reachability_now(machine_id))
+
+
 async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
     """Connect to one machine and refresh its OS/kernel/arch/CPU/RAM/disk/
     uptime/process-count facts. Requires a pinned host key — machines

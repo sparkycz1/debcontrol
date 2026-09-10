@@ -156,15 +156,14 @@ def create_app() -> FastAPI:
         # one at plain `/api` (app/web/routes/api_docs.py) — FastAPI's
         # default page pulls its JS/CSS from a CDN and inlines its own
         # init script, both of which this app's CSP forbids. `openapi_url`
-        # stays enabled in every environment (including production): unlike
-        # the old dev-only `/docs`, this path isn't in
-        # `app.auth.middleware`'s public allowlist, so it already requires
-        # being logged in like any other page — the reason `/docs` used to
-        # be disabled in production (an unauthenticated full map of every
-        # endpoint) doesn't apply once a login is required to see it.
+        # is disabled here too (`None`) — `app/web/routes/api_docs.py`
+        # defines its own `GET /openapi.json` instead, gated the same way
+        # `GET /api` is (logged in AND `User.api_access_enabled`), since
+        # FastAPI's own built-in route accepts no `Depends` to add that
+        # check to.
         docs_url=None,
         redoc_url=None,
-        openapi_url="/openapi.json",
+        openapi_url=None,
     )
     app.openapi = lambda: _custom_openapi(app)  # type: ignore[method-assign]
 

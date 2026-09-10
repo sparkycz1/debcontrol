@@ -30,17 +30,54 @@ complete map of every endpoint, parameter, and permission this app has —
 handing that to anyone with network access, logged in or not, would be a
 reconnaissance gift. Once inside, "Authorize" in the UI takes one of this
 account's own API tokens (see `/account`) for actually trying requests.
+
+On top of that session-login check, this route also requires
+`User.api_access_enabled` — the same account-level flag (separate from
+role permissions, granted per-account on the Users page) that gates
+actually creating an API token (`POST /account/api-tokens`). An account
+without it can't use anything this page offers anyway (there's no token
+to "Authorize" with), so there is no reason for it to still be able to
+browse the full endpoint/parameter map either — same reconnaissance
+reasoning as the login-wall above, just narrowed to which *logged-in*
+accounts count as trusted with it.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 
+from app.auth.dependencies import get_current_user
+from app.db.models.user import User
 from app.web.templating import templates
 
 router = APIRouter()
 
 
+def _require_api_access(current_user: User) -> None:
+    if not current_user.api_access_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="An administrator hasn't granted this account API access.",
+        )
+
+
 @router.get("/api", include_in_schema=False)
-async def api_docs(request: Request) -> Response:
+async def api_docs(
+    request: Request, current_user: User = Depends(get_current_user)
+) -> Response:
+    _require_api_access(current_user)
     return templates.TemplateResponse(request, "api_docs.html", {})
+
+
+@router.get("/openapi.json", include_in_schema=False)
+async def openapi_schema(
+    request: Request, current_user: User = Depends(get_current_user)
+) -> Response:
+    """FastAPI's own `openapi_url` is disabled (see `app.main.create_app`)
+    in favor of this route, purely so the same `api_access_enabled` check
+    `GET /api` uses can gate it too — FastAPI's built-in route accepts no
+    `Depends`. `request.app.openapi()` is `_custom_openapi` (also set up in
+    `app.main`), cached after the first call like FastAPI's own default."""
+    _require_api_access(current_user)
+    return JSONResponse(request.app.openapi())

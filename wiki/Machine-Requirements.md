@@ -74,7 +74,7 @@ the exact command:
 | Latest installed kernel (for reboot-required) | `dpkg --list 'linux-image-*'` | `dpkg` |
 | CPU architecture | `uname -m` | `coreutils` |
 | CPU cores | `nproc` | `coreutils` |
-| CPU model | `/proc/cpuinfo` (`model name`) | kernel |
+| CPU model | `lscpu` (`Model name:`), falls back to `/proc/cpuinfo` (`model name`) if `lscpu` is missing | `util-linux` |
 | RAM | `/proc/meminfo` via `awk` | kernel + `mawk` (Debian's default `awk`) |
 | RAM speed (MHz) | `dmidecode -t 17` | `dmidecode` — **needs root**, see below |
 | Disks | `lsblk` | `util-linux` |

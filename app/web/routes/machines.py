@@ -1157,6 +1157,17 @@ async def machine_monitoring(
     reachability_samples = list(reachability_result.scalars().all())
     availability = monitoring_history.build_availability_history(reachability_samples, range_key)
 
+    # One unified "Last checked" timestamp for the whole tab, replacing a
+    # separate one under each of the CPU/RAM/disk/services sample and the
+    # Availability sample — they're usually the same instant ("Refresh
+    # now" and the two periodic sweeps that back them both touch the same
+    # machine together), but pick whichever is actually more recent rather
+    # than assuming that.
+    candidates = [
+        ts for ts in (machine.monitoring_updated_at, availability.latest_checked_at) if ts
+    ]
+    last_checked_at = max(candidates) if candidates else None
+
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -1168,6 +1179,7 @@ async def machine_monitoring(
             "csrf_token": csrf_token,
             "history": history,
             "availability": availability,
+            "last_checked_at": last_checked_at,
             "time_ranges": monitoring_history.TIME_RANGES,
             "range_key": range_key,
             "service_counts": await _get_service_counts(machine_id, db),
@@ -1176,6 +1188,56 @@ async def machine_monitoring(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post("/{machine_id}/monitoring/refresh", dependencies=[_manage, Depends(verify_csrf)])
+async def refresh_machine_monitoring_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """"Refresh now" for the Monitoring tab — forces both a fresh CPU/RAM/
+    disk/services sample and a fresh reachability check right now, waits
+    for both, then redirects back to the (now up to date) tab, rather than
+    waiting out either sweep's own interval. Same `action.manage`
+    permission the sibling facts/packages/services refresh buttons use."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    settings = get_settings()
+
+    monitoring_result = tasks.sample_machine_monitoring.delay(str(machine.id))
+    reachability_result = tasks.check_machine_reachability_now.delay(str(machine.id))
+    error: str | None = None
+    try:
+        results = await asyncio.gather(
+            asyncio.to_thread(monitoring_result.get, timeout=settings.ssh_connect_timeout + 30),
+            asyncio.to_thread(reachability_result.get, timeout=settings.ssh_connect_timeout + 15),
+        )
+        for result in results:
+            if isinstance(result, dict) and not result.get("ok"):
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.monitoring.refresh",
+        summary=f'Refreshed monitoring for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/monitoring?range_key={range_key}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 # --- Self-polling fragments -------------------------------------------------

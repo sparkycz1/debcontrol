@@ -797,12 +797,17 @@ generated from the app's own live route definitions (FastAPI's
 `openapi()`), so docs and API can't drift apart.
 
 > [!NOTE]
-> **This requires being logged in**, same as every other page. `/api` and
-> the schema it loads (`GET /openapi.json`) are deliberately *not* on the
-> public, bearer-token-only footing of `/api/v1/...` itself — an OpenAPI
-> document is a complete map of every endpoint, parameter, and permission
-> this app has. On the page, click **Authorize** and paste one of your own
-> API tokens (see
+> **This requires being logged in AND `User.api_access_enabled`**, the
+> same account-level flag (separate from role permissions) that gates
+> actually creating an API token. `/api` and the schema it loads (`GET
+> /openapi.json`, a hand-written route too — FastAPI's built-in
+> `openapi_url` is disabled in `app.main` specifically so this check can
+> gate it) are deliberately *not* on the public, bearer-token-only footing
+> of `/api/v1/...` itself — an OpenAPI document is a complete map of every
+> endpoint, parameter, and permission this app has, and an account with no
+> API access can't do anything with that map anyway (there's no token to
+> "Authorize" with). On the page, click **Authorize** and paste one of your
+> own API tokens (see
 > [Per-user API tokens](#per-user-api-tokens-gated-by-a-separate-account-level-flag-inheriting-the-role-live))
 > to send requests — the same bearer-token auth the real API uses.
 
@@ -1177,6 +1182,12 @@ immediately and relying on the next poll — the packages and services
 snapshots below each have their own equivalent button:
 
 - **CPU architecture**: `uname -m`.
+- **CPU model**: `lscpu`'s own `Model name:` line, tolerant of the
+  leading whitespace modern `util-linux` nests it under in its tree-style
+  output. Falls back to `/proc/cpuinfo`'s `model name` field only if
+  `lscpu` itself is missing — that field alone is x86-only and reads back
+  empty on any ARM machine (a Raspberry Pi, an ARM cloud instance), which
+  `lscpu` doesn't have that gap on.
 - **Uptime**: `/proc/uptime`'s first field via `awk`, floored to whole
   seconds — no `uptime`/`procps` binary needed.
 - **Process count**: `ls -d /proc/[0-9]*/ | wc -l` rather than

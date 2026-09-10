@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.ssh.facts import parse_facts_output
+from app.ssh.facts import FACTS_COMMAND, parse_facts_output
 
 
 def test_parse_facts_output_full_no_reboot_needed():
@@ -183,3 +183,36 @@ def test_parse_facts_output_filesystems_ignores_malformed_lines():
             "use_percent": 50,
         }
     ]
+
+
+# --- CPU_MODEL section of FACTS_COMMAND: the remote shell fragment itself
+# — same "assert on the built command string" convention
+# `test_build_update_command_*` (tests/test_updates.py) uses for its shell
+# scripts, not a real shell execution (this repo's tests run on Windows
+# dev machines too, where faking a PATH-shadowed `lscpu` for a real bash
+# subprocess is its own can of worms). This guards against the exact
+# regression that shipped the x86-only bug in the first place: someone
+# reverting to a bare `/proc/cpuinfo` read with no `lscpu` preference.
+
+
+def test_facts_command_prefers_lscpu_for_cpu_model():
+    # `/proc/cpuinfo`'s `model name` field is x86-only — empty on ARM
+    # (Raspberry Pi, an ARM cloud instance). `lscpu`'s own `Model name:`
+    # line exists on both architectures, so it must be tried first.
+    cpu_model_section = FACTS_COMMAND.split("===CPU_MODEL===")[1].split("===RAM_KB===")[0]
+    assert "lscpu" in cpu_model_section
+    assert cpu_model_section.index("lscpu") < cpu_model_section.index("/proc/cpuinfo")
+
+
+def test_facts_command_cpu_model_tolerates_lscpus_indented_tree_output():
+    # Modern util-linux nests "Model name:" under "Vendor ID:" with leading
+    # whitespace in lscpu's tree-style output — a grep anchored to column 1
+    # would silently never match it.
+    cpu_model_section = FACTS_COMMAND.split("===CPU_MODEL===")[1].split("===RAM_KB===")[0]
+    assert "^[[:space:]]*Model name:" in cpu_model_section
+
+
+def test_facts_command_still_falls_back_to_proc_cpuinfo():
+    cpu_model_section = FACTS_COMMAND.split("===CPU_MODEL===")[1].split("===RAM_KB===")[0]
+    assert "|| " in cpu_model_section
+    assert "model name' /proc/cpuinfo" in cpu_model_section

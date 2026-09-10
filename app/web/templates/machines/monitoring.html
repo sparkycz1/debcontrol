@@ -18,6 +18,22 @@
 
   {{ render_tabnav(tabs, active_tab) }}
 
+  {% if request.state.user.has_permission('machine.manage') %}
+    <form method="post" action="/machines/{{ machine.id }}/monitoring/refresh?range_key={{ range_key | urlencode }}" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
+        {{ t(request, "monitoring.refresh_now") }}
+      </button>
+    </form>
+  {% endif %}
+  <p class="hint">
+    {% if last_checked_at %}
+      {{ t(request, "monitoring.last_checked", when=(last_checked_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) }}
+    {% else %}
+      {{ t(request, "monitoring.last_checked_never") }}
+    {% endif %}
+  </p>
+
   {% if not machine.monitoring_updated_at and not availability.sample_count %}
     <section class="panel">
       <p class="hint">
@@ -165,7 +181,6 @@
               <span class="badge {{ 'badge-ok' if availability.latest_reachable else 'badge-error' }}">
                 {{ t(request, "monitoring.availability.reachable") if availability.latest_reachable else t(request, "monitoring.availability.unreachable") }}
               </span>
-              {% if availability.latest_checked_at %}({{ availability.latest_checked_at | local_time('%Y-%m-%d %H:%M %Z') }}){% endif %}
             {% else %}
               {{ t(request, "monitoring.availability.latest_check") }} —
             {% endif %}
@@ -186,10 +201,6 @@
       <section class="panel">
         {{ render_services_summary(machine, service_counts, poll=True) }}
       </section>
-
-      <p class="hint">
-        {{ t(request, "monitoring.last_sample", when=(machine.monitoring_updated_at | local_time('%Y-%m-%d %H:%M %Z'))) }}
-      </p>
     {% endif %}
   {% endif %}
 
