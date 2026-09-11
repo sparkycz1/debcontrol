@@ -176,7 +176,7 @@ place a decrypted key exists is in memory, between `decrypt_secret` and
 the outbound HTTP header.
 
 Chat text itself isn't copied into the audit log — it records what was
-*done*, see [Architecture → Audit log](Architecture.md#-audit-log-who-what-outcome-when).
+*done*, see [Architecture → Audit log](Audit-Log.md#-audit-log-who-what-outcome-when).
 
 ## 🩺 "Ask AI why"
 

@@ -44,7 +44,11 @@ flowchart LR
 | Page | For when you need to... |
 |---|---|
 | [🚀 Installation](Installation.md) | Stand the thing up — Docker, reverse proxy, env vars, backups |
-| [🏗️ Architecture](Architecture.md) | Understand *why* it's built this way (the deep-dive reference) |
+| [🏗️ Architecture](Architecture.md) | Understand *why* it's built this way (stack, project layout, security essentials — the hub for the pages below) |
+| [🔐 Authentication & RBAC](Authentication-RBAC.md) | Logins, sessions, roles/permissions, 2FA, per-user API tokens, the REST API's auth model |
+| [🖥️ Machine Management](Machine-Management.md) | SSH, updates, facts/packages/monitoring, logs, the terminal, scheduling |
+| [📝 Audit Log](Audit-Log.md) | Hash-chain integrity, retention, export, SIEM forwarding |
+| [🔔 Notifications](Notifications.md) | Rules, user groups, templates, and every placeholder you can use in one |
 | [📏 Host Requirements](Host-Requirements.md) | Size your own server for 10 machines or 10,000 |
 | [🔑 SSH Host Key Verification](SSH-Host-Key-Verification.md) | Understand why there's no "trust on first use" |
 | [🧰 Machine Requirements](Machine-Requirements.md) | Know what a target Debian box needs before adding it |
@@ -78,5 +82,9 @@ terminator in front of it, always. Pick your fighter:
 
 Want the granular, paragraph-by-paragraph feature list this table used to
 be? That level of detail now lives where it belongs — next to the *why*,
-in [Architecture](Architecture.md) — so this page stays something you can
-actually read in one sitting. 🎉
+split across [Architecture](Architecture.md) and its
+[Authentication & RBAC](Authentication-RBAC.md),
+[Machine Management](Machine-Management.md),
+[Audit Log](Audit-Log.md), and [Notifications](Notifications.md)
+companion pages — so this page stays something you can actually read in
+one sitting. 🎉

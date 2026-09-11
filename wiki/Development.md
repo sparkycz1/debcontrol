@@ -238,7 +238,7 @@ module docstring for the full parameter list (`outcome`, `target_type`/
 
 ## 🌐 Adding or extending a UI language
 
-See [Architecture](Architecture.md#per-user-ui-language-i18n) for the full
+See [Architecture](Authentication-RBAC.md#per-user-ui-language-i18n) for the full
 design. Two separate things:
 
 **Adding a new language** — no code change:

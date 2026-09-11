@@ -156,7 +156,7 @@ roles, groups, scheduled tasks, machine rows) stays small regardless.
 
 The audit log is hash-chained and append-only (tampering breaks the
 chain from that point — see
-[Architecture](Architecture.md#-audit-log-who-what-outcome-when)); grows
+[Architecture](Audit-Log.md#-audit-log-who-what-outcome-when)); grows
 with activity, not fleet size, with its own retention setting.
 
 ## 🚦 Signs you're under-provisioned

@@ -22,7 +22,7 @@ Include, if known:
 
 This is a self-hosted admin tool for managing Debian/Ubuntu machines over SSH — the threat model and existing safeguards are documented in the wiki:
 
-- [Architecture → Security model](../wiki/Architecture.md#-security-model) — SSH host key pinning, secrets at rest, authentication/RBAC, CSRF, the audit log.
+- [Architecture → Security essentials](../wiki/Architecture.md#-security-essentials) — CSRF, HTTP headers, startup validation, container hardening, plus links to [Authentication & RBAC](../wiki/Authentication-RBAC.md), [Machine Management](../wiki/Machine-Management.md) (SSH host key pinning, secrets at rest), and [Audit Log](../wiki/Audit-Log.md).
 - [AI Assistant](../wiki/AI-Assistant.md) — the confirm-before-execute rule, permission model, and the residual prompt-injection risk it deliberately does not eliminate.
 - [SSH Host Key Verification](../wiki/SSH-Host-Key-Verification.md) — why there's no trust-on-first-use.
 
