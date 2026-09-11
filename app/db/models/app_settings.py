@@ -57,6 +57,22 @@ class SyslogProtocol(enum.StrEnum):
 DEFAULT_SYSLOG_PORT = 514
 
 
+class SmtpEncryption(enum.StrEnum):
+    """Transport security for the SMTP relay (config only, for now — see
+    `AppSettings.smtp_*`'s own comment for what's built and what's a
+    deliberate follow-up). `NONE` is plaintext, for an internal/trusted
+    relay only; `STARTTLS` upgrades a plain connection (the common case,
+    port 587); `SSL_TLS` connects already-encrypted from the start (the
+    older convention, typically port 465)."""
+
+    NONE = "none"
+    STARTTLS = "starttls"
+    SSL_TLS = "ssl_tls"
+
+
+DEFAULT_SMTP_PORT = 587
+
+
 class FleetSummaryFrequency(enum.StrEnum):
     """How often `app.tasks.ai_jobs.generate_fleet_summary` writes a new
     `FleetSummary` row — see that module and `AppSettings.
@@ -214,6 +230,30 @@ class AppSettings(Base):
         default=SyslogProtocol.UDP,
         nullable=False,
     )
+
+    # --- SMTP relay — configuration only, for now. Nothing in the app
+    # sends an email through this yet; this round is just the Settings →
+    # Integrations section so the relay can be set up and saved ahead of an
+    # actual notification feature (e.g. on a failed update run or an
+    # offline machine), a deliberate follow-up. Same encrypted-secret
+    # convention as `ldap_bind_password_encrypted`/`oidc_client_secret_encrypted`
+    # above. ---
+    smtp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    smtp_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_port: Mapped[int] = mapped_column(Integer, default=DEFAULT_SMTP_PORT, nullable=False)
+    smtp_encryption: Mapped[SmtpEncryption] = mapped_column(
+        pg_enum(SmtpEncryption, name="smtp_encryption"),
+        default=SmtpEncryption.STARTTLS,
+        nullable=False,
+    )
+    smtp_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_password_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Envelope/header From — most relays (and SPF/DKIM-checking recipients)
+    # reject a send whose From doesn't match an address the relay account is
+    # actually allowed to send as, so this is its own field rather than
+    # reusing `smtp_username`.
+    smtp_from_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_from_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False

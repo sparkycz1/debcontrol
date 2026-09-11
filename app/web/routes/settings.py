@@ -34,8 +34,10 @@ from app.db.models.app_settings import (
     DEFAULT_LDAP_USER_SEARCH_FILTER,
     DEFAULT_OIDC_SCOPES,
     DEFAULT_OIDC_USERNAME_CLAIM,
+    DEFAULT_SMTP_PORT,
     DEFAULT_SYSLOG_PORT,
     FleetSummaryFrequency,
+    SmtpEncryption,
     SyslogProtocol,
 )
 from app.db.models.audit_log import AuditOutcome
@@ -105,6 +107,7 @@ async def _render_settings(
         "csrf_token": csrf_token,
         "errors": errors,
         "syslog_protocols": list(SyslogProtocol),
+        "smtp_encryptions": list(SmtpEncryption),
         # Ordered by the enum, so the panel always renders the same five
         # blocks in the same order.
         "ai_configs": [ai_configs[kind] for kind in AiProviderKind if kind in ai_configs],
@@ -568,6 +571,74 @@ async def update_syslog_settings(
         summary=(
             f"Updated syslog forwarding settings "
             f"({'enabled, ' + protocol.value if app_settings.syslog_enabled else 'disabled'})"
+        ),
+    )
+    return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/smtp", dependencies=[_manage, Depends(verify_csrf)])
+async def update_smtp_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    smtp_enabled: str = Form(""),
+    smtp_host: str = Form(""),
+    smtp_port: str = Form(str(DEFAULT_SMTP_PORT)),
+    smtp_encryption: str = Form(SmtpEncryption.STARTTLS.value),
+    smtp_username: str = Form(""),
+    smtp_password: str = Form(""),
+    smtp_from_address: str = Form(""),
+    smtp_from_name: str = Form(""),
+) -> Response:
+    """Configuration only, for now — nothing sends an email through this
+    yet (see `AppSettings.smtp_*`'s own comment). Same write-only-secret
+    convention as LDAP/OIDC above: a blank password field keeps the stored
+    value."""
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+
+    host = smtp_host.strip()
+    try:
+        encryption = SmtpEncryption(smtp_encryption)
+    except ValueError:
+        errors.append("Unknown SMTP encryption mode.")
+        encryption = app_settings.smtp_encryption
+
+    try:
+        port = int(smtp_port.strip() or str(DEFAULT_SMTP_PORT))
+        if not (0 < port <= 65535):
+            raise ValueError
+    except ValueError:
+        errors.append("Port must be a whole number between 1 and 65535.")
+        port = app_settings.smtp_port
+
+    from_address = smtp_from_address.strip()
+    if from_address and "@" not in from_address:
+        errors.append('"From" address must be a valid email address.')
+
+    if bool(smtp_enabled) and not host:
+        errors.append("Enabling the SMTP relay needs a server host/IP.")
+
+    if errors:
+        return await _render_settings(request, db, errors, tab="integrations")
+
+    app_settings.smtp_enabled = bool(smtp_enabled)
+    app_settings.smtp_host = host or None
+    app_settings.smtp_port = port
+    app_settings.smtp_encryption = encryption
+    app_settings.smtp_username = smtp_username.strip() or None
+    if smtp_password:
+        app_settings.smtp_password_encrypted = encrypt_secret(smtp_password)
+    app_settings.smtp_from_address = from_address or None
+    app_settings.smtp_from_name = smtp_from_name.strip() or None
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.smtp.update",
+        summary=(
+            f"Updated SMTP relay settings "
+            f"({'enabled, ' + encryption.value if app_settings.smtp_enabled else 'disabled'})"
         ),
     )
     return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)

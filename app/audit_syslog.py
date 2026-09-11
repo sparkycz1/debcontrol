@@ -9,9 +9,12 @@ back into the caller. See `log_event`'s call into `forward_to_syslog`.
 
 Supports plain UDP, plain TCP, and TCP-over-TLS ("encrypted syslog", for
 sending to a SIEM over a network you don't fully trust). Messages are
-RFC 5424 formatted; the two TCP modes use RFC 6587 octet-counting framing
-(`"<length> <message>"`) so the receiver can split a stream into messages —
-UDP needs no framing, since one datagram is already one message.
+RFC 5424 formatted, and the MSG part is a compact JSON object — not
+free-text `key="value"` pairs — so a receiver's own parser (or `jq`) never
+needs a bespoke grammar for it; the two TCP modes use RFC 6587
+octet-counting framing (`"<length> <message>"`) so the receiver can split
+a stream into messages — UDP needs no framing, since one datagram is
+already one message.
 
 All socket I/O is blocking (`socket`/`ssl` are simplest for one-shot sends
 like this — no long-lived connection to manage) so it always runs off the
@@ -22,6 +25,7 @@ synchronous `ldap3` calls.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import socket
 import ssl
@@ -51,15 +55,24 @@ def _rfc5424_message(entry: AuditLogEntry) -> str:
     timestamp = entry.created_at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     hostname = socket.gethostname() or "-"
     msg_id = (entry.action or "-").replace(" ", "_")[:32]
-    detail = (
-        f'actor="{entry.actor or "-"}" ip="{entry.ip_address or "-"}" '
-        f'outcome="{entry.outcome.value}" '
-        f'target="{entry.target_type or "-"}:{entry.target_id or "-"}" '
-        f'summary="{entry.summary}"'
-    )
+    payload = {
+        "event": "audit",
+        "id": str(entry.id),
+        "timestamp": timestamp,
+        "action": entry.action,
+        "actor": entry.actor,
+        "ip": entry.ip_address,
+        "outcome": entry.outcome.value,
+        "target_type": entry.target_type,
+        "target_id": entry.target_id,
+        "target_label": entry.target_label,
+        "summary": entry.summary,
+        "details": entry.details,
+    }
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     # "debcontrol" is the APP-NAME field; "-" (no PROCID), then MSGID, then
-    # "-" for STRUCTURED-DATA (none), then the message itself.
-    return f"<{pri}>1 {timestamp} {hostname} debcontrol - {msg_id} - {detail}"
+    # "-" for STRUCTURED-DATA (none), then the JSON message itself.
+    return f"<{pri}>1 {timestamp} {hostname} debcontrol - {msg_id} - {body}"
 
 
 def _send_sync(app_settings: AppSettings, message: str) -> None:

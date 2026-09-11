@@ -400,3 +400,70 @@ async def test_syslog_forwarding_sends_udp_datagram():
     sent_bytes, address = mock_socket.sendto.call_args[0]
     assert sent_bytes == b"test message"
     assert address == ("siem.example.com", 514)
+
+
+async def test_rfc5424_message_body_is_json():
+    import json
+    from datetime import UTC, datetime
+
+    from app.audit_syslog import _rfc5424_message
+    from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+
+    entry = AuditLogEntry(
+        created_at=datetime.now(UTC),
+        actor="alice",
+        ip_address="10.0.0.1",
+        action="machine.reboot",
+        outcome=AuditOutcome.SUCCESS,
+        target_type="machine",
+        target_id="db1",
+        target_label="db1.example.com",
+        summary="Rebooted db1",
+    )
+    message = _rfc5424_message(entry)
+    # Header (PRI VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID
+    # STRUCTURED-DATA) is seven space-separated fields before the MSG part.
+    body = message.split(" ", 7)[-1]
+    parsed = json.loads(body)
+    assert parsed["actor"] == "alice"
+    assert parsed["outcome"] == "success"
+    assert parsed["summary"] == "Rebooted db1"
+
+
+async def test_update_smtp_settings_persists_and_validates(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+
+    missing_host = await client.post(
+        "/settings/smtp",
+        data={
+            "smtp_enabled": "1",
+            "smtp_host": "",
+            "smtp_port": "587",
+            "smtp_encryption": "starttls",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert "needs a server host" in missing_host.text
+
+    ok = await client.post(
+        "/settings/smtp",
+        data={
+            "smtp_enabled": "1",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": "465",
+            "smtp_encryption": "ssl_tls",
+            "smtp_username": "relay@example.com",
+            "smtp_from_address": "debcontrol@example.com",
+            "smtp_from_name": "debcontrol",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert ok.status_code == 303
+
+    page = await client.get("/settings?tab=integrations")
+    assert 'value="465"' in page.text
+    assert 'value="debcontrol@example.com"' in page.text
+
+    log = await client.get("/audit")
+    assert "settings.smtp.update" in log.text

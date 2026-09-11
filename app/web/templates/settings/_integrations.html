@@ -31,6 +31,51 @@
   </section>
 
   <section class="panel">
+    <h2>{{ t(request, "settings.integrations.smtp") }}</h2>
+    <p class="hint">
+      {{ t(request, "settings.integrations.smtp_hint") }}
+    </p>
+    <form method="post" action="/settings/smtp" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="smtp_enabled">
+        <input type="checkbox" id="smtp_enabled" name="smtp_enabled" value="1"
+               {% if app_settings.smtp_enabled %}checked{% endif %}>
+        {{ t(request, "settings.integrations.enabled") }}
+      </label>
+      <label for="smtp_host">{{ t(request, "settings.integrations.server_host") }}</label>
+      <input type="text" id="smtp_host" name="smtp_host" maxlength="255"
+             placeholder="smtp.example.com" value="{{ app_settings.smtp_host or '' }}">
+      <label for="smtp_port">{{ t(request, "settings.integrations.port") }}</label>
+      <input type="number" id="smtp_port" name="smtp_port" min="1" max="65535"
+             value="{{ app_settings.smtp_port }}">
+      <label for="smtp_encryption">{{ t(request, "settings.integrations.encryption") }}</label>
+      <select id="smtp_encryption" name="smtp_encryption">
+        {% for enc in smtp_encryptions %}
+          <option value="{{ enc.value }}" {% if app_settings.smtp_encryption == enc %}selected{% endif %}>
+            {% if enc.value == 'none' %}{{ t(request, "settings.integrations.encryption_none") }}
+            {% elif enc.value == 'starttls' %}{{ t(request, "settings.integrations.encryption_starttls") }}
+            {% else %}{{ t(request, "settings.integrations.encryption_ssl_tls") }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <label for="smtp_username">{{ t(request, "settings.integrations.smtp_username") }}</label>
+      <input type="text" id="smtp_username" name="smtp_username" autocomplete="off"
+             value="{{ app_settings.smtp_username or '' }}">
+      <label for="smtp_password">{{ t(request, "settings.integrations.smtp_password") }}</label>
+      <input type="password" id="smtp_password" name="smtp_password" autocomplete="new-password"
+             placeholder="{{ t(request, 'settings.integrations.unchanged') if app_settings.smtp_password_encrypted else '' }}">
+      <p class="hint">{{ t(request, "settings.integrations.leave_blank_hint") }}</p>
+      <label for="smtp_from_address">{{ t(request, "settings.integrations.smtp_from_address") }}</label>
+      <input type="text" id="smtp_from_address" name="smtp_from_address" placeholder="debcontrol@example.com"
+             value="{{ app_settings.smtp_from_address or '' }}">
+      <label for="smtp_from_name">{{ t(request, "settings.integrations.smtp_from_name") }}</label>
+      <input type="text" id="smtp_from_name" name="smtp_from_name" placeholder="debcontrol"
+             value="{{ app_settings.smtp_from_name or '' }}">
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+  </section>
+
+  <section class="panel">
     <h2>{{ t(request, "settings.integrations.ldap") }}</h2>
     <p class="hint">
       {{ t(request, "settings.integrations.ldap_hint_before") }}

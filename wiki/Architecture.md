@@ -1496,7 +1496,19 @@ RFC 5424 format, RFC 6587 framing for TCP). Best-effort, fire-and-forget
 — an unreachable/slow/misconfigured SIEM must never block or fail the
 action being audited, so any delivery failure is caught and swallowed.
 Blocking socket I/O runs via `asyncio.to_thread`, same pattern LDAP's
-synchronous calls use.
+synchronous calls use. The MSG part is a compact JSON object, not
+free-text `key="value"` pairs — a receiver's own parser (or `jq`) needs
+no bespoke grammar for it.
+
+### SMTP relay: configuration only, for now
+
+Settings → Integrations has an SMTP section (`AppSettings.smtp_*` —
+host/port/encryption/username/password/from address/from name), same
+encrypted-secret convention as LDAP/OIDC next to it. Deliberately just
+configuration in this round — nothing in the app sends an email through
+it yet. The `send_email(...)` call itself, and whatever decides *when*
+an email goes out (most likely a per-user notification preference), is a
+follow-up once that design is settled.
 
 ### Version metadata: baked in at build time, not read from `.git`
 
@@ -1555,7 +1567,7 @@ TLS-terminating proxy. Firewall it, or bind `web.ports` to `127.0.0.1:${APP_PORT
 - **Per-schedule timezones** — cron is always UTC, permanent, not a
   stopgap. `TZ` only affects log timestamps and local-time display.
 - No scheduled "power on" to pair with scheduled shutdown — no way to power on a machine that's off.
-- Rotating the app's SSH identity, and LDAP/OIDC/syslog config, stay web-UI-only.
+- Rotating the app's SSH identity, and LDAP/OIDC/syslog/SMTP config, stay web-UI-only.
 - The **AI assistant** is web-UI-only, conversations private to their
   creator (no shared/admin view). See
   [AI Assistant → Deliberately out of scope](AI-Assistant.md#-deliberately-out-of-scope).
