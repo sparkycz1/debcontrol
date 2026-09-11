@@ -9,7 +9,7 @@
 </div>
 
 [![CI](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 ![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/web-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Task queue](https://img.shields.io/badge/task%20queue-Celery-37814A?logo=celery&logoColor=white)
@@ -107,4 +107,4 @@ See [.github/SECURITY.md](.github/SECURITY.md) — supported versions and how to
 
 ## 📄 License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for noncommercial use; commercial use needs a separate agreement with the licensor

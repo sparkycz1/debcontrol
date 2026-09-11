@@ -4,7 +4,7 @@ version = "0.47.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
-license = { text = "Proprietary" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 
 dependencies = [
     "fastapi>=0.141.1",
