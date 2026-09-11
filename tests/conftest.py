@@ -120,7 +120,25 @@ class FakeRedis:
 
 @pytest_asyncio.fixture
 async def db_session_factory():
-    """Isolated in-memory SQLite DB for each test (no real Postgres)."""
+    """Isolated in-memory SQLite DB for each test (no real Postgres).
+
+    Known aiosqlite quirk to watch for when writing a new test: a route
+    that UPDATEs a row with an `onupdate=func.now()` column (e.g.
+    `User.updated_at`) into a UNIQUE-constraint violation raises
+    `sqlalchemy.exc.MissingGreenlet` here instead of the expected
+    `IntegrityError` — SQLAlchemy emits an implicit
+    `UPDATE ... RETURNING updated_at` for such columns, and a failing
+    RETURNING-augmented UPDATE corrupts aiosqlite's greenlet/asyncio
+    bridging. This is confirmed to be an aiosqlite-only artifact, not a
+    production behavior (production always uses asyncpg, a completely
+    different RETURNING/error-handling code path — see `app.core.config`).
+    Routes that update a unique field now check for a conflicting row
+    proactively instead of relying on catching `IntegrityError` from the
+    commit (see `_duplicate_user_error` in `app/web/routes/users.py` and
+    `app/web/routes/api_v1_users.py`) specifically so this scenario is
+    testable at all under this fixture — follow that pattern for any new
+    "edit to a duplicate unique value" test.
+    """
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},

@@ -9,7 +9,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -61,6 +61,31 @@ async def _get_user_or_404(user_id: uuid.UUID, db: AsyncSession) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     return user
+
+
+async def _duplicate_user_error(
+    db: AsyncSession, *, exclude_user_id: uuid.UUID, username: str, email: str | None
+) -> str | None:
+    """Proactively look for a row this write would collide with, instead of
+    relying on catching `IntegrityError` from the commit — see the matching
+    helper in `app/web/routes/users.py` for why: `User.updated_at`'s
+    `onupdate=func.now()` makes an UPDATE emit an implicit
+    `RETURNING updated_at`, and a UNIQUE violation on that specific
+    statement shape surfaces as `sqlalchemy.exc.MissingGreenlet` rather than
+    `IntegrityError` under the test suite's aiosqlite backend (confirmed not
+    to happen against production's asyncpg). Must be called before mutating
+    `user` in place — see the call site in `update_user_api`.
+    """
+    conditions = [User.username == username]
+    if email:
+        conditions.append(User.email == email)
+    result = await db.execute(select(User).where(User.id != exclude_user_id, or_(*conditions)))
+    conflict = result.scalars().first()
+    if conflict is None:
+        return None
+    if conflict.username == username:
+        return f'A user named "{username}" already exists.'
+    return "That email is already in use by another account."
 
 
 async def _would_remove_last_admin(db: AsyncSession, target: User) -> bool:
@@ -177,6 +202,16 @@ async def update_user_api(
                     "it can't lose that access."
                 ),
             )
+
+    # Checked before mutating `user` in place below: once its attributes are
+    # dirtied, a `SELECT` here would trigger autoflush and emit the very
+    # UPDATE this check exists to get ahead of, defeating the point (see
+    # `_duplicate_user_error`'s docstring).
+    duplicate_error = await _duplicate_user_error(
+        db, exclude_user_id=user.id, username=payload.username, email=payload.email
+    )
+    if duplicate_error is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=duplicate_error)
 
     user.username = payload.username
     user.display_name = payload.display_name
