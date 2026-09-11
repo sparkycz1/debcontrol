@@ -22,7 +22,7 @@ MIN_PASSWORD_LENGTH = 12
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def _normalize_email(value: str | None) -> str | None:
+def normalize_email(value: str | None) -> str | None:
     """Shared by `UserCreate`/`UserUpdate` — blank means "no email set",
     same as every other optional text field here; anything else must look
     like an address. Lowercased for the same reason `username` is: it's
@@ -69,7 +69,7 @@ class UserCreate(BaseModel):
     @field_validator("email")
     @classmethod
     def _validate_email(cls, value: str | None) -> str | None:
-        return _normalize_email(value)
+        return normalize_email(value)
 
     @model_validator(mode="after")
     def _check_password_required(self) -> UserCreate:
@@ -115,4 +115,4 @@ class UserUpdate(BaseModel):
     @field_validator("email")
     @classmethod
     def _validate_email(cls, value: str | None) -> str | None:
-        return _normalize_email(value)
+        return normalize_email(value)

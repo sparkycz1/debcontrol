@@ -49,7 +49,9 @@
       <input type="number" id="smtp_port" name="smtp_port" min="1" max="65535"
              value="{{ app_settings.smtp_port }}">
       <label for="smtp_encryption">{{ t(request, "settings.integrations.encryption") }}</label>
-      <select id="smtp_encryption" name="smtp_encryption">
+      <select id="smtp_encryption" name="smtp_encryption"
+              data-smtp-encryption="smtp_port"
+              data-port-defaults='{"none": 25, "starttls": 587, "ssl_tls": 465}'>
         {% for enc in smtp_encryptions %}
           <option value="{{ enc.value }}" {% if app_settings.smtp_encryption == enc %}selected{% endif %}>
             {% if enc.value == 'none' %}{{ t(request, "settings.integrations.encryption_none") }}

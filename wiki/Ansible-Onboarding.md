@@ -29,7 +29,7 @@ the same `POST /api/inform` self-registration
 [Machine Requirements](Machine-Requirements.md#self-registration-optional-for-future-automation)
 describes — a *pending* entry only. Pinning the host key and confirming
 it's really your machine is still a deliberate human step in
-**Machines**. See [Architecture](Architecture.md#self-registration-is-not-the-same-as-trust).
+**Machines**. See [Architecture](Machine-Management.md#self-registration-is-not-the-same-as-trust).
 
 ## ✅ Requirements
 
@@ -62,7 +62,7 @@ it's really your machine is still a deliberate human step in
    - `debcontrol_inform_token` — the shared `INFORM_TOKEN`, or
      (recommended — attributable, individually revocable) a per-user API
      token from **My account** (role needs "Manage machines"). See
-     [Architecture](Architecture.md#per-user-api-tokens-gated-by-a-separate-account-level-flag-inheriting-the-role-live).
+     [Architecture](Authentication-RBAC.md#per-user-api-tokens-gated-by-a-separate-account-level-flag-inheriting-the-role-live).
 4. Run it:
    ```bash
    ansible-playbook -i inventory.ini debcontrol-onboard.yml

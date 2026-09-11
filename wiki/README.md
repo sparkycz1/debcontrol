@@ -36,7 +36,11 @@ enabled, and it lives in its own separate git repository
 
 - [Home](Home.md) — overview and table of contents
 - [Installation](Installation.md) — Docker quick start, with or without Caddy
-- [Architecture](Architecture.md) — stack choices and security model
+- [Architecture](Architecture.md) — stack choices and cross-cutting security essentials (start here; the rest below are its companion pages)
+- [Authentication & RBAC](Authentication-RBAC.md) — logins, sessions, roles/permissions, 2FA, the REST API's auth model
+- [Machine Management](Machine-Management.md) — SSH, updates, monitoring, logs, the terminal, scheduling
+- [Audit Log](Audit-Log.md) — hash-chain integrity, retention, export, SIEM forwarding
+- [Notifications](Notifications.md) — rules, user groups, templates, and every placeholder you can use in one
 - [Host Requirements](Host-Requirements.md) — sizing debcontrol's own host(s) for a fleet from dozens to thousands of machines
 - [SSH Host Key Verification](SSH-Host-Key-Verification.md) — the fingerprint-pinning flow, explained
 - [Machine Requirements](Machine-Requirements.md) — what a Debian machine needs to be managed

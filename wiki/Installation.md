@@ -99,8 +99,8 @@ Then start the stack and create the first admin yourself — "2. Run" and
 
 Not everything lives here: audit-log retention and LDAP/OIDC login
 config are set from the app's own **Settings** page, not env vars — see
-[Architecture](Architecture.md#audit-log-retention-the-first-setting-editable-through-the-ui)
-and [Architecture](Architecture.md#authentication--rbac).
+[Architecture](Audit-Log.md#audit-log-retention-the-first-setting-editable-through-the-ui)
+and [Architecture](Authentication-RBAC.md).
 
 ## ▶️ 2. Run (manual setup only — Option A's script already does this)
 
@@ -190,7 +190,7 @@ docker compose exec web python scripts/create_admin.py --username admin
 
 Prompts for a password (12+ chars, twice), creates an "Administrator"
 role with every permission if none exists yet. Password change forced on
-first login. See [Architecture](Architecture.md#authentication--rbac).
+first login. See [Architecture](Authentication-RBAC.md).
 
 Locked out later (forgotten password, lost TOTP device)?
 `scripts/reset_account.py` is the same idea for an existing account:
@@ -367,7 +367,7 @@ Restore onto a checkout at the version the backup was taken from — `upgrade.sh
 
 Every secret this app stores (machine passwords, its own SSH key, TOTP
 secrets, third-party API keys) has used AES-256-GCM since debcontrol
-0.45.0 — see [Architecture → FIPS alignment](Architecture.md#fips-alignment).
+0.45.0 — see [Architecture → FIPS alignment](Machine-Management.md#fips-alignment).
 A value encrypted by an older version is still read transparently forever
 (nothing breaks by doing nothing), but a deployment that would rather not
 carry any of the older AES-128 ciphertext going forward can upgrade every

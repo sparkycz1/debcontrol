@@ -80,6 +80,7 @@ async def get_account_api(user: User = Depends(get_api_token_user)) -> dict[str,
         "id": str(user.id),
         "username": user.username,
         "display_name": user.display_name,
+        "email": user.email,
         "locale": user.locale or "en",
     }
 

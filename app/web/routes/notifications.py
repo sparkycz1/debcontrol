@@ -638,6 +638,7 @@ async def delete_group(
 async def list_templates(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     result = await db.execute(select(NotificationTemplate))
     overrides = {t.event_type: t for t in result.scalars().all()}
+    locale_code = request.state.locale.code
     rows = [
         {
             "event_type": event_type,
@@ -645,7 +646,7 @@ async def list_templates(request: Request, db: AsyncSession = Depends(get_db)) -
             "subject": (
                 overrides[event_type.value].subject
                 if event_type.value in overrides
-                else default_template(event_type)[0]
+                else default_template(event_type, locale_code)[0]
             ),
         }
         for event_type in NotificationEventType
@@ -663,7 +664,7 @@ async def edit_template_form(
         select(NotificationTemplate).where(NotificationTemplate.event_type == event_type.value)
     )
     template = result.scalar_one_or_none()
-    default_subject, default_body = default_template(event_type)
+    default_subject, default_body = default_template(event_type, request.state.locale.code)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -695,7 +696,7 @@ async def update_template(
     try:
         payload = NotificationTemplateUpdate(subject=subject, body=body)
     except ValueError as exc:
-        default_subject, default_body = default_template(event_type)
+        default_subject, default_body = default_template(event_type, request.state.locale.code)
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,

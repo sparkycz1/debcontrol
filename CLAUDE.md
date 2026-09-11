@@ -21,10 +21,17 @@ detailed, current, and actively maintained alongside the code:
   (adding a route, a permission, a machine/group action, a background
   task, an audit log call). Read the relevant recipe before adding one of
   these rather than improvising a new pattern.
-- **[wiki/Architecture.md](wiki/Architecture.md)** — the full technical
-  and security model: why things are built the way they are, project
-  structure, auth/RBAC, the REST API, SSH/update/monitoring internals,
-  the audit log, CSRF/CSP/headers.
+- **[wiki/Architecture.md](wiki/Architecture.md)** — stack, project
+  structure, and cross-cutting security essentials (CSRF/CSP/headers,
+  startup validation, container hardening). Feature-specific depth lives
+  in its own page from there: **[Authentication &
+  RBAC](wiki/Authentication-RBAC.md)** (logins, sessions, permissions, the
+  REST API's own auth model), **[Machine
+  Management](wiki/Machine-Management.md)** (SSH, updates, monitoring,
+  terminal, scheduling), **[Audit Log](wiki/Audit-Log.md)**, and
+  **[Notifications](wiki/Notifications.md)** (rules, templates, every
+  placeholder). Read the relevant page before changing something it
+  documents, rather than guessing from the code alone.
 - **[wiki/Home.md](wiki/Home.md)** — the feature table (what every page
   does), the canonical wiki table of contents.
 
@@ -124,7 +131,7 @@ history around v0.19.0/v0.19.1).
   not imported there is invisible to `--autogenerate`.
 - **UI strings go through `t()`, not literal English in a template.**
   `{{ t(request, "area.key") }}` (`app/web/templating.py`, backed by
-  `app/i18n/`) resolves per-account — see [Per-user UI language](wiki/Architecture.md#per-user-ui-language-i18n).
+  `app/i18n/`) resolves per-account — see [Per-user UI language](wiki/Authentication-RBAC.md#per-user-ui-language-i18n).
   Not every page is converted yet; a page that already uses `t()` should
   stay consistent, and any new key needs an entry in **every** file under
   `app/i18n/locales/`, not just `en.json` (see the checklist below).

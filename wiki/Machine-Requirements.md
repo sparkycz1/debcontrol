@@ -43,7 +43,7 @@ automates it. For debcontrol's *own* host, see [Host Requirements](Host-Requirem
   chmod 600 ~/.ssh/authorized_keys
   ```
   Manual today — debcontrol uses
-  [one shared SSH identity](Architecture.md#one-shared-ssh-identity-not-one-key-per-machine),
+  [one shared SSH identity](Machine-Management.md#one-shared-ssh-identity-not-one-key-per-machine),
   not a key per machine.
 - **Password auth:** a supported fallback (marked not-recommended in the
   UI). Needs `PasswordAuthentication yes` in `/etc/ssh/sshd_config` —
@@ -209,7 +209,7 @@ materially different trust level than a plain fact, even without root.
 A machine can announce itself during first boot by POSTing to
 `/api/inform` with a shared bearer token (`INFORM_TOKEN` in `.env`) — a
 *pending* entry only, no access granted (see
-[Architecture](Architecture.md#self-registration-is-not-the-same-as-trust)).
+[Architecture](Machine-Management.md#self-registration-is-not-the-same-as-trust)).
 
 The script below is the manual, minimal version. Want the
 account/sudo/key setup done at the same time? See

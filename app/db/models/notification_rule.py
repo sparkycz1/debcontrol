@@ -54,6 +54,12 @@ class NotificationEventType(enum.StrEnum):
     MACHINE_UNREACHABLE = "machine.unreachable"
     MACHINE_REACHABLE_AGAIN = "machine.reachable_again"
     UPDATE_RUN_FAILED = "machine.update_run.failed"
+    # Fired when the AI assistant's scheduled fleet summary
+    # (Settings → AI Assistant — frequency/provider/model still configured
+    # there, since that's about *which model writes it*, not *who hears
+    # about it*) finishes generating a new report. Not machine-scoped — see
+    # `app.tasks.ai_jobs._generate_fleet_summary`'s `notify(...)` call.
+    FLEET_SUMMARY_GENERATED = "fleet_summary.generated"
 
 
 notification_rule_users = Table(

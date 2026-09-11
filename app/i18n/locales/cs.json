@@ -45,6 +45,7 @@
     "account.profile.role": "Role",
     "account.profile.login_method": "Způsob přihlášení",
     "account.profile.display_name": "Zobrazované jméno",
+    "account.profile.email_hint": "Použije se jako adresa příjemce, pokud na tebe cílí notifikační pravidlo (viz Notifikace). K přihlášení se nepoužívá.",
     "account.language.heading": "Jazyk",
     "account.language.label": "Jazyk rozhraní",
     "account.language.help": "Ovlivňuje jen tvůj vlastní účet — ostatní si zachovají svou vlastní volbu (nebo výchozí angličtinu).",
@@ -786,6 +787,15 @@
     "settings.general.facts_refresh_value": "každých {seconds} sekund",
     "settings.general.in_env_reachability": "v <code>.env</code>) — TCP připojení na SSH port, bez ověření",
     "settings.general.in_env": "v <code>.env</code>)",
+    "settings.general.monitoring_sample": "Monitorovací vzorek",
+    "settings.general.monitoring_sample_value": "každých {seconds} sekund",
+    "settings.general.reachability_concurrency": "Souběžnost kontroly dostupnosti",
+    "settings.general.reachability_concurrency_value": "{count} strojů najednou",
+    "settings.general.ssh_connect_timeout": "Timeout SSH připojení",
+    "settings.general.ssh_connect_timeout_value": "{seconds} sekund",
+    "settings.general.update_timeout": "Timeout běhu aktualizace",
+    "settings.general.update_timeout_value": "{seconds} sekund",
+    "settings.general.background_checks_hint": "Všechno tohle jsou proměnné prostředí nastavené při nasazení (viz .env.example) — změň je tam a restartuj, ne z téhle stránky.",
 
     "settings.security.audit_log": "Audit log",
     "settings.security.audit_log_lower": "audit logu",
@@ -888,7 +898,7 @@
     "settings.ai.fleet_summary_hint_before": "Úloha na pozadí zapisuje běžným jazykem psanou zprávu \"co se změnilo, co vyžaduje pozornost\" na",
     "settings.ai.fleet_summary_hint_middle": " — ve výchozím stavu vypnuto, protože (na rozdíl od všeho výše) toto podle plánu skutečně volá AI API, ať už si to někdo přečte, nebo ne. Toto vždy jen",
     "settings.ai.displays": "zobrazí",
-    "settings.ai.fleet_summary_hint_after": " zprávu; neposílá e-mail, Slack zprávu ani žádné jiné upozornění.",
+    "settings.ai.fleet_summary_hint_after": " zprávu; pravidlo v Notifikacích ti navíc pošle e-mail, jakmile je nová zpráva hotová.",
     "settings.ai.frequency": "Frekvence",
     "settings.ai.disabled": "Vypnuto",
     "settings.ai.daily": "Denně",
@@ -966,6 +976,7 @@
 
     "notifications.event.machine_unreachable": "Stroj se stal nedostupným",
     "notifications.event.machine_reachable_again": "Stroj je opět dostupný",
-    "notifications.event.update_run_failed": "Aktualizace selhala"
+    "notifications.event.update_run_failed": "Aktualizace selhala",
+    "notifications.event.fleet_summary_generated": "Vygenerováno plánované shrnutí flotily"
   }
 }

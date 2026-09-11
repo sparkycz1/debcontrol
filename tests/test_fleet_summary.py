@@ -1,6 +1,8 @@
-"""The scheduled fleet summary — app.tasks.ai_jobs.generate_fleet_summary
-(display-only, no notifications), its Settings AI-tab configuration, and
-the Dashboard panel that shows the latest one.
+"""The scheduled fleet summary — app.tasks.ai_jobs.generate_fleet_summary,
+its Settings AI-tab configuration, the Dashboard panel that shows the
+latest one, and (see test_notify_fleet_summary_generated_recipient below)
+its Notifications wiring — a rule listening for
+`NotificationEventType.FLEET_SUMMARY_GENERATED` gets emailed the report.
 """
 
 from __future__ import annotations
@@ -128,6 +130,63 @@ async def test_generate_fleet_summary_writes_a_row_when_due(db_session_factory, 
         assert rows[0].model_id == model_id
     assert len(fake.calls) == 1
     assert "offline1" in fake.calls[0]["messages"][0]["content"]
+
+
+async def test_notify_fleet_summary_generated_recipient(db_session_factory, monkeypatch):
+    from app.core.security import encrypt_secret
+    from app.db.models.app_settings import SmtpEncryption
+    from app.db.models.notification_rule import NotificationEventType, NotificationRule
+    from app.db.models.role import Role
+    from app.db.models.user import User
+
+    provider_id, model_id = await setup_provider(db_session_factory)
+    await _enable_fleet_summary(db_session_factory, provider_id, model_id)
+
+    sent: list[tuple[str, str, str]] = []
+
+    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001 - test double
+        sent.append((to_address, subject, body))
+
+    import app.services.notifications as notifications_module
+
+    monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
+    fake = _FakeSummaryClient("All quiet.")
+    monkeypatch.setattr(ai_jobs, "build_client", lambda config: fake)
+
+    async with db_session_factory() as db:
+        app_settings = await get_or_create_app_settings(db)
+        app_settings.smtp_enabled = True
+        app_settings.smtp_host = "smtp.example.com"
+        app_settings.smtp_encryption = SmtpEncryption.STARTTLS
+        app_settings.smtp_password_encrypted = encrypt_secret("x")
+
+        role = Role(name="role-summary-recipient")
+        db.add(role)
+        await db.flush()
+        recipient = User(
+            username="summary-fan",
+            auth_provider="local",
+            email="summary-fan@example.com",
+            role=role,
+        )
+        db.add(recipient)
+        await db.flush()
+        rule = NotificationRule(
+            name="fleet summary",
+            enabled=True,
+            event_types=[NotificationEventType.FLEET_SUMMARY_GENERATED.value],
+        )
+        rule.users = [recipient]
+        db.add(rule)
+        await db.commit()
+
+    await ai_jobs._generate_fleet_summary()
+
+    assert len(sent) == 1
+    to_address, subject, body = sent[0]
+    assert to_address == "summary-fan@example.com"
+    assert "All quiet." in body
 
 
 async def test_generate_fleet_summary_is_a_noop_when_not_due_yet(db_session_factory, monkeypatch):

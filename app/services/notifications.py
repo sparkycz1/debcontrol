@@ -43,27 +43,64 @@ from app.db.models.notification_rule import (
     NotificationRule,
     NotificationTemplate,
 )
+from app.db.models.user import User
+from app.i18n import DEFAULT_LOCALE_CODE
 
 logger = logging.getLogger(__name__)
 
 # Built-in subject/body used whenever no `NotificationTemplate` row
-# overrides a given event type — see that model's own docstring. Every
-# `NotificationEventType` member needs an entry here.
-_DEFAULT_TEMPLATES: dict[NotificationEventType, tuple[str, str]] = {
-    NotificationEventType.MACHINE_UNREACHABLE: (
-        "debcontrol: {machine_name} is unreachable",
-        "{machine_name} ({machine_ip}) stopped responding to reachability checks "
-        "at {timestamp}.\n\n{details}",
-    ),
-    NotificationEventType.MACHINE_REACHABLE_AGAIN: (
-        "debcontrol: {machine_name} is reachable again",
-        "{machine_name} ({machine_ip}) responded to a reachability check again "
-        "at {timestamp}, after previously being unreachable.\n\n{details}",
-    ),
-    NotificationEventType.UPDATE_RUN_FAILED: (
-        "debcontrol: update run failed on {machine_name}",
-        "An update run on {machine_name} ({machine_ip}) failed at {timestamp}.\n\n{details}",
-    ),
+# overrides a given event type, keyed by locale code (same codes as
+# `app.i18n` — currently "en"/"cs") — every `NotificationEventType` member
+# needs an entry in every locale here. A locale with no entry falls back
+# to `DEFAULT_LOCALE_CODE` (English), same "never worse than doing
+# nothing" fallback `app.i18n.translate` itself uses. Which locale is
+# used for a given recipient is `User.locale` (see `notify`'s "one email
+# per recipient, rendered in *their* language" below) — an admin-edited
+# `NotificationTemplate` override is a single value, not per-locale, since
+# an admin who customizes the wording is expected to write it in
+# whichever language they want every recipient to see it in.
+_DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
+    "en": {
+        NotificationEventType.MACHINE_UNREACHABLE: (
+            "debcontrol: {machine_name} is unreachable",
+            "{machine_name} ({machine_ip}) stopped responding to reachability checks "
+            "at {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.MACHINE_REACHABLE_AGAIN: (
+            "debcontrol: {machine_name} is reachable again",
+            "{machine_name} ({machine_ip}) responded to a reachability check again "
+            "at {timestamp}, after previously being unreachable.\n\n{details}",
+        ),
+        NotificationEventType.UPDATE_RUN_FAILED: (
+            "debcontrol: update run failed on {machine_name}",
+            "An update run on {machine_name} ({machine_ip}) failed at {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.FLEET_SUMMARY_GENERATED: (
+            "debcontrol: new fleet summary ({timestamp})",
+            "The scheduled AI fleet summary generated at {timestamp} is ready.\n\n{details}",
+        ),
+    },
+    "cs": {
+        NotificationEventType.MACHINE_UNREACHABLE: (
+            "debcontrol: {machine_name} je nedostupný",
+            "{machine_name} ({machine_ip}) přestal reagovat na kontrolu dostupnosti "
+            "v {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.MACHINE_REACHABLE_AGAIN: (
+            "debcontrol: {machine_name} je opět dostupný",
+            "{machine_name} ({machine_ip}) znovu reagoval na kontrolu dostupnosti "
+            "v {timestamp}, poté co byl nedostupný.\n\n{details}",
+        ),
+        NotificationEventType.UPDATE_RUN_FAILED: (
+            "debcontrol: aktualizace na {machine_name} selhala",
+            "Aktualizace na stroji {machine_name} ({machine_ip}) selhala v {timestamp}."
+            "\n\n{details}",
+        ),
+        NotificationEventType.FLEET_SUMMARY_GENERATED: (
+            "debcontrol: nové shrnutí flotily ({timestamp})",
+            "Plánované AI shrnutí flotily vygenerované v {timestamp} je hotové.\n\n{details}",
+        ),
+    },
 }
 
 
@@ -77,25 +114,31 @@ class _SafeDict(dict[str, str]):
         return "{" + key + "}"
 
 
-def default_template(event_type: NotificationEventType) -> tuple[str, str]:
-    """The built-in (subject, body) for `event_type`, used whenever no
-    `NotificationTemplate` row overrides it — also what the Notifications
-    → Templates page shows as the starting point to edit, and what
-    "Reset to default" (`app/web/routes/notifications.py`) puts back."""
-    return _DEFAULT_TEMPLATES[event_type]
+def default_template(
+    event_type: NotificationEventType, locale: str = DEFAULT_LOCALE_CODE
+) -> tuple[str, str]:
+    """The built-in (subject, body) for `event_type` in `locale`, used
+    whenever no `NotificationTemplate` row overrides it — also what the
+    Notifications → Templates page shows as the starting point to edit
+    (in the viewing admin's own UI language — see
+    `app/web/routes/notifications.py`), and what "Reset to default" puts
+    back. A `locale` with no translations here falls back to English."""
+    return _DEFAULT_TEMPLATES.get(locale, _DEFAULT_TEMPLATES[DEFAULT_LOCALE_CODE])[event_type]
 
 
 def render_template(
     event_type: NotificationEventType,
     template: NotificationTemplate | None,
     context: dict[str, Any],
+    *,
+    locale: str = DEFAULT_LOCALE_CODE,
 ) -> tuple[str, str]:
     """Subject and body for one event, substituting `{placeholder}` values
-    from `context` into the stored (or built-in default, if `template` is
-    None) text — plain `str.format_map`, not a template engine, so an
-    admin-edited body can never execute code or reach outside its own
-    string (see `NotificationTemplate`'s docstring). Missing placeholders
-    are left as literal text rather than raising.
+    from `context` into the stored (or built-in default for `locale`, if
+    `template` is None) text — plain `str.format_map`, not a template
+    engine, so an admin-edited body can never execute code or reach
+    outside its own string (see `NotificationTemplate`'s docstring).
+    Missing placeholders are left as literal text rather than raising.
 
     Placeholders every event type provides: `{event}` (the event type's
     code, e.g. "machine.unreachable"), `{timestamp}` (UTC ISO-8601).
@@ -105,7 +148,7 @@ def render_template(
     if template is not None:
         subject_tpl, body_tpl = template.subject, template.body
     else:
-        subject_tpl, body_tpl = _DEFAULT_TEMPLATES[event_type]
+        subject_tpl, body_tpl = default_template(event_type, locale)
     safe_context = _SafeDict({k: "" if v is None else str(v) for k, v in context.items()})
     return subject_tpl.format_map(safe_context), body_tpl.format_map(safe_context)
 
@@ -144,21 +187,19 @@ async def _matching_rules(
     ]
 
 
-def _recipient_emails(rules: list[NotificationRule]) -> set[str]:
+def _recipients(rules: list[NotificationRule]) -> list[User]:
     """The union of every matching rule's recipients — directly-listed
-    users plus every member of its user groups — deduplicated, and
+    users plus every member of its user groups — deduplicated by id, and
     silently dropping a disabled account or one with no `User.email` set
-    (see `NotificationRule`'s docstring)."""
-    emails: set[str] = set()
+    (see `NotificationRule`'s docstring). Returns full `User` objects, not
+    just addresses, so `notify` can render each one's email in *their*
+    own `User.locale` (see this module's i18n note above)."""
+    by_id: dict[object, User] = {}
     for rule in rules:
-        for user in rule.users:
+        for user in (*rule.users, *(m for g in rule.user_groups for m in g.members)):
             if user.is_active and user.email:
-                emails.add(user.email)
-        for group in rule.user_groups:
-            for user in group.members:
-                if user.is_active and user.email:
-                    emails.add(user.email)
-    return emails
+                by_id[user.id] = user
+    return list(by_id.values())
 
 
 def _send_smtp_message(
@@ -215,7 +256,7 @@ async def notify(
         rules = await _matching_rules(db, event_type, machine)
         if not rules:
             return
-        recipients = _recipient_emails(rules)
+        recipients = _recipients(rules)
         if not recipients:
             return
 
@@ -233,13 +274,25 @@ async def notify(
         if machine is not None:
             full_context.setdefault("machine_name", machine.name)
             full_context.setdefault("machine_ip", machine.ip_address)
-        subject, body = render_template(event_type, template, full_context)
 
-        for address in recipients:
+        # Rendered once per recipient, in *their* own UI language
+        # (`User.locale`, same field the rest of the app already uses for
+        # this) rather than once for everyone — an admin-set template
+        # override is still a single value regardless of locale (see the
+        # module-level note above `_DEFAULT_TEMPLATES`).
+        for user in recipients:
+            assert user.email is not None  # guaranteed by `_recipients`
+            subject, body = render_template(
+                event_type, template, full_context, locale=user.locale or DEFAULT_LOCALE_CODE
+            )
             try:
-                await asyncio.to_thread(_send_smtp_message, app_settings, address, subject, body)
+                await asyncio.to_thread(
+                    _send_smtp_message, app_settings, user.email, subject, body
+                )
             except Exception:
-                logger.warning("Failed to send notification email to %s", address, exc_info=True)
+                logger.warning(
+                    "Failed to send notification email to %s", user.email, exc_info=True
+                )
     except Exception:
         logger.warning(
             "Notification dispatch failed for event=%s", event_type.value, exc_info=True

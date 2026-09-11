@@ -21,6 +21,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn.helpers import options_to_json
 
@@ -69,7 +70,7 @@ from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
 from app.i18n import available_locales, get_locale
-from app.schemas.user import MIN_PASSWORD_LENGTH
+from app.schemas.user import MIN_PASSWORD_LENGTH, normalize_email
 from app.web.templating import templates
 
 router = APIRouter()
@@ -772,6 +773,7 @@ async def update_display_name(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     display_name: str = Form(""),
+    email: str = Form(""),
 ) -> Response:
     # `current_user` (from the auth middleware's own, already-closed DB
     # session) can't be mutated and saved through `db` — a different
@@ -780,13 +782,39 @@ async def update_display_name(
     # mutating route below does the same for the same reason.
     user = await db.get(User, current_user.id)
     assert user is not None
+
+    try:
+        normalized_email = normalize_email(email)
+    except ValueError as exc:
+        return await _render_account(request, db, user, errors=[str(exc)])
+
+    # Checked explicitly up front, not left to the `email` column's unique
+    # constraint to reject at commit time — same end result, but a plain
+    # SELECT here is simpler to reason about than an IntegrityError-driven
+    # rollback for what's a one-column, low-contention self-service form.
+    if normalized_email is not None:
+        conflict = await db.execute(
+            select(User.id).where(User.email == normalized_email, User.id != user.id)
+        )
+        if conflict.scalar_one_or_none() is not None:
+            return await _render_account(
+                request, db, user, errors=["That email is already in use by another account."]
+            )
+
     user.display_name = display_name.strip() or None
-    await db.commit()
+    user.email = normalized_email
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return await _render_account(
+            request, db, user, errors=["That email is already in use by another account."]
+        )
     await log_event(
         db,
         request=request,
         action="user.account.update",
-        summary=f'"{user.username}" updated their display name',
+        summary=f'"{user.username}" updated their profile',
         target_type="user",
         target_id=user.id,
         target_label=user.username,

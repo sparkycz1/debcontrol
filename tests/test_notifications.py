@@ -17,7 +17,7 @@ from app.db.models.notification_rule import (
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_group import UserGroup
-from app.services.notifications import notify, render_template
+from app.services.notifications import default_template, notify, render_template
 
 
 async def _make_role(db: AsyncSession, name: str) -> Role:
@@ -175,6 +175,18 @@ async def test_template_default_then_override_then_reset(client, db_session_fact
             await db.execute(select(NotificationTemplate))
         ).scalars().all()
         assert remaining == []
+
+
+def test_default_template_is_localized():
+    en_subject, _ = default_template(NotificationEventType.MACHINE_UNREACHABLE, "en")
+    cs_subject, _ = default_template(NotificationEventType.MACHINE_UNREACHABLE, "cs")
+    assert "unreachable" in en_subject
+    assert "nedostupný" in cs_subject
+    # Unknown locale falls back to English rather than raising.
+    assert default_template(NotificationEventType.MACHINE_UNREACHABLE, "xx") == (
+        en_subject,
+        default_template(NotificationEventType.MACHINE_UNREACHABLE, "en")[1],
+    )
 
 
 def test_render_template_leaves_unknown_placeholder_literal():
