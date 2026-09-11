@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -65,6 +65,39 @@ async def _get_user_or_404(user_id: uuid.UUID, db: AsyncSession) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     return user
+
+
+async def _duplicate_user_error(
+    db: AsyncSession, *, exclude_user_id: uuid.UUID, username: str, email: str | None
+) -> str | None:
+    """Proactively look for a row this write would collide with, instead of
+    relying on catching `IntegrityError` from the commit.
+
+    This matters specifically for *updates*, not creates: `User.updated_at`
+    has `onupdate=func.now()`, so SQLAlchemy emits an implicit
+    `UPDATE ... RETURNING updated_at`. Confirmed against both dialects:
+    asyncpg (what production actually runs — see `app.core.config`) handles
+    a UNIQUE-violating RETURNING UPDATE the same way as any other failed
+    statement, surfacing a normal `IntegrityError`. But under the test
+    suite's aiosqlite backend (`tests/conftest.py`'s `db_session_factory`),
+    the same failure corrupts aiosqlite's greenlet/asyncio bridging and
+    surfaces as `sqlalchemy.exc.MissingGreenlet` instead — a driver-level
+    quirk, not a real production behavior. This check sidesteps it so the
+    common "edited to someone else's username/email" case behaves
+    identically on both backends; the `IntegrityError` catch below the
+    commit stays in place as a defense-in-depth backstop for a genuine
+    create/update race.
+    """
+    conditions = [User.username == username]
+    if email:
+        conditions.append(User.email == email)
+    result = await db.execute(select(User).where(User.id != exclude_user_id, or_(*conditions)))
+    conflict = result.scalars().first()
+    if conflict is None:
+        return None
+    if conflict.username == username:
+        return f'A user named "{username}" already exists.'
+    return "That email is already in use by another account."
 
 
 async def _get_roles(db: AsyncSession) -> list[Role]:
@@ -437,6 +470,16 @@ async def update_user(
                 ["This is the last account that can manage users — it can't lose that access."],
                 status.HTTP_409_CONFLICT,
             )
+
+    # Checked before mutating `user` in place below: once its attributes are
+    # dirtied, a `SELECT` here would trigger autoflush and emit the very
+    # UPDATE this check exists to get ahead of, defeating the point (see
+    # `_duplicate_user_error`'s docstring).
+    duplicate_error = await _duplicate_user_error(
+        db, exclude_user_id=user.id, username=payload.username, email=payload.email
+    )
+    if duplicate_error is not None:
+        return await _rerender([duplicate_error], status.HTTP_409_CONFLICT)
 
     user.username = payload.username
     user.display_name = payload.display_name

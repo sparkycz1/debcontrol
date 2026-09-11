@@ -349,6 +349,67 @@ async def test_user_crud_via_api(client, db_session_factory):
         assert await db.get(User, uuid.UUID(user_id)) is None
 
 
+async def test_user_api_update_to_duplicate_username_or_email_is_rejected(
+    client, db_session_factory
+):
+    headers = await _api_token(client)
+
+    async with db_session_factory() as db:
+        role = (await db.execute(select(Role))).scalars().first()
+        role_id = str(role.id)
+
+    create_owner = await client.post(
+        "/api/v1/users",
+        json={
+            "username": "api-owns-the-name",
+            "email": "api-owns-the-email@example.com",
+            "auth_provider": "ldap",
+            "role_id": role_id,
+        },
+        headers=headers,
+    )
+    assert create_owner.status_code == 201, create_owner.text
+
+    create_target = await client.post(
+        "/api/v1/users",
+        json={
+            "username": "api-edit-target",
+            "auth_provider": "ldap",
+            "role_id": role_id,
+        },
+        headers=headers,
+    )
+    assert create_target.status_code == 201, create_target.text
+    target_id = create_target.json()["id"]
+
+    duplicate_username = await client.put(
+        f"/api/v1/users/{target_id}",
+        json={
+            "username": "api-owns-the-name",
+            "auth_provider": "ldap",
+            "role_id": role_id,
+            "is_active": True,
+        },
+        headers=headers,
+    )
+    assert duplicate_username.status_code == 409
+    assert "already exists" in duplicate_username.json()["detail"]
+
+    duplicate_email = await client.put(
+        f"/api/v1/users/{target_id}",
+        json={
+            "username": "api-edit-target",
+            "email": "api-owns-the-email@example.com",
+            "auth_provider": "ldap",
+            "role_id": role_id,
+            "is_active": True,
+        },
+        headers=headers,
+    )
+    assert duplicate_email.status_code == 409
+    assert "already in use" in duplicate_email.json()["detail"]
+
+
 async def test_user_api_cannot_delete_self(client):
     headers = await _api_token(client)
     from tests.conftest import ADMIN_USERNAME

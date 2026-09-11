@@ -310,3 +310,79 @@ async def test_duplicate_email_is_rejected(client):
     )
     assert response.status_code == 409
     assert "already in use" in response.text
+
+
+async def test_edit_user_to_duplicate_username_is_rejected(client, db_session_factory):
+    from app.db.models.role import Role
+    from app.db.models.user import AuthProvider, User
+
+    async with db_session_factory() as db:
+        role = Role(name="role-taken-username")
+        db.add(role)
+        await db.flush()
+        db.add(User(username="owns-the-name", auth_provider=AuthProvider.LDAP, role=role))
+        role2 = Role(name="role-edit-username")
+        db.add(role2)
+        await db.flush()
+        target = User(username="edit-target-username", auth_provider=AuthProvider.LDAP, role=role2)
+        db.add(target)
+        await db.commit()
+        await db.refresh(target)
+        user_id, role_id = target.id, role2.id
+
+    await client.get(f"/users/{user_id}/edit")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        f"/users/{user_id}/edit",
+        data={
+            "username": "owns-the-name",
+            "auth_provider": "ldap",
+            "role_id": str(role_id),
+            "is_active": "1",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert response.status_code == 409
+    assert "already exists" in response.text
+
+
+async def test_edit_user_to_duplicate_email_is_rejected(client, db_session_factory):
+    from app.db.models.role import Role
+    from app.db.models.user import AuthProvider, User
+
+    async with db_session_factory() as db:
+        role = Role(name="role-taken-email")
+        db.add(role)
+        await db.flush()
+        db.add(
+            User(
+                username="email-owner",
+                auth_provider=AuthProvider.LDAP,
+                email="taken@example.com",
+                role=role,
+            )
+        )
+        role2 = Role(name="role-edit-email")
+        db.add(role2)
+        await db.flush()
+        target = User(username="email-edit-target", auth_provider=AuthProvider.LDAP, role=role2)
+        db.add(target)
+        await db.commit()
+        await db.refresh(target)
+        user_id, role_id = target.id, role2.id
+
+    await client.get(f"/users/{user_id}/edit")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        f"/users/{user_id}/edit",
+        data={
+            "username": "email-edit-target",
+            "email": "taken@example.com",
+            "auth_provider": "ldap",
+            "role_id": str(role_id),
+            "is_active": "1",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert response.status_code == 409
+    assert "already in use" in response.text
