@@ -1453,7 +1453,9 @@ Every entry is linked into a hash chain (`sequence`, `prev_hash`,
 ### Audit log retention: the first setting editable through the UI
 
 `audit_log_retention_days`, set from Settings, controls how many days
-`purge_old_audit_log_entries` keeps on a daily sweep. `None` (default) = keep forever.
+`purge_old_audit_log_entries` keeps on a daily sweep. Defaults to **90
+days**, same as the operational-data retention settings below; `None`
+(settable from the same Settings field) means keep forever.
 
 The first value editable at runtime through the UI rather than fixed at
 deploy time via `.env`. Purging only removes the *oldest* rows; never
@@ -1500,15 +1502,63 @@ synchronous calls use. The MSG part is a compact JSON object, not
 free-text `key="value"` pairs — a receiver's own parser (or `jq`) needs
 no bespoke grammar for it.
 
-### SMTP relay: configuration only, for now
+### SMTP relay
 
 Settings → Integrations has an SMTP section (`AppSettings.smtp_*` —
 host/port/encryption/username/password/from address/from name), same
-encrypted-secret convention as LDAP/OIDC next to it. Deliberately just
-configuration in this round — nothing in the app sends an email through
-it yet. The `send_email(...)` call itself, and whatever decides *when*
-an email goes out (most likely a per-user notification preference), is a
-follow-up once that design is settled.
+encrypted-secret convention as LDAP/OIDC next to it. `smtp_enabled` gates
+whether Notifications (below) actually sends anything — with it off, or
+no host set, notification dispatch is a complete no-op.
+
+### Notifications: rule-based email alerts
+
+`/notifications` (`app/web/routes/notifications.py`, gated by the
+`notification.view`/`notification.manage` permissions — deliberately
+separate from `settings.manage` and `user.manage`, since "who gets
+emailed about what" is a narrower trust level than either) lets an admin
+define **rules**: which events to fire on, who to notify, and which
+machines to limit the rule to.
+
+- **Events** are a small, fixed, code-defined set —
+  `app.db.models.notification_rule.NotificationEventType` — not an
+  open-ended "any audit action" hook. Currently: a machine's
+  reachability *transitioning* (not every poll tick that just confirms
+  the same state — see `app.tasks.jobs._ping_all_machines`/
+  `_check_machine_reachability_now`) to unreachable or back to reachable,
+  and an update run failing (`_run_machine_update`). Adding another event
+  is a three-step recipe: add an enum member, wire one `notify(...)` call
+  at the point the event happens, add its default template — see
+  `NotificationEventType`'s own docstring.
+- **Recipients** are the union of a rule's directly-listed users and
+  every member of its **user groups** (`app.db.models.user_group.
+  UserGroup` — a plain named group of accounts, unrelated to `Role`
+  (permissions) or `MachineGroup` (machines), that exists purely to be a
+  reusable notification target). `User.email` is the address used; a
+  user with none set is silently skipped, never an error.
+- **Scope** narrows which machines a rule cares about — a set of
+  machines and/or machine groups; empty means every machine, matching
+  `MachineGroup`'s own "All machines" convention.
+- **Templates** (`/notifications/templates`) are one subject/body pair
+  per event type, plain-text with `{placeholder}` substitution
+  (`app.services.notifications.render_template` — `str.format_map`, not
+  a template engine, so an admin-edited body can never execute code). An
+  event with no customized `NotificationTemplate` row uses a built-in
+  default; deleting the row (Reset to default) is the whole "undo".
+
+`app.services.notifications.notify(db, event_type, machine=..., context=...)`
+is the one place this all comes together: find enabled rules matching
+the event and scope, resolve recipients, render the template, send one
+email per recipient via stdlib `smtplib` (run through `asyncio.to_thread`,
+same sync-library/async-caller seam every Celery task already crosses —
+no new SMTP client dependency for this one feature). Every failure here
+— SMTP disabled, no matching rule, no recipient with an email, the SMTP
+server itself refusing — is caught and logged, never raised: a
+notification must never be able to break the background job that
+triggered it, the same "best-effort, never load-bearing" spirit the
+audit log's syslog mirror already has.
+
+Web-UI-only this round (see `api_v1.py`'s module docstring) — a REST
+equivalent is a reasonable follow-up, not included here.
 
 ### Version metadata: baked in at build time, not read from `.git`
 

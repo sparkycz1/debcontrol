@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "notifications.templates.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "notifications.templates.title") }}</h1>
+    <a class="button button-secondary" href="/notifications">{{ t(request, "notifications.back_to_rules") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "notifications.templates.hint") }}</p>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>{{ t(request, "notifications.templates.table.event") }}</th>
+        <th>{{ t(request, "notifications.templates.table.subject") }}</th>
+        <th>{{ t(request, "notifications.templates.table.status") }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ t(request, "notifications.event." ~ row.event_type.name | lower) }}</td>
+          <td>{{ row.subject }}</td>
+          <td>
+            {{ t(request, "notifications.templates.status_custom") if row.is_override
+               else t(request, "notifications.templates.status_default") }}
+          </td>
+          <td><a href="/notifications/templates/{{ row.event_type.value }}/edit">{{ t(request, "notifications.templates.edit") }}</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

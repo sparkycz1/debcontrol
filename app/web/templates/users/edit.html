@@ -34,6 +34,11 @@
       <input type="text" id="display_name" name="display_name" maxlength="255"
              value="{{ target_user.display_name or '' }}">
 
+      <label for="email">{{ t(request, "users.new.email_label") }}</label>
+      <input type="email" id="email" name="email" maxlength="255"
+             value="{{ target_user.email or '' }}">
+      <p class="hint">{{ t(request, "users.new.email_hint") }}</p>
+
       <label for="role_id">{{ t(request, "users.table.role") }}</label>
       <select id="role_id" name="role_id" required>
         {% for role in roles %}

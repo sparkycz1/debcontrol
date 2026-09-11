@@ -41,6 +41,7 @@ def _user_to_dict(user: User) -> dict[str, object]:
         "id": str(user.id),
         "username": user.username,
         "display_name": user.display_name,
+        "email": user.email,
         "auth_provider": user.auth_provider.value,
         "role_id": str(user.role_id),
         "role_name": user.role.name if user.role else None,
@@ -95,6 +96,7 @@ async def create_user_api(
     user = User(
         username=payload.username,
         display_name=payload.display_name,
+        email=payload.email,
         auth_provider=payload.auth_provider,
         password_hash=hash_password(payload.password) if payload.password else None,
         must_change_password=payload.auth_provider == AuthProvider.LOCAL,
@@ -108,7 +110,10 @@ async def create_user_api(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f'A user named "{payload.username}" already exists.',
+            detail=(
+                f'A user named "{payload.username}" already exists, '
+                "or that email is already in use by another account."
+            ),
         ) from None
     user = await _get_user_or_404(user.id, db)
     await log_event(
@@ -175,6 +180,7 @@ async def update_user_api(
 
     user.username = payload.username
     user.display_name = payload.display_name
+    user.email = payload.email
     user.auth_provider = payload.auth_provider
     user.role_id = payload.role_id
     user.is_active = payload.is_active
@@ -193,7 +199,10 @@ async def update_user_api(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f'A user named "{payload.username}" already exists.',
+            detail=(
+                f'A user named "{payload.username}" already exists, '
+                "or that email is already in use by another account."
+            ),
         ) from None
 
     if not payload.is_active:

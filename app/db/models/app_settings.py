@@ -91,10 +91,17 @@ class AppSettings(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     # How many days of audit_log_entries to keep before the daily purge job
-    # (app.tasks.jobs.purge_old_audit_log_entries) deletes them. NULL means
-    # "keep forever" — the default, since silently discarding audit history
-    # is a much worse surprise than an unbounded table.
-    audit_log_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # (app.tasks.jobs.purge_old_audit_log_entries) deletes them. NULL still
+    # means "keep forever" if an operator wants that — but the default is a
+    # bounded 90 days, same as the operational-data retention settings below,
+    # rather than unbounded: a real fleet's audit trail otherwise grows
+    # forever with nothing here to bound it, and 90 days is long enough to
+    # cover almost any investigation window while still being an explicit,
+    # visible choice on the Settings page (not a silent app-side default
+    # someone has to go looking for).
+    audit_log_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=90
+    )
 
     # Same idea, for the daily fleet_snapshots row written by
     # app.tasks.jobs.record_fleet_snapshot and purged by

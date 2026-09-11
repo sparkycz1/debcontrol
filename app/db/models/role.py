@@ -62,6 +62,14 @@ class Permission(enum.StrEnum):
     AI_ACCESS = "ai.access"
     SCHEDULING_VIEW = "scheduling.view"
     SCHEDULING_MANAGE = "scheduling.manage"
+    # Notification rules, recipient user groups, and email templates
+    # (`/notifications`, app/web/routes/notifications.py) — kept apart from
+    # SETTINGS_MANAGE since "who gets emailed about what" is a different,
+    # narrower trust level than the rest of Settings (SMTP relay, LDAP/OIDC,
+    # syslog), and apart from USER_MANAGE since a user group here is a
+    # notification-recipient list, not an account-administration concept.
+    NOTIFICATION_VIEW = "notification.view"
+    NOTIFICATION_MANAGE = "notification.manage"
     AUDIT_VIEW = "audit.view"
     SETTINGS_VIEW = "settings.view"
     SETTINGS_MANAGE = "settings.manage"

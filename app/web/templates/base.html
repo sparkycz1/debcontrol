@@ -38,6 +38,9 @@
         <a href="/users" {% if current_path.startswith('/users') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.users") }}</a>
         <a href="/roles" {% if current_path.startswith('/roles') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.roles") }}</a>
       {% endif %}
+      {% if current_user.has_permission('notification.view') %}
+        <a href="/notifications" {% if current_path.startswith('/notifications') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.notifications") }}</a>
+      {% endif %}
       {% if current_user.has_permission('settings.view') %}
         <a href="/settings" {% if current_path.startswith('/settings') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.settings") }}</a>
       {% endif %}

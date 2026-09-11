@@ -232,3 +232,81 @@ async def _fresh_csrf(client: AsyncClient) -> str:
     token = client.cookies.get("csrftoken")
     assert token is not None
     return token
+
+
+async def test_create_user_with_email_persists_and_is_normalized(client):
+    roles_page = await client.get("/roles")
+    role_id = _extract_role_id(roles_page.text)
+
+    await client.get("/users/new")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        "/users",
+        data={
+            "username": "has-email",
+            "display_name": "",
+            "email": "  MAIL@Example.com  ",
+            "auth_provider": "ldap",
+            "password": "",
+            "role_id": role_id,
+            "csrf_token": csrf_token,
+        },
+    )
+    assert response.status_code == 303
+
+    edit_page = await client.get("/users")
+    assert "has-email" in edit_page.text
+
+
+async def test_create_user_rejects_malformed_email(client):
+    roles_page = await client.get("/roles")
+    role_id = _extract_role_id(roles_page.text)
+
+    await client.get("/users/new")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        "/users",
+        data={
+            "username": "bad-email",
+            "display_name": "",
+            "email": "not-an-email",
+            "auth_provider": "ldap",
+            "password": "",
+            "role_id": role_id,
+            "csrf_token": csrf_token,
+        },
+    )
+    assert response.status_code == 422
+    assert "look like" in response.text
+
+
+async def test_duplicate_email_is_rejected(client):
+    roles_page = await client.get("/roles")
+    role_id = _extract_role_id(roles_page.text)
+
+    await client.get("/users/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/users",
+        data={
+            "username": "first-owner",
+            "email": "shared@example.com",
+            "auth_provider": "ldap",
+            "password": "",
+            "role_id": role_id,
+            "csrf_token": csrf_token,
+        },
+    )
+    response = await client.post(
+        "/users",
+        data={
+            "username": "second-owner",
+            "email": "shared@example.com",
+            "auth_provider": "ldap",
+            "password": "",
+            "role_id": role_id,
+            "csrf_token": csrf_token,
+        },
+    )
+    assert response.status_code == 409
+    assert "already in use" in response.text

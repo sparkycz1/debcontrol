@@ -47,6 +47,7 @@ from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.notification_rule import NotificationEventType
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
     KIND_FACTS,
@@ -56,6 +57,7 @@ from app.services.live_updates import (
     KIND_UPDATES,
     publish_machine_event,
 )
+from app.services.notifications import notify
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
@@ -639,7 +641,13 @@ async def _ping_all_machines() -> None:
             results = await asyncio.gather(*(_check(m) for m in machines))
 
             now = datetime.now(UTC)
+            transitions: list[tuple[Machine, bool]] = []
             for machine, outcome in results:
+                was_reachable = machine.is_reachable
+                # `None` means this machine has never been checked before —
+                # not a transition from a known state, so nothing to notify.
+                if was_reachable is not None and was_reachable != outcome.reachable:
+                    transitions.append((machine, outcome.reachable))
                 machine.is_reachable = outcome.reachable
                 machine.last_ping_at = now
                 session.add(
@@ -653,6 +661,17 @@ async def _ping_all_machines() -> None:
             await session.commit()
             for machine, _outcome in results:
                 await publish_machine_event(str(machine.id), KIND_STATUS)
+            # Notify only on an actual state change — not every tick that
+            # simply confirms "still unreachable"/"still reachable" — see
+            # app.services.notifications's module docstring.
+            for machine, now_reachable in transitions:
+                await notify(
+                    session,
+                    NotificationEventType.MACHINE_REACHABLE_AGAIN
+                    if now_reachable
+                    else NotificationEventType.MACHINE_UNREACHABLE,
+                    machine=machine,
+                )
 
 
 @celery_app.task(name="app.tasks.jobs.ping_all_machines")
@@ -676,6 +695,7 @@ async def _check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
 
         outcome = await check_reachable(machine.ip_address, machine.port)
         now = datetime.now(UTC)
+        was_reachable = machine.is_reachable
         machine.is_reachable = outcome.reachable
         machine.last_ping_at = now
         session.add(
@@ -688,6 +708,17 @@ async def _check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
         )
         await session.commit()
         await publish_machine_event(str(machine.id), KIND_STATUS)
+        # `was_reachable is None` means this is the machine's very first
+        # reachability check ever — not a transition from a known state, so
+        # nothing to notify about yet.
+        if was_reachable is not None and was_reachable != outcome.reachable:
+            await notify(
+                session,
+                NotificationEventType.MACHINE_REACHABLE_AGAIN
+                if outcome.reachable
+                else NotificationEventType.MACHINE_UNREACHABLE,
+                machine=machine,
+            )
         return {"ok": True, "reachable": outcome.reachable}
 
 
@@ -1187,6 +1218,14 @@ async def _run_machine_update(run_id: str) -> None:
 
         run.finished_at = datetime.now(UTC)
         await session.commit()
+
+        if run.status == UpdateRunStatus.FAILED:
+            await notify(
+                session,
+                NotificationEventType.UPDATE_RUN_FAILED,
+                machine=machine,
+                context={"details": run.error or ""},
+            )
 
     refresh_machine_packages.delay(str(run.machine_id))
     check_machine_updates.delay(str(run.machine_id))

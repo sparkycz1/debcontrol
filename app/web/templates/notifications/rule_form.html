@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "notifications.rule.edit_title") if rule else t(request, "notifications.rule.new_title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "notifications.rule.edit_title") if rule else t(request, "notifications.rule.new_title") }}</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post"
+        action="{{ '/notifications/rules/' ~ rule.id ~ '/edit' if rule else '/notifications/rules' }}"
+        class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">{{ t(request, "notifications.rule.name_label") }}</label>
+    <input type="text" id="name" name="name" required maxlength="255" value="{{ form.name or '' }}">
+
+    <label for="description">{{ t(request, "notifications.rule.description_label") }}</label>
+    <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
+
+    <label>
+      <input type="checkbox" name="enabled" {{ 'checked' if form.enabled else '' }}>
+      {{ t(request, "notifications.rule.enabled_label") }}
+    </label>
+
+    <label>{{ t(request, "notifications.rule.events_label") }}</label>
+    <div class="permission-grid">
+      {% for event in event_types %}
+        <label>
+          <input type="checkbox" name="event_types" value="{{ event.value }}"
+                 {{ 'checked' if event.value in selected_event_types else '' }}>
+          {{ t(request, "notifications.event." ~ event.name | lower) }}
+        </label>
+      {% endfor %}
+    </div>
+
+    <label>{{ t(request, "notifications.rule.recipients_users_label") }}</label>
+    {% if all_users %}
+      <div class="permission-grid">
+        {% for user in all_users %}
+          <label>
+            <input type="checkbox" name="user_ids" value="{{ user.id }}"
+                   {{ 'checked' if user.id | string in selected_user_ids else '' }}>
+            {{ user.username }}{% if not user.email %} ({{ t(request, "notifications.rule.no_email") }}){% endif %}
+          </label>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="hint">{{ t(request, "notifications.rule.no_users") }}</p>
+    {% endif %}
+
+    <label>{{ t(request, "notifications.rule.recipients_groups_label") }}</label>
+    {% if all_user_groups %}
+      <div class="permission-grid">
+        {% for group in all_user_groups %}
+          <label>
+            <input type="checkbox" name="user_group_ids" value="{{ group.id }}"
+                   {{ 'checked' if group.id | string in selected_user_group_ids else '' }}>
+            {{ group.name }}
+          </label>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="hint">
+        {{ t(request, "notifications.rule.no_user_groups") }}
+        <a href="/notifications/groups/new">{{ t(request, "notifications.groups.add") }}</a>
+      </p>
+    {% endif %}
+
+    <label>{{ t(request, "notifications.rule.scope_machines_label") }}</label>
+    {% if all_machines %}
+      <div class="permission-grid">
+        {% for machine in all_machines %}
+          <label>
+            <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
+                   {{ 'checked' if machine.id | string in selected_machine_ids else '' }}>
+            {{ machine.name }}
+          </label>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <label>{{ t(request, "notifications.rule.scope_groups_label") }}</label>
+    {% if all_machine_groups %}
+      <div class="permission-grid">
+        {% for group in all_machine_groups %}
+          <label>
+            <input type="checkbox" name="machine_group_ids" value="{{ group.id }}"
+                   {{ 'checked' if group.id | string in selected_machine_group_ids else '' }}>
+            {{ group.name }}
+          </label>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <p class="hint">{{ t(request, "notifications.rule.scope_hint") }}</p>
+
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/notifications">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

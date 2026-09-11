@@ -20,7 +20,11 @@ the AI assistant's provider credentials are excluded for the reasons given
 in wiki/Architecture.md's "The REST API: read and write, mirroring the web
 UI" section — each one is either a secret/credential surface or carries a
 lock-out/blast-radius risk that's meant to be handled deliberately, by a
-human, not scriptable. The interactive SSH terminal
+human, not scriptable. Notifications (`/notifications` — rules, user
+groups, templates; see wiki/Architecture.md's "Notifications" section) is
+excluded for a simpler reason: it's new this round and web-UI-only for now,
+the same way SMTP settings started out — a REST equivalent is a reasonable
+follow-up, not a deliberate permanent exclusion. The interactive SSH terminal
 (`app/web/routes/terminal_ws.py`) and the AI assistant's chat
 (`app/web/routes/ai.py`) are excluded for a different reason: both are
 inherently interactive, browser-only features (a live WebSocket relaying

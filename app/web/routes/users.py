@@ -203,6 +203,7 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     username: str = Form(...),
     display_name: str = Form(""),
+    email: str = Form(""),
     auth_provider: AuthProvider = Form(...),
     password: str = Form(""),
     role_id: str = Form(...),
@@ -229,6 +230,7 @@ async def create_user(
                 "form": {
                     "username": username,
                     "display_name": display_name,
+                    "email": email,
                     "auth_provider": auth_provider,
                     "role_id": role_id,
                 },
@@ -246,6 +248,7 @@ async def create_user(
         payload = UserCreate(
             username=username,
             display_name=display_name or None,
+            email=email or None,
             auth_provider=auth_provider,
             password=password or None,
             role_id=role_uuid,
@@ -263,6 +266,7 @@ async def create_user(
     user = User(
         username=payload.username,
         display_name=payload.display_name,
+        email=payload.email,
         auth_provider=payload.auth_provider,
         password_hash=hash_password(payload.password) if payload.password else None,
         # An admin-set initial password must be changed on first login —
@@ -277,8 +281,16 @@ async def create_user(
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        # Could be the username or the email unique constraint — either way
+        # the account wasn't created, and there's no cheap way to tell which
+        # column tripped from a generic IntegrityError without inspecting
+        # driver-specific error text, so the message covers both.
         return await _rerender(
-            [f'A user named "{payload.username}" already exists.'], status.HTTP_409_CONFLICT
+            [
+                f'A user named "{payload.username}" already exists, '
+                "or that email is already in use by another account."
+            ],
+            status.HTTP_409_CONFLICT,
         )
     await db.refresh(user)
 
@@ -329,6 +341,7 @@ async def update_user(
     current_user: User = Depends(get_current_user),
     username: str = Form(...),
     display_name: str = Form(""),
+    email: str = Form(""),
     auth_provider: AuthProvider = Form(...),
     password: str = Form(""),
     role_id: str = Form(...),
@@ -365,6 +378,7 @@ async def update_user(
         payload = UserUpdate(
             username=username,
             display_name=display_name or None,
+            email=email or None,
             auth_provider=auth_provider,
             password=password or None,
             role_id=role_uuid,
@@ -426,6 +440,7 @@ async def update_user(
 
     user.username = payload.username
     user.display_name = payload.display_name
+    user.email = payload.email
     user.auth_provider = payload.auth_provider
     user.role_id = payload.role_id
     user.is_active = payload.is_active
@@ -448,7 +463,11 @@ async def update_user(
     except IntegrityError:
         await db.rollback()
         return await _rerender(
-            [f'A user named "{payload.username}" already exists.'], status.HTTP_409_CONFLICT
+            [
+                f'A user named "{payload.username}" already exists, '
+                "or that email is already in use by another account."
+            ],
+            status.HTTP_409_CONFLICT,
         )
 
     if not payload.is_active:

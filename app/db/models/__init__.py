@@ -16,6 +16,11 @@ from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.notification_rule import (
+    NotificationEventType,
+    NotificationRule,
+    NotificationTemplate,
+)
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.models.saved_audit_view import SavedAuditView
@@ -26,6 +31,7 @@ from app.db.models.ssh_identity import SSHIdentity
 from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
+from app.db.models.user_group import UserGroup
 from app.db.models.user_machine_group_access import UserMachineGroupAccess
 from app.db.models.user_session import UserSession
 from app.db.models.webauthn_credential import WebAuthnCredential
@@ -55,6 +61,9 @@ __all__ = [
     "MachineReachabilitySample",
     "MachineService",
     "MachineUpdateRun",
+    "NotificationEventType",
+    "NotificationRule",
+    "NotificationTemplate",
     "PendingActionStatus",
     "PendingMachine",
     "Permission",
@@ -73,6 +82,7 @@ __all__ = [
     "UpdateRunStatus",
     "UpgradeStrategy",
     "User",
+    "UserGroup",
     "UserMachineGroupAccess",
     "UserSession",
     "WebAuthnCredential",

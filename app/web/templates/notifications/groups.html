@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "notifications.groups.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "notifications.groups.title") }}</h1>
+    <div>
+      <a class="button button-secondary" href="/notifications">{{ t(request, "notifications.back_to_rules") }}</a>
+      <a class="button" href="/notifications/groups/new">{{ t(request, "notifications.groups.add") }}</a>
+    </div>
+  </div>
+
+  {% if groups %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "notifications.groups.table.name") }}</th>
+          <th>{{ t(request, "notifications.groups.table.members") }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for group in groups %}
+          <tr>
+            <td><a href="/notifications/groups/{{ group.id }}/edit">{{ group.name }}</a></td>
+            <td>{{ group.members | length }}</td>
+            <td>
+              <form method="post" action="/notifications/groups/{{ group.id }}/delete" class="inline-form"
+                    data-confirm="{{ t(request, 'notifications.groups.delete_confirm', name=(group.name | e)) | safe }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button button-danger">{{ t(request, "notifications.delete") }}</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="hint">{{ t(request, "notifications.groups.no_groups") }}</p>
+  {% endif %}
+{% endblock %}

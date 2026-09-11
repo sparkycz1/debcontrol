@@ -40,6 +40,7 @@ from app.web.routes import (
     live_ws,
     machine_groups,
     machines,
+    notifications,
     roles,
     scheduling,
     terminal_ws,
@@ -242,6 +243,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_account.router)
     app.include_router(users.router)
     app.include_router(roles.router)
+    app.include_router(notifications.router)
     app.include_router(settings_routes.router)
     app.include_router(theme.router)
     # No HTTP dependency here — WebSocket connections never go through
