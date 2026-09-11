@@ -1525,7 +1525,12 @@ machines to limit the rule to.
   reachability *transitioning* (not every poll tick that just confirms
   the same state — see `app.tasks.jobs._ping_all_machines`/
   `_check_machine_reachability_now`) to unreachable or back to reachable,
-  and an update run failing (`_run_machine_update`). Adding another event
+  an update run failing (`_run_machine_update`), and the AI assistant's
+  scheduled fleet summary finishing (`FLEET_SUMMARY_GENERATED`, fired from
+  `app.tasks.ai_jobs._generate_fleet_summary` — not machine-scoped, so it
+  matches any rule regardless of that rule's machine/machine-group scope;
+  see wiki/AI-Assistant.md's "Scheduled fleet summary" section). Adding
+  another event
   is a three-step recipe: add an enum member, wire one `notify(...)` call
   at the point the event happens, add its default template — see
   `NotificationEventType`'s own docstring.

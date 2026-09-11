@@ -60,8 +60,10 @@ from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.fleet_summary import FleetSummary
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
+from app.db.models.notification_rule import NotificationEventType
 from app.db.models.user import User
 from app.services.fleet_stats import compute_fleet_stats
+from app.services.notifications import notify
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -495,6 +497,18 @@ async def _generate_fleet_summary() -> None:
             )
         )
         await session.commit()
+
+        # Who (if anyone) actually gets emailed about this is configured in
+        # Notifications, not here — see NotificationEventType.
+        # FLEET_SUMMARY_GENERATED's own docstring. Not machine-scoped, so
+        # every rule listening for this event matches regardless of its
+        # machine/machine-group scope (see `app.services.notifications.
+        # _rule_matches_scope`).
+        await notify(
+            session,
+            NotificationEventType.FLEET_SUMMARY_GENERATED,
+            context={"details": result.text},
+        )
 
 
 @celery_app.task(

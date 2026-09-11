@@ -205,9 +205,14 @@ offline/need a security update/have a readiness finding, and how many
 runs/audit events failed. Shown to any account with `machine.view` and
 no group restriction (unattended, fleet-wide text — nothing left to scope after the fact).
 
-**Display-only, for now.** Never an email/Slack/notification — just a
-row the Dashboard renders. Retention (default 180 days) purged daily
-like fleet snapshots and update-run history.
+Always shown on the Dashboard as a row; **whether it also emails anyone**
+is configured separately, in Notifications
+(`NotificationEventType.FLEET_SUMMARY_GENERATED` — see
+wiki/Architecture.md's "Notifications" section) — a rule targeting that
+event fires right after the row is written, with the report text as the
+email body. No rule for it means no email, same as today. Retention
+(default 180 days) purged daily like fleet snapshots and update-run
+history.
 
 ## 🚫 Deliberately out of scope
 

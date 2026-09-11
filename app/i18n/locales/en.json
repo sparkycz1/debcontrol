@@ -45,6 +45,7 @@
     "account.profile.role": "Role",
     "account.profile.login_method": "Login method",
     "account.profile.display_name": "Display name",
+    "account.profile.email_hint": "Used as the recipient address if a notification rule targets you (see Notifications). Not used for login.",
     "account.language.heading": "Language",
     "account.language.label": "UI language",
     "account.language.help": "Only affects your own account — everyone else keeps their own choice (or the default, English).",
@@ -786,6 +787,15 @@
     "settings.general.facts_refresh_value": "every {seconds} seconds",
     "settings.general.in_env_reachability": "in <code>.env</code>) — TCP connect to the SSH port, no authentication",
     "settings.general.in_env": "in <code>.env</code>)",
+    "settings.general.monitoring_sample": "Monitoring sample",
+    "settings.general.monitoring_sample_value": "every {seconds} seconds",
+    "settings.general.reachability_concurrency": "Reachability sweep concurrency",
+    "settings.general.reachability_concurrency_value": "{count} machines at once",
+    "settings.general.ssh_connect_timeout": "SSH connect timeout",
+    "settings.general.ssh_connect_timeout_value": "{seconds} seconds",
+    "settings.general.update_timeout": "Update run timeout",
+    "settings.general.update_timeout_value": "{seconds} seconds",
+    "settings.general.background_checks_hint": "All of these are deploy-time environment variables (see .env.example) — change them there and restart, not from this page.",
 
     "settings.security.audit_log": "Audit log",
     "settings.security.audit_log_lower": "audit log",
@@ -888,7 +898,7 @@
     "settings.ai.fleet_summary_hint_before": "A background job writes a plain-language \"what changed, what needs attention\" report to the",
     "settings.ai.fleet_summary_hint_middle": " — off by default, since (unlike everything else above) this makes a real AI API call on a schedule, whether or not anyone reads it. This only ever",
     "settings.ai.displays": "displays",
-    "settings.ai.fleet_summary_hint_after": " a report; it does not send an email, Slack message, or any other notification.",
+    "settings.ai.fleet_summary_hint_after": " a report; add a rule for it in Notifications to also get emailed when a new one is ready.",
     "settings.ai.frequency": "Frequency",
     "settings.ai.disabled": "Disabled",
     "settings.ai.daily": "Daily",
@@ -966,6 +976,7 @@
 
     "notifications.event.machine_unreachable": "Machine became unreachable",
     "notifications.event.machine_reachable_again": "Machine reachable again",
-    "notifications.event.update_run_failed": "Update run failed"
+    "notifications.event.update_run_failed": "Update run failed",
+    "notifications.event.fleet_summary_generated": "Scheduled fleet summary generated"
   }
 }

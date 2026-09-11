@@ -64,6 +64,10 @@ _DEFAULT_TEMPLATES: dict[NotificationEventType, tuple[str, str]] = {
         "debcontrol: update run failed on {machine_name}",
         "An update run on {machine_name} ({machine_ip}) failed at {timestamp}.\n\n{details}",
     ),
+    NotificationEventType.FLEET_SUMMARY_GENERATED: (
+        "debcontrol: new fleet summary ({timestamp})",
+        "The scheduled AI fleet summary generated at {timestamp} is ready.\n\n{details}",
+    ),
 }
 
 
