@@ -13,158 +13,187 @@
 
   <form method="post"
         action="{{ '/notifications/rules/' ~ rule.id ~ '/edit' if rule else '/notifications/rules' }}"
-        class="form" autocomplete="off">
+        class="form form-wide" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <label for="name">{{ t(request, "notifications.rule.name_label") }}</label>
-    <input type="text" id="name" name="name" required maxlength="255" value="{{ form.name or '' }}">
+    <div class="panel">
+      <h2>{{ t(request, "notifications.rule.section_basics") }}</h2>
 
-    <label for="description">{{ t(request, "notifications.rule.description_label") }}</label>
-    <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
+      <label for="name">{{ t(request, "notifications.rule.name_label") }}</label>
+      <input type="text" id="name" name="name" required maxlength="255" value="{{ form.name or '' }}">
 
-    <label>
-      <input type="checkbox" name="enabled" {{ 'checked' if form.enabled else '' }}>
-      {{ t(request, "notifications.rule.enabled_label") }}
-    </label>
+      <label for="description">{{ t(request, "notifications.rule.description_label") }}</label>
+      <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
 
-    <label>{{ t(request, "notifications.rule.events_label") }}</label>
-    <div class="permission-grid">
-      {% for event in event_types %}
-        <label>
-          <input type="checkbox" name="event_types" value="{{ event.value }}"
-                 {{ 'checked' if event.value in selected_event_types else '' }}>
-          {{ t(request, "notifications.event." ~ event.name | lower) }}
-        </label>
-      {% endfor %}
+      <label>
+        <input type="checkbox" name="enabled" {{ 'checked' if form.enabled else '' }}>
+        {{ t(request, "notifications.rule.enabled_label") }}
+      </label>
     </div>
 
-    <label>{{ t(request, "notifications.rule.conditions_label") }}</label>
-    <p class="hint">{{ t(request, "notifications.rule.conditions_hint") }}</p>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>{{ t(request, "notifications.rule.conditions_field") }}</th>
-          <th>{{ t(request, "notifications.rule.conditions_operator") }}</th>
-          <th>{{ t(request, "notifications.rule.conditions_value") }}</th>
-          <th>{{ t(request, "notifications.rule.conditions_mount") }}</th>
-          <th>{{ t(request, "notifications.rule.conditions_sustained") }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in condition_rows %}
-          <tr>
-            <td>
-              <select name="condition_field">
-                <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
-                {% for key, label_key in condition_field_choices %}
-                  <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
-                    {{ t(request, "notifications.condition_field." ~ label_key) }}
-                  </option>
-                {% endfor %}
-              </select>
-            </td>
-            <td>
-              <select name="condition_operator">
-                {% for opkey in condition_operator_choices %}
-                  <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
-                    {{ t(request, "notifications.condition_operator." ~ opkey) }}
-                  </option>
-                {% endfor %}
-              </select>
-            </td>
-            <td><input type="text" name="condition_value" maxlength="255" value="{{ row.value or '' }}"></td>
-            <td><input type="text" name="condition_mount" maxlength="255" placeholder="/var"
-                       value="{{ row.mount_point or '' }}"></td>
-            <td><input type="number" name="condition_sustained" min="0" max="86400"
-                       value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}"></td>
-          </tr>
+    <div class="panel">
+      <h2>{{ t(request, "notifications.rule.section_events") }}</h2>
+
+      <label>{{ t(request, "notifications.rule.events_label") }}</label>
+      <div class="permission-grid">
+        {% for event in event_types %}
+          <label>
+            <input type="checkbox" name="event_types" value="{{ event.value }}"
+                   {{ 'checked' if event.value in selected_event_types else '' }}>
+            {{ t(request, "notifications.event." ~ event.name | lower) }}
+          </label>
         {% endfor %}
-      </tbody>
-    </table>
-    <p class="hint">{{ t(request, "notifications.rule.conditions_and_hint") }}</p>
-
-    <label for="conditions_yaml">{{ t(request, "notifications.rule.conditions_yaml_label") }}</label>
-    <textarea id="conditions_yaml" name="conditions_yaml" rows="4"
-              placeholder="- field: monitoring.cpu_percent&#10;  operator: gt&#10;  value: &quot;90&quot;&#10;  sustained_seconds: 300">{{ form.conditions_yaml or '' }}</textarea>
-    <p class="hint">{{ t(request, "notifications.rule.conditions_yaml_hint") }}</p>
-
-    <label>{{ t(request, "notifications.rule.recipients_users_label") }}</label>
-    {% if all_users %}
-      <div class="checklist-filter-group">
-        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
-               aria-label="{{ t(request, 'notifications.rule.recipients_users_label') }}">
-        <div class="permission-grid" data-checklist-items>
-          {% for user in all_users %}
-            <label>
-              <input type="checkbox" name="user_ids" value="{{ user.id }}"
-                     {{ 'checked' if user.id | string in selected_user_ids else '' }}>
-              {{ user.display_name or user.username }}{% if not user.email %} ({{ t(request, "notifications.rule.no_email") }}){% endif %}
-            </label>
-          {% endfor %}
-        </div>
-        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
       </div>
-    {% else %}
-      <p class="hint">{{ t(request, "notifications.rule.no_users") }}</p>
-    {% endif %}
+    </div>
 
-    <label>{{ t(request, "notifications.rule.recipients_roles_label") }}</label>
-    {% if all_roles %}
-      <div class="checklist-filter-group">
-        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
-               aria-label="{{ t(request, 'notifications.rule.recipients_roles_label') }}">
-        <div class="permission-grid" data-checklist-items>
-          {% for role in all_roles %}
-            <label>
-              <input type="checkbox" name="role_ids" value="{{ role.id }}"
-                     {{ 'checked' if role.id | string in selected_role_ids else '' }}>
-              {{ role.name }}
-            </label>
-          {% endfor %}
-        </div>
-        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
-      </div>
-    {% else %}
-      <p class="hint">{{ t(request, "notifications.rule.no_roles") }}</p>
-    {% endif %}
-    <p class="hint">{{ t(request, "notifications.rule.recipients_hint") }}</p>
+    <div class="panel">
+      <h2>{{ t(request, "notifications.rule.section_conditions") }}</h2>
+      <p class="hint">{{ t(request, "notifications.rule.conditions_hint") }}</p>
 
-    <label>{{ t(request, "notifications.rule.scope_machines_label") }}</label>
-    {% if all_machines %}
-      <div class="checklist-filter-group">
-        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
-               aria-label="{{ t(request, 'notifications.rule.scope_machines_label') }}">
-        <div class="permission-grid" data-checklist-items>
-          {% for machine in all_machines %}
-            <label>
-              <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
-                     {{ 'checked' if machine.id | string in selected_machine_ids else '' }}>
-              {{ machine.name }}
-            </label>
-          {% endfor %}
-        </div>
-        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
-      </div>
-    {% endif %}
+      <table class="data-table">
+        <thead>
+            <tr>
+              <th>{{ t(request, "notifications.rule.conditions_field") }}</th>
+              <th>{{ t(request, "notifications.rule.conditions_operator") }}</th>
+              <th>{{ t(request, "notifications.rule.conditions_value") }}</th>
+              <th>{{ t(request, "notifications.rule.conditions_mount") }}</th>
+              <th>{{ t(request, "notifications.rule.conditions_sustained") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in condition_rows %}
+              <tr>
+                <td>
+                  <select name="condition_field">
+                    <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
+                    {% for key, label_key in condition_field_choices %}
+                      <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
+                        {{ t(request, "notifications.condition_field." ~ label_key) }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td>
+                  <select name="condition_operator">
+                    {% for opkey in condition_operator_choices %}
+                      <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
+                        {{ t(request, "notifications.condition_operator." ~ opkey) }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td><input type="text" name="condition_value" maxlength="255" value="{{ row.value or '' }}"></td>
+                <td><input type="text" name="condition_mount" maxlength="255" placeholder="/var"
+                           value="{{ row.mount_point or '' }}"></td>
+                <td><input type="number" name="condition_sustained" min="0" max="86400"
+                           value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}"></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      <p class="hint">{{ t(request, "notifications.rule.conditions_and_hint") }}</p>
 
-    <label>{{ t(request, "notifications.rule.scope_groups_label") }}</label>
-    {% if all_machine_groups %}
-      <div class="checklist-filter-group">
-        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
-               aria-label="{{ t(request, 'notifications.rule.scope_groups_label') }}">
-        <div class="permission-grid" data-checklist-items>
-          {% for group in all_machine_groups %}
-            <label>
-              <input type="checkbox" name="machine_group_ids" value="{{ group.id }}"
-                     {{ 'checked' if group.id | string in selected_machine_group_ids else '' }}>
-              {{ group.name }}
-            </label>
-          {% endfor %}
+      <label for="conditions_yaml">{{ t(request, "notifications.rule.conditions_yaml_label") }}</label>
+      <textarea id="conditions_yaml" name="conditions_yaml" rows="4"
+                placeholder="- field: monitoring.cpu_percent&#10;  operator: gt&#10;  value: &quot;90&quot;&#10;  sustained_seconds: 300">{{ form.conditions_yaml or '' }}</textarea>
+      <p class="hint">{{ t(request, "notifications.rule.conditions_yaml_hint") }}</p>
+    </div>
+
+    <div class="panel">
+      <h2>{{ t(request, "notifications.rule.section_delivery") }}</h2>
+
+      <label for="send_via">{{ t(request, "notifications.rule.send_via_label") }}</label>
+      <select id="send_via" disabled>
+        <option>{{ t(request, "notifications.rule.send_via_smtp") }}</option>
+      </select>
+      <p class="hint">{{ t(request, "notifications.rule.send_via_hint") }}</p>
+    </div>
+
+    <div class="panel">
+      <h2>{{ t(request, "notifications.rule.section_recipients") }}</h2>
+
+      <label>{{ t(request, "notifications.rule.recipients_users_label") }}</label>
+      {% if all_users %}
+        <div class="checklist-filter-group">
+          <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+                 aria-label="{{ t(request, 'notifications.rule.recipients_users_label') }}">
+          <div class="permission-grid" data-checklist-items>
+            {% for user in all_users %}
+              <label>
+                <input type="checkbox" name="user_ids" value="{{ user.id }}"
+                       {{ 'checked' if user.id | string in selected_user_ids else '' }}>
+                {{ user.display_name or user.username }}{% if not user.email %} ({{ t(request, "notifications.rule.no_email") }}){% endif %}
+              </label>
+            {% endfor %}
+          </div>
+          <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
         </div>
-        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
-      </div>
-    {% endif %}
-    <p class="hint">{{ t(request, "notifications.rule.scope_hint") }}</p>
+      {% else %}
+        <p class="hint">{{ t(request, "notifications.rule.no_users") }}</p>
+      {% endif %}
+
+      <label>{{ t(request, "notifications.rule.recipients_roles_label") }}</label>
+      {% if all_roles %}
+        <div class="checklist-filter-group">
+          <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+                 aria-label="{{ t(request, 'notifications.rule.recipients_roles_label') }}">
+          <div class="permission-grid" data-checklist-items>
+            {% for role in all_roles %}
+              <label>
+                <input type="checkbox" name="role_ids" value="{{ role.id }}"
+                       {{ 'checked' if role.id | string in selected_role_ids else '' }}>
+                {{ role.name }}
+              </label>
+            {% endfor %}
+          </div>
+          <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
+        </div>
+      {% else %}
+        <p class="hint">{{ t(request, "notifications.rule.no_roles") }}</p>
+      {% endif %}
+      <p class="hint">{{ t(request, "notifications.rule.recipients_hint") }}</p>
+    </div>
+
+    <div class="panel">
+      <h2>{{ t(request, "notifications.rule.section_scope") }}</h2>
+
+      <label>{{ t(request, "notifications.rule.scope_machines_label") }}</label>
+      {% if all_machines %}
+        <div class="checklist-filter-group">
+          <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+                 aria-label="{{ t(request, 'notifications.rule.scope_machines_label') }}">
+          <div class="permission-grid" data-checklist-items>
+            {% for machine in all_machines %}
+              <label>
+                <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
+                       {{ 'checked' if machine.id | string in selected_machine_ids else '' }}>
+                {{ machine.name }}
+              </label>
+            {% endfor %}
+          </div>
+          <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
+        </div>
+      {% endif %}
+
+      <label>{{ t(request, "notifications.rule.scope_groups_label") }}</label>
+      {% if all_machine_groups %}
+        <div class="checklist-filter-group">
+          <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+                 aria-label="{{ t(request, 'notifications.rule.scope_groups_label') }}">
+          <div class="permission-grid" data-checklist-items>
+            {% for group in all_machine_groups %}
+              <label>
+                <input type="checkbox" name="machine_group_ids" value="{{ group.id }}"
+                       {{ 'checked' if group.id | string in selected_machine_group_ids else '' }}>
+                {{ group.name }}
+              </label>
+            {% endfor %}
+          </div>
+          <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
+        </div>
+      {% endif %}
+      <p class="hint">{{ t(request, "notifications.rule.scope_hint") }}</p>
+    </div>
 
     <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     <a class="button button-secondary" href="/notifications">{{ t(request, "common.cancel") }}</a>

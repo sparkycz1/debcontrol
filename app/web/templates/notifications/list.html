@@ -38,7 +38,11 @@
         {% for rule in rules %}
           <tr>
             <td><a href="/notifications/rules/{{ rule.id }}/edit">{{ rule.name }}</a></td>
-            <td>{{ rule.event_type_enums | map(attribute='value') | join(', ') }}</td>
+            <td>
+              {% for event in rule.event_type_enums %}
+                <span class="badge badge-tag">{{ t(request, "notifications.event." ~ event.name | lower) }}</span>
+              {% endfor %}
+            </td>
             <td>{{ rule.users | length }} {{ t(request, "notifications.users_word") }}, {{ rule.roles | length }} {{ t(request, "notifications.roles_word") }}</td>
             <td>
               {% if not rule.machines and not rule.machine_groups %}
