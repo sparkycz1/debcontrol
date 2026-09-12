@@ -261,6 +261,12 @@
     "users.status.disabled": "zakázán",
     "users.never": "nikdy",
     "users.edit": "Upravit",
+    "users.impersonate": "Přihlásit se jako",
+    "users.impersonate.confirm": "Přihlásit se jako {name}? Vše, co od teď uděláte, se zaznamenává pod jejich účtem, dokud se neodhlásíte.",
+
+    "impersonation.acting_as": "({admin})",
+    "impersonation.banner_title": "Jste přihlášeni jako tento účet přes Impersonate, spustil to {admin}. Odhlášením se vrátíte na svůj vlastní účet.",
+    "impersonation.stop": "Ukončit (odhlásit)",
 
     "roles.title": "Role",
     "roles.add": "Přidat roli",

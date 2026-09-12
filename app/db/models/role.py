@@ -78,6 +78,13 @@ class Permission(enum.StrEnum):
     # without the others (a role editor who can't also assign roles to users
     # isn't useful on its own).
     USER_MANAGE = "user.manage"
+    # Log in as any other account without knowing their password — "Sign in
+    # as" from the user list (app/web/routes/impersonation.py). Deliberately
+    # its own permission, not implied by USER_MANAGE: editing accounts and
+    # roles is one trust level, being able to silently act *as* one of them
+    # is a materially bigger one (everything the impersonated session does is
+    # audit-logged under both identities — see that module's docstring).
+    USER_IMPERSONATE = "user.impersonate"
 
 
 class Role(Base):

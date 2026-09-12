@@ -204,6 +204,7 @@ async def require_auth(
 
         request.state.user = session.user
         request.state.session = session
+        request.state.impersonator = session.impersonator
         request.state.locale = get_locale(session.user.locale)
 
         if _totp_enrollment_required(

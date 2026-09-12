@@ -32,7 +32,12 @@ keystrokes to a PTY and a real terminal emulator's output back; a
 conversational back-and-forth where every proposed action needs an
 explicit human confirmation click) with no meaningful "REST" shape to
 expose — there's nothing here for a script to call that would do anything
-useful without a human driving it. `POST /{id}/run-onboarding-with-
+useful without a human driving it. Impersonate (`/users/{id}/impersonate`,
+`app/web/routes/impersonation.py`) is excluded for the same reason as the
+terminal/AI chat: it swaps the browser's own session cookie for another
+one, a concept that doesn't translate to a stateless bearer-token API call
+at all — an API token already scopes to one fixed account (see
+`app.auth.api_tokens`) by design. `POST /{id}/run-onboarding-with-
 credential` (a *fresh*, one-time password submitted through the "Fix it"
 flow, not the machine's stored credential) is excluded for the same
 secret-handling reason as SSH key rotation; `POST /{id}/run-onboarding`

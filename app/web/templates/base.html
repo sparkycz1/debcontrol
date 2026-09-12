@@ -59,10 +59,20 @@
           {{ '☀️' if current_theme == 'light' else '🌙' }}
         </button>
       </form>
-      <a href="/account">{{ current_user.display_name or current_user.username }}</a>
+      {% set impersonator = request.state.impersonator %}
+      <a href="/account" class="impersonation-tag">
+        {{ current_user.display_name or current_user.username }}
+        {% if impersonator %}
+          <span class="impersonation-admin" title="{{ t(request, 'impersonation.banner_title', admin=(impersonator.display_name or impersonator.username)) }}">
+            {{ t(request, "impersonation.acting_as", admin=(impersonator.display_name or impersonator.username)) }}
+          </span>
+        {% endif %}
+      </a>
       <form method="post" action="/logout" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
-        <button type="submit" class="link-button">{{ t(request, "nav.log_out") }}</button>
+        <button type="submit" class="link-button">
+          {{ t(request, "impersonation.stop") if impersonator else t(request, "nav.log_out") }}
+        </button>
       </form>
     </div>
   </header>

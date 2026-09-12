@@ -217,6 +217,22 @@ p { margin: 0 0 var(--space-3); }
 .site-header-user a { color: var(--color-muted); text-decoration: none; }
 .site-header-user a:hover { color: var(--color-text); }
 
+/* "Signed in as {target} ({acting as admin})" while impersonating — see
+   app.web.routes.impersonation. Deliberately loud (the warning color, a
+   filled badge) since this is the one state where an admin's own account
+   name isn't what's shown as "you" everywhere else in the app. */
+.impersonation-tag {
+  color: var(--color-text);
+}
+.impersonation-tag .impersonation-admin {
+  background: rgba(224, 171, 74, 0.18);
+  color: var(--color-warn);
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.4rem;
+  font-weight: 600;
+  margin-left: var(--space-1);
+}
+
 .link-button {
   background: none;
   border: none;

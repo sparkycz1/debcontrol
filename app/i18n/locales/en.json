@@ -261,6 +261,12 @@
     "users.status.disabled": "disabled",
     "users.never": "never",
     "users.edit": "Edit",
+    "users.impersonate": "Sign in as",
+    "users.impersonate.confirm": "Sign in as {name}? Everything done from then on is logged under their account until you log out.",
+
+    "impersonation.acting_as": "({admin})",
+    "impersonation.banner_title": "You're signed in as this account via Impersonate, started by {admin}. Log out to return to your own account.",
+    "impersonation.stop": "Stop (log out)",
 
     "roles.title": "Roles",
     "roles.add": "Add role",

@@ -32,6 +32,16 @@ SESSION_COOKIE_NAME = "session"
 SESSION_IDLE_TIMEOUT = timedelta(hours=12)
 SESSION_ABSOLUTE_MAX = timedelta(days=30)
 
+IMPERSONATION_RETURN_COOKIE_NAME = "impersonation_return"
+_IMPERSONATION_RETURN_SALT = "impersonation-return"
+# Generous compared to a normal session's own idle timeout — this cookie
+# only ever needs to outlive however long an admin spends poking around as
+# someone else, not a whole day. Session validity itself (both the
+# impersonated one and the original one it points back to) is still checked
+# independently on every request/at stop time, so this is just an outer
+# bound on the signed value itself, not a privilege in its own right.
+_IMPERSONATION_RETURN_MAX_AGE_SECONDS = 12 * 60 * 60
+
 PENDING_TOTP_COOKIE_NAME = "totp_pending"
 _PENDING_TOTP_SALT = "totp-pending-2fa"
 _PENDING_TOTP_MAX_AGE_SECONDS = 300
@@ -96,7 +106,8 @@ async def get_valid_session(db: AsyncSession, raw_token: str) -> UserSession | N
         .options(
             selectinload(UserSession.user)
             .selectinload(User.role)
-            .selectinload(Role.permission_grants)
+            .selectinload(Role.permission_grants),
+            selectinload(UserSession.impersonator),
         )
         .where(UserSession.token_hash == _hash_token(raw_token))
     )
@@ -136,6 +147,94 @@ async def revoke_all_sessions_for_user(
         stmt = stmt.where(UserSession.id != except_session_id)
     await db.execute(stmt)
     await db.commit()
+
+
+async def start_impersonation(
+    db: AsyncSession,
+    *,
+    admin: User,
+    target: User,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> tuple[UserSession, str]:
+    """Create a new session for `target`, tagged as started by `admin` — see
+    `app.web.routes.impersonation`. The admin's own original session is left
+    exactly as it is; the caller is responsible for stashing its raw token
+    (in the signed `impersonation_return` cookie) before swapping the
+    browser's session cookie over to this new one."""
+    raw_token = secrets.token_urlsafe(32)
+    now = datetime.now(UTC)
+    session = UserSession(
+        user_id=target.id,
+        impersonator_id=admin.id,
+        token_hash=_hash_token(raw_token),
+        expires_at=now + SESSION_IDLE_TIMEOUT,
+        ip_address=ip_address,
+        user_agent=(user_agent or "")[:255] or None,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return session, raw_token
+
+
+def _impersonation_return_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(
+        get_settings().secret_key.get_secret_value(),
+        salt=_IMPERSONATION_RETURN_SALT,
+        signer_kwargs={"digest_method": hashlib.sha256},
+    )
+
+
+def create_impersonation_return_ticket(raw_session_token: str) -> str:
+    """Signs the admin's own raw session token so it can be handed back to
+    them, unreadable/untamperable by the browser in between, once they stop
+    impersonating — see `stop_impersonation`."""
+    return _impersonation_return_serializer().dumps(raw_session_token)
+
+
+def read_impersonation_return_ticket(ticket: str) -> str | None:
+    try:
+        raw = _impersonation_return_serializer().loads(
+            ticket, max_age=_IMPERSONATION_RETURN_MAX_AGE_SECONDS
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    return raw if isinstance(raw, str) else None
+
+
+def set_impersonation_return_cookie(response: Response, ticket: str) -> None:
+    response.set_cookie(
+        IMPERSONATION_RETURN_COOKIE_NAME,
+        ticket,
+        httponly=True,
+        samesite="strict",
+        secure=get_settings().is_production,
+        max_age=_IMPERSONATION_RETURN_MAX_AGE_SECONDS,
+    )
+
+
+def clear_impersonation_return_cookie(response: Response) -> None:
+    response.delete_cookie(IMPERSONATION_RETURN_COOKIE_NAME)
+
+
+async def stop_impersonation(
+    db: AsyncSession, *, impersonation_session: UserSession, return_ticket: str
+) -> tuple[UserSession, str] | None:
+    """Ends one impersonation: revokes `impersonation_session` and resolves
+    the original admin session (and its raw token, to put back in the
+    cookie) the return ticket points back to. Returns `None` (nothing to
+    restore — caller should fall back to an ordinary logout) if the ticket
+    is missing/expired/tampered, or if the session it names is itself no
+    longer valid (expired, already revoked elsewhere)."""
+    await revoke_session(db, impersonation_session)
+    raw_original_token = read_impersonation_return_ticket(return_ticket)
+    if raw_original_token is None:
+        return None
+    restored = await get_valid_session(db, raw_original_token)
+    if restored is None:
+        return None
+    return restored, raw_original_token
 
 
 def set_session_cookie(response: Response, raw_token: str) -> None:

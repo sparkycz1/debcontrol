@@ -75,11 +75,12 @@ also signs the OIDC-flow session cookie.
 
 ### RBAC: custom roles, a fixed permission set
 
-An admin defines named `Role`s and picks exactly which of 12 fixed
+An admin defines named `Role`s and picks exactly which of the fixed
 `Permission`s each grants — `machine.view`/`.manage`, `group.view`/
-`.manage`, `action.updates`, `action.power`, `scheduling.view`/`.manage`,
-`audit.view`, `settings.view`/`.manage`, `user.manage` — then assigns
-**one role per user**. Resource-grained, not per-object.
+`.manage`, `action.updates`, `action.power`, `action.terminal`,
+`ai.access`, `scheduling.view`/`.manage`, `notification.view`/`.manage`,
+`audit.view`, `settings.view`/`.manage`, `user.manage`, `user.impersonate`
+— then assigns **one role per user**. Resource-grained, not per-object.
 
 A `MANAGE` permission always also grants the matching `VIEW`
 (`_MANAGE_IMPLIES_VIEW`) — otherwise `machine.manage` without
@@ -120,6 +121,42 @@ the grant and the revoke are audit-logged
 (`user.temporary_permission.grant`/`.revoke`); the REST API mirrors both
 at `POST`/`GET /api/v1/users/{id}/temporary-permissions` and `DELETE
 .../temporary-permissions/{grant_id}`.
+
+### Impersonate: signing in as another account
+
+**Users → "Sign in as"** (`user.impersonate`, `app/web/routes/impersonation.py`)
+lets an admin act as any other account without knowing its password — for
+reproducing what a restricted role actually sees, or helping someone
+without asking for their credentials.
+
+- **How the session swap works**: starting it doesn't touch the admin's
+  own session row at all. It creates a brand-new `UserSession` for the
+  target account (tagged `impersonator_id`), points the browser's session
+  cookie at that new session, and stashes the admin's own raw session
+  token in a second, signed, httponly cookie (`impersonation_return`) —
+  unreadable/untamperable in the browser in between.
+- **Ending it is folded into the ordinary "log out" button**, not a
+  separate control: logging out of an impersonated session restores the
+  admin's own original session instead of signing out entirely — like
+  closing a `su` shell. A full, ordinary logout only happens if the return
+  cookie is missing/expired or the original session no longer validates.
+- **Guardrails**: an admin can't impersonate themselves, can't start a
+  second impersonation on top of one already active (stop first), and can
+  never impersonate an account that itself holds `user.impersonate` — no
+  admin-on-admin impersonation and no impersonation chains. A disabled
+  account can't be impersonated either.
+- **Audit trail**: starting and stopping are their own entries
+  (`user.impersonate.start`/`.stop`) naming both accounts. Every action
+  taken *during* the impersonated session is audit-logged exactly like
+  normal, under the impersonated account — `request.state.impersonator`
+  is available to any call site that wants to additionally record who was
+  really driving (the topbar banner below uses it purely for display).
+- **UI**: the header shows the impersonated account's name with the
+  admin's own name alongside it in a colored tag, so it's never ambiguous
+  which account is "you" right now.
+- **Not in the REST API** — see `api_v1.py`'s module docstring: swapping a
+  browser's session cookie has no meaningful shape as a stateless
+  bearer-token call.
 
 ### Machine-group scoping: which machines an account may see
 

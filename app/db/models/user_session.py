@@ -31,7 +31,7 @@ class UserSession(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    user: Mapped[User] = relationship(back_populates="sessions")
+    user: Mapped[User] = relationship(back_populates="sessions", foreign_keys=[user_id])
 
     # SHA-256 hex digest of the raw token that actually sits in the client's
     # cookie — the raw value is never stored, so a DB leak alone doesn't hand
@@ -47,6 +47,17 @@ class UserSession(Base):
 
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Set only for a session created by "Impersonate" (see
+    # `app.web.routes.impersonation`) — the account that started it, distinct
+    # from `user_id` (the account actually being browsed as). NULL for every
+    # ordinary session. Used to render the "acting as" banner and to audit-log
+    # who was really behind the wheel; never grants anything by itself — the
+    # impersonated session's own `user.role` still governs what it can do.
+    impersonator_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    impersonator: Mapped[User | None] = relationship(foreign_keys=[impersonator_id])
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"UserSession(id={self.id!r}, user_id={self.user_id!r})"

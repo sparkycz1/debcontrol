@@ -162,7 +162,9 @@ class User(Base):
     role: Mapped[Role] = relationship(back_populates="users", lazy="joined")
 
     sessions: Mapped[list[UserSession]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user",
+        foreign_keys="UserSession.user_id",
+        cascade="all, delete-orphan",
     )
     totp_recovery_codes: Mapped[list[TotpRecoveryCode]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
