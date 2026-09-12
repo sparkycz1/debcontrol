@@ -139,8 +139,10 @@ services:
   # --scale beat=N` — every replica would publish the same schedule, so each
   # daily purge/snapshot and every sweep would fire N times.
   #
-  # It reads REACHABILITY_CHECK_INTERVAL_SECONDS / FACTS_REFRESH_INTERVAL_SECONDS
-  # once at startup, so restart this service after changing either.
+  # It reads the reachability-check/facts-refresh/monitoring intervals
+  # (Settings -> Checks & retention, app/db/models/app_settings.py) from
+  # the database once at startup, so restart this service after changing
+  # any of them.
   beat:
     <<: *app-image
     command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]

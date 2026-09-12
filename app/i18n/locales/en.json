@@ -18,17 +18,13 @@
     "nav.api_docs": "API docs",
     "nav.log_out": "Log out",
     "nav.switch_theme": "Switch to {theme} theme",
-
     "theme.dark": "dark",
     "theme.light": "light",
-
     "common.save": "Save",
     "common.cancel": "Cancel",
-
     "footer.tagline": "debcontrol — manage Debian machines over SSH",
     "footer.commit": "Commit: {commit}",
     "footer.commit_unknown": "unknown",
-
     "login.username": "Username",
     "login.password": "Password",
     "login.submit": "Log in",
@@ -38,7 +34,6 @@
     "login.use_passkey": "Use a passkey",
     "login.oidc_button": "Log in with OIDC",
     "login.oidc_button_named": "Log in with {name}",
-
     "account.title": "My account",
     "account.profile.heading": "Profile",
     "account.profile.username": "Username",
@@ -116,7 +111,6 @@
     "totp_challenge.or_use_key": "Or, use a security key or your device's biometrics instead:",
     "totp_challenge.sign_in_with_key": "Sign in with a security key or your device's biometrics.",
     "totp_challenge.use_passkey": "Use a passkey",
-
     "machines.title": "Machines",
     "machines.actions.package_search": "Package search",
     "machines.actions.bulk_import": "Bulk import",
@@ -125,7 +119,6 @@
     "machines.actions.import_config": "Import config",
     "machines.actions.add": "Add machine",
     "machines.actions.more": "More actions",
-
     "machines.pending.heading": "Pending machines",
     "machines.pending.description": "Self-registered via POST /api/inform — not yet added, not trusted for anything. Review each entry and either add it (you'll still go through the normal host-key confirmation flow) or dismiss it.",
     "machines.pending.ip": "IP address",
@@ -134,11 +127,9 @@
     "machines.pending.seen": "Seen",
     "machines.pending.use_this": "Use this",
     "machines.pending.dismiss": "Dismiss",
-
     "machines.view.table": "Table",
     "machines.view.list": "List",
     "machines.view.cards": "Cards",
-
     "machines.search.placeholder": "Search by name, IP, hostname, OS version, username, notes...",
     "machines.search.submit": "Search",
     "machines.search.clear": "Clear",
@@ -146,16 +137,13 @@
     "machines.tag.filter_label": "Filter by tag",
     "machines.tag.mode_or": "any selected tag",
     "machines.tag.mode_and": "all selected tags",
-
     "machines.save_view.placeholder": "Name this view…",
     "machines.save_view.submit": "Save this view",
     "machines.save_view.duplicate": "You already have a saved view with that name.",
-
     "machines.empty.no_match": "No machines match \"{query}\".",
     "machines.empty.no_filter_match": "No machines match this filter.",
     "machines.empty.none_yet": "No managed machines yet.",
     "machines.empty.add_first": "Add your first machine",
-
     "machines.table.name": "Name",
     "machines.table.ip": "IP address",
     "machines.table.hostname": "Hostname",
@@ -164,7 +152,6 @@
     "machines.table.updates": "Updates",
     "machines.table.host_key": "Host key",
     "machines.table.details": "Details",
-
     "machines.bulk.select_all": "Select all machines",
     "machines.bulk.strategy_aria": "Upgrade strategy for bulk update",
     "machines.bulk.tags_aria": "Tags for the buttons below",
@@ -176,11 +163,9 @@
     "machines.bulk.tags_placeholder": "tag1, tag2…",
     "machines.bulk.add_tags": "Add tags",
     "machines.bulk.remove_tags": "Remove tags",
-
     "machines.pagination.previous": "Previous",
     "machines.pagination.next": "Next",
     "machines.power_skipped": "{count} selected machine(s) skipped — no confirmed host key yet.",
-
     "dashboard.title": "Dashboard",
     "dashboard.stats.total": "Total",
     "dashboard.stats.online": "Online",
@@ -216,7 +201,6 @@
     "dashboard.activity.none_yet": "No audited activity yet.",
     "dashboard.activity.full_log": "Full audit log",
     "dashboard.no_access": "Your role doesn't have view access to any of the areas this dashboard summarizes.",
-
     "audit.title": "Audit log",
     "audit.intro": "Who (account and source IP), what happened, its outcome, and when. A blank \"User\" is a pre-login event (a failed login attempt, machine self-registration) or a background job's own fixed label (e.g. \"scheduler (automatic)\"). Every entry is hash-chained for tamper-evidence; verify the chain and set the retention policy on the",
     "audit.intro_tail": " page.",
@@ -247,7 +231,6 @@
     "audit.save_view.duplicate": "You already have a saved view with that name.",
     "audit.save_view.delete": "Delete saved view {name}",
     "audit.save_view.delete_confirm": "Delete the saved view &quot;{name}&quot;?",
-
     "users.title": "Users",
     "users.add": "Add user",
     "users.table.username": "Username",
@@ -263,11 +246,9 @@
     "users.edit": "Edit",
     "users.impersonate": "Sign in as",
     "users.impersonate.confirm": "Sign in as {name}? Everything done from then on is logged under their account until you log out.",
-
     "impersonation.acting_as": "({admin})",
     "impersonation.banner_title": "You're signed in as this account via Impersonate, started by {admin}. Log out to return to your own account.",
     "impersonation.stop": "Stop (log out)",
-
     "roles.title": "Roles",
     "roles.add": "Add role",
     "roles.table.name": "Name",
@@ -280,7 +261,6 @@
     "roles.delete_confirm": "Delete role \"{name}\"?",
     "roles.delete_role": "Delete role",
     "roles.assigned_to": "Assigned to {count} user(s) — reassign them before deleting this role.",
-
     "role.config_import.export": "Export config (JSON)",
     "role.config_import.import": "Import config",
     "role.config_import.title": "Import role configuration",
@@ -335,7 +315,6 @@
     "roles.new.title": "Add role",
     "roles.new.require_totp": "Require two-factor authentication (TOTP) for users with this role",
     "roles.new.require_totp_hint": "A user holding this role who hasn't enrolled TOTP is blocked from everything except enrolling it (and logging out) — checked live on every request, not just at login. Doesn't apply to OIDC accounts (their provider is expected to own MFA — TOTP isn't offered for them).",
-
     "users.new.title": "Add user",
     "users.new.email_label": "Email",
     "users.new.email_hint": "Optional — the address notification rules send to when they target this user (see Notifications). Not used for login.",
@@ -349,7 +328,6 @@
     "users.new.no_groups": "No machine groups exist yet.",
     "users.new.restrict_groups_hint": "Leave all unchecked for full access. Ticking one or more limits this account to those groups' machines everywhere — lists, search, actions, scheduling, and the AI assistant. Machines in no group stay hidden from a restricted account, and \"All machines\" isn't available to it as a scheduling target. The audit log is never restricted.",
     "users.new.create": "Create user",
-
     "groups.title": "Machine groups",
     "groups.add": "Add group",
     "groups.search.placeholder": "Search groups by name or description...",
@@ -651,7 +629,6 @@
     "machine.preview.confirm_run": "Confirm — run this update on {name}",
     "machine.update_run.title": "Update run",
     "machine.update_run.back": "Back to machine",
-
     "machine.availability.check_error": "Could not check for updates: {error}",
     "machine.availability.not_checked_yet": "Not checked yet. This runs automatically on the same periodic sweep as facts, whenever you click \"Check for updates now\" below, and whenever a scheduled \"Check for updates\" task fires (see the Scheduling tab) — whichever ran last is what's shown here, including the package names.",
     "machine.availability.last_check_failed": "Last check (checked {when}) couldn't determine what's available via apt — see the error above, or try again. (flatpak/snap checks below don't depend on this.)",
@@ -680,7 +657,6 @@
     "machine.update_run.rollback_hint": "Re-installs the package versions captured right before this update ran, for whatever has since changed. Needs the old .deb still resolvable from a configured apt source — otherwise apt reports it can't locate that version, same as any other apt failure.",
     "machine.update_run.is_rollback": "This is a rollback of an earlier update run.",
     "machine.update_run.rollback_badge": "rollback",
-
     "scheduling.new": "New scheduled task",
     "scheduling.config_import.export": "Export config (JSON)",
     "scheduling.config_import.import": "Import config",
@@ -728,7 +704,6 @@
     "scheduling.history.attempted": "Attempted",
     "scheduling.history.skipped": "Skipped",
     "scheduling.history.empty": "This task hasn't fired yet.",
-
     "ai.title": "AI assistant",
     "ai.intro_before_confirm": "Describe what you want in plain language. The assistant can look up your machines and groups on its own, and can <em>propose</em> actions against them — updates, reboots, or a shell command. Nothing it proposes ever runs until you read the exact command and target list and click",
     "ai.confirm": "Confirm",
@@ -771,7 +746,6 @@
     "ai.chat.waiting_for_reply": "Waiting for the assistant's reply — this updates automatically.",
     "ai.chat.answers_can_take_a_while": "Answers can take a little while for anything involving several machines.",
     "ai.chat.send": "Send",
-
     "settings.general.ssh_identity": "App SSH identity",
     "settings.general.ssh_identity_hint": "debcontrol connects to machines using this one shared key when \"SSH key\" is chosen as the authentication method — there's no key upload/generation to do per machine. To let it manage a machine, append the public key below to that machine's <code>~/.ssh/authorized_keys</code> for the user debcontrol will connect as. Adding it to an already-managed machine can be done for you — see \"Push pending key to all machines\" below once you've generated a replacement key.",
     "settings.general.fingerprint": "Fingerprint",
@@ -786,50 +760,40 @@
     "settings.general.discard_key": "Discard pending key",
     "settings.general.push_key_hint": "\"Push pending key to all machines\" runs a command over SSH (using each machine's currently active key) to append the pending key above to <code>~/.ssh/authorized_keys</code> — for every machine using \"SSH key\" authentication with a pinned host key. It does not remove the old line or activate anything; it only saves you the manual copy-paste step above. Machines using password authentication aren't affected, since they don't use this key at all.",
     "settings.general.generate_key": "Generate replacement key",
-    "settings.general.background_checks": "Background checks",
-    "settings.general.reachability_check": "Reachability check",
-    "settings.general.reachability_check_value": "every {seconds} seconds",
-    "settings.general.facts_refresh": "Facts refresh",
-    "settings.general.facts_refresh_value": "every {seconds} seconds",
-    "settings.general.in_env_reachability": "in <code>.env</code>) — TCP connect to the SSH port, no authentication",
-    "settings.general.in_env": "in <code>.env</code>)",
-    "settings.general.monitoring_sample": "Monitoring sample",
-    "settings.general.monitoring_sample_value": "every {seconds} seconds",
-    "settings.general.reachability_concurrency": "Reachability sweep concurrency",
-    "settings.general.reachability_concurrency_value": "{count} machines at once",
-    "settings.general.ssh_connect_timeout": "SSH connect timeout",
-    "settings.general.ssh_connect_timeout_value": "{seconds} seconds",
-    "settings.general.update_timeout": "Update run timeout",
-    "settings.general.update_timeout_value": "{seconds} seconds",
-    "settings.general.background_checks_hint": "All of these are deploy-time environment variables (see .env.example) — change them there and restart, not from this page.",
-
+    "settings.checks.background_checks": "Background checks",
+    "settings.checks.reachability_check": "Reachability check interval (seconds)",
+    "settings.checks.facts_refresh": "Facts refresh interval (seconds)",
+    "settings.checks.monitoring_sample": "Monitoring sample interval (seconds)",
+    "settings.checks.reachability_concurrency": "Reachability sweep concurrency",
+    "settings.checks.ssh_connect_timeout": "SSH connect timeout (seconds)",
+    "settings.checks.update_timeout": "Update run timeout (seconds)",
+    "settings.checks.background_checks_hint": "The SSH connect timeout, update run timeout, and reachability concurrency take effect on the very next check — no restart needed. The three interval fields (reachability/facts/monitoring) are read by the background worker only when it starts, so a change to one of those needs a restart of the worker/beat services to take effect.",
     "settings.security.audit_log": "Audit log",
     "settings.security.audit_log_lower": "audit log",
     "settings.security.audit_hash_chain_hint": "Every entry is hash-chained (each links to the previous one's hash), so altering or removing an entry breaks the chain from that point on — see <a href=\"/audit\">Audit</a> and the wiki page \"Architecture\" for how that works and what it doesn't protect against.",
-    "settings.security.keep_audit_days": "Keep audit log entries for (days)",
-    "settings.security.forever": "forever",
-    "settings.security.keep_audit_days_hint": "Leave empty to keep every entry forever (the default). Otherwise, entries older than this are permanently deleted once a day — the chain's most recent entries and its ability to verify what remains are unaffected, since only the oldest end is ever pruned.",
+    "settings.checks.keep_audit_days": "Keep audit log entries for (days)",
+    "settings.checks.forever": "forever",
+    "settings.checks.keep_audit_days_hint": "Leave empty to keep every entry forever (the default). Otherwise, entries older than this are permanently deleted once a day — the chain's most recent entries and its ability to verify what remains are unaffected, since only the oldest end is ever pruned.",
     "settings.security.verify_chain": "Verify chain integrity now",
     "settings.security.checked_entry": "Checked {count} chained entry.",
     "settings.security.checked_entries": "Checked {count} chained entries.",
     "settings.security.export_hint_before": "Every entry can also be exported for archival/compliance outside the app:",
     "settings.security.export_hint_after": " (the <a href=\"/audit\">Audit</a> page's own export links respect whatever search/outcome filter is set there).",
-    "settings.security.dashboard_trends": "Dashboard trends",
-    "settings.security.dashboard_trends_hint_before": "A background job records one daily snapshot of fleet-wide counts (online/offline machines, pending updates, ...) for the trend chart(s) on the",
-    "settings.security.dashboard_trends_hint_after": ". This only controls how long those snapshots are kept — it doesn't affect the live counts themselves.",
-    "settings.security.keep_snapshots_days": "Keep daily snapshots for (days)",
-    "settings.security.keep_snapshots_hint": "Leave empty to keep every snapshot forever. Defaults to 90 days.",
-    "settings.security.update_run_history": "Update run history",
-    "settings.security.update_run_hint_before": "Each entry on a machine's Updates tab (the apt/flatpak/snap output from one run) is stored in full — this only controls how long those stored runs are kept, not whether updates themselves run. On a large fleet with recurring scheduled updates (see",
-    "settings.security.update_run_hint_middle": ") this table can otherwise grow without bound. The fact that an update was <em>triggered</em> stays in the",
-    "settings.security.update_run_hint_after": " regardless of this setting — only the stored run record/output is purged.",
-    "settings.security.keep_update_run_days": "Keep update run history for (days)",
-    "settings.security.keep_update_run_hint": "Leave empty to keep every run forever. Defaults to 90 days.",
-    "settings.security.monitoring_history": "Monitoring history",
-    "settings.security.monitoring_history_hint": "A CPU/RAM/disk-usage sample is stored for every machine on the Monitoring tab's own cadence (<code>MONITORING_INTERVAL_SECONDS</code>, 2 minutes by default) — this only controls how long those samples are kept, not how often they're taken. A single machine can override this instance-wide default on its own Settings tab.",
-    "settings.security.keep_monitoring_days": "Keep monitoring history for (days)",
-    "settings.security.keep_monitoring_hint": "Leave empty to keep every sample forever. Defaults to 90 days.",
-
+    "settings.checks.dashboard_trends": "Dashboard trends",
+    "settings.checks.dashboard_trends_hint_before": "A background job records one daily snapshot of fleet-wide counts (online/offline machines, pending updates, ...) for the trend chart(s) on the",
+    "settings.checks.dashboard_trends_hint_after": ". This only controls how long those snapshots are kept — it doesn't affect the live counts themselves.",
+    "settings.checks.keep_snapshots_days": "Keep daily snapshots for (days)",
+    "settings.checks.keep_snapshots_hint": "Leave empty to keep every snapshot forever. Defaults to 90 days.",
+    "settings.checks.update_run_history": "Update run history",
+    "settings.checks.update_run_hint_before": "Each entry on a machine's Updates tab (the apt/flatpak/snap output from one run) is stored in full — this only controls how long those stored runs are kept, not whether updates themselves run. On a large fleet with recurring scheduled updates (see",
+    "settings.checks.update_run_hint_middle": ") this table can otherwise grow without bound. The fact that an update was <em>triggered</em> stays in the",
+    "settings.checks.update_run_hint_after": " regardless of this setting — only the stored run record/output is purged.",
+    "settings.checks.keep_update_run_days": "Keep update run history for (days)",
+    "settings.checks.keep_update_run_hint": "Leave empty to keep every run forever. Defaults to 90 days.",
+    "settings.checks.monitoring_history": "Monitoring history",
+    "settings.checks.monitoring_history_hint": "A CPU/RAM/disk-usage sample is stored for every machine on the Monitoring tab's own cadence (<code>MONITORING_INTERVAL_SECONDS</code>, 2 minutes by default) — this only controls how long those samples are kept, not how often they're taken. A single machine can override this instance-wide default on its own Settings tab.",
+    "settings.checks.keep_monitoring_days": "Keep monitoring history for (days)",
+    "settings.checks.keep_monitoring_hint": "Leave empty to keep every sample forever. Defaults to 90 days.",
     "settings.integrations.syslog": "Syslog forwarding",
     "settings.integrations.syslog_hint": "Live-mirrors every audit log entry to an external syslog server (e.g. a SIEM) as it's written — RFC 5424 formatted, best-effort: a delivery failure here is only ever logged, never blocks the action being audited. The database entry (exportable on the Security tab) is always the real record; this is just a copy sent elsewhere.",
     "settings.integrations.enabled": "Enabled",
@@ -876,7 +840,6 @@
     "settings.integrations.username_claim": "Username claim",
     "settings.integrations.scopes": "Scopes",
     "settings.integrations.scopes_hint": "Must include <code>openid</code>.",
-
     "settings.ai.intro_before": "Configure the providers behind the",
     "settings.ai.intro_after": " page. Enabling a provider isn't the same as trusting its whole catalog: fetch its models, then tick exactly which ones may be picked for a conversation. Everything the assistant can actually do against a machine is still gated by the requesting user's own role permissions, and every action it proposes must be confirmed by a human before it runs.",
     "settings.ai.api_key": "API key",
@@ -910,9 +873,7 @@
     "settings.ai.daily": "Daily",
     "settings.ai.weekly": "Weekly",
     "settings.ai.enable_provider_first": "Enable a provider and choose at least one model above first.",
-
     "nav.notifications": "Notifications",
-
     "notifications.title": "Notifications",
     "notifications.add_rule": "Add rule",
     "notifications.templates_link": "Templates",
@@ -934,7 +895,6 @@
     "notifications.machines_word": "machine(s)",
     "notifications.machine_groups_word": "machine group(s)",
     "notifications.scope_all": "all machines",
-
     "notifications.rule.new_title": "Add notification rule",
     "notifications.rule.edit_title": "Edit notification rule",
     "notifications.rule.name_label": "Name",
@@ -952,7 +912,6 @@
     "notifications.rule.no_roles": "No roles exist yet.",
     "notifications.rule.filter_placeholder": "Filter…",
     "notifications.rule.filter_no_matches": "Nothing matches.",
-
     "notifications.templates.title": "Email templates",
     "notifications.templates.hint": "One template per event, used to render the subject/body of a notification email. An event with no customized template uses the built-in default shown here.",
     "notifications.templates.table.event": "Event",
@@ -961,19 +920,26 @@
     "notifications.templates.status_default": "default",
     "notifications.templates.status_custom": "customized",
     "notifications.templates.edit": "Edit",
-
     "notifications.template.title": "Template: {event}",
     "notifications.template.subject_label": "Subject",
     "notifications.template.body_label": "Body",
     "notifications.template.body_hint": "Plain text. Available placeholders: {event}, {timestamp}, {machine_name}, {machine_ip}, {details}. An unrecognized placeholder is left as literal text rather than causing an error.",
     "notifications.template.reset": "Reset to default",
     "notifications.template.reset_confirm": "Reset this template to the built-in default? Your customized text will be lost.",
-
     "notifications.event.machine_unreachable": "Machine became unreachable",
     "notifications.event.machine_reachable_again": "Machine reachable again",
     "notifications.event.update_run_failed": "Update run failed",
     "notifications.event.update_run_succeeded": "Update run succeeded",
     "notifications.event.machine_onboarded": "Machine finished onboarding",
-    "notifications.event.fleet_summary_generated": "Scheduled fleet summary generated"
+    "notifications.event.fleet_summary_generated": "Scheduled fleet summary generated",
+    "settings.checks.title": "Checks & retention",
+    "settings.checks.intervals_note": "seconds",
+    "settings.checks.machines_at_once": "machines at once",
+    "settings.checks.invalid_seconds": "\"{value}\" isn't a whole number of seconds greater than zero.",
+    "settings.checks.invalid_concurrency": "\"{value}\" isn't a whole number of machines greater than zero.",
+    "settings.checks.ssh_timeout_range": "SSH connect timeout must be between 1 and 300 seconds.",
+    "settings.checks.update_timeout_range": "Update run timeout must be between 60 and 14400 seconds (4 hours).",
+    "settings.checks.save_background_checks": "Save background checks",
+    "settings.security.retention_moved_hint": "All retention settings (audit log, dashboard trends, update run history, monitoring history) moved to"
   }
 }

@@ -159,8 +159,14 @@ required vars) — see [Ansible Onboarding](Ansible-Onboarding.md).
 `autoclean` (**Machines → a machine → System updates**, or scoped to a
 group / "All machines") needs root on the target and can run long:
 
-- **A dedicated long timeout** — `UPDATE_TIMEOUT_SECONDS` (default 30
-  min) via a per-task `time_limit=`, distinct from the 60s default every other job uses.
+- **A dedicated long timeout** — `AppSettings.update_timeout_seconds`
+  (Settings → Checks & retention; default 30 min), read fresh on every
+  run, distinct from the 60s default every other job uses. Celery's own
+  hard per-task kill switch is a separate, generous, fixed constant
+  (`app.tasks.jobs._UPDATE_TASK_TIME_LIMIT_SECONDS`) sized to comfortably
+  exceed the maximum this setting can be configured to — not itself
+  configurable, since a Celery task decorator argument can't read the
+  database.
 - **Cleanup always runs, chained by `;` not `&&`** — a failed upgrade
   still runs `autoremove`/`autoclean`; the upgrade step's own exit
   status decides succeeded/failed.

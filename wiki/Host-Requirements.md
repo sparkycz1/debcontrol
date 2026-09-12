@@ -38,6 +38,14 @@ at any real scale — shorten its retention first if storage is tight.
 
 ## 🧮 How to compute this yourself
 
+> [!NOTE]
+> The settings named below by their old environment-variable names
+> (`REACHABILITY_CHECK_INTERVAL_SECONDS`, `REACHABILITY_CHECK_CONCURRENCY`,
+> `SSH_CONNECT_TIMEOUT`, `FACTS_REFRESH_INTERVAL_SECONDS`,
+> `MONITORING_INTERVAL_SECONDS`) are all set from **Settings → Checks &
+> retention** now, not `.env` — see [Installation](Installation.md). The
+> names and the math below are otherwise unchanged.
+
 ### 1. The reachability sweep must finish inside its own interval
 
 `ping_all_machines` (Beat, every `REACHABILITY_CHECK_INTERVAL_SECONDS`,

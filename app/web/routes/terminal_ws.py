@@ -65,7 +65,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit import log_event
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
-from app.core.config import get_settings
+from app.core.app_settings import get_or_create_app_settings
 from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
@@ -231,10 +231,10 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
         return
     user, machine = authenticated
 
-    settings = get_settings()
     db_session_factory = websocket.app.state.db_session_factory
     async with db_session_factory() as db:
         secret = await resolve_machine_credential(machine, db)
+        app_settings = await get_or_create_app_settings(db)
 
     await websocket.accept()
 
@@ -251,7 +251,7 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
             conn, process = await open_shell_session(
                 machine,
                 secret,
-                settings.ssh_connect_timeout,
+                app_settings.ssh_connect_timeout,
                 term_type=_TERM_TYPE,
                 term_size=_DEFAULT_TERM_SIZE,
             )

@@ -61,9 +61,9 @@ these. Set `DATABASE_URL`/`REDIS_URL` directly only for something these
 parts can't express (different host/port, a managed database).
 
 Also set `TZ` (default UTC), and `DOMAIN`/`ACME_EMAIL` if using the
-bundled Caddy. `FACTS_REFRESH_INTERVAL_SECONDS`,
-`REACHABILITY_CHECK_INTERVAL_SECONDS`, `APP_PORT` all have working
-defaults (600s/60s/8080).
+bundled Caddy. `APP_PORT` has a working default (8080) — the background-
+check intervals/timeouts below are configured from the app's own
+**Settings → Checks & retention** page after first login, not `.env`.
 
 The app **refuses to start** if any secret still looks like a
 `.env.example` placeholder.
@@ -83,10 +83,6 @@ Then start the stack and create the first admin yourself — "2. Run" and
 | `REDIS_PASSWORD` | redis, app | Redis password (`--requirepass`), and the part the app builds its connection URL from. `REDIS_HOST`/`REDIS_PORT`/`REDIS_DB` (default `redis`/`6379`/`0`) override the rest. |
 | `REDIS_URL` | app | Optional — set to fully override the built Redis URL. Redis serves as Celery's broker and result backend, and backs the login rate limiter. |
 | `SSH_DATA_DIR` | app | Reserved data directory inside the container. |
-| `SSH_CONNECT_TIMEOUT` | app | SSH connection timeout, in seconds. |
-| `FACTS_REFRESH_INTERVAL_SECONDS` | beat | How often (seconds) OS/kernel/CPU/RAM/disk facts are refreshed per machine. Default 600 (10 minutes). |
-| `REACHABILITY_CHECK_INTERVAL_SECONDS` | beat | How often (seconds) the online/offline status badge's TCP-only reachability sweep runs per machine. Default 60. |
-| `UPDATE_TIMEOUT_SECONDS` | worker | Max time (seconds) for one machine's full update/upgrade/autoremove/autoclean run. Default 1800. |
 | `INFORM_TOKEN` | app | Bearer token required by `POST /api/inform` (self-registration). |
 | `LOG_LEVEL` | app | Python logging level. |
 | `TZ` | db, redis, app, worker, beat, caddy | IANA timezone (e.g. `Europe/Prague`) applied to every container's own clock, **and used by the app to display every timestamp in the UI** (audit log, "last refreshed"/"last run" times, etc.) in that timezone instead of UTC. Data is always stored as UTC regardless of this, and Scheduling's cron expressions are always interpreted as UTC regardless of this too. Defaults to UTC if unset. |
@@ -97,10 +93,13 @@ Then start the stack and create the first admin yourself — "2. Run" and
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
-Not everything lives here: audit-log retention and LDAP/OIDC login
-config are set from the app's own **Settings** page, not env vars — see
+Not everything lives here: the SSH connect/update-run timeouts, every
+background-check interval and the reachability sweep's concurrency,
+every retention policy, and LDAP/OIDC login config are all set from the
+app's own **Settings** page instead — Settings → Checks & retention for
+the first group, see
 [Architecture](Audit-Log.md#audit-log-retention-the-first-setting-editable-through-the-ui)
-and [Architecture](Authentication-RBAC.md).
+and [Architecture](Authentication-RBAC.md) for the rest.
 
 ## ▶️ 2. Run (manual setup only — Option A's script already does this)
 
@@ -124,9 +123,13 @@ Caddy already running? Point it at `127.0.0.1:${APP_PORT}` — see:
 > once per replica. The `worker` service, by contrast, is safe to scale.
 
 > [!NOTE]
-> `beat` reads `FACTS_REFRESH_INTERVAL_SECONDS` and
-> `REACHABILITY_CHECK_INTERVAL_SECONDS` **once, at startup**. Restart that
-> service after changing either — the running app will not pick them up.
+> `beat` reads the facts-refresh/reachability-check/monitoring intervals
+> (Settings → Checks & retention) from the database **once, at startup**
+> — same "restart to pick up a change" contract these had back when they
+> were environment variables. Restart the `beat` service after changing
+> any of the three. The SSH connect timeout, update-run timeout, and
+> reachability concurrency, by contrast, are read fresh on every check —
+> no restart needed for those.
 
 If your reverse proxy runs in its own separate Docker Compose project, it
 needs to join this project's network instead of using the loopback

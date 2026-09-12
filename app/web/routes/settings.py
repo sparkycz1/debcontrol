@@ -1,7 +1,9 @@
-"""Settings — the app's SSH identity, background-check intervals (both
-read-only, sourced from the environment), the audit log retention policy,
-and the LDAP/OIDC login configuration (see `app/db/models/app_settings.py`
-for why these are Settings-page config rather than environment variables).
+"""Settings — the app's SSH identity (General), background-check
+intervals/timeouts/concurrency and every retention policy (Checks &
+retention), the audit log's own hash-chain verification (Security), and
+the LDAP/OIDC/syslog/SMTP login and integration configuration
+(Integrations) — see `app/db/models/app_settings.py` for why all of this
+is Settings-page config rather than environment variables.
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ _manage = Depends(require_permission(Permission.SETTINGS_MANAGE))
 # `/settings?tab=<that tab>` instead of losing your place on every save.
 _TABS: list[tuple[str, str, str]] = [
     ("general", "General", "/settings?tab=general"),
+    ("checks", "Checks & retention", "/settings?tab=checks"),
     ("security", "Security", "/settings?tab=security"),
     ("integrations", "Integrations", "/settings?tab=integrations"),
     ("ai", "AI", "/settings?tab=ai"),
@@ -147,6 +150,122 @@ def _parse_retention_days(raw: str) -> tuple[int | None, str | None]:
     return value, None
 
 
+def _parse_bounded_int(
+    raw: str, *, label: str, minimum: int, maximum: int
+) -> tuple[int | None, str | None]:
+    """Shared by `update_background_checks` below — every field there is a
+    whole number of seconds (or machines) with a sane range, unlike the
+    retention fields above (which allow an empty "forever"). Returns
+    `(value, error_message)`; exactly one is `None`."""
+    stripped = raw.strip()
+    try:
+        value = int(stripped)
+    except ValueError:
+        return None, f'"{stripped}" isn\'t a whole number for {label}.'
+    if not (minimum <= value <= maximum):
+        return None, f"{label} must be between {minimum} and {maximum}."
+    return value, None
+
+
+@router.post("/background-checks", dependencies=[_manage, Depends(verify_csrf)])
+async def update_background_checks(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ssh_connect_timeout: str = Form(""),
+    update_timeout_seconds: str = Form(""),
+    reachability_check_interval_seconds: str = Form(""),
+    facts_refresh_interval_seconds: str = Form(""),
+    monitoring_interval_seconds: str = Form(""),
+    reachability_check_concurrency: str = Form(""),
+) -> Response:
+    """The SSH connect/update-run timeouts, every background-check
+    interval, and the reachability sweep's concurrency cap — moved here
+    from environment variables (see `app/db/models/app_settings.py`'s new
+    fields and `app.core.config`'s module docstring).
+
+    The two timeouts and the concurrency cap are read fresh from the
+    database by every task that uses them (see `app/tasks/jobs.py`), so a
+    change here takes effect on the very next check — no restart needed.
+    The three intervals are only read by Celery Beat at its own process
+    start (`app.tasks.celery_app`), so a change to one of those needs a
+    restart of the worker/beat services, same as when they were `.env`
+    values — see `settings.checks.background_checks_hint` in the template.
+
+    Bounds below exist for two reasons: a sane range for the setting
+    itself, and — for the two timeouts specifically — staying safely under
+    Celery's own hard per-task time limit (`app.tasks.jobs.
+    _SSH_TASK_TIME_LIMIT_SECONDS`/`_UPDATE_TASK_TIME_LIMIT_SECONDS`), which
+    is a fixed constant sized to comfortably exceed these maximums and is
+    not itself configurable (a Celery task decorator argument can't read
+    the database — see that module's own comment).
+    """
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+
+    def _field(raw: str, *, label: str, minimum: int, maximum: int) -> int | None:
+        value, error = _parse_bounded_int(raw, label=label, minimum=minimum, maximum=maximum)
+        if error:
+            errors.append(error)
+        return value
+
+    ssh_timeout = _field(ssh_connect_timeout, label="SSH connect timeout", minimum=1, maximum=300)
+    update_timeout = _field(
+        update_timeout_seconds, label="Update run timeout", minimum=60, maximum=14400
+    )
+    reachability_interval = _field(
+        reachability_check_interval_seconds,
+        label="Reachability check interval",
+        minimum=5,
+        maximum=86400,
+    )
+    facts_interval = _field(
+        facts_refresh_interval_seconds, label="Facts refresh interval", minimum=60, maximum=604800
+    )
+    monitoring_interval = _field(
+        monitoring_interval_seconds, label="Monitoring sample interval", minimum=10, maximum=86400
+    )
+    concurrency = _field(
+        reachability_check_concurrency,
+        label="Reachability sweep concurrency",
+        minimum=1,
+        maximum=1000,
+    )
+
+    if errors:
+        return await _render_settings(request, db, errors, tab="checks")
+
+    assert ssh_timeout is not None
+    assert update_timeout is not None
+    assert reachability_interval is not None
+    assert facts_interval is not None
+    assert monitoring_interval is not None
+    assert concurrency is not None
+
+    app_settings.ssh_connect_timeout = ssh_timeout
+    app_settings.update_timeout_seconds = update_timeout
+    app_settings.reachability_check_interval_seconds = reachability_interval
+    app_settings.facts_refresh_interval_seconds = facts_interval
+    app_settings.monitoring_interval_seconds = monitoring_interval
+    app_settings.reachability_check_concurrency = concurrency
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.background_checks.update",
+        summary="Updated background-check settings",
+        details={
+            "ssh_connect_timeout": ssh_timeout,
+            "update_timeout_seconds": update_timeout,
+            "reachability_check_interval_seconds": reachability_interval,
+            "facts_refresh_interval_seconds": facts_interval,
+            "monitoring_interval_seconds": monitoring_interval,
+            "reachability_check_concurrency": concurrency,
+        },
+    )
+    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/audit-retention", dependencies=[_manage, Depends(verify_csrf)])
 async def update_audit_retention(
     request: Request,
@@ -156,7 +275,7 @@ async def update_audit_retention(
     app_settings = await get_or_create_app_settings(db)
     new_value, error = _parse_retention_days(retention_days)
     if error:
-        return await _render_settings(request, db, [error], tab="security")
+        return await _render_settings(request, db, [error], tab="checks")
 
     app_settings.audit_log_retention_days = new_value
     await db.commit()
@@ -172,7 +291,7 @@ async def update_audit_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/dashboard-trends-retention", dependencies=[_manage, Depends(verify_csrf)])
@@ -188,7 +307,7 @@ async def update_dashboard_trends_retention(
     app_settings = await get_or_create_app_settings(db)
     new_value, error = _parse_retention_days(retention_days)
     if error:
-        return await _render_settings(request, db, [error], tab="security")
+        return await _render_settings(request, db, [error], tab="checks")
 
     app_settings.dashboard_trends_retention_days = new_value
     await db.commit()
@@ -204,7 +323,7 @@ async def update_dashboard_trends_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/update-run-retention", dependencies=[_manage, Depends(verify_csrf)])
@@ -219,7 +338,7 @@ async def update_machine_update_run_retention(
     app_settings = await get_or_create_app_settings(db)
     new_value, error = _parse_retention_days(retention_days)
     if error:
-        return await _render_settings(request, db, [error], tab="security")
+        return await _render_settings(request, db, [error], tab="checks")
 
     app_settings.machine_update_run_retention_days = new_value
     await db.commit()
@@ -235,7 +354,7 @@ async def update_machine_update_run_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/monitoring-retention", dependencies=[_manage, Depends(verify_csrf)])
@@ -252,7 +371,7 @@ async def update_monitoring_retention(
     app_settings = await get_or_create_app_settings(db)
     new_value, error = _parse_retention_days(retention_days)
     if error:
-        return await _render_settings(request, db, [error], tab="security")
+        return await _render_settings(request, db, [error], tab="checks")
 
     app_settings.monitoring_history_retention_days = new_value
     await db.commit()
@@ -268,7 +387,7 @@ async def update_monitoring_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])

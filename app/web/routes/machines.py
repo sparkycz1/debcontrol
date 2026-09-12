@@ -1204,15 +1204,19 @@ async def refresh_machine_monitoring_endpoint(
     waiting out either sweep's own interval. Same `action.manage`
     permission the sibling facts/packages/services refresh buttons use."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     monitoring_result = tasks.sample_machine_monitoring.delay(str(machine.id))
     reachability_result = tasks.check_machine_reachability_now.delay(str(machine.id))
     error: str | None = None
     try:
         results = await asyncio.gather(
-            asyncio.to_thread(monitoring_result.get, timeout=settings.ssh_connect_timeout + 30),
-            asyncio.to_thread(reachability_result.get, timeout=settings.ssh_connect_timeout + 15),
+            asyncio.to_thread(
+                monitoring_result.get, timeout=app_settings.ssh_connect_timeout + 30
+            ),
+            asyncio.to_thread(
+                reachability_result.get, timeout=app_settings.ssh_connect_timeout + 15
+            ),
         )
         for result in results:
             if isinstance(result, dict) and not result.get("ok"):
@@ -1412,7 +1416,7 @@ async def run_onboarding_endpoint(
     the machine's credential never leaves this process — the task resolves
     it itself from the DB, it is never passed as a task argument."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.run_machine_onboarding.delay(str(machine.id))
     error: str | None = None
@@ -1423,7 +1427,7 @@ async def run_onboarding_endpoint(
         # inside the task — a bad password, a network hiccup — is what
         # this wait reports, not this endpoint giving up first.
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 120
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 120
         )
         if isinstance(result, dict):
             if result.get("ok"):
@@ -1487,11 +1491,11 @@ async def recheck_readiness_endpoint(
     trip, same "Test connection"-style pattern as the other on-demand
     checks on this page."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.check_machine_readiness.delay(str(machine.id))
     with contextlib.suppress(Exception):
-        await asyncio.to_thread(async_result.get, timeout=settings.ssh_connect_timeout + 15)
+        await asyncio.to_thread(async_result.get, timeout=app_settings.ssh_connect_timeout + 15)
 
     redirect_url = f"/machines/{machine.id}"
     if request.headers.get("HX-Request") == "true":
@@ -1531,7 +1535,7 @@ async def run_onboarding_with_credential_endpoint(
     success-path revert never gets a chance to run when the script fails.
     """
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     previous_username = machine.username
     previous_auth_method = machine.auth_method
@@ -1544,7 +1548,7 @@ async def run_onboarding_with_credential_endpoint(
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 120
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 120
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -1600,13 +1604,13 @@ async def fix_readiness_directly_endpoint(
     between page load and this click just gets its own real error back
     from the SSH connection, same as any other stale-page race."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.fix_root_readiness.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 60
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 60
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -1797,13 +1801,13 @@ async def discover_host_key(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
 
     context: dict[str, object] = {"machine": machine, "csrf_token": csrf_token}
     try:
         context["fingerprint"] = await discover_host_key_fingerprint(
-            machine.ip_address, machine.port, settings.ssh_connect_timeout
+            machine.ip_address, machine.port, app_settings.ssh_connect_timeout
         )
     except SSHConnectionError as exc:
         context["error"] = str(exc)
@@ -1879,14 +1883,14 @@ async def test_connection_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.test_machine_connection.delay(str(machine.id))
     result: dict[str, object] | None = None
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 5
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 5
         )
     except CeleryTimeoutError:
         error = "The background job did not respond in time."
@@ -1921,13 +1925,13 @@ async def refresh_facts_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.refresh_machine_facts.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 5
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 5
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -1974,13 +1978,13 @@ async def refresh_packages_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.refresh_machine_packages.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 15
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 15
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -2035,13 +2039,13 @@ async def refresh_services_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.refresh_machine_services.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 15
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 15
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -2087,13 +2091,13 @@ async def check_updates_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.check_machine_updates.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.update_timeout_seconds + 5
+            async_result.get, timeout=app_settings.update_timeout_seconds + 5
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -2156,14 +2160,14 @@ async def preview_machine_update(
             detail="Confirm the host key fingerprint before previewing updates.",
         )
 
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
     async_result = tasks.preview_machine_update.delay(str(machine.id), strategy.value)
     error: str | None = None
     to_install_or_upgrade: list[PendingPackage] = []
     to_remove: list[PendingPackage] = []
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.update_timeout_seconds + 5
+            async_result.get, timeout=app_settings.update_timeout_seconds + 5
         )
         if isinstance(result, dict):
             if not result.get("ok"):
@@ -2457,7 +2461,7 @@ async def machine_logs(
     now"/"Test connection" are — not the returned log content itself,
     which is never stored anywhere in this app."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     output: str | None = None
     error: str | None = None
@@ -2479,7 +2483,7 @@ async def machine_logs(
                     until=until,
                 )
             result = await asyncio.to_thread(
-                async_result.get, timeout=settings.ssh_connect_timeout + 15
+                async_result.get, timeout=app_settings.ssh_connect_timeout + 15
             )
             if isinstance(result, dict):
                 if result.get("ok"):
@@ -2524,7 +2528,7 @@ async def machine_logs(
             "since": since,
             "until": until,
             "default_lines": ssh_logs.DEFAULT_LINE_LIMIT,
-            "allowed_paths": settings.log_file_allowed_path_list,
+            "allowed_paths": get_settings().log_file_allowed_path_list,
         },
     )
     if new_cookie:
@@ -2551,8 +2555,8 @@ async def machine_logs_browse(
     round trip / `action.terminal` gate as the rest of the Logs tab; see
     `app.ssh.logs`'s module docstring."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    settings = get_settings()
-    allowed_paths = settings.log_file_allowed_path_list
+    app_settings = await get_or_create_app_settings(db)
+    allowed_paths = get_settings().log_file_allowed_path_list
     current_path = path.strip() or (allowed_paths[0] if allowed_paths else "")
 
     entries: list[dict[str, object]] = []
@@ -2567,7 +2571,7 @@ async def machine_logs_browse(
                 str(machine.id), path=current_path
             )
             result = await asyncio.to_thread(
-                async_result.get, timeout=settings.ssh_connect_timeout + 15
+                async_result.get, timeout=app_settings.ssh_connect_timeout + 15
             )
             if isinstance(result, dict):
                 if result.get("ok"):

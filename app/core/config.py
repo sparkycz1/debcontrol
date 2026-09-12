@@ -65,57 +65,18 @@ class Settings(BaseSettings):
     redis_url_override: str | None = Field(default=None, alias="REDIS_URL")
 
     ssh_data_dir: Path = Field(default=Path("./data"), alias="SSH_DATA_DIR")
-    ssh_connect_timeout: int = Field(default=10, alias="SSH_CONNECT_TIMEOUT")
 
-    # How often (seconds) the background worker re-checks OS/kernel/hostname/
-    # CPU/RAM/disk facts for every machine.
-    facts_refresh_interval_seconds: int = Field(
-        default=3600, alias="FACTS_REFRESH_INTERVAL_SECONDS"
-    )
-
-    # How often (seconds) the "is it alive" status badge's reachability sweep
-    # (a plain TCP connect to the SSH port, no authentication) runs for every
-    # machine. Deliberately its own, much shorter, default than
-    # `facts_refresh_interval_seconds` — this check is cheap enough to run
-    # far more often.
-    reachability_check_interval_seconds: int = Field(
-        default=60, alias="REACHABILITY_CHECK_INTERVAL_SECONDS"
-    )
-
-    # How often (seconds) the Monitoring tab's CPU/RAM/disk-usage sample (and
-    # the cheap "how many systemd services are failed" count shown there) is
-    # taken for every machine — a real SSH round trip (unlike the plain TCP
-    # reachability check above), but much lighter than a full facts refresh.
-    # Its own cadence, deliberately between the other two: frequent enough
-    # for a useful trend graph, not so frequent it dominates worker capacity
-    # at fleet scale (see wiki/Host-Requirements.md). A machine can raise
-    # its own interval via `Machine.monitoring_interval_seconds` — see
-    # `app.tasks.jobs._due_machines`, the same mechanism
-    # `reachability_check_interval_seconds`/`facts_refresh_interval_seconds`
-    # already use.
-    monitoring_interval_seconds: int = Field(default=120, alias="MONITORING_INTERVAL_SECONDS")
-
-    # How many machines the reachability sweep (app.tasks.jobs._ping_all_machines)
-    # checks concurrently — a semaphore, not a thread/process count, since
-    # each check is just an `asyncio` TCP connect attempt. The default (20)
-    # comfortably finishes one sweep of a few hundred machines well within
-    # the default 60s interval; a fleet in the thousands needs this raised
-    # (see wiki/Host-Requirements.md) so one sweep reliably finishes
-    # before the next one is due — Beat does not skip/coalesce a sweep that's
-    # still running when its next tick fires, so a sweep that consistently
-    # overruns the interval means overlapping sweeps piling up over time.
-    reachability_check_concurrency: int = Field(
-        default=20, alias="REACHABILITY_CHECK_CONCURRENCY"
-    )
+    # SSH connect timeout, the update-run timeout, every background-check
+    # interval (facts/reachability/monitoring), and the reachability sweep's
+    # concurrency cap all live in `AppSettings`
+    # (`app/db/models/app_settings.py`) now, not here — Settings → Monitoring
+    # page, `settings.manage` — since they're app behavior an operator tunes
+    # day to day, not deploy-time infrastructure decided once at deploy
+    # time. See that model's own comments for each field's default and the
+    # Celery-time-limit caveat on the two timeouts.
 
     # Bearer token machines must present when self-registering via POST /api/inform.
     inform_token: SecretStr = Field(alias="INFORM_TOKEN")
-
-    # apt update/upgrade/autoremove/autoclean can legitimately take a long
-    # time (large downloads, many packages) — this is the max wall-clock
-    # time given to that whole sequence, distinct from `ssh_connect_timeout`
-    # (which only bounds establishing the connection itself).
-    update_timeout_seconds: int = Field(default=1800, alias="UPDATE_TIMEOUT_SECONDS")
 
     # Comma-separated absolute path prefixes the Logs tab's "view an
     # arbitrary file" feature is allowed to read from a managed machine

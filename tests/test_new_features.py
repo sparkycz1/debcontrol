@@ -253,15 +253,36 @@ async def test_settings_shows_app_version(client):
     assert APP_VERSION in response.text
 
 
-async def test_settings_shows_configurable_reachability_check_interval(client):
-    from app.core.config import get_settings
+def _input_value(page_text: str, field_id: str) -> str:
+    import re
 
-    response = await client.get("/settings")
+    match = re.search(rf'id="{field_id}"[^>]*>', page_text)
+    assert match is not None, f"no input#{field_id} found"
+    value_match = re.search(r'value="([^"]*)"', match.group(0))
+    assert value_match is not None, match.group(0)
+    return value_match.group(1)
+
+
+async def test_settings_reachability_check_interval_is_editable(client):
+    response = await client.get("/settings?tab=checks")
     assert response.status_code == 200
-    assert (
-        f"every {get_settings().reachability_check_interval_seconds} seconds" in response.text
+    assert _input_value(response.text, "reachability_check_interval_seconds") == "60"
+
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post(
+        "/settings/background-checks",
+        data={
+            "csrf_token": csrf_token,
+            "ssh_connect_timeout": "10",
+            "update_timeout_seconds": "1800",
+            "reachability_check_interval_seconds": "45",
+            "facts_refresh_interval_seconds": "3600",
+            "monitoring_interval_seconds": "120",
+            "reachability_check_concurrency": "20",
+        },
     )
-    assert "REACHABILITY_CHECK_INTERVAL_SECONDS" in response.text
+    updated = await client.get("/settings?tab=checks")
+    assert _input_value(updated.text, "reachability_check_interval_seconds") == "45"
 
 
 async def test_update_syslog_settings_persists_and_validates(client):

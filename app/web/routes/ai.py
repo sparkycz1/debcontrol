@@ -58,7 +58,7 @@ from app.ai.tools import (
 )
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
-from app.core.config import get_settings
+from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.db.models.ai_conversation import AiConversation, derive_title
 from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStatus
@@ -630,7 +630,7 @@ async def confirm_action(
         await send_power_to_machines(machines, PowerAction.SHUTDOWN)
     elif tool_name == RUN_SSH_COMMAND:
         errors.extend(
-            await _run_command_and_summarize(conversation, machines, str(command or ""))
+            await _run_command_and_summarize(db, conversation, machines, str(command or ""))
         )
     else:
         raise HTTPException(
@@ -666,7 +666,7 @@ async def confirm_action(
 
 
 async def _run_command_and_summarize(
-    conversation: AiConversation, machines: list[Any], command: str
+    db: AsyncSession, conversation: AiConversation, machines: list[Any], command: str
 ) -> list[str]:
     """Run the confirmed command on each resolved machine, then hand the
     combined output back to the model for one plain-language summary.
@@ -684,8 +684,8 @@ async def _run_command_and_summarize(
     request instead of one shared wait — the whole point of a "fan out to
     a group" tool is that it actually fans out.
     """
-    settings = get_settings()
-    per_task_timeout = settings.ssh_connect_timeout + 70
+    app_settings = await get_or_create_app_settings(db)
+    per_task_timeout = app_settings.ssh_connect_timeout + 70
     errors: list[str] = []
 
     dispatched = [

@@ -132,6 +132,52 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # --- Background checks (moved here from environment variables — see
+    # app.core.config's module docstring and wiki/Development.md's
+    # "Settings vs. environment" note). Defaults match what used to be the
+    # hardcoded env defaults, so an upgrading instance behaves identically
+    # until an admin changes one from the new Settings → Monitoring tab. ---
+    #
+    # How long (seconds) a single SSH connection attempt is given before
+    # giving up — see app.ssh.connection. Read fresh from this table on
+    # every task run (app.tasks.jobs), so a change here takes effect on the
+    # very next scheduled check, no restart needed.
+    ssh_connect_timeout: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    # Max wall-clock time given to one apt/flatpak/snap update run (distinct
+    # from ssh_connect_timeout, which only bounds establishing the
+    # connection itself). Celery's own hard per-task time limit for the
+    # update-run tasks is a separate, generous, code-level constant (see
+    # app.tasks.jobs._UPDATE_TASK_TIME_LIMIT_SECONDS) sized to comfortably
+    # exceed any value this field can be set to — that constant is a Celery
+    # process-safety ceiling, not something an operator tunes; this field is
+    # the actual, meaningful timeout.
+    update_timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800, nullable=False)
+    # How often (seconds) the background worker re-checks OS/kernel/
+    # hostname/CPU/RAM/disk facts, packages, services, and readiness for
+    # every machine. Beat re-reads this only at its own process start (see
+    # app.tasks.celery_app) — same "restart to pick up a change" contract
+    # this field had back when it was FACTS_REFRESH_INTERVAL_SECONDS in .env.
+    facts_refresh_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=3600, nullable=False
+    )
+    # How often (seconds) the "is it alive" status badge's reachability
+    # sweep runs for every machine. Same Beat-restart caveat as above.
+    reachability_check_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=60, nullable=False
+    )
+    # How often (seconds) the Monitoring tab's CPU/RAM/disk-usage sample is
+    # taken for every machine. Same Beat-restart caveat as above.
+    monitoring_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=120, nullable=False
+    )
+    # How many machines the reachability sweep checks concurrently — a
+    # semaphore, not a thread/process count. Read fresh from this table on
+    # every sweep (app.tasks.jobs._ping_all_machines), so this one *does*
+    # take effect immediately, unlike the three interval fields above.
+    reachability_check_concurrency: Mapped[int] = mapped_column(
+        Integer, default=20, nullable=False
+    )
+
     # Same idea again, for `MachineMonitoringSample` rows (app.tasks.jobs.
     # purge_old_monitoring_samples) — a row is taken every
     # `MONITORING_INTERVAL_SECONDS` (2 minutes by default) for every

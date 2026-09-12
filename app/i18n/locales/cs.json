@@ -18,17 +18,13 @@
     "nav.api_docs": "Dokumentace API",
     "nav.log_out": "Odhlásit se",
     "nav.switch_theme": "Přepnout na {theme} téma",
-
     "theme.dark": "tmavé",
     "theme.light": "světlé",
-
     "common.save": "Uložit",
     "common.cancel": "Zrušit",
-
     "footer.tagline": "debcontrol — správa Debian zařízení přes SSH",
     "footer.commit": "Commit: {commit}",
     "footer.commit_unknown": "neznámý",
-
     "login.username": "Uživatelské jméno",
     "login.password": "Heslo",
     "login.submit": "Přihlásit se",
@@ -38,7 +34,6 @@
     "login.use_passkey": "Použít passkey",
     "login.oidc_button": "Přihlásit se přes OIDC",
     "login.oidc_button_named": "Přihlásit se přes {name}",
-
     "account.title": "Můj účet",
     "account.profile.heading": "Profil",
     "account.profile.username": "Uživatelské jméno",
@@ -116,7 +111,6 @@
     "totp_challenge.or_use_key": "Nebo místo toho použij bezpečnostní klíč či biometriku zařízení:",
     "totp_challenge.sign_in_with_key": "Přihlas se bezpečnostním klíčem nebo biometrikou zařízení.",
     "totp_challenge.use_passkey": "Použít passkey",
-
     "machines.title": "Zařízení",
     "machines.actions.package_search": "Vyhledávání balíčků",
     "machines.actions.bulk_import": "Hromadný import",
@@ -125,7 +119,6 @@
     "machines.actions.import_config": "Import konfigurace",
     "machines.actions.add": "Přidat zařízení",
     "machines.actions.more": "Další akce",
-
     "machines.pending.heading": "Čekající zařízení",
     "machines.pending.description": "Zaregistrováno samo přes POST /api/inform — ještě nepřidáno, zatím nedůvěryhodné. Každý záznam buď přidej (i tak projdeš normální potvrzení klíče hostitele), nebo zamítni.",
     "machines.pending.ip": "IP adresa",
@@ -134,11 +127,9 @@
     "machines.pending.seen": "Zjištěno",
     "machines.pending.use_this": "Použít",
     "machines.pending.dismiss": "Zamítnout",
-
     "machines.view.table": "Tabulka",
     "machines.view.list": "Seznam",
     "machines.view.cards": "Karty",
-
     "machines.search.placeholder": "Hledat podle jména, IP, hostname, verze OS, uživatele, poznámek...",
     "machines.search.submit": "Hledat",
     "machines.search.clear": "Zrušit filtr",
@@ -146,16 +137,13 @@
     "machines.tag.filter_label": "Filtrovat podle štítku",
     "machines.tag.mode_or": "kterýkoli vybraný štítek",
     "machines.tag.mode_and": "všechny vybrané štítky",
-
     "machines.save_view.placeholder": "Pojmenuj tento pohled…",
     "machines.save_view.submit": "Uložit pohled",
     "machines.save_view.duplicate": "Pohled s tímto názvem už máš uložený.",
-
     "machines.empty.no_match": "Žádná zařízení neodpovídají \"{query}\".",
     "machines.empty.no_filter_match": "Žádná zařízení neodpovídají tomuto filtru.",
     "machines.empty.none_yet": "Zatím žádná spravovaná zařízení.",
     "machines.empty.add_first": "Přidat první zařízení",
-
     "machines.table.name": "Název",
     "machines.table.ip": "IP adresa",
     "machines.table.hostname": "Hostname",
@@ -164,7 +152,6 @@
     "machines.table.updates": "Aktualizace",
     "machines.table.host_key": "Klíč hostitele",
     "machines.table.details": "Detail",
-
     "machines.bulk.select_all": "Vybrat všechny mašiny",
     "machines.bulk.strategy_aria": "Strategie aktualizace pro hromadnou akci",
     "machines.bulk.tags_aria": "Štítky pro tlačítka níže",
@@ -176,11 +163,9 @@
     "machines.bulk.tags_placeholder": "štítek1, štítek2…",
     "machines.bulk.add_tags": "Přidat štítky",
     "machines.bulk.remove_tags": "Odebrat štítky",
-
     "machines.pagination.previous": "Předchozí",
     "machines.pagination.next": "Další",
     "machines.power_skipped": "{count} vybraných zařízení přeskočeno — zatím bez potvrzeného klíče hostitele.",
-
     "dashboard.title": "Přehled",
     "dashboard.stats.total": "Celkem",
     "dashboard.stats.online": "Online",
@@ -216,7 +201,6 @@
     "dashboard.activity.none_yet": "Zatím žádná zaznamenaná aktivita.",
     "dashboard.activity.full_log": "Celý audit log",
     "dashboard.no_access": "Tvoje role nemá přístup pro zobrazení žádné z oblastí, které tento přehled shrnuje.",
-
     "audit.title": "Audit log",
     "audit.intro": "Kdo (účet a zdrojová IP), co se stalo, výsledek a kdy. Prázdné \"Uživatel\" znamená událost před přihlášením (neúspěšný pokus o přihlášení, samoregistrace zařízení) nebo vlastní pevný popisek na pozadí běžící úlohy (např. \"scheduler (automatic)\"). Každý záznam je řetězen hashem kvůli odolnosti proti manipulaci; ověření řetězu a nastavení doby uchovávání najdeš na stránce",
     "audit.intro_tail": ".",
@@ -247,7 +231,6 @@
     "audit.save_view.duplicate": "Pohled s tímto názvem už máš uložený.",
     "audit.save_view.delete": "Smazat uložený pohled {name}",
     "audit.save_view.delete_confirm": "Smazat uložený pohled &quot;{name}&quot;?",
-
     "users.title": "Uživatelé",
     "users.add": "Přidat uživatele",
     "users.table.username": "Uživatelské jméno",
@@ -263,11 +246,9 @@
     "users.edit": "Upravit",
     "users.impersonate": "Přihlásit se jako",
     "users.impersonate.confirm": "Přihlásit se jako {name}? Vše, co od teď uděláte, se zaznamenává pod jejich účtem, dokud se neodhlásíte.",
-
     "impersonation.acting_as": "({admin})",
     "impersonation.banner_title": "Jste přihlášeni jako tento účet přes Impersonate, spustil to {admin}. Odhlášením se vrátíte na svůj vlastní účet.",
     "impersonation.stop": "Ukončit (odhlásit)",
-
     "roles.title": "Role",
     "roles.add": "Přidat roli",
     "roles.table.name": "Název",
@@ -280,7 +261,6 @@
     "roles.delete_confirm": "Smazat roli \"{name}\"?",
     "roles.delete_role": "Smazat roli",
     "roles.assigned_to": "Přiřazeno {count} uživatelům — před smazáním této role je přeřaď jinam.",
-
     "role.config_import.export": "Export konfigurace (JSON)",
     "role.config_import.import": "Import konfigurace",
     "role.config_import.title": "Import konfigurace rolí",
@@ -335,7 +315,6 @@
     "roles.new.title": "Přidat roli",
     "roles.new.require_totp": "Vyžadovat dvoufaktorové ověření (TOTP) pro uživatele s touto rolí",
     "roles.new.require_totp_hint": "Uživatel s touto rolí, který si nezaložil TOTP, má zablokováno vše kromě jeho založení (a odhlášení) — kontrolováno živě při každém požadavku, ne jen při přihlášení. Neplatí pro OIDC účty (jejich poskytovatel má mít na starosti MFA — TOTP se jim nenabízí).",
-
     "users.new.title": "Přidat uživatele",
     "users.new.email_label": "E-mail",
     "users.new.email_hint": "Volitelné — adresa, na kterou notifikační pravidla posílají zprávy, pokud cílí na tohoto uživatele (viz Notifikace). K přihlášení se nepoužívá.",
@@ -349,7 +328,6 @@
     "users.new.no_groups": "Zatím žádné skupiny zařízení.",
     "users.new.restrict_groups_hint": "Nech vše nezaškrtnuté pro plný přístup. Zaškrtnutím jedné nebo více omezíš tento účet na zařízení těchto skupin všude — v seznamech, hledání, akcích, plánování i u AI asistenta. Zařízení bez skupiny zůstanou pro omezený účet skrytá a \"Všechna zařízení\" pro něj není dostupné jako cíl plánování. Audit log není nikdy omezen.",
     "users.new.create": "Vytvořit uživatele",
-
     "groups.title": "Skupiny zařízení",
     "groups.add": "Přidat skupinu",
     "groups.search.placeholder": "Hledat skupiny podle názvu nebo popisu...",
@@ -651,7 +629,6 @@
     "machine.preview.confirm_run": "Potvrdit — spustit tuto aktualizaci na {name}",
     "machine.update_run.title": "Běh aktualizace",
     "machine.update_run.back": "Zpět na zařízení",
-
     "machine.availability.check_error": "Kontrolu aktualizací se nepodařilo provést: {error}",
     "machine.availability.not_checked_yet": "Zatím nezkontrolováno. Toto běží automaticky ve stejném pravidelném cyklu jako fakta, kdykoli klikneš níže na \"Zkontrolovat aktualizace teď\", a kdykoli se spustí naplánovaná úloha \"Zkontrolovat aktualizace\" (viz záložka Plánování) — zobrazuje se výsledek toho, co proběhlo naposledy, včetně názvů balíčků.",
     "machine.availability.last_check_failed": "Poslední kontrola (zkontrolováno {when}) nezjistila, co je dostupné přes apt — viz chyba výše, nebo zkus znovu. (kontroly flatpak/snap níže na tomto nezávisí.)",
@@ -680,7 +657,6 @@
     "machine.update_run.rollback_hint": "Přeinstaluje verze balíčků zachycené těsně před spuštěním této aktualizace, u těch, co se od té doby změnily. Potřebuje, aby stará verze .deb balíku byla stále dostupná z nakonfigurovaného zdroje apt — jinak apt nahlásí, že danou verzi nemůže najít, stejně jako u jiného selhání apt.",
     "machine.update_run.is_rollback": "Toto je rollback dřívějšího běhu aktualizace.",
     "machine.update_run.rollback_badge": "rollback",
-
     "scheduling.new": "Nová naplánovaná úloha",
     "scheduling.config_import.export": "Export konfigurace (JSON)",
     "scheduling.config_import.import": "Import konfigurace",
@@ -728,7 +704,6 @@
     "scheduling.history.attempted": "Provedeno",
     "scheduling.history.skipped": "Přeskočeno",
     "scheduling.history.empty": "Tento úkol ještě neproběhl.",
-
     "ai.title": "AI asistent",
     "ai.intro_before_confirm": "Popiš, co potřebuješ, běžným jazykem. Asistent si umí sám dohledat tvá zařízení a skupiny a může <em>navrhnout</em> akce vůči nim — aktualizace, restart nebo shellový příkaz. Nic z toho, co navrhne, se nespustí, dokud si nepřečteš přesný příkaz a seznam cílů a neklikneš na",
     "ai.confirm": "Potvrdit",
@@ -771,7 +746,6 @@
     "ai.chat.waiting_for_reply": "Čeká se na odpověď asistenta — aktualizuje se automaticky.",
     "ai.chat.answers_can_take_a_while": "Odpovědi mohou chvíli trvat u všeho, co zahrnuje více zařízení.",
     "ai.chat.send": "Odeslat",
-
     "settings.general.ssh_identity": "SSH identita aplikace",
     "settings.general.ssh_identity_hint": "debcontrol se připojuje k zařízením pomocí tohoto jednoho sdíleného klíče, když je jako metoda ověření zvoleno \"SSH key\" — není potřeba nahrávat/generovat klíč pro každé zařízení zvlášť. Aby mohl spravovat zařízení, přidej veřejný klíč níže do souboru <code>~/.ssh/authorized_keys</code> daného zařízení pro uživatele, pod kterým se debcontrol připojuje. Přidání k už spravovanému zařízení lze udělat za tebe — viz \"Odeslat čekající klíč na všechna zařízení\" níže, jakmile vygeneruješ náhradní klíč.",
     "settings.general.fingerprint": "Otisk",
@@ -786,50 +760,40 @@
     "settings.general.discard_key": "Zahodit čekající klíč",
     "settings.general.push_key_hint": "\"Odeslat čekající klíč na všechna zařízení\" spustí příkaz přes SSH (pomocí aktuálně aktivního klíče každého zařízení), který přidá čekající klíč výše do <code>~/.ssh/authorized_keys</code> — pro každé zařízení používající ověření \"SSH key\" s připnutým klíčem hostitele. Nesmaže starý řádek ani nic neaktivuje; jen ti ušetří ruční kopírování výše. Zařízení používající ověření heslem tím nejsou ovlivněna, protože tento klíč vůbec nepoužívají.",
     "settings.general.generate_key": "Vygenerovat náhradní klíč",
-    "settings.general.background_checks": "Kontroly na pozadí",
-    "settings.general.reachability_check": "Kontrola dostupnosti",
-    "settings.general.reachability_check_value": "každých {seconds} sekund",
-    "settings.general.facts_refresh": "Obnova faktů",
-    "settings.general.facts_refresh_value": "každých {seconds} sekund",
-    "settings.general.in_env_reachability": "v <code>.env</code>) — TCP připojení na SSH port, bez ověření",
-    "settings.general.in_env": "v <code>.env</code>)",
-    "settings.general.monitoring_sample": "Monitorovací vzorek",
-    "settings.general.monitoring_sample_value": "každých {seconds} sekund",
-    "settings.general.reachability_concurrency": "Souběžnost kontroly dostupnosti",
-    "settings.general.reachability_concurrency_value": "{count} strojů najednou",
-    "settings.general.ssh_connect_timeout": "Timeout SSH připojení",
-    "settings.general.ssh_connect_timeout_value": "{seconds} sekund",
-    "settings.general.update_timeout": "Timeout běhu aktualizace",
-    "settings.general.update_timeout_value": "{seconds} sekund",
-    "settings.general.background_checks_hint": "Všechno tohle jsou proměnné prostředí nastavené při nasazení (viz .env.example) — změň je tam a restartuj, ne z téhle stránky.",
-
+    "settings.checks.background_checks": "Kontroly na pozadí",
+    "settings.checks.reachability_check": "Interval kontroly dostupnosti (sekundy)",
+    "settings.checks.facts_refresh": "Interval obnovy faktů (sekundy)",
+    "settings.checks.monitoring_sample": "Interval monitorovacího vzorku (sekundy)",
+    "settings.checks.reachability_concurrency": "Souběžnost kontroly dostupnosti",
+    "settings.checks.ssh_connect_timeout": "Timeout SSH připojení (sekundy)",
+    "settings.checks.update_timeout": "Timeout běhu aktualizace (sekundy)",
+    "settings.checks.background_checks_hint": "Timeout SSH připojení, timeout běhu aktualizace a souběžnost kontroly dostupnosti se projeví hned při dalším běhu — bez restartu. Tři intervaly (dostupnost/fakta/monitoring) čte worker na pozadí jen při svém startu, takže změna některého z nich se projeví až po restartu služeb worker/beat.",
     "settings.security.audit_log": "Audit log",
     "settings.security.audit_log_lower": "audit logu",
     "settings.security.audit_hash_chain_hint": "Každý záznam je řetězen hashem (odkazuje na hash toho předchozího), takže úprava nebo odstranění záznamu poruší řetěz od toho bodu dál — jak to funguje a co to nechrání viz <a href=\"/audit\">Audit</a> a wiki stránka \"Architecture\".",
-    "settings.security.keep_audit_days": "Uchovávat záznamy auditu po (dnů)",
-    "settings.security.forever": "napořád",
-    "settings.security.keep_audit_days_hint": "Nech prázdné pro uchování všech záznamů navždy (výchozí). Jinak jsou záznamy starší tohoto limitu jednou denně trvale smazány — nejnovější záznamy řetězu a schopnost ověřit zbytek tím nejsou ovlivněny, protože se ořezává jen nejstarší konec.",
+    "settings.checks.keep_audit_days": "Uchovávat záznamy auditu po (dnů)",
+    "settings.checks.forever": "napořád",
+    "settings.checks.keep_audit_days_hint": "Nech prázdné pro uchování všech záznamů navždy (výchozí). Jinak jsou záznamy starší tohoto limitu jednou denně trvale smazány — nejnovější záznamy řetězu a schopnost ověřit zbytek tím nejsou ovlivněny, protože se ořezává jen nejstarší konec.",
     "settings.security.verify_chain": "Ověřit integritu řetězu teď",
     "settings.security.checked_entry": "Zkontrolován {count} řetězený záznam.",
     "settings.security.checked_entries": "Zkontrolováno {count} řetězených záznamů.",
     "settings.security.export_hint_before": "Každý záznam lze také exportovat pro archivaci/audit mimo aplikaci:",
     "settings.security.export_hint_after": " (vlastní exportní odkazy na stránce <a href=\"/audit\">Audit</a> respektují jakýkoli nastavený filtr hledání/výsledku).",
-    "settings.security.dashboard_trends": "Trendy přehledu",
-    "settings.security.dashboard_trends_hint_before": "Úloha na pozadí ukládá jeden denní snímek souhrnných počtů celé flotily (online/offline zařízení, čekající aktualizace, ...) pro grafy trendů na",
-    "settings.security.dashboard_trends_hint_after": ". Toto jen řídí, jak dlouho se tyto snímky uchovávají — neovlivňuje to samotné živé počty.",
-    "settings.security.keep_snapshots_days": "Uchovávat denní snímky po (dnů)",
-    "settings.security.keep_snapshots_hint": "Nech prázdné pro uchování všech snímků navždy. Výchozí je 90 dní.",
-    "settings.security.update_run_history": "Historie běhů aktualizací",
-    "settings.security.update_run_hint_before": "Každý záznam na záložce Aktualizace daného zařízení (výstup apt/flatpak/snap z jednoho běhu) je uložen celý — toto jen řídí, jak dlouho se tyto uložené běhy uchovávají, ne zda aktualizace samotné běží. U velké flotily s pravidelně plánovanými aktualizacemi (viz",
-    "settings.security.update_run_hint_middle": ") jinak tato tabulka může neomezeně růst. To, že aktualizace byla <em>spuštěna</em>, zůstává v",
-    "settings.security.update_run_hint_after": " bez ohledu na toto nastavení — mažou se jen uložené záznamy/výstup běhu.",
-    "settings.security.keep_update_run_days": "Uchovávat historii běhů aktualizací po (dnů)",
-    "settings.security.keep_update_run_hint": "Nech prázdné pro uchování všech běhů navždy. Výchozí je 90 dní.",
-    "settings.security.monitoring_history": "Historie monitoringu",
-    "settings.security.monitoring_history_hint": "Vzorek využití CPU/RAM/disku se ukládá pro každé zařízení ve vlastním intervalu záložky Monitoring (<code>MONITORING_INTERVAL_SECONDS</code>, výchozí 2 minuty) — toto jen řídí, jak dlouho se tyto vzorky uchovávají, ne jak často se berou. Jedno zařízení může tuto výchozí hodnotu přepsat na vlastní záložce Nastavení.",
-    "settings.security.keep_monitoring_days": "Uchovávat historii monitoringu po (dnů)",
-    "settings.security.keep_monitoring_hint": "Nech prázdné pro uchování všech vzorků navždy. Výchozí je 90 dní.",
-
+    "settings.checks.dashboard_trends": "Trendy přehledu",
+    "settings.checks.dashboard_trends_hint_before": "Úloha na pozadí ukládá jeden denní snímek souhrnných počtů celé flotily (online/offline zařízení, čekající aktualizace, ...) pro grafy trendů na",
+    "settings.checks.dashboard_trends_hint_after": ". Toto jen řídí, jak dlouho se tyto snímky uchovávají — neovlivňuje to samotné živé počty.",
+    "settings.checks.keep_snapshots_days": "Uchovávat denní snímky po (dnů)",
+    "settings.checks.keep_snapshots_hint": "Nech prázdné pro uchování všech snímků navždy. Výchozí je 90 dní.",
+    "settings.checks.update_run_history": "Historie běhů aktualizací",
+    "settings.checks.update_run_hint_before": "Každý záznam na záložce Aktualizace daného zařízení (výstup apt/flatpak/snap z jednoho běhu) je uložen celý — toto jen řídí, jak dlouho se tyto uložené běhy uchovávají, ne zda aktualizace samotné běží. U velké flotily s pravidelně plánovanými aktualizacemi (viz",
+    "settings.checks.update_run_hint_middle": ") jinak tato tabulka může neomezeně růst. To, že aktualizace byla <em>spuštěna</em>, zůstává v",
+    "settings.checks.update_run_hint_after": " bez ohledu na toto nastavení — mažou se jen uložené záznamy/výstup běhu.",
+    "settings.checks.keep_update_run_days": "Uchovávat historii běhů aktualizací po (dnů)",
+    "settings.checks.keep_update_run_hint": "Nech prázdné pro uchování všech běhů navždy. Výchozí je 90 dní.",
+    "settings.checks.monitoring_history": "Historie monitoringu",
+    "settings.checks.monitoring_history_hint": "Vzorek využití CPU/RAM/disku se ukládá pro každé zařízení ve vlastním intervalu záložky Monitoring (<code>MONITORING_INTERVAL_SECONDS</code>, výchozí 2 minuty) — toto jen řídí, jak dlouho se tyto vzorky uchovávají, ne jak často se berou. Jedno zařízení může tuto výchozí hodnotu přepsat na vlastní záložce Nastavení.",
+    "settings.checks.keep_monitoring_days": "Uchovávat historii monitoringu po (dnů)",
+    "settings.checks.keep_monitoring_hint": "Nech prázdné pro uchování všech vzorků navždy. Výchozí je 90 dní.",
     "settings.integrations.syslog": "Přeposílání syslogu",
     "settings.integrations.syslog_hint": "Živě zrcadlí každý záznam auditu na externí syslog server (např. SIEM) v okamžiku zápisu — formát RFC 5424, best-effort: selhání doručení se jen zaloguje, nikdy neblokuje auditovanou akci. Záznam v databázi (exportovatelný na záložce Bezpečnost) je vždy skutečným záznamem; toto je jen kopie odeslaná jinam.",
     "settings.integrations.enabled": "Zapnuto",
@@ -876,7 +840,6 @@
     "settings.integrations.username_claim": "Claim uživatelského jména",
     "settings.integrations.scopes": "Scopes",
     "settings.integrations.scopes_hint": "Musí obsahovat <code>openid</code>.",
-
     "settings.ai.intro_before": "Nastav poskytovatele, kteří stojí za stránkou",
     "settings.ai.intro_after": ". Zapnutí poskytovatele neznamená důvěru celému jeho katalogu: načti jeho modely a pak zaškrtni přesně ty, které lze vybrat pro konverzaci. Vše, co asistent skutečně může udělat vůči zařízení, je stále omezeno vlastními oprávněními role žádajícího uživatele, a každou akci, kterou navrhne, musí před spuštěním potvrdit člověk.",
     "settings.ai.api_key": "API klíč",
@@ -910,9 +873,7 @@
     "settings.ai.daily": "Denně",
     "settings.ai.weekly": "Týdně",
     "settings.ai.enable_provider_first": "Nejdřív zapni poskytovatele a vyber alespoň jeden model výše.",
-
     "nav.notifications": "Notifikace",
-
     "notifications.title": "Notifikace",
     "notifications.add_rule": "Přidat pravidlo",
     "notifications.templates_link": "Šablony",
@@ -934,7 +895,6 @@
     "notifications.machines_word": "stroj(ů)",
     "notifications.machine_groups_word": "skupin(a) strojů",
     "notifications.scope_all": "všechny stroje",
-
     "notifications.rule.new_title": "Přidat notifikační pravidlo",
     "notifications.rule.edit_title": "Upravit notifikační pravidlo",
     "notifications.rule.name_label": "Název",
@@ -952,7 +912,6 @@
     "notifications.rule.no_roles": "Zatím neexistují žádné role.",
     "notifications.rule.filter_placeholder": "Filtrovat…",
     "notifications.rule.filter_no_matches": "Nic neodpovídá.",
-
     "notifications.templates.title": "E-mailové šablony",
     "notifications.templates.hint": "Jedna šablona na událost, použitá pro předmět/tělo notifikačního e-mailu. Událost bez vlastní šablony použije vestavěný výchozí text zobrazený zde.",
     "notifications.templates.table.event": "Událost",
@@ -961,19 +920,26 @@
     "notifications.templates.status_default": "výchozí",
     "notifications.templates.status_custom": "upraveno",
     "notifications.templates.edit": "Upravit",
-
     "notifications.template.title": "Šablona: {event}",
     "notifications.template.subject_label": "Předmět",
     "notifications.template.body_label": "Tělo",
     "notifications.template.body_hint": "Prostý text. Dostupné zástupné symboly: {event}, {timestamp}, {machine_name}, {machine_ip}, {details}. Neznámý zástupný symbol se zobrazí doslovně, nezpůsobí chybu.",
     "notifications.template.reset": "Obnovit výchozí",
     "notifications.template.reset_confirm": "Obnovit tuto šablonu na vestavěný výchozí text? Tvoje úpravy se ztratí.",
-
     "notifications.event.machine_unreachable": "Stroj se stal nedostupným",
     "notifications.event.machine_reachable_again": "Stroj je opět dostupný",
     "notifications.event.update_run_failed": "Aktualizace selhala",
     "notifications.event.update_run_succeeded": "Aktualizace proběhla úspěšně",
     "notifications.event.machine_onboarded": "Stroj dokončil onboarding",
-    "notifications.event.fleet_summary_generated": "Vygenerováno plánované shrnutí flotily"
+    "notifications.event.fleet_summary_generated": "Vygenerováno plánované shrnutí flotily",
+    "settings.checks.title": "Kontroly a uchovávání",
+    "settings.checks.intervals_note": "sekund",
+    "settings.checks.machines_at_once": "strojů najednou",
+    "settings.checks.invalid_seconds": "\"{value}\" není celé kladné číslo sekund.",
+    "settings.checks.invalid_concurrency": "\"{value}\" není celé kladné číslo strojů.",
+    "settings.checks.ssh_timeout_range": "Timeout SSH připojení musí být mezi 1 a 300 sekundami.",
+    "settings.checks.update_timeout_range": "Timeout běhu aktualizace musí být mezi 60 a 14400 sekundami (4 hodiny).",
+    "settings.checks.save_background_checks": "Uložit kontroly na pozadí",
+    "settings.security.retention_moved_hint": "Všechna nastavení uchovávání (audit log, trendy přehledu, historie běhů aktualizací, historie monitoringu) se přesunula do"
   }
 }

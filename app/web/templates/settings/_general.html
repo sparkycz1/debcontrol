@@ -45,28 +45,3 @@
     </form>
     {% endif %}
   </section>
-
-  <section class="panel">
-    <h2>{{ t(request, "settings.general.background_checks") }}</h2>
-    <dl class="detail-list">
-      <dt>{{ t(request, "settings.general.reachability_check") }}</dt>
-      <dd>{{ t(request, "settings.general.reachability_check_value", seconds=settings.reachability_check_interval_seconds) }}
-        (<code>REACHABILITY_CHECK_INTERVAL_SECONDS</code> {{ t(request, "settings.general.in_env_reachability") | safe }}</dd>
-      <dt>{{ t(request, "settings.general.facts_refresh") }}</dt>
-      <dd>{{ t(request, "settings.general.facts_refresh_value", seconds=settings.facts_refresh_interval_seconds) }}
-        (<code>FACTS_REFRESH_INTERVAL_SECONDS</code> {{ t(request, "settings.general.in_env") | safe }}</dd>
-      <dt>{{ t(request, "settings.general.monitoring_sample") }}</dt>
-      <dd>{{ t(request, "settings.general.monitoring_sample_value", seconds=settings.monitoring_interval_seconds) }}
-        (<code>MONITORING_INTERVAL_SECONDS</code> {{ t(request, "settings.general.in_env") | safe }}</dd>
-      <dt>{{ t(request, "settings.general.reachability_concurrency") }}</dt>
-      <dd>{{ t(request, "settings.general.reachability_concurrency_value", count=settings.reachability_check_concurrency) }}
-        (<code>REACHABILITY_CHECK_CONCURRENCY</code> {{ t(request, "settings.general.in_env") | safe }}</dd>
-      <dt>{{ t(request, "settings.general.ssh_connect_timeout") }}</dt>
-      <dd>{{ t(request, "settings.general.ssh_connect_timeout_value", seconds=settings.ssh_connect_timeout) }}
-        (<code>SSH_CONNECT_TIMEOUT</code> {{ t(request, "settings.general.in_env") | safe }}</dd>
-      <dt>{{ t(request, "settings.general.update_timeout") }}</dt>
-      <dd>{{ t(request, "settings.general.update_timeout_value", seconds=settings.update_timeout_seconds) }}
-        (<code>UPDATE_TIMEOUT_SECONDS</code> {{ t(request, "settings.general.in_env") | safe }}</dd>
-    </dl>
-    <p class="hint">{{ t(request, "settings.general.background_checks_hint") }}</p>
-  </section>

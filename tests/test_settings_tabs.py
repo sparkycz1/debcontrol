@@ -1,9 +1,10 @@
-"""Settings' tab split (General / Security / Integrations / AI) — see
-app/web/routes/settings.py's module comment above `_TABS`. Unlike the
-machine/group tabs, there's one GET route for all four (`?tab=...`), so
-these tests focus on: each tab shows only its own content, a POST handler
-redirects back to *its own* tab (not always "General"), and an unknown tab
-value falls back cleanly instead of 404ing or rendering nothing.
+"""Settings' tab split (General / Checks & retention / Security /
+Integrations / AI) — see app/web/routes/settings.py's module comment
+above `_TABS`. Unlike the machine/group tabs, there's one GET route for
+all five (`?tab=...`), so these tests focus on: each tab shows only its
+own content, a POST handler redirects back to *its own* tab (not always
+"General"), and an unknown tab value falls back cleanly instead of
+404ing or rendering nothing.
 """
 
 from __future__ import annotations
@@ -17,13 +18,14 @@ def _tabnav_html(page_text: str) -> str:
     return match.group(0)
 
 
-async def test_settings_tabs_show_the_same_four_tabs_everywhere(client):
-    for tab in ("general", "security", "integrations", "ai"):
+async def test_settings_tabs_show_the_same_five_tabs_everywhere(client):
+    for tab in ("general", "checks", "security", "integrations", "ai"):
         response = await client.get(f"/settings?tab={tab}")
         assert response.status_code == 200, tab
         tabnav = _tabnav_html(response.text)
         for expected in (
             "/settings?tab=general",
+            "/settings?tab=checks",
             "/settings?tab=security",
             "/settings?tab=integrations",
             "/settings?tab=ai",
@@ -46,11 +48,21 @@ async def test_unknown_tab_falls_back_to_general(client):
     assert "App SSH identity" in response.text
 
 
-async def test_security_tab_has_audit_and_dashboard_trends_not_general_content(client):
+async def test_security_tab_has_audit_log_not_general_or_checks_content(client):
     response = await client.get("/settings?tab=security")
     assert response.status_code == 200
     assert "Audit log" in response.text
+    assert "App SSH identity" not in response.text
+    assert "Dashboard trends" not in response.text
+
+
+async def test_checks_tab_has_background_checks_and_retention(client):
+    response = await client.get("/settings?tab=checks")
+    assert response.status_code == 200
     assert "Dashboard trends" in response.text
+    assert "Update run history" in response.text
+    assert "Monitoring history" in response.text
+    assert 'name="ssh_connect_timeout"' in response.text
     assert "App SSH identity" not in response.text
 
 
@@ -74,7 +86,7 @@ async def test_ai_tab_has_ai_assistant_content(client):
     assert "LDAP login" not in response.text
 
 
-async def test_saving_audit_retention_redirects_back_to_security_tab(client):
+async def test_saving_audit_retention_redirects_back_to_checks_tab(client):
     await client.get("/settings")
     csrf_token = client.cookies.get("csrftoken")
     response = await client.post(
@@ -83,7 +95,52 @@ async def test_saving_audit_retention_redirects_back_to_security_tab(client):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/settings?tab=security"
+    assert response.headers["location"] == "/settings?tab=checks"
+
+
+async def test_saving_background_checks_redirects_back_to_checks_tab(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        "/settings/background-checks",
+        data={
+            "csrf_token": csrf_token,
+            "ssh_connect_timeout": "15",
+            "update_timeout_seconds": "900",
+            "reachability_check_interval_seconds": "30",
+            "facts_refresh_interval_seconds": "1800",
+            "monitoring_interval_seconds": "60",
+            "reachability_check_concurrency": "10",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?tab=checks"
+
+    page = await client.get("/settings?tab=checks")
+    assert 'id="ssh_connect_timeout"' in page.text
+    ssh_timeout_field = re.search(r'id="ssh_connect_timeout"[^>]*>', page.text)
+    assert ssh_timeout_field is not None
+    assert 'value="15"' in ssh_timeout_field.group(0)
+
+
+async def test_background_checks_rejects_out_of_range_values(client):
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        "/settings/background-checks",
+        data={
+            "csrf_token": csrf_token,
+            "ssh_connect_timeout": "9999",
+            "update_timeout_seconds": "900",
+            "reachability_check_interval_seconds": "30",
+            "facts_refresh_interval_seconds": "1800",
+            "monitoring_interval_seconds": "60",
+            "reachability_check_concurrency": "10",
+        },
+    )
+    assert response.status_code == 200
+    assert "must be between" in response.text
 
 
 async def test_saving_ldap_settings_redirects_back_to_integrations_tab(client):

@@ -14,7 +14,9 @@
     </div>
   {% endif %}
 
-  {% if active_tab == 'security' %}
+  {% if active_tab == 'checks' %}
+    {% include "settings/_checks.html" %}
+  {% elif active_tab == 'security' %}
     {% include "settings/_security.html" %}
   {% elif active_tab == 'integrations' %}
     {% include "settings/_integrations.html" %}

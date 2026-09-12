@@ -94,9 +94,9 @@ async def test_update_run_retention_setting_persists_and_redirects_to_security_t
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/settings?tab=security"
+    assert response.headers["location"] == "/settings?tab=checks"
 
-    page = await client.get("/settings?tab=security")
+    page = await client.get("/settings?tab=checks")
     assert 'value="45"' in page.text
 
 

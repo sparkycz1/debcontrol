@@ -68,6 +68,7 @@ from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_api_token_user, require_api_permission
+from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.security import encrypt_secret
 from app.db.models.audit_log import AuditOutcome
@@ -639,14 +640,14 @@ async def test_connection_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.test_machine_connection.delay(str(machine.id))
     result: dict[str, object] | None = None
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 5
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 5
         )
     except CeleryTimeoutError:
         error = "The background job did not respond in time."
@@ -675,13 +676,13 @@ async def discover_host_key_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     fingerprint: str | None = None
     error: str | None = None
     try:
         fingerprint = await discover_host_key_fingerprint(
-            machine.ip_address, machine.port, settings.ssh_connect_timeout
+            machine.ip_address, machine.port, app_settings.ssh_connect_timeout
         )
     except SSHConnectionError as exc:
         error = str(exc)
@@ -746,13 +747,13 @@ async def refresh_facts_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.refresh_machine_facts.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 5
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 5
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -786,13 +787,13 @@ async def refresh_packages_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.refresh_machine_packages.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 15
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 15
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -823,13 +824,13 @@ async def refresh_services_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.refresh_machine_services.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 15
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 15
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -863,14 +864,14 @@ async def run_onboarding_api(
     machine record. See this module's docstring for why the "Fix it"
     variant that submits a fresh one-time credential is not exposed here."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.run_machine_onboarding.delay(str(machine.id))
     error: str | None = None
     output: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 120
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 120
         )
         if isinstance(result, dict):
             if result.get("ok"):
@@ -912,13 +913,13 @@ async def fix_readiness_directly_api(
     already on file, same as `run_onboarding_api` above, so it's exposed
     here for the same reason that one is."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.fix_root_readiness.delay(str(machine.id))
     error: str | None = None
     try:
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 60
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 60
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -949,11 +950,11 @@ async def recheck_readiness_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     async_result = tasks.check_machine_readiness.delay(str(machine.id))
     with contextlib.suppress(Exception):
-        await asyncio.to_thread(async_result.get, timeout=settings.ssh_connect_timeout + 15)
+        await asyncio.to_thread(async_result.get, timeout=app_settings.ssh_connect_timeout + 15)
     return {"ok": True}
 
 
@@ -974,7 +975,7 @@ async def machine_logs_api(
     `ACTION_TERMINAL`, same as the web route, not `MACHINE_VIEW` — see
     `app.ssh.logs`'s module docstring for why. Never stored anywhere."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
 
     if not machine.host_key_fingerprint:
         raise HTTPException(
@@ -995,7 +996,7 @@ async def machine_logs_api(
                 str(machine.id), lines=clamped_lines, search=search, since=since, until=until
             )
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 15
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 15
         )
         if isinstance(result, dict):
             if result.get("ok"):
@@ -1041,8 +1042,8 @@ async def machine_logs_browse_api(
     path already known either. Gated behind `ACTION_TERMINAL`, same as the
     rest of the Logs API. Never stored anywhere."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    settings = get_settings()
-    allowed_paths = settings.log_file_allowed_path_list
+    app_settings = await get_or_create_app_settings(db)
+    allowed_paths = get_settings().log_file_allowed_path_list
     current_path = path.strip() or (allowed_paths[0] if allowed_paths else "")
 
     if not machine.host_key_fingerprint:
@@ -1061,7 +1062,7 @@ async def machine_logs_browse_api(
     try:
         async_result = tasks.browse_machine_log_directory.delay(str(machine.id), path=current_path)
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.ssh_connect_timeout + 15
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 15
         )
         if isinstance(result, dict):
             if result.get("ok"):
@@ -1268,13 +1269,13 @@ async def preview_machine_update_api(
         )
 
     async_result = preview_machine_update.delay(str(machine.id), strategy.value)
-    settings = get_settings()
+    app_settings = await get_or_create_app_settings(db)
     try:
         # `AsyncResult.get()` is a blocking, synchronous call — off the event
         # loop it goes, or it would stall every other in-flight request for
         # as long as this preview takes.
         result = await asyncio.to_thread(
-            async_result.get, timeout=settings.update_timeout_seconds + 5
+            async_result.get, timeout=app_settings.update_timeout_seconds + 5
         )
     except CeleryTimeoutError as exc:
         raise HTTPException(
