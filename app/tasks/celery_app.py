@@ -82,6 +82,7 @@ _INTERVAL_SETTING_DEFAULTS: dict[str, int] = {
     "reachability_check_interval_seconds": 60,
     "facts_refresh_interval_seconds": 3600,
     "monitoring_interval_seconds": 120,
+    "notification_condition_check_interval_seconds": 60,
 }
 
 
@@ -253,6 +254,17 @@ celery_app.conf.beat_schedule = {
     "monitor-all-machines": {
         "task": "app.tasks.jobs.monitor_all_machines",
         "schedule": timedelta(seconds=_interval_settings["monitoring_interval_seconds"]),
+    },
+    # Re-evaluates every condition-based notification rule (CPU/RAM/disk/
+    # facts thresholds — see app.db.models.notification_condition) against
+    # the fleet's latest facts/monitoring data. Runs after the sweeps above
+    # write their results, so it reads already-fresh rows rather than
+    # triggering new SSH work of its own.
+    "evaluate-notification-conditions": {
+        "task": "app.tasks.jobs.evaluate_notification_conditions",
+        "schedule": timedelta(
+            seconds=_interval_settings["notification_condition_check_interval_seconds"]
+        ),
     },
     # Cron expressions are minute-grained anyway, so a fixed per-minute tick
     # (rather than a configurable interval) is the natural fit for the

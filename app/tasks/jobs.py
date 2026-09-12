@@ -46,7 +46,9 @@ from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
-from app.db.models.notification_rule import NotificationEventType
+from app.db.models.notification_condition import NotificationConditionState
+from app.db.models.notification_rule import NotificationEventType, NotificationRule
+from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
     KIND_FACTS,
@@ -56,7 +58,7 @@ from app.services.live_updates import (
     KIND_UPDATES,
     publish_machine_event,
 )
-from app.services.notifications import notify
+from app.services.notifications import _rule_matches_scope, notify
 from app.ssh.client import test_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
@@ -1051,6 +1053,134 @@ async def _monitor_all_machines() -> None:
 @celery_app.task(name="app.tasks.jobs.monitor_all_machines")
 def monitor_all_machines() -> None:
     asyncio.run(_monitor_all_machines())
+
+
+async def _evaluate_notification_conditions() -> None:
+    """Periodic sweep re-evaluating every enabled `NotificationRule` that
+    has `conditions` set (CPU/RAM/disk/facts thresholds — see
+    `app.db.models.notification_condition`, `app.services.condition_fields`)
+    against every active machine in that rule's scope. Cadence owned by
+    Celery Beat (`AppSettings.notification_condition_check_interval_seconds`).
+
+    Reads only already-fresh rows written by `_ping_all_machines`/
+    `_monitor_all_machines`/the facts sweep — no new SSH work of its own,
+    so this is cheap even at fleet scale. One query for the latest
+    `MachineMonitoringSample` per machine (`DISTINCT ON`, Postgres-native —
+    this app has no other supported database), not one query per machine.
+
+    A rule notifies only on the true transition into "all its conditions
+    match" (and again after a false→true cycle), optionally delayed until
+    the match has held continuously for `sustained_seconds` — see
+    `NotificationConditionState`'s docstring for why that state has to be
+    DB-persisted here (evaluation happens on its own sweep, not inside the
+    same tick that wrote the sample). One rule/machine's error is caught
+    and logged individually so a single bad condition can't abort the
+    sweep for every other rule/machine.
+    """
+    async with db_session.AsyncSessionLocal() as session:
+        rules = list(
+            (
+                await session.execute(
+                    select(NotificationRule).where(NotificationRule.enabled.is_(True))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        rules = [r for r in rules if r.conditions]
+        if not rules:
+            return
+
+        machines = list(
+            (await session.execute(select(Machine).where(Machine.is_active))).scalars().all()
+        )
+        if not machines:
+            return
+
+        latest_samples = (
+            (
+                await session.execute(
+                    select(MachineMonitoringSample)
+                    .distinct(MachineMonitoringSample.machine_id)
+                    .order_by(
+                        MachineMonitoringSample.machine_id,
+                        MachineMonitoringSample.sampled_at.desc(),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        sample_by_machine = {s.machine_id: s for s in latest_samples}
+
+        existing_states = (
+            (await session.execute(select(NotificationConditionState))).scalars().all()
+        )
+        state_by_key = {(s.rule_id, s.machine_id): s for s in existing_states}
+
+        now = datetime.now(UTC)
+        for rule in rules:
+            in_scope = [m for m in machines if _rule_matches_scope(rule, m)]
+            rule_sustain = max(
+                (c.sustained_seconds or 0 for c in rule.conditions), default=0
+            )
+            for machine in in_scope:
+                try:
+                    sample = sample_by_machine.get(machine.id)
+                    matched = all(
+                        evaluate_condition(
+                            c.field, c.operator, c.value, machine, sample, c.mount_point
+                        )
+                        for c in rule.conditions
+                    )
+                    state = state_by_key.get((rule.id, machine.id))
+                    if state is None:
+                        state = NotificationConditionState(rule_id=rule.id, machine_id=machine.id)
+                        session.add(state)
+                        state_by_key[(rule.id, machine.id)] = state
+
+                    if not matched:
+                        if state.matched:
+                            state.matched = False
+                            state.first_matched_at = None
+                            state.notified_at = None
+                        continue
+
+                    if not state.matched:
+                        state.matched = True
+                        state.first_matched_at = now
+                        state.notified_at = None
+                    if state.first_matched_at is None:
+                        state.first_matched_at = now
+
+                    held_seconds = (now - state.first_matched_at).total_seconds()
+                    if held_seconds < rule_sustain or state.notified_at is not None:
+                        continue
+
+                    state.notified_at = now
+                    summary = "; ".join(
+                        summarize_condition(c.field, c.operator, c.value, c.mount_point)
+                        for c in rule.conditions
+                    )
+                    await notify(
+                        session,
+                        NotificationEventType.CONDITION_MATCHED,
+                        machine=machine,
+                        context={"rule_name": rule.name, "condition_summary": summary},
+                    )
+                except Exception:
+                    logger.warning(
+                        "Condition evaluation failed for rule=%s machine=%s",
+                        rule.id,
+                        machine.id,
+                        exc_info=True,
+                    )
+        await session.commit()
+
+
+@celery_app.task(name="app.tasks.jobs.evaluate_notification_conditions")
+def evaluate_notification_conditions() -> None:
+    asyncio.run(_evaluate_notification_conditions())
 
 
 _MONITORING_SAMPLE_PURGE_ACTOR = "retention policy (automatic)"

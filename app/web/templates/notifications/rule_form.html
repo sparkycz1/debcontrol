@@ -38,6 +38,56 @@
       {% endfor %}
     </div>
 
+    <label>{{ t(request, "notifications.rule.conditions_label") }}</label>
+    <p class="hint">{{ t(request, "notifications.rule.conditions_hint") }}</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "notifications.rule.conditions_field") }}</th>
+          <th>{{ t(request, "notifications.rule.conditions_operator") }}</th>
+          <th>{{ t(request, "notifications.rule.conditions_value") }}</th>
+          <th>{{ t(request, "notifications.rule.conditions_mount") }}</th>
+          <th>{{ t(request, "notifications.rule.conditions_sustained") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in condition_rows %}
+          <tr>
+            <td>
+              <select name="condition_field">
+                <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
+                {% for key, label_key in condition_field_choices %}
+                  <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
+                    {{ t(request, "notifications.condition_field." ~ label_key) }}
+                  </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <select name="condition_operator">
+                {% for opkey in condition_operator_choices %}
+                  <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
+                    {{ t(request, "notifications.condition_operator." ~ opkey) }}
+                  </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="condition_value" maxlength="255" value="{{ row.value or '' }}"></td>
+            <td><input type="text" name="condition_mount" maxlength="255" placeholder="/var"
+                       value="{{ row.mount_point or '' }}"></td>
+            <td><input type="number" name="condition_sustained" min="0" max="86400"
+                       value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}"></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">{{ t(request, "notifications.rule.conditions_and_hint") }}</p>
+
+    <label for="conditions_yaml">{{ t(request, "notifications.rule.conditions_yaml_label") }}</label>
+    <textarea id="conditions_yaml" name="conditions_yaml" rows="4"
+              placeholder="- field: monitoring.cpu_percent&#10;  operator: gt&#10;  value: &quot;90&quot;&#10;  sustained_seconds: 300">{{ form.conditions_yaml or '' }}</textarea>
+    <p class="hint">{{ t(request, "notifications.rule.conditions_yaml_hint") }}</p>
+
     <label>{{ t(request, "notifications.rule.recipients_users_label") }}</label>
     {% if all_users %}
       <div class="checklist-filter-group">
@@ -118,5 +168,10 @@
 
     <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     <a class="button button-secondary" href="/notifications">{{ t(request, "common.cancel") }}</a>
+    {% if rule %}
+      <a class="button button-secondary" href="/notifications/rules/{{ rule.id }}/export">
+        {{ t(request, "notifications.rule.export_yaml") }}
+      </a>
+    {% endif %}
   </form>
 {% endblock %}

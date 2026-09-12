@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "notifications.rule.import_title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "notifications.rule.import_title") }}</h1>
+  <p class="hint">{{ t(request, "notifications.rule.import_hint") }}</p>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+  {% if imported %}
+    <div class="alert alert-ok">
+      {{ t(request, "notifications.rule.import_result", created=imported.created, updated=imported.updated) }}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/notifications/rules/import" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="yaml_text">{{ t(request, "notifications.rule.import_yaml_label") }}</label>
+    <textarea id="yaml_text" name="yaml_text" rows="16">{{ form.yaml_text or '' }}</textarea>
+    <button type="submit" class="button">{{ t(request, "notifications.rule.import_submit") }}</button>
+    <a class="button button-secondary" href="/notifications">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

@@ -396,7 +396,7 @@ async def test_settings_shows_ssh_identity(client):
 
 
 async def test_settings_audit_retention_defaults_to_forever(client):
-    response = await client.get("/settings?tab=checks")
+    response = await client.get("/settings?tab=security")
     assert response.status_code == 200
     assert "forever" in response.text
 
@@ -410,7 +410,7 @@ async def test_update_audit_retention_persists_value(client):
     )
     assert response.status_code == 303
 
-    page = await client.get("/settings?tab=checks")
+    page = await client.get("/settings?tab=security")
     assert 'value="90"' in page.text
 
     log = await client.get("/audit")
@@ -430,7 +430,7 @@ async def test_update_audit_retention_empty_means_forever(client):
     )
     assert response.status_code == 303
 
-    page = await client.get("/settings?tab=checks")
+    page = await client.get("/settings?tab=security")
     assert "keep forever" in page.text.lower() or "forever" in page.text
 
 

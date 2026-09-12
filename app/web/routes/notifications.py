@@ -14,7 +14,9 @@ follow-up, not included here.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
+import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -28,6 +30,7 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.notification_condition import NotificationCondition
 from app.db.models.notification_rule import (
     NotificationEventType,
     NotificationRule,
@@ -37,11 +40,20 @@ from app.db.models.role import Permission, Role
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.notification import (
+    NotificationConditionCreate,
     NotificationRuleCreate,
     NotificationTemplateUpdate,
 )
+from app.services.condition_fields import ALL_OPERATORS, CONDITION_FIELDS
 from app.services.notifications import default_template
 from app.web.templating import templates
+
+# How many blank condition rows to pad the form with beyond however many a
+# rule already has — enough to add a few more conditions in one save
+# without needing JS to add rows one at a time (see rule_form.html's
+# "Conditions" table). The YAML textarea below it is the escape hatch for
+# anyone who needs more than that in one go.
+_BLANK_CONDITION_ROWS = 4
 
 router = APIRouter(
     prefix="/notifications",
@@ -82,15 +94,147 @@ async def _all_machine_groups(db: AsyncSession) -> list[MachineGroup]:
     return list(result.scalars().all())
 
 
+def _condition_row(
+    *,
+    field: str = "",
+    operator: str = "",
+    value: str = "",
+    mount_point: str | None = None,
+    sustained_seconds: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "field": field,
+        "operator": operator,
+        "value": value,
+        "mount_point": mount_point,
+        "sustained_seconds": sustained_seconds,
+    }
+
+
+def _condition_rows_for_rule(rule: NotificationRule | None) -> list[dict[str, Any]]:
+    rows = (
+        [
+            _condition_row(
+                field=c.field,
+                operator=c.operator,
+                value=c.value,
+                mount_point=c.mount_point,
+                sustained_seconds=c.sustained_seconds,
+            )
+            for c in rule.conditions
+        ]
+        if rule
+        else []
+    )
+    rows.extend(_condition_row() for _ in range(_BLANK_CONDITION_ROWS))
+    return rows
+
+
 def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object]:
     return {
-        "event_types": list(NotificationEventType),
+        # CONDITION_MATCHED is managed automatically (added whenever a rule
+        # has conditions — see `_build_conditions_and_event_types` below),
+        # not a manually-checkable event on the form.
+        "event_types": [
+            e for e in NotificationEventType if e != NotificationEventType.CONDITION_MATCHED
+        ],
         "selected_event_types": [e.value for e in rule.event_type_enums] if rule else [],
         "selected_user_ids": [str(u.id) for u in rule.users] if rule else [],
         "selected_role_ids": [str(r.id) for r in rule.roles] if rule else [],
         "selected_machine_ids": [str(m.id) for m in rule.machines] if rule else [],
         "selected_machine_group_ids": [str(g.id) for g in rule.machine_groups] if rule else [],
+        "condition_rows": _condition_rows_for_rule(rule),
+        "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
+        "condition_operator_choices": ALL_OPERATORS,
     }
+
+
+def _parse_condition_rows(
+    fields: list[str],
+    operators: list[str],
+    values: list[str],
+    mounts: list[str],
+    sustains: list[str],
+) -> list[dict[str, Any]]:
+    """One row per parallel form-array index — a row with no field or no
+    value is silently skipped (the empty padding rows `_BLANK_CONDITION_ROWS`
+    adds, or a row the admin cleared out to remove it)."""
+    rows: list[dict[str, Any]] = []
+    for field, operator, value, mount, sustain in zip(
+        fields, operators, values, mounts, sustains, strict=False
+    ):
+        if not field.strip() or not value.strip():
+            continue
+        sustained: int | None = None
+        if sustain.strip():
+            try:
+                sustained = int(sustain.strip())
+            except ValueError:
+                sustained = None
+        rows.append(
+            {
+                "field": field.strip(),
+                "operator": operator.strip(),
+                "value": value.strip(),
+                "mount_point": mount.strip() or None,
+                "sustained_seconds": sustained,
+            }
+        )
+    return rows
+
+
+def _parse_conditions_yaml_block(text: str) -> list[dict[str, Any]]:
+    """The rule form's "Conditions as YAML" textarea — a YAML list of
+    condition dicts only (not a whole rule; see `_rule_to_yaml_dict` below
+    for the full-rule export/import shape). Empty input means "use the
+    form rows instead" (see the callers of this function)."""
+    if not text.strip():
+        return []
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("Conditions YAML must be a list of condition entries.")
+    rows: list[dict[str, Any]] = []
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            raise ValueError("Each condition entry must be a mapping.")
+        rows.append(
+            {
+                "field": str(entry.get("field", "")),
+                "operator": str(entry.get("operator", "")),
+                "value": str(entry.get("value", "")),
+                "mount_point": (
+                    str(entry["mount_point"]) if entry.get("mount_point") else None
+                ),
+                "sustained_seconds": entry.get("sustained_seconds"),
+            }
+        )
+    return rows
+
+
+def _build_conditions_and_event_types(
+    event_types: list[str],
+    raw_conditions: list[dict[str, Any]],
+) -> tuple[list[str], list[NotificationConditionCreate]]:
+    """Validates `raw_conditions` against the field registry and, if any
+    survive, adds `CONDITION_MATCHED` to `event_types` automatically — a
+    rule with conditions is always dispatched through the same
+    `notify()`/`_matching_rules` path as an event-type rule (see
+    `NotificationEventType.CONDITION_MATCHED`'s docstring), so the admin
+    never has to remember to check that box themselves. Raises `ValueError`
+    (surfaced as a form error) on the first invalid condition."""
+    conditions: list[NotificationConditionCreate] = []
+    for raw in raw_conditions:
+        try:
+            conditions.append(NotificationConditionCreate(**raw))
+        except Exception as exc:
+            raise ValueError(f'Invalid condition "{raw.get("field")}": {exc}') from exc
+    updated_event_types = list(event_types)
+    if conditions and NotificationEventType.CONDITION_MATCHED.value not in updated_event_types:
+        updated_event_types.append(NotificationEventType.CONDITION_MATCHED.value)
+    return updated_event_types, conditions
 
 
 def _parse_ids(raw_ids: list[str]) -> list[uuid.UUID]:
@@ -217,8 +361,16 @@ async def create_rule(
     role_ids: list[str] = Form(default=[]),
     machine_ids: list[str] = Form(default=[]),
     machine_group_ids: list[str] = Form(default=[]),
+    condition_field: list[str] = Form(default=[]),
+    condition_operator: list[str] = Form(default=[]),
+    condition_value: list[str] = Form(default=[]),
+    condition_mount: list[str] = Form(default=[]),
+    condition_sustained: list[str] = Form(default=[]),
+    conditions_yaml: str = Form(""),
 ) -> Response:
-    async def _rerender(errors: list[str], status_code: int) -> Response:
+    async def _rerender(
+        errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
+    ) -> Response:
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -230,14 +382,28 @@ async def create_rule(
                 "all_machines": await _all_machines(db),
                 "all_machine_groups": await _all_machine_groups(db),
                 "errors": errors,
-                "form": {"name": name, "description": description, "enabled": bool(enabled)},
+                "form": {
+                    "name": name,
+                    "description": description,
+                    "enabled": bool(enabled),
+                    "conditions_yaml": conditions_yaml,
+                },
                 "csrf_token": csrf_token,
-                "event_types": list(NotificationEventType),
+                "event_types": [
+                    e
+                    for e in NotificationEventType
+                    if e != NotificationEventType.CONDITION_MATCHED
+                ],
                 "selected_event_types": event_types,
                 "selected_user_ids": user_ids,
                 "selected_role_ids": role_ids,
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
+                "condition_rows": condition_rows,
+                "condition_field_choices": [
+                    (k, f.label_key) for k, f in CONDITION_FIELDS.items()
+                ],
+                "condition_operator_choices": ALL_OPERATORS,
             },
             status_code=status_code,
         )
@@ -246,20 +412,57 @@ async def create_rule(
         return response
 
     try:
+        raw_conditions = _parse_conditions_yaml_block(
+            conditions_yaml
+        ) or _parse_condition_rows(
+            condition_field, condition_operator, condition_value, condition_mount,
+            condition_sustained,
+        )
+    except ValueError as exc:
+        return await _rerender(
+            [str(exc)],
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            _condition_rows_for_rule(None),
+        )
+
+    try:
+        resolved_event_types, conditions = _build_conditions_and_event_types(
+            event_types, raw_conditions
+        )
+    except ValueError as exc:
+        rows = raw_conditions + [
+            _condition_row() for _ in range(_BLANK_CONDITION_ROWS)
+        ]
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, rows)
+
+    try:
         payload = NotificationRuleCreate(
             name=name,
             description=description or None,
             enabled=bool(enabled),
-            event_types=event_types,
+            event_types=resolved_event_types,
         )
     except ValueError as exc:
-        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
+        rows = raw_conditions + [
+            _condition_row() for _ in range(_BLANK_CONDITION_ROWS)
+        ]
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, rows)
 
     rule = NotificationRule(
         name=payload.name,
         description=payload.description,
         enabled=payload.enabled,
         event_types=payload.event_types,
+        conditions=[
+            NotificationCondition(
+                field=c.field,
+                operator=c.operator,
+                value=c.value,
+                mount_point=c.mount_point,
+                sustained_seconds=c.sustained_seconds,
+            )
+            for c in conditions
+        ],
     )
     await _apply_rule_recipients_and_scope(
         db,
@@ -274,9 +477,11 @@ async def create_rule(
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        rows = raw_conditions + [_condition_row() for _ in range(_BLANK_CONDITION_ROWS)]
         return await _rerender(
             [f'A notification rule named "{payload.name}" already exists.'],
             status.HTTP_409_CONFLICT,
+            rows,
         )
     await db.refresh(rule)
 
@@ -336,10 +541,18 @@ async def update_rule(
     role_ids: list[str] = Form(default=[]),
     machine_ids: list[str] = Form(default=[]),
     machine_group_ids: list[str] = Form(default=[]),
+    condition_field: list[str] = Form(default=[]),
+    condition_operator: list[str] = Form(default=[]),
+    condition_value: list[str] = Form(default=[]),
+    condition_mount: list[str] = Form(default=[]),
+    condition_sustained: list[str] = Form(default=[]),
+    conditions_yaml: str = Form(""),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
-    async def _rerender(errors: list[str], status_code: int) -> Response:
+    async def _rerender(
+        errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
+    ) -> Response:
         csrf_token, new_cookie = get_or_create_csrf_token(request)
         response = templates.TemplateResponse(
             request,
@@ -351,14 +564,28 @@ async def update_rule(
                 "all_machines": await _all_machines(db),
                 "all_machine_groups": await _all_machine_groups(db),
                 "errors": errors,
-                "form": {"name": name, "description": description, "enabled": bool(enabled)},
+                "form": {
+                    "name": name,
+                    "description": description,
+                    "enabled": bool(enabled),
+                    "conditions_yaml": conditions_yaml,
+                },
                 "csrf_token": csrf_token,
-                "event_types": list(NotificationEventType),
+                "event_types": [
+                    e
+                    for e in NotificationEventType
+                    if e != NotificationEventType.CONDITION_MATCHED
+                ],
                 "selected_event_types": event_types,
                 "selected_user_ids": user_ids,
                 "selected_role_ids": role_ids,
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
+                "condition_rows": condition_rows,
+                "condition_field_choices": [
+                    (k, f.label_key) for k, f in CONDITION_FIELDS.items()
+                ],
+                "condition_operator_choices": ALL_OPERATORS,
             },
             status_code=status_code,
         )
@@ -367,19 +594,54 @@ async def update_rule(
         return response
 
     try:
+        raw_conditions = _parse_conditions_yaml_block(
+            conditions_yaml
+        ) or _parse_condition_rows(
+            condition_field, condition_operator, condition_value, condition_mount,
+            condition_sustained,
+        )
+    except ValueError as exc:
+        return await _rerender(
+            [str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, _condition_rows_for_rule(rule)
+        )
+
+    try:
+        resolved_event_types, conditions = _build_conditions_and_event_types(
+            event_types, raw_conditions
+        )
+    except ValueError as exc:
+        rows = raw_conditions + [
+            _condition_row() for _ in range(_BLANK_CONDITION_ROWS)
+        ]
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, rows)
+
+    try:
         payload = NotificationRuleCreate(
             name=name,
             description=description or None,
             enabled=bool(enabled),
-            event_types=event_types,
+            event_types=resolved_event_types,
         )
     except ValueError as exc:
-        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
+        rows = raw_conditions + [
+            _condition_row() for _ in range(_BLANK_CONDITION_ROWS)
+        ]
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, rows)
 
     rule.name = payload.name
     rule.description = payload.description
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
+    rule.conditions = [
+        NotificationCondition(
+            field=c.field,
+            operator=c.operator,
+            value=c.value,
+            mount_point=c.mount_point,
+            sustained_seconds=c.sustained_seconds,
+        )
+        for c in conditions
+    ]
     await _apply_rule_recipients_and_scope(
         db,
         rule,
@@ -393,9 +655,11 @@ async def update_rule(
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        rows = raw_conditions + [_condition_row() for _ in range(_BLANK_CONDITION_ROWS)]
         return await _rerender(
             [f'A notification rule named "{payload.name}" already exists.'],
             status.HTTP_409_CONFLICT,
+            rows,
         )
 
     await log_event(
@@ -429,6 +693,233 @@ async def delete_rule(
         target_label=name,
     )
     return RedirectResponse(url="/notifications", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- YAML export/import ---------------------------------------------------
+#
+# A portable, human-editable representation of a whole rule — natural keys
+# (email/role name/machine name/group name) rather than raw database ids,
+# so a rule exported from one instance can be reviewed, version-controlled,
+# and re-imported into another. Import upserts by `name` (the same unique
+# key `NotificationRule.name` already enforces), so re-importing an
+# unmodified export is a no-op and editing the YAML and re-importing is
+# "update in place." See `wiki/Notifications.md`'s "Condition-based rules"
+# section for the full shape and an example.
+
+
+def _rule_to_yaml_dict(rule: NotificationRule) -> dict[str, Any]:
+    return {
+        "name": rule.name,
+        "description": rule.description,
+        "enabled": rule.enabled,
+        "event_types": [
+            e.value for e in rule.event_type_enums if e != NotificationEventType.CONDITION_MATCHED
+        ],
+        "conditions": [
+            {
+                "field": c.field,
+                "operator": c.operator,
+                "value": c.value,
+                **({"mount_point": c.mount_point} if c.mount_point else {}),
+                **(
+                    {"sustained_seconds": c.sustained_seconds}
+                    if c.sustained_seconds
+                    else {}
+                ),
+            }
+            for c in rule.conditions
+        ],
+        "recipients": {
+            "users": [u.email for u in rule.users if u.email],
+            "roles": [r.name for r in rule.roles],
+        },
+        "scope": {
+            "machines": [m.name for m in rule.machines],
+            "machine_groups": [g.name for g in rule.machine_groups],
+        },
+    }
+
+
+async def _apply_yaml_rule(db: AsyncSession, data: dict[str, Any]) -> tuple[NotificationRule, bool]:
+    """Upserts one rule from a parsed YAML dict (`_rule_to_yaml_dict`'s
+    shape) — matched by `name`. Returns `(rule, created)`. Raises
+    `ValueError` on anything invalid; the caller rolls back the whole
+    import on the first bad rule rather than leaving a partial import
+    applied."""
+    if not isinstance(data, dict) or not data.get("name"):
+        raise ValueError("Each rule needs at least a \"name\".")
+
+    result = await db.execute(select(NotificationRule).where(NotificationRule.name == data["name"]))
+    rule = result.scalar_one_or_none()
+    created = rule is None
+    if rule is None:
+        rule = NotificationRule(name=data["name"])
+
+    raw_conditions = [dict(c) for c in (data.get("conditions") or [])]
+    event_types = [str(e) for e in (data.get("event_types") or [])]
+    try:
+        resolved_event_types, conditions = _build_conditions_and_event_types(
+            event_types, raw_conditions
+        )
+        payload = NotificationRuleCreate(
+            name=data["name"],
+            description=data.get("description") or None,
+            enabled=bool(data.get("enabled", True)),
+            event_types=resolved_event_types,
+        )
+    except ValueError as exc:
+        raise ValueError(f'Rule "{data["name"]}": {exc}') from exc
+
+    rule.description = payload.description
+    rule.enabled = payload.enabled
+    rule.event_types = payload.event_types
+    rule.conditions = [
+        NotificationCondition(
+            field=c.field,
+            operator=c.operator,
+            value=c.value,
+            mount_point=c.mount_point,
+            sustained_seconds=c.sustained_seconds,
+        )
+        for c in conditions
+    ]
+
+    recipients = data.get("recipients") or {}
+    emails = [str(e) for e in (recipients.get("users") or [])]
+    role_names = [str(r) for r in (recipients.get("roles") or [])]
+    if emails:
+        user_result = await db.execute(select(User).where(User.email.in_(emails)))
+        rule.users = list(user_result.scalars().all())
+    else:
+        rule.users = []
+    if role_names:
+        role_result = await db.execute(select(Role).where(Role.name.in_(role_names)))
+        rule.roles = list(role_result.scalars().all())
+    else:
+        rule.roles = []
+
+    scope = data.get("scope") or {}
+    machine_names = [str(m) for m in (scope.get("machines") or [])]
+    group_names = [str(g) for g in (scope.get("machine_groups") or [])]
+    if machine_names:
+        machine_result = await db.execute(select(Machine).where(Machine.name.in_(machine_names)))
+        rule.machines = list(machine_result.scalars().all())
+    else:
+        rule.machines = []
+    if group_names:
+        group_result = await db.execute(
+            select(MachineGroup).where(MachineGroup.name.in_(group_names))
+        )
+        rule.machine_groups = list(group_result.scalars().all())
+    else:
+        rule.machine_groups = []
+
+    if created:
+        db.add(rule)
+    return rule, created
+
+
+@router.get("/rules/{rule_id}/export")
+async def export_rule(
+    request: Request, rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    rule = await _get_rule_or_404(rule_id, db)
+    text = yaml.safe_dump(_rule_to_yaml_dict(rule), sort_keys=False, allow_unicode=True)
+    return Response(content=text, media_type="application/yaml")
+
+
+@router.get("/rules/export")
+async def export_all_rules(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    result = await db.execute(
+        select(NotificationRule)
+        .options(
+            selectinload(NotificationRule.users),
+            selectinload(NotificationRule.roles),
+            selectinload(NotificationRule.machines),
+            selectinload(NotificationRule.machine_groups),
+        )
+        .order_by(NotificationRule.name)
+    )
+    rules = result.scalars().all()
+    text = yaml.safe_dump(
+        [_rule_to_yaml_dict(r) for r in rules], sort_keys=False, allow_unicode=True
+    )
+    return Response(content=text, media_type="application/yaml")
+
+
+@router.get("/rules/import")
+async def import_rules_form(request: Request) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "notifications/rule_import.html",
+        {"errors": [], "form": {}, "imported": None, "csrf_token": csrf_token},
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/rules/import", dependencies=[_manage, Depends(verify_csrf)])
+async def import_rules(
+    request: Request, db: AsyncSession = Depends(get_db), yaml_text: str = Form(...)
+) -> Response:
+    async def _rerender(errors: list[str], status_code: int) -> Response:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "notifications/rule_import.html",
+            {
+                "errors": errors,
+                "form": {"yaml_text": yaml_text},
+                "imported": None,
+                "csrf_token": csrf_token,
+            },
+            status_code=status_code,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    try:
+        parsed = yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        return await _rerender([f"Invalid YAML: {exc}"], status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    entries = parsed if isinstance(parsed, list) else [parsed]
+    created_count = 0
+    updated_count = 0
+    try:
+        for entry in entries:
+            _rule, created = await _apply_yaml_rule(db, entry)
+            created_count += 1 if created else 0
+            updated_count += 0 if created else 1
+        await db.commit()
+    except (ValueError, IntegrityError) as exc:
+        await db.rollback()
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    await log_event(
+        db,
+        request=request,
+        action="notification_rule.import",
+        summary=f"Imported {created_count + updated_count} notification rule(s) from YAML",
+        details={"created": created_count, "updated": updated_count},
+    )
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "notifications/rule_import.html",
+        {
+            "errors": [],
+            "form": {},
+            "imported": {"created": created_count, "updated": updated_count},
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
 
 
 # --- Templates -----------------------------------------------------------

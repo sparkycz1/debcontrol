@@ -177,6 +177,7 @@ async def update_background_checks(
     facts_refresh_interval_seconds: str = Form(""),
     monitoring_interval_seconds: str = Form(""),
     reachability_check_concurrency: str = Form(""),
+    notification_condition_check_interval_seconds: str = Form(""),
 ) -> Response:
     """The SSH connect/update-run timeouts, every background-check
     interval, and the reachability sweep's concurrency cap — moved here
@@ -230,6 +231,12 @@ async def update_background_checks(
         minimum=1,
         maximum=1000,
     )
+    condition_check_interval = _field(
+        notification_condition_check_interval_seconds,
+        label="Condition-based notification check interval",
+        minimum=10,
+        maximum=86400,
+    )
 
     if errors:
         return await _render_settings(request, db, errors, tab="checks")
@@ -240,6 +247,7 @@ async def update_background_checks(
     assert facts_interval is not None
     assert monitoring_interval is not None
     assert concurrency is not None
+    assert condition_check_interval is not None
 
     app_settings.ssh_connect_timeout = ssh_timeout
     app_settings.update_timeout_seconds = update_timeout
@@ -247,6 +255,7 @@ async def update_background_checks(
     app_settings.facts_refresh_interval_seconds = facts_interval
     app_settings.monitoring_interval_seconds = monitoring_interval
     app_settings.reachability_check_concurrency = concurrency
+    app_settings.notification_condition_check_interval_seconds = condition_check_interval
     await db.commit()
 
     await log_event(
@@ -261,6 +270,7 @@ async def update_background_checks(
             "facts_refresh_interval_seconds": facts_interval,
             "monitoring_interval_seconds": monitoring_interval,
             "reachability_check_concurrency": concurrency,
+            "notification_condition_check_interval_seconds": condition_check_interval,
         },
     )
     return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
@@ -275,7 +285,7 @@ async def update_audit_retention(
     app_settings = await get_or_create_app_settings(db)
     new_value, error = _parse_retention_days(retention_days)
     if error:
-        return await _render_settings(request, db, [error], tab="checks")
+        return await _render_settings(request, db, [error], tab="security")
 
     app_settings.audit_log_retention_days = new_value
     await db.commit()
@@ -291,7 +301,7 @@ async def update_audit_retention(
         ),
     )
 
-    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/dashboard-trends-retention", dependencies=[_manage, Depends(verify_csrf)])

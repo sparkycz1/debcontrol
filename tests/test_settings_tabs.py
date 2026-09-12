@@ -52,6 +52,7 @@ async def test_security_tab_has_audit_log_not_general_or_checks_content(client):
     response = await client.get("/settings?tab=security")
     assert response.status_code == 200
     assert "Audit log" in response.text
+    assert 'name="retention_days"' in response.text
     assert "App SSH identity" not in response.text
     assert "Dashboard trends" not in response.text
 
@@ -64,6 +65,8 @@ async def test_checks_tab_has_background_checks_and_retention(client):
     assert "Monitoring history" in response.text
     assert 'name="ssh_connect_timeout"' in response.text
     assert "App SSH identity" not in response.text
+    # Audit log retention moved to the Security tab — not shown here anymore.
+    assert 'id="retention_days"' not in response.text
 
 
 async def test_integrations_tab_has_syslog_ldap_and_oidc(client):
@@ -86,7 +89,7 @@ async def test_ai_tab_has_ai_assistant_content(client):
     assert "LDAP login" not in response.text
 
 
-async def test_saving_audit_retention_redirects_back_to_checks_tab(client):
+async def test_saving_audit_retention_redirects_back_to_security_tab(client):
     await client.get("/settings")
     csrf_token = client.cookies.get("csrftoken")
     response = await client.post(
@@ -95,7 +98,7 @@ async def test_saving_audit_retention_redirects_back_to_checks_tab(client):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/settings?tab=checks"
+    assert response.headers["location"] == "/settings?tab=security"
 
 
 async def test_saving_background_checks_redirects_back_to_checks_tab(client):
@@ -111,6 +114,7 @@ async def test_saving_background_checks_redirects_back_to_checks_tab(client):
             "facts_refresh_interval_seconds": "1800",
             "monitoring_interval_seconds": "60",
             "reachability_check_concurrency": "10",
+            "notification_condition_check_interval_seconds": "60",
         },
         follow_redirects=False,
     )
@@ -137,6 +141,7 @@ async def test_background_checks_rejects_out_of_range_values(client):
             "facts_refresh_interval_seconds": "1800",
             "monitoring_interval_seconds": "60",
             "reachability_check_concurrency": "10",
+            "notification_condition_check_interval_seconds": "60",
         },
     )
     assert response.status_code == 200

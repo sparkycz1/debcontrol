@@ -16,6 +16,7 @@ from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.notification_condition import NotificationCondition, NotificationConditionState
 from app.db.models.notification_rule import (
     NotificationEventType,
     NotificationRule,
@@ -60,6 +61,8 @@ __all__ = [
     "MachineReachabilitySample",
     "MachineService",
     "MachineUpdateRun",
+    "NotificationCondition",
+    "NotificationConditionState",
     "NotificationEventType",
     "NotificationRule",
     "NotificationTemplate",

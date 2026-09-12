@@ -62,9 +62,11 @@ Every entry is linked into a hash chain (`sequence`, `prev_hash`,
 
 ### Audit log retention: the first setting editable through the UI
 
-`audit_log_retention_days`, set from Settings, controls how many days
-`purge_old_audit_log_entries` keeps on a daily sweep. Defaults to **90
-days**, same as the operational-data retention settings below; `None`
+`audit_log_retention_days`, set from Settings → **Security** (moved there
+from Checks & retention — a security setting belongs with the hash-chain
+verify/export controls, not the operational check intervals), controls how
+many days `purge_old_audit_log_entries` keeps on a daily sweep. Defaults to
+**90 days**, same as the operational-data retention settings below; `None`
 (settable from the same Settings field) means keep forever.
 
 The first value editable at runtime through the UI rather than fixed at

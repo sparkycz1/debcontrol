@@ -22,6 +22,10 @@ add another):
 - `app.tasks.jobs._run_machine_update` — UPDATE_RUN_FAILED / UPDATE_RUN_SUCCEEDED.
 - `app.tasks.jobs._run_machine_onboarding` — MACHINE_ONBOARDED, on success.
 - `app.tasks.ai_jobs._generate_fleet_summary` — FLEET_SUMMARY_GENERATED.
+- `app.tasks.jobs._evaluate_notification_conditions` — CONDITION_MATCHED,
+  fired only on the true transition of a rule's own
+  `NotificationCondition`s (see `app.db.models.notification_condition`),
+  the same "transition, not every tick" rule as reachability above.
 """
 
 from __future__ import annotations
@@ -91,6 +95,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: new fleet summary ({timestamp})",
             "The scheduled AI fleet summary generated at {timestamp} is ready.\n\n{details}",
         ),
+        NotificationEventType.CONDITION_MATCHED: (
+            "debcontrol: {rule_name} matched on {machine_name}",
+            "{machine_name} ({machine_ip}) matched the notification rule "
+            "\"{rule_name}\" at {timestamp}: {condition_summary}.\n\n{details}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -121,6 +130,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
         NotificationEventType.FLEET_SUMMARY_GENERATED: (
             "debcontrol: nové shrnutí flotily ({timestamp})",
             "Plánované AI shrnutí flotily vygenerované v {timestamp} je hotové.\n\n{details}",
+        ),
+        NotificationEventType.CONDITION_MATCHED: (
+            "debcontrol: pravidlo {rule_name} se shoduje na {machine_name}",
+            "{machine_name} ({machine_ip}) odpovídá notifikačnímu pravidlu "
+            "\"{rule_name}\" v {timestamp}: {condition_summary}.\n\n{details}",
         ),
     },
 }

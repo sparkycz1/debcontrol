@@ -191,6 +191,15 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # How often (seconds) condition-based notification rules (CPU/RAM/
+    # disk/etc. thresholds — see app.db.models.notification_condition and
+    # app.services.notifications) are re-evaluated against the fleet's
+    # latest facts/monitoring data. Same Beat-restart caveat as the other
+    # interval fields above.
+    notification_condition_check_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=60, nullable=False
+    )
+
     # --- AI assistant token limits (app.ai.usage) ---
     #
     # Global (fleet-wide, not per-user) ceilings on total tokens — input +

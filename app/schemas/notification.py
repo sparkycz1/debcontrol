@@ -5,6 +5,38 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 from app.db.models.notification_rule import NotificationEventType
+from app.services.condition_fields import CONDITION_FIELDS, operators_for
+
+
+class NotificationConditionCreate(BaseModel):
+    """One AND-clause of a condition-based rule — see
+    `app.db.models.notification_condition`'s module docstring. Validated
+    against the field registry (`app.services.condition_fields`) both from
+    the rule form's repeated field/operator/value rows and from a parsed
+    YAML rule (`app/web/routes/notifications.py`'s import), so the two
+    input paths can never disagree about what's valid."""
+
+    field: str
+    operator: str
+    value: str = Field(min_length=1, max_length=255)
+    mount_point: str | None = Field(default=None, max_length=255)
+    sustained_seconds: int | None = Field(default=None, ge=0, le=86400)
+
+    @field_validator("field")
+    @classmethod
+    def _validate_field(cls, value: str) -> str:
+        if value not in CONDITION_FIELDS:
+            raise ValueError(f'Unknown condition field "{value}".')
+        return value
+
+    def model_post_init(self, __context: object) -> None:
+        field = CONDITION_FIELDS.get(self.field)
+        if field is not None and self.operator not in operators_for(field.value_type):
+            raise ValueError(
+                f'Operator "{self.operator}" isn\'t valid for field "{self.field}".'
+            )
+        if field is not None and field.needs_mount and not self.mount_point:
+            raise ValueError(f'Field "{self.field}" needs a filesystem mount point.')
 
 
 class NotificationRuleCreate(BaseModel):

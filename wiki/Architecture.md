@@ -128,7 +128,7 @@ All background work runs on **Celery**, with the existing Redis instance
 
 | Kind | Examples | Triggered by |
 |---|---|---|
-| **Periodic sweeps** | reachability ping, facts refresh, package refresh, update-availability check | Celery **Beat**, on `timedelta` schedules read from Settings |
+| **Periodic sweeps** | reachability ping, facts refresh, package refresh, update-availability check, condition-based notification evaluation | Celery **Beat**, on `timedelta` schedules read from Settings |
 | **Daily housekeeping** | audit-log purge, fleet snapshot, snapshot purge | Celery **Beat**, on `crontab()` schedules |
 | **One-off, per machine** | SSH connect test, facts/packages refresh, apt update, update preview, reboot/shutdown | a route or another task calling `some_task.delay(...)` |
 

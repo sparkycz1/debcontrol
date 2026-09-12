@@ -45,6 +45,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.db.models.machine import Machine
     from app.db.models.machine_group import MachineGroup
+    from app.db.models.notification_condition import NotificationCondition
     from app.db.models.role import Role
     from app.db.models.user import User
 
@@ -77,6 +78,18 @@ class NotificationEventType(enum.StrEnum):
     # about it*) finishes generating a new report. Not machine-scoped — see
     # `app.tasks.ai_jobs._generate_fleet_summary`'s `notify(...)` call.
     FLEET_SUMMARY_GENERATED = "fleet_summary.generated"
+    # Fired by the condition-evaluation sweep (`app.tasks.jobs.
+    # evaluate_notification_conditions`) whenever a rule's own
+    # `NotificationCondition` row(s) — CPU/RAM/disk/facts thresholds, see
+    # `app.db.models.notification_condition` and
+    # `app.services.condition_fields` — all match for a machine in scope,
+    # on the true transition (and again after a false→true cycle), not
+    # every tick that simply confirms "still matching." A rule with
+    # `conditions` set has this added to its own `event_types`
+    # automatically when saved (`app/web/routes/notifications.py`) so the
+    # existing `notify()`/`_matching_rules` dispatch path needs no special
+    # case for condition-based rules.
+    CONDITION_MATCHED = "machine.condition_matched"
 
 
 notification_rule_users = Table(
@@ -143,6 +156,13 @@ class NotificationRule(Base):
     )
     machine_groups: Mapped[list[MachineGroup]] = relationship(
         secondary=notification_rule_machine_groups, lazy="selectin"
+    )
+    # Condition-based triggers (CPU/RAM/disk/facts thresholds) — see
+    # `app.db.models.notification_condition`. A rule with any of these is
+    # evaluated by `app.tasks.jobs.evaluate_notification_conditions` in
+    # addition to (not instead of) its `event_types` above.
+    conditions: Mapped[list[NotificationCondition]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan", lazy="selectin"
     )
 
     @property

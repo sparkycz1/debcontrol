@@ -7,6 +7,10 @@
     <h1>{{ t(request, "notifications.title") }}</h1>
     <div>
       <a class="button button-secondary" href="/notifications/templates">{{ t(request, "notifications.templates_link") }}</a>
+      {% if rules %}
+        <a class="button button-secondary" href="/notifications/rules/export">{{ t(request, "notifications.rule.export_all_yaml") }}</a>
+      {% endif %}
+      <a class="button button-secondary" href="/notifications/rules/import">{{ t(request, "notifications.rule.import_yaml") }}</a>
       <a class="button" href="/notifications/rules/new">{{ t(request, "notifications.add_rule") }}</a>
     </div>
   </div>

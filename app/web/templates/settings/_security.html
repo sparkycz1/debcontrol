@@ -5,6 +5,18 @@
       {{ t(request, "settings.security.audit_hash_chain_hint") | safe }}
     </p>
 
+    <form method="post" action="/settings/audit-retention" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="retention_days">{{ t(request, "settings.security.keep_audit_days") }}</label>
+      <input type="number" id="retention_days" name="retention_days" min="0" step="1"
+             placeholder="{{ t(request, 'settings.checks.forever') }}"
+             value="{{ app_settings.audit_log_retention_days if app_settings.audit_log_retention_days is not none else '' }}">
+      <p class="hint">
+        {{ t(request, "settings.security.keep_audit_days_hint") }}
+      </p>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+
     <form method="post" action="/settings/audit-verify" class="stack-gap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button button-secondary">{{ t(request, "settings.security.verify_chain") }}</button>
@@ -21,9 +33,5 @@
       {{ t(request, "settings.security.export_hint_before") }}
       <a href="/audit/export?format=csv">CSV</a> ·
       <a href="/audit/export?format=json">JSON</a>{{ t(request, "settings.security.export_hint_after") }}
-    </p>
-    <p class="hint">
-      {{ t(request, "settings.security.retention_moved_hint") }}
-      <a href="/settings?tab=checks">{{ t(request, "settings.checks.title") }}</a>.
     </p>
   </section>

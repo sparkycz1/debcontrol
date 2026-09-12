@@ -597,7 +597,7 @@ wheels = [
 
 [[package]]
 name = "debcontrol"
-version = "0.53.0"
+version = "0.54.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -622,6 +622,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyotp" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "qrcode" },
     { name = "redis", extra = ["hiredis"] },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -640,6 +641,7 @@ dev = [
     { name = "types-authlib" },
     { name = "types-croniter" },
     { name = "types-ldap3" },
+    { name = "types-pyyaml" },
     { name = "types-qrcode" },
 ]
 
@@ -667,6 +669,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "pyotp", specifier = ">=2.10.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "qrcode", specifier = ">=8.2" },
     { name = "redis", extras = ["hiredis"], specifier = ">=5.3.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.52" },
@@ -685,6 +688,7 @@ dev = [
     { name = "types-authlib", specifier = ">=1.7.2.20260827" },
     { name = "types-croniter", specifier = ">=6.0.0" },
     { name = "types-ldap3", specifier = ">=2.9.13.20260827" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20260826" },
     { name = "types-qrcode", specifier = ">=8.2.0.20260518" },
 ]
 
@@ -1756,6 +1760,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/ba/a3be5620ec108bfb21481a7796a3c352e627969fa67db6a033cdaeacd117/types_pyasn1-0.6.0.20260724.tar.gz", hash = "sha256:00b9324c1ce8167ec1dc503018cc7d4f190f5770dd3e9a365e897e290e0532db", size = 17373, upload-time = "2026-07-24T04:57:47.402Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/ab/9936badd94cfbfb73d2ec83409e203fee44fc83a744e09a8779b37042f45/types_pyasn1-0.6.0.20260724-py3-none-any.whl", hash = "sha256:487987e4492ce2e1ba6f0048f025165383c49d5d16a345ae5dfe7d44045b7910", size = 24054, upload-time = "2026-07-24T04:57:46.482Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260906"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/6e/abec85b9013db5b934b0280a6dd104904d84f7bcbaab2e2f3def87ac7463/types_pyyaml-6.0.12.20260906.tar.gz", hash = "sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212", size = 18649, upload-time = "2026-09-06T06:35:35.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/c0/fc0644b7ddcfb969e95845837143cb5173ddd6e06ee4ba5fc493cd9329b7/types_pyyaml-6.0.12.20260906-py3-none-any.whl", hash = "sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b", size = 21282, upload-time = "2026-09-06T06:35:34.372Z" },
 ]
 
 [[package]]

@@ -976,6 +976,14 @@ p { margin: 0 0 var(--space-3); }
 .panel h2 { margin-top: 0; }
 .panel h2 + .hint { margin-top: calc(-1 * var(--space-2)); }
 
+/* A category grouping several related panels together (e.g. Settings'
+   Checks & retention tab, grouped by functional area — Reachability,
+   Monitoring, ...) — the heading sits above its panels, un-boxed, so the
+   panels themselves stay the visual unit. */
+.panel-group { margin-bottom: var(--space-6); }
+.panel-group h2 { margin-top: 0; margin-bottom: var(--space-3); }
+.panel-group .panel:last-child { margin-bottom: 0; }
+
 .hint { color: var(--color-muted); font-size: 0.88rem; }
 
 /* --- Alerts --- */

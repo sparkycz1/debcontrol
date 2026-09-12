@@ -102,6 +102,7 @@ Today:
 | `machine.update_run.succeeded` | The same run finishes with `status=SUCCEEDED` instead — its own event type so a rule can opt into just failures, just successes, or both. | Yes |
 | `machine.onboarded` | A machine finishes onboarding successfully (switches over to debcontrol's own SSH identity) — see `app.tasks.jobs._run_machine_onboarding`. | Yes |
 | `fleet_summary.generated` | The AI assistant's scheduled fleet summary (Settings → AI Assistant → Scheduled fleet summary) finishes generating a new report. Frequency/provider/model stay configured there — only "who hears about it" lives here. See `app.tasks.ai_jobs._generate_fleet_summary`. | **No** — matches every rule regardless of machine/machine-group scope, since there's no single machine to check it against. |
+| `machine.condition_matched` | A rule's own **conditions** (CPU/RAM/disk/facts thresholds — see "Condition-based rules" below) all match for a machine in scope. Added to a rule's `event_types` automatically whenever it has any conditions — never checked by hand. | Yes |
 
 **Adding another event is a three-step recipe**, documented on
 `NotificationEventType`'s own docstring in code:
@@ -120,6 +121,90 @@ Today:
    `app/services/notifications.py` — **for every shipped locale** (see
    "Templates and locale" below), the same i18n-parity expectation the
    rest of the app has for user-facing strings.
+
+## Condition-based rules: thresholds instead of a fixed event
+
+Beyond the fixed lifecycle events above, a rule can carry one or more
+**conditions** — "notify when CPU usage is over 90%," "notify when the
+Debian version is X," "notify when /var is over 85% full." Evaluated by a
+periodic Celery Beat sweep (`app.tasks.jobs.evaluate_notification_conditions`,
+interval set in Settings → Checks & retention → Notifications, default 60s
+— see [Development](Development.md)'s background-job recipe), not inline
+with the events above.
+
+**Field registry, not an arbitrary expression language.** A condition
+references a field from a curated, code-defined set
+(`app.services.condition_fields.CONDITION_FIELDS`) — everything the app
+already tracks per machine, either from its latest facts snapshot
+(`Machine`) or its latest monitoring sample (`MachineMonitoringSample`):
+
+| Field key | Meaning | Value type |
+|---|---|---|
+| `machine.os_id` | Distro id (`debian`, `ubuntu`, ...) | string |
+| `machine.os_version` | Full OS version string | string |
+| `machine.kernel_version` | Kernel version | string |
+| `machine.cpu_architecture` | e.g. `x86_64` | string |
+| `machine.cpu_cores` | Core count | number |
+| `machine.uptime_seconds` | Seconds since boot | number |
+| `machine.reboot_required` | Pending-reboot flag | bool |
+| `machine.upgradable_count` / `machine.security_upgradable_count` | Pending package updates | number |
+| `machine.is_reachable` | Current reachability state | bool |
+| `monitoring.cpu_percent` | Latest CPU sample | number |
+| `monitoring.load1` / `.load5` / `.load15` | Latest load averages | number |
+| `monitoring.ram_percent` | Computed from the latest sample's `ram_used_bytes`/`ram_total_bytes` | number |
+| `monitoring.filesystem_use_percent` | One filesystem's usage — needs a **mount point** (e.g. `/var`) to disambiguate | number |
+| `monitoring.failed_services_count` | Latest sample's failed-service count | number |
+
+A `monitoring.*` field reads the machine's **latest**
+`MachineMonitoringSample`; a machine with no sample yet simply never
+matches (not an error). Operators: `gt`/`gte`/`lt`/`lte`/`eq`/`ne` for
+numbers and booleans, plus `eq`/`ne`/`contains`/`not_contains`/`in`/
+`not_in` for strings.
+
+**Every condition in a rule must match — AND only.** For "or," create a
+second rule; this keeps a rule's own meaning unambiguous and keeps the
+YAML shape (below) simple enough to hand-edit, rather than building a
+general boolean-expression parser for one feature.
+
+**Debounce**: a rule notifies once on the true transition into "all
+conditions match" for a given machine, and again after a false→true
+cycle — never every sweep tick that just confirms "still matching," the
+same spirit as `machine.unreachable`/`machine.reachable_again` above but
+persisted (`NotificationConditionState`, one row per rule×machine) since
+evaluation runs on its own sweep rather than inline with whatever wrote
+the sample. A condition can optionally require the match to hold
+continuously for `sustained_seconds` before it fires, to ignore a brief
+spike.
+
+**Configuring conditions — form or YAML, on the same rule.** The rule form
+has a repeatable field/operator/value/mount/sustained-seconds table, plus
+a "conditions as YAML" textarea for pasting more than the table's rows —
+whichever is filled in wins. Beyond that, a **whole rule** (name,
+description, events, conditions, recipients-by-email/role-name,
+scope-by-machine-name/group-name) can be exported and re-imported as
+YAML — `GET /notifications/rules/{id}/export` (one) or
+`GET /notifications/rules/export` (all), and `GET`/`POST
+/notifications/rules/import` to paste one back in. Import **upserts by
+`name`** (the same unique key the form already enforces) — re-importing
+an unmodified export is a no-op, editing the YAML and re-importing updates
+that rule in place. Example:
+
+```yaml
+name: High CPU on web servers
+enabled: true
+conditions:
+  - field: monitoring.cpu_percent
+    operator: gt
+    value: "90"
+    sustained_seconds: 300
+recipients:
+  users: [oncall@example.com]
+  roles: [Operators]
+scope:
+  machine_groups: [Web]
+```
+
+Same web-UI-only scope as the rest of this page — see "REST API" below.
 
 ## Placeholders: variables usable in a template
 
@@ -156,6 +241,7 @@ What `{details}` actually contains, per event:
 | `machine.update_run.succeeded` | The run's captured output. |
 | `machine.onboarded` | Empty — the subject/body wording alone already says what happened. |
 | `fleet_summary.generated` | The full generated report text (the same content shown on the Dashboard). |
+| `machine.condition_matched` | Also provides `{rule_name}` and `{condition_summary}` (a human-readable rendering of the matched conditions, e.g. "cpu_percent gt 90"); `{details}` is empty. |
 
 ## Templates: one subject/body pair per event, per your language
 
@@ -230,7 +316,7 @@ possible future optimization, not a correctness concern today.
 ## Audit logging
 
 Rule/template create-edit-delete are all audit-logged
-(`notification_rule.create`/`.update`/`.delete`,
+(`notification_rule.create`/`.update`/`.delete`/`.import`,
 `notification_template.update`/`.reset`) — the same "every mutation gets
 an entry" convention every other admin-config page follows. **Actually
 sending a notification email is not itself audit-logged** — it's a

@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.53.0"
+version = "0.54.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -35,6 +35,12 @@ dependencies = [
     # Standard 5-field cron expression parsing/next-run computation for
     # Scheduling (app/scheduling/). Well-established, tiny, no transitive deps.
     "croniter>=6.0.0",
+    # YAML export/import for condition-based Notification rules
+    # (app/web/routes/notifications.py) — already an indirect dependency
+    # (a Celery-ecosystem package pulls it in), promoted to direct since
+    # this app now imports it itself rather than only relying on it
+    # transitively.
+    "pyyaml>=6.0.3",
     # --- Authentication (app/auth/) ---
     # Argon2id password hashing for local accounts — current OWASP-recommended
     # default, memory-hard (better GPU/ASIC resistance than bcrypt).
@@ -107,6 +113,7 @@ dev = [
     "types-croniter>=6.0.0",
     "types-ldap3>=2.9.13.20260827",
     "types-qrcode>=8.2.0.20260518",
+    "types-pyyaml>=6.0.12.20260826",
 ]
 
 [tool.uv]

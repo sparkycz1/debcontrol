@@ -279,6 +279,7 @@ async def test_settings_reachability_check_interval_is_editable(client):
             "facts_refresh_interval_seconds": "3600",
             "monitoring_interval_seconds": "120",
             "reachability_check_concurrency": "20",
+            "notification_condition_check_interval_seconds": "60",
         },
     )
     updated = await client.get("/settings?tab=checks")
