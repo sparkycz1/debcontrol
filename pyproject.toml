@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.54.0"
+version = "0.54.1"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -9,7 +9,13 @@ license = { text = "PolyForm-Noncommercial-1.0.0" }
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.4",
-    "pydantic>=2.13.4",
+    # Lower bound is `openrouter`'s own ceiling (`pydantic>=2.11.2,<2.13`,
+    # every 1.x release so far — see that dependency's own comment below),
+    # not a feature floor of this app's — nothing here needs anything
+    # pydantic 2.13 added. `uv lock` currently resolves this to 2.12.x
+    # because of that ceiling; the full test suite + `mypy --strict`-style
+    # gate both pass at that version. Revisit once `openrouter` lifts it.
+    "pydantic>=2.11.2",
     "pydantic-settings>=2.15.0",
     "sqlalchemy[asyncio]>=2.0.52",
     "asyncpg>=0.31.0",
@@ -21,7 +27,7 @@ dependencies = [
     # `redis >=4.5.2,!=4.5.5,!=5.0.2,<6.5` itself — so the real upper bound is
     # kombu's, and repeating a stricter one here would only mask it. Only the
     # lower bound stays, since the app is not tested below 5.3.1.
-    # See README.md, "Dependency version notes".
+    # See wiki/Architecture.md, "Dependency version notes".
     "redis[hiredis]>=5.3.1",
     # Task queue: broker AND result backend are the same Redis instance
     # (REDIS_URL). `[redis]` pulls kombu's redis transport. See
@@ -82,8 +88,15 @@ dependencies = [
     # (below) even though OpenRouter's API is also OpenAI-compatible — it
     # has its own dedicated SDK, which is what this app uses for it instead.
     "openai>=3.6.0",
-    # OpenRouter's own SDK — see `OpenRouterClient`.
-    "openrouter>=0.10.8",
+    # OpenRouter's own SDK — see `OpenRouterClient`. 1.x (declared "stable
+    # as of v1.0") pins `pydantic<2.13`, hence this project's own pydantic
+    # floor above; 1.x also changed `models.list_async`'s response shape
+    # (`response.result.data` instead of `response.data`, and it can
+    # legitimately return `None`) and added pagination query params to the
+    # models endpoint — both handled in `OpenRouterClient.list_models`.
+    # `chat.send_async`'s shape (`.choices`/`.usage`/tool-call parsing) is
+    # unchanged from 0.x.
+    "openrouter>=1.1.139",
     # Google's SDK for Gemini — see `GeminiClient`.
     "google-genai>=2.21.0",
     # Renders a machine's runbook (Overview tab) from Markdown to HTML —

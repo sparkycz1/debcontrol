@@ -282,7 +282,12 @@ async def test_openai_compatible_uses_the_configured_base_url():
 
 async def test_openrouter_list_models():
     def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://openrouter.ai/api/v1/models"
+        # The SDK's 1.x line added pagination (`offset`/`limit` query
+        # params, `links`/`total_count` in the response) — this app only
+        # ever reads the single page it gets back, same as it did with 0.x's
+        # unpaginated response, so only the URL/JSON shape below changed to
+        # match, not `OpenRouterClient.list_models`'s own behavior.
+        assert str(request.url) == "https://openrouter.ai/api/v1/models?offset=0&limit=500"
         return httpx.Response(
             200,
             json={
@@ -307,7 +312,9 @@ async def test_openrouter_list_models():
                         "supported_voices": None,
                         "top_provider": {"is_moderated": False},
                     }
-                ]
+                ],
+                "links": {"next": None},
+                "total_count": 1,
             },
         )
 

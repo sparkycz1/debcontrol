@@ -77,6 +77,15 @@ directly (only `worker` does).
   > The client library version and the Redis **server** version are
   > independent. redis-py 5.x and 6.x both talk to a Redis 8.x server —
   > do not try to "match" them.
+- **`openrouter` (the AI provider SDK) pins this project's `pydantic`
+  floor** — every 1.x release (the SDK's current, "stable as of v1.0"
+  line) declares `pydantic>=2.11.2,<2.13`, so `uv.lock` currently resolves
+  `pydantic` to 2.12.x rather than the newest 2.13+. Not a feature
+  constraint of this app's own code; revisit once a future `openrouter`
+  release lifts that upper pydantic bound. See `OpenRouterClient` for the
+  other 0.x→1.x shape changes this upgrade needed (`models.list_async`'s
+  response nesting/pagination/optionality — `chat.send_async` was
+  unaffected).
 - Versions in `pyproject.toml` are lower bounds (`>=`); exact, reproducible
   versions come from the committed `uv.lock`.
 - Docker images for stateful services (`postgres:18.6`, `redis:8.10.1`,

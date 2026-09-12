@@ -403,7 +403,19 @@ class OpenRouterClient(BaseAiClient):
             )
         except Exception as exc:
             raise _wrap_provider_error("OpenRouter", exc) from exc
-        return [ModelInfo(id=entry.id, display_name=entry.name) for entry in response.data]
+        # The SDK's 1.x line wraps the model list one level deeper than 0.x
+        # did (`response.result.data` instead of `response.data`) and added
+        # pagination (`response.next`) — this app only ever showed the
+        # single page 0.x returned, so that's preserved rather than
+        # following `.next`. `list_async` can also return `None` now for a
+        # transport-level empty/malformed reply, not something that should
+        # raise — same "no models" outcome an empty `.data` list already
+        # produced before.
+        if response is None:
+            return []
+        return [
+            ModelInfo(id=entry.id, display_name=entry.name) for entry in response.result.data
+        ]
 
     async def send(
         self,
