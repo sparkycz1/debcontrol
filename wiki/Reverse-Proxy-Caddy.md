@@ -39,6 +39,10 @@ over the internal Docker network.
   you've confirmed HTTPS works, since preload-list submission is hard to undo.
 - Hardened headers (`nosniff`, `no-referrer`, `Server` stripped) and
   conservative request/idle timeouts.
+- **5MB request body cap** — the app has no file-upload endpoint; the
+  largest legitimate body is a pasted runbook, SSH key, or a config/
+  notification-rule JSON/YAML import, all comfortably under that. Rejects
+  an oversized POST at the proxy, before it reaches `web` at all.
 
 ### Verifying it worked
 
@@ -77,6 +81,10 @@ Add a site block pointing at wherever `web` is reachable — typically
 your-domain.example.com {
 	tls {
 		protocols tls1.3 tls1.3
+	}
+
+	request_body {
+		max_size 5MB
 	}
 
 	header {

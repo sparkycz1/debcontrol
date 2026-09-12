@@ -23,6 +23,16 @@
 
 	encode zstd gzip
 
+	# No route here accepts a file upload (there is none in the app) — the
+	# largest legitimate body is a pasted runbook, SSH key, or a config/
+	# notification-rule JSON/YAML import, all comfortably under a few
+	# hundred KB. 5MB is generous headroom against those while capping an
+	# oversized POST (accidental or malicious) before it reaches `web` at
+	# all, rather than relying on the app process to notice and reject one.
+	request_body {
+		max_size 5MB
+	}
+
 	header {
 		# HSTS: tell browsers to only ever use HTTPS for this host (and
 		# subdomains) for the next two years. Remove "preload" until you've
