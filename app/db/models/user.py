@@ -96,10 +96,10 @@ class User(Base):
 
     # Optional — not needed to log in (that's `username`), but this is the
     # address Notifications (`app.services.notifications`) sends to when a
-    # rule targets this user or a `UserGroup` they belong to. A user with no
-    # email set is simply skipped as a notification recipient, never an
-    # error. Stored lowercased, same normalize-on-the-way-in convention as
-    # `username` (see `app.schemas.user`).
+    # rule targets this user directly or targets a `Role` they hold. A user
+    # with no email set is simply skipped as a notification recipient, never
+    # an error. Stored lowercased, same normalize-on-the-way-in convention
+    # as `username` (see `app.schemas.user`).
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
 
     # This account's own UI language, self-service (My account → Language) —

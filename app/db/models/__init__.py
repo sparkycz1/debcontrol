@@ -31,7 +31,6 @@ from app.db.models.ssh_identity import SSHIdentity
 from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
-from app.db.models.user_group import UserGroup
 from app.db.models.user_machine_group_access import UserMachineGroupAccess
 from app.db.models.user_session import UserSession
 from app.db.models.webauthn_credential import WebAuthnCredential
@@ -82,7 +81,6 @@ __all__ = [
     "UpdateRunStatus",
     "UpgradeStrategy",
     "User",
-    "UserGroup",
     "UserMachineGroupAccess",
     "UserSession",
     "WebAuthnCredential",

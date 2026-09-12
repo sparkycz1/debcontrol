@@ -40,7 +40,7 @@ enabled, and it lives in its own separate git repository
 - [Authentication & RBAC](Authentication-RBAC.md) — logins, sessions, roles/permissions, 2FA, the REST API's auth model
 - [Machine Management](Machine-Management.md) — SSH, updates, monitoring, logs, the terminal, scheduling
 - [Audit Log](Audit-Log.md) — hash-chain integrity, retention, export, SIEM forwarding
-- [Notifications](Notifications.md) — rules, user groups, templates, and every placeholder you can use in one
+- [Notifications](Notifications.md) — rules, role-based targeting, templates, and every placeholder you can use in one
 - [Host Requirements](Host-Requirements.md) — sizing debcontrol's own host(s) for a fleet from dozens to thousands of machines
 - [SSH Host Key Verification](SSH-Host-Key-Verification.md) — the fingerprint-pinning flow, explained
 - [Machine Requirements](Machine-Requirements.md) — what a Debian machine needs to be managed

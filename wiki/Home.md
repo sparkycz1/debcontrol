@@ -48,7 +48,7 @@ flowchart LR
 | [🔐 Authentication & RBAC](Authentication-RBAC.md) | Logins, sessions, roles/permissions, 2FA, per-user API tokens, the REST API's auth model |
 | [🖥️ Machine Management](Machine-Management.md) | SSH, updates, facts/packages/monitoring, logs, the terminal, scheduling |
 | [📝 Audit Log](Audit-Log.md) | Hash-chain integrity, retention, export, SIEM forwarding |
-| [🔔 Notifications](Notifications.md) | Rules, user groups, templates, and every placeholder you can use in one |
+| [🔔 Notifications](Notifications.md) | Rules, role-based targeting, templates, and every placeholder you can use in one |
 | [📏 Host Requirements](Host-Requirements.md) | Size your own server for 10 machines or 10,000 |
 | [🔑 SSH Host Key Verification](SSH-Host-Key-Verification.md) | Understand why there's no "trust on first use" |
 | [🧰 Machine Requirements](Machine-Requirements.md) | Know what a target Debian box needs before adding it |
@@ -76,7 +76,7 @@ terminator in front of it, always. Pick your fighter:
 | 🧠 **AI assistant** | Chat with your fleet (5 provider choices) — it can *propose* actions, never run one without you literally confirming the command first |
 | 📝 **Audit log** | Hash-chained, tamper-evident, exportable, optionally forwarded to your SIEM |
 | 👤 **Users & Roles** | Full RBAC matrix, temporary permission grants, bulk actions, SSO — export/import roles too |
-| 🔔 **Notifications** | Rules — event, who (users/user groups), which machines/groups — email you when something happens, with editable per-event templates |
+| 🔔 **Notifications** | Rules — event, who (users/roles), which machines/groups — email you when something happens, with editable per-event templates |
 | 📚 **API docs** (`/api`) | Live Swagger UI over the full read/write REST API — everything the web UI can do, an API can too |
 | ⚙️ **Settings** | SSH key rotation, retention policies, LDAP/OIDC/syslog/SMTP integrations, AI provider config |
 

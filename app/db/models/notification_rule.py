@@ -4,8 +4,14 @@ trigger one. See `app.services.notifications` for the dispatch/send logic
 that actually reads these; this module only holds the data.
 
 **Recipients** are the union of a rule's directly-listed `users` and every
-member of its `user_groups` (`app.db.models.user_group.UserGroup`) — a
-user with no `User.email` set is silently skipped, not an error, the same
+active user whose `Role` is one of the rule's `roles` — deliberately
+targeting the existing RBAC `Role` rather than a separate notification-only
+grouping concept (an earlier round of this feature had its own `UserGroup`
+model; it was folded into `Role` once it became clear "who should hear
+about what" almost always tracks "what job does this account do", which a
+role already answers, and a second, parallel grouping concept just for
+notifications was one more list to keep in sync as accounts come and go).
+A user with no `User.email` set is silently skipped, not an error, the same
 "missing config = no-op" spirit `AppSettings.smtp_enabled` already has.
 
 **Scope** narrows *which machines* a rule cares about: empty `machines`
@@ -39,8 +45,8 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.db.models.machine import Machine
     from app.db.models.machine_group import MachineGroup
+    from app.db.models.role import Role
     from app.db.models.user import User
-    from app.db.models.user_group import UserGroup
 
 
 class NotificationEventType(enum.StrEnum):
@@ -54,6 +60,17 @@ class NotificationEventType(enum.StrEnum):
     MACHINE_UNREACHABLE = "machine.unreachable"
     MACHINE_REACHABLE_AGAIN = "machine.reachable_again"
     UPDATE_RUN_FAILED = "machine.update_run.failed"
+    # The success counterpart of the above — fired from the same
+    # `app.tasks.jobs._run_machine_update`/`_run_group_update` call sites,
+    # on `UpdateRunStatus.SUCCEEDED` instead of `.FAILED`. Kept as its own
+    # event type (not "update run finished either way") so a rule can opt
+    # into just failures, just successes, or both.
+    UPDATE_RUN_SUCCEEDED = "machine.update_run.succeeded"
+    # Fired once, right after a machine finishes onboarding successfully
+    # (`app.tasks.jobs._run_onboarding`) — "a new machine just joined the
+    # fleet," as distinct from every other event here being about a machine
+    # already onboarded.
+    MACHINE_ONBOARDED = "machine.onboarded"
     # Fired when the AI assistant's scheduled fleet summary
     # (Settings → AI Assistant — frequency/provider/model still configured
     # there, since that's about *which model writes it*, not *who hears
@@ -69,13 +86,11 @@ notification_rule_users = Table(
     Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
 )
 
-notification_rule_user_groups = Table(
-    "notification_rule_user_groups",
+notification_rule_roles = Table(
+    "notification_rule_roles",
     Base.metadata,
     Column("rule_id", ForeignKey("notification_rules.id", ondelete="CASCADE"), primary_key=True),
-    Column(
-        "user_group_id", ForeignKey("user_groups.id", ondelete="CASCADE"), primary_key=True
-    ),
+    Column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
 )
 
 notification_rule_machines = Table(
@@ -120,8 +135,8 @@ class NotificationRule(Base):
     users: Mapped[list[User]] = relationship(
         secondary=notification_rule_users, lazy="selectin"
     )
-    user_groups: Mapped[list[UserGroup]] = relationship(
-        secondary=notification_rule_user_groups, lazy="selectin"
+    roles: Mapped[list[Role]] = relationship(
+        secondary=notification_rule_roles, lazy="selectin"
     )
     machines: Mapped[list[Machine]] = relationship(
         secondary=notification_rule_machines, lazy="selectin"

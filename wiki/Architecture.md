@@ -15,7 +15,7 @@ the app grows:
 | [🔐 Authentication & RBAC](Authentication-RBAC.md) | Logins (local/LDAP/OIDC), sessions, roles/permissions, temporary grants, machine-group scoping, TOTP/WebAuthn, per-user API tokens, per-user UI language, the REST API's own auth model |
 | [🖥️ Machine Management](Machine-Management.md) | SSH host key pinning, secrets, config export/import, system updates (run/preview/rollback/check), facts/packages/services, monitoring, logs, live updates, readiness checks, tags, saved views, bulk actions, power, the interactive terminal, scheduling |
 | [📝 Audit Log](Audit-Log.md) | Who/what/outcome/when, hash-chain integrity, retention, CSV/JSON export, syslog/SIEM forwarding, the Dashboard's daily trend snapshot |
-| [🔔 Notifications](Notifications.md) | Rules (event/recipients/scope), user groups, templates & available placeholders, per-recipient locale, SMTP delivery |
+| [🔔 Notifications](Notifications.md) | Rules (event/recipients/scope), role-based targeting, searchable pickers, templates & available placeholders, per-recipient locale, SMTP delivery |
 | [🧠 AI Assistant](AI-Assistant.md) | The chat assistant, its tool/permission model, the scheduled fleet summary |
 | [🔑 SSH Host Key Verification](SSH-Host-Key-Verification.md) | Why there's no "trust on first use," and how pinning/mismatch detection works |
 

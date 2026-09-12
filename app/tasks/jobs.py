@@ -451,6 +451,8 @@ async def _run_machine_onboarding(machine_id: str) -> dict[str, Any]:
         machine.secret_encrypted = None
         await session.commit()
 
+        await notify(session, NotificationEventType.MACHINE_ONBOARDED, machine=machine)
+
         return {"ok": True, "output": result.output}
 
 
@@ -1225,6 +1227,13 @@ async def _run_machine_update(run_id: str) -> None:
                 NotificationEventType.UPDATE_RUN_FAILED,
                 machine=machine,
                 context={"details": run.error or ""},
+            )
+        elif run.status == UpdateRunStatus.SUCCEEDED:
+            await notify(
+                session,
+                NotificationEventType.UPDATE_RUN_SUCCEEDED,
+                machine=machine,
+                context={"details": run.output or ""},
             )
 
     refresh_machine_packages.delay(str(run.machine_id))

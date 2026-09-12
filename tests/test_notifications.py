@@ -1,5 +1,5 @@
-"""Tests for Notifications: rules, user groups, templates, and the
-dispatch/send logic in `app.services.notifications`."""
+"""Tests for Notifications: rules, role-based targeting, templates, and
+the dispatch/send logic in `app.services.notifications`."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.role import Role
 from app.db.models.user import User
-from app.db.models.user_group import UserGroup
 from app.services.notifications import default_template, notify, render_template
 
 
@@ -102,39 +101,31 @@ async def test_create_rule_persists_recipients_and_scope(client, db_session_fact
     assert "notification_rule.create" in log.text
 
 
-async def test_user_group_create_and_membership(client, db_session_factory):
+async def test_create_rule_targeting_a_role(client, db_session_factory):
     async with db_session_factory() as db:
-        role = await _make_role(db, "role-bob")
-        user = User(username="bob", auth_provider="local", email="bob@example.com", role=role)
-        db.add(user)
+        role = await _make_role(db, "role-oncall-team")
+        db.add(role)
         await db.commit()
-        await db.refresh(user)
-        user_id = user.id
+        await db.refresh(role)
+        role_id = role.id
 
-    await client.get("/notifications/groups/new")
+    await client.get("/notifications/rules/new")
     csrf_token = client.cookies.get("csrftoken")
 
     response = await client.post(
-        "/notifications/groups",
+        "/notifications/rules",
         data={
-            "name": "on-call",
-            "description": "On-call rotation",
-            "user_ids": [str(user_id)],
+            "name": "role-targeted rule",
+            "event_types": [NotificationEventType.MACHINE_UNREACHABLE.value],
+            "role_ids": [str(role_id)],
             "csrf_token": csrf_token,
         },
     )
     assert response.status_code == 303
 
     async with db_session_factory() as db:
-        group = (await db.execute(select(UserGroup))).scalar_one()
-        assert group.name == "on-call"
-        assert [m.id for m in group.members] == [user_id]
-
-    duplicate = await client.post(
-        "/notifications/groups",
-        data={"name": "on-call", "csrf_token": csrf_token},
-    )
-    assert "already exists" in duplicate.text
+        rule = (await db.execute(select(NotificationRule))).scalar_one()
+        assert [r.id for r in rule.roles] == [role_id]
 
 
 async def test_template_default_then_override_then_reset(client, db_session_factory):
@@ -235,17 +226,14 @@ async def test_notify_sends_to_matching_recipients_only(db_session_factory, monk
         db.add_all([in_scope, out_of_scope, recipient, no_email_user])
         await db.flush()
 
-        group = UserGroup(name="alerts")
-        group.members = [no_email_user]  # deliberately no usable email
-        db.add(group)
-
         rule = NotificationRule(
             name="web1 unreachable",
             enabled=True,
             event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
         )
         rule.users = [recipient]
-        rule.user_groups = [group]
+        # role2's only member has no usable email — deliberately dropped.
+        rule.roles = [role2]
         rule.machines = [in_scope]
         db.add(rule)
         await db.commit()

@@ -40,60 +40,78 @@
 
     <label>{{ t(request, "notifications.rule.recipients_users_label") }}</label>
     {% if all_users %}
-      <div class="permission-grid">
-        {% for user in all_users %}
-          <label>
-            <input type="checkbox" name="user_ids" value="{{ user.id }}"
-                   {{ 'checked' if user.id | string in selected_user_ids else '' }}>
-            {{ user.username }}{% if not user.email %} ({{ t(request, "notifications.rule.no_email") }}){% endif %}
-          </label>
-        {% endfor %}
+      <div class="checklist-filter-group">
+        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+               aria-label="{{ t(request, 'notifications.rule.recipients_users_label') }}">
+        <div class="permission-grid" data-checklist-items>
+          {% for user in all_users %}
+            <label>
+              <input type="checkbox" name="user_ids" value="{{ user.id }}"
+                     {{ 'checked' if user.id | string in selected_user_ids else '' }}>
+              {{ user.display_name or user.username }}{% if not user.email %} ({{ t(request, "notifications.rule.no_email") }}){% endif %}
+            </label>
+          {% endfor %}
+        </div>
+        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
       </div>
     {% else %}
       <p class="hint">{{ t(request, "notifications.rule.no_users") }}</p>
     {% endif %}
 
-    <label>{{ t(request, "notifications.rule.recipients_groups_label") }}</label>
-    {% if all_user_groups %}
-      <div class="permission-grid">
-        {% for group in all_user_groups %}
-          <label>
-            <input type="checkbox" name="user_group_ids" value="{{ group.id }}"
-                   {{ 'checked' if group.id | string in selected_user_group_ids else '' }}>
-            {{ group.name }}
-          </label>
-        {% endfor %}
+    <label>{{ t(request, "notifications.rule.recipients_roles_label") }}</label>
+    {% if all_roles %}
+      <div class="checklist-filter-group">
+        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+               aria-label="{{ t(request, 'notifications.rule.recipients_roles_label') }}">
+        <div class="permission-grid" data-checklist-items>
+          {% for role in all_roles %}
+            <label>
+              <input type="checkbox" name="role_ids" value="{{ role.id }}"
+                     {{ 'checked' if role.id | string in selected_role_ids else '' }}>
+              {{ role.name }}
+            </label>
+          {% endfor %}
+        </div>
+        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
       </div>
     {% else %}
-      <p class="hint">
-        {{ t(request, "notifications.rule.no_user_groups") }}
-        <a href="/notifications/groups/new">{{ t(request, "notifications.groups.add") }}</a>
-      </p>
+      <p class="hint">{{ t(request, "notifications.rule.no_roles") }}</p>
     {% endif %}
+    <p class="hint">{{ t(request, "notifications.rule.recipients_hint") }}</p>
 
     <label>{{ t(request, "notifications.rule.scope_machines_label") }}</label>
     {% if all_machines %}
-      <div class="permission-grid">
-        {% for machine in all_machines %}
-          <label>
-            <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
-                   {{ 'checked' if machine.id | string in selected_machine_ids else '' }}>
-            {{ machine.name }}
-          </label>
-        {% endfor %}
+      <div class="checklist-filter-group">
+        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+               aria-label="{{ t(request, 'notifications.rule.scope_machines_label') }}">
+        <div class="permission-grid" data-checklist-items>
+          {% for machine in all_machines %}
+            <label>
+              <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
+                     {{ 'checked' if machine.id | string in selected_machine_ids else '' }}>
+              {{ machine.name }}
+            </label>
+          {% endfor %}
+        </div>
+        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
       </div>
     {% endif %}
 
     <label>{{ t(request, "notifications.rule.scope_groups_label") }}</label>
     {% if all_machine_groups %}
-      <div class="permission-grid">
-        {% for group in all_machine_groups %}
-          <label>
-            <input type="checkbox" name="machine_group_ids" value="{{ group.id }}"
-                   {{ 'checked' if group.id | string in selected_machine_group_ids else '' }}>
-            {{ group.name }}
-          </label>
-        {% endfor %}
+      <div class="checklist-filter-group">
+        <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+               aria-label="{{ t(request, 'notifications.rule.scope_groups_label') }}">
+        <div class="permission-grid" data-checklist-items>
+          {% for group in all_machine_groups %}
+            <label>
+              <input type="checkbox" name="machine_group_ids" value="{{ group.id }}"
+                     {{ 'checked' if group.id | string in selected_machine_group_ids else '' }}>
+              {{ group.name }}
+            </label>
+          {% endfor %}
+        </div>
+        <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
       </div>
     {% endif %}
     <p class="hint">{{ t(request, "notifications.rule.scope_hint") }}</p>

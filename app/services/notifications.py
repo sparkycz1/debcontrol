@@ -19,7 +19,9 @@ add another):
   — MACHINE_UNREACHABLE / MACHINE_REACHABLE_AGAIN, fired only on a
   reachability *transition*, never on every poll tick that confirms the
   same state.
-- `app.tasks.jobs._run_machine_update` — UPDATE_RUN_FAILED.
+- `app.tasks.jobs._run_machine_update` — UPDATE_RUN_FAILED / UPDATE_RUN_SUCCEEDED.
+- `app.tasks.jobs._run_machine_onboarding` — MACHINE_ONBOARDED, on success.
+- `app.tasks.ai_jobs._generate_fleet_summary` — FLEET_SUMMARY_GENERATED.
 """
 
 from __future__ import annotations
@@ -75,6 +77,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: update run failed on {machine_name}",
             "An update run on {machine_name} ({machine_ip}) failed at {timestamp}.\n\n{details}",
         ),
+        NotificationEventType.UPDATE_RUN_SUCCEEDED: (
+            "debcontrol: update run succeeded on {machine_name}",
+            "An update run on {machine_name} ({machine_ip}) finished successfully at "
+            "{timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.MACHINE_ONBOARDED: (
+            "debcontrol: {machine_name} finished onboarding",
+            "{machine_name} ({machine_ip}) finished onboarding at {timestamp} and is now "
+            "managed with debcontrol's own SSH identity.",
+        ),
         NotificationEventType.FLEET_SUMMARY_GENERATED: (
             "debcontrol: new fleet summary ({timestamp})",
             "The scheduled AI fleet summary generated at {timestamp} is ready.\n\n{details}",
@@ -95,6 +107,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: aktualizace na {machine_name} selhala",
             "Aktualizace na stroji {machine_name} ({machine_ip}) selhala v {timestamp}."
             "\n\n{details}",
+        ),
+        NotificationEventType.UPDATE_RUN_SUCCEEDED: (
+            "debcontrol: aktualizace na {machine_name} proběhla úspěšně",
+            "Aktualizace na stroji {machine_name} ({machine_ip}) úspěšně doběhla v "
+            "{timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.MACHINE_ONBOARDED: (
+            "debcontrol: {machine_name} dokončil onboarding",
+            "{machine_name} ({machine_ip}) dokončil onboarding v {timestamp} a je nyní "
+            "spravován pod vlastní SSH identitou debcontrolu.",
         ),
         NotificationEventType.FLEET_SUMMARY_GENERATED: (
             "debcontrol: nové shrnutí flotily ({timestamp})",
@@ -187,19 +209,21 @@ async def _matching_rules(
     ]
 
 
-def _recipients(rules: list[NotificationRule]) -> list[User]:
+async def _recipients(db: AsyncSession, rules: list[NotificationRule]) -> list[User]:
     """The union of every matching rule's recipients — directly-listed
-    users plus every member of its user groups — deduplicated by id, and
-    silently dropping a disabled account or one with no `User.email` set
-    (see `NotificationRule`'s docstring). Returns full `User` objects, not
-    just addresses, so `notify` can render each one's email in *their*
-    own `User.locale` (see this module's i18n note above)."""
-    by_id: dict[object, User] = {}
-    for rule in rules:
-        for user in (*rule.users, *(m for g in rule.user_groups for m in g.members)):
-            if user.is_active and user.email:
-                by_id[user.id] = user
-    return list(by_id.values())
+    users plus every active user holding one of its target roles —
+    deduplicated by id, and silently dropping a disabled account or one
+    with no `User.email` set (see `NotificationRule`'s docstring). Returns
+    full `User` objects, not just addresses, so `notify` can render each
+    one's email in *their* own `User.locale` (see this module's i18n note
+    above)."""
+    by_id: dict[object, User] = {u.id: u for u in (u for rule in rules for u in rule.users)}
+    role_ids = {role.id for rule in rules for role in rule.roles}
+    if role_ids:
+        result = await db.execute(select(User).where(User.role_id.in_(role_ids)))
+        for user in result.scalars().all():
+            by_id[user.id] = user
+    return [u for u in by_id.values() if u.is_active and u.email]
 
 
 def _send_smtp_message(
@@ -256,7 +280,7 @@ async def notify(
         rules = await _matching_rules(db, event_type, machine)
         if not rules:
             return
-        recipients = _recipients(rules)
+        recipients = await _recipients(db, rules)
         if not recipients:
             return
 

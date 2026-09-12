@@ -915,7 +915,6 @@
 
     "notifications.title": "Notifikace",
     "notifications.add_rule": "Přidat pravidlo",
-    "notifications.groups_link": "Skupiny uživatelů",
     "notifications.templates_link": "Šablony",
     "notifications.back_to_rules": "Zpět na pravidla",
     "notifications.smtp_not_configured": "Není nastaven žádný SMTP relay, takže notifikační e-maily se zatím reálně neodešlou.",
@@ -931,7 +930,7 @@
     "notifications.delete_confirm": "Smazat notifikační pravidlo \"{name}\"?",
     "notifications.no_rules": "Zatím žádná notifikační pravidla.",
     "notifications.users_word": "uživatel(ů)",
-    "notifications.groups_word": "skupin(a)",
+    "notifications.roles_word": "rol(e/í)",
     "notifications.machines_word": "stroj(ů)",
     "notifications.machine_groups_word": "skupin(a) strojů",
     "notifications.scope_all": "všechny stroje",
@@ -943,26 +942,16 @@
     "notifications.rule.enabled_label": "Zapnuto",
     "notifications.rule.events_label": "Upozornit při",
     "notifications.rule.recipients_users_label": "Upozornit tyto uživatele",
-    "notifications.rule.recipients_groups_label": "Upozornit tyto skupiny uživatelů",
+    "notifications.rule.recipients_roles_label": "Upozornit každého s těmito rolemi",
+    "notifications.rule.recipients_hint": "Příjemce je kdokoliv vybraný přímo výše, nebo jakýkoliv aktivní účet s jednou z rolí výše — žádnou samostatnou skupinu není třeba udržovat.",
     "notifications.rule.scope_machines_label": "Omezit na tyto stroje",
     "notifications.rule.scope_groups_label": "Omezit na tyto skupiny strojů",
     "notifications.rule.scope_hint": "Necháš-li obojí nezaškrtnuté, pravidlo platí pro všechny stroje. Zaškrtnutím jednoho nebo více omezíš pravidlo jen na ně.",
     "notifications.rule.no_email": "bez e-mailu",
     "notifications.rule.no_users": "Zatím neexistují žádné uživatelské účty.",
-    "notifications.rule.no_user_groups": "Zatím neexistují žádné skupiny uživatelů.",
-
-    "notifications.groups.title": "Notifikační skupiny uživatelů",
-    "notifications.groups.add": "Přidat skupinu",
-    "notifications.groups.table.name": "Název",
-    "notifications.groups.table.members": "Členové",
-    "notifications.groups.no_groups": "Zatím žádné skupiny uživatelů — skupina umožní pravidlu upozornit více lidí najednou.",
-    "notifications.groups.delete_confirm": "Smazat skupinu uživatelů \"{name}\"?",
-
-    "notifications.group.new_title": "Přidat skupinu uživatelů",
-    "notifications.group.edit_title": "Upravit skupinu uživatelů",
-    "notifications.group.name_label": "Název",
-    "notifications.group.description_label": "Popis",
-    "notifications.group.members_label": "Členové",
+    "notifications.rule.no_roles": "Zatím neexistují žádné role.",
+    "notifications.rule.filter_placeholder": "Filtrovat…",
+    "notifications.rule.filter_no_matches": "Nic neodpovídá.",
 
     "notifications.templates.title": "E-mailové šablony",
     "notifications.templates.hint": "Jedna šablona na událost, použitá pro předmět/tělo notifikačního e-mailu. Událost bez vlastní šablony použije vestavěný výchozí text zobrazený zde.",
@@ -983,6 +972,8 @@
     "notifications.event.machine_unreachable": "Stroj se stal nedostupným",
     "notifications.event.machine_reachable_again": "Stroj je opět dostupný",
     "notifications.event.update_run_failed": "Aktualizace selhala",
+    "notifications.event.update_run_succeeded": "Aktualizace proběhla úspěšně",
+    "notifications.event.machine_onboarded": "Stroj dokončil onboarding",
     "notifications.event.fleet_summary_generated": "Vygenerováno plánované shrnutí flotily"
   }
 }

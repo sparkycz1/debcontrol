@@ -16,11 +16,9 @@ here is data an admin manages from the UI. Gated by two permissions,
 `settings.manage` and `user.manage` — "who gets emailed about what" is a
 narrower trust level than either of those.
 
-Three sub-pages, one router:
+Two sub-pages, one router:
 
 - **`/notifications`** — the rules list, create/edit/delete a rule.
-- **`/notifications/groups`** — **user groups**, a reusable "notify all of
-  these people" recipient list (see below).
 - **`/notifications/templates`** — one editable subject/body pair per
   event type (see "Templates" below).
 
@@ -36,14 +34,20 @@ A `NotificationRule` (`app.db.models.notification_rule`) has:
 | `enabled` | A disabled rule is skipped entirely — kept, not deleted, so it's easy to switch back on. |
 | `event_types` | Which events (see below) fire this rule — a rule can list more than one. |
 | `users` | Directly-listed recipients. |
-| `user_groups` | Recipient groups (see "User groups" below) — every active member with an email gets notified. |
+| `roles` | Every active account holding one of these `Role`s is also a recipient (see "Recipients by role" below) — no separate notification-only grouping concept. |
 | `machines` / `machine_groups` | **Scope** — see below. |
 
-**Recipients** are the union of `users` and every member of every group in
-`user_groups`, deduplicated by account. A recipient is silently skipped
-(never an error, never blocks the others) if their account is disabled or
-has no email address set (see "Who can receive an email" below) — a rule
-with zero *reachable* recipients is simply a no-op for that firing.
+**Recipients** are the union of `users` and every active user holding one
+of the rule's `roles`, deduplicated by account. A recipient is silently
+skipped (never an error, never blocks the others) if their account is
+disabled or has no email address set (see "Who can receive an email"
+below) — a rule with zero *reachable* recipients is simply a no-op for
+that firing.
+
+Both the user picker and the machine/machine-group pickers on the rule
+form are filterable — a text box above each checkbox grid narrows it down
+by name as you type (`checklist-filter.js`), so a fleet with hundreds of
+machines or accounts stays usable rather than becoming a giant scroll.
 
 **Scope** narrows *which machines* a rule cares about:
 
@@ -66,21 +70,23 @@ normalized lowercase, and unique — it is *not* used for login, only as
 the notification address. An account with no email simply can't receive
 a notification; nothing in the UI forces one to be set.
 
-## User groups: a reusable recipient list
+## Recipients by role
 
-`/notifications/groups` manages `UserGroup` — a plain named group of
-accounts (`app.db.models.user_group`) that exists **purely** to be a
-notification target. It is deliberately unrelated to two other things
-that sound similar:
+A rule can target a `Role` (`app.db.models.role`, the same one that
+governs permissions — see [Authentication & RBAC](Authentication-RBAC.md))
+directly, instead of only listing individual accounts: pick "Operators"
+once and every account currently holding that role is a recipient, with
+no separate list to keep in sync as people join, leave, or change job.
+This deliberately reuses `Role` rather than a second, parallel
+notification-only grouping concept — an earlier round of this feature had
+exactly that (a standalone `UserGroup`), and it was folded into `Role`
+once it became clear "who should hear about what" almost always tracks
+"what job does this account do," which a role already answers.
 
-- **`Role`** (`app.db.models.role`) answers "what may this account *do*"
-  (permissions) — nothing to do with who gets emailed.
-- **`MachineGroup`** groups *machines*, not people.
-
-A user can belong to any number of `UserGroup`s (unlike a machine, which
-has exactly one `MachineGroup` or none). Creating/editing a group just
-picks which user accounts are members; membership has no other effect
-anywhere else in the app.
+A rule's actual recipient set is re-evaluated every time it fires, not
+snapshotted when the rule was saved — promote someone into a targeted
+role and they start receiving that rule's notifications on the very next
+matching event, no rule edit needed.
 
 ## Events: what can trigger a rule
 
@@ -93,6 +99,8 @@ Today:
 | `machine.unreachable` | A machine's reachability check finds it unreachable, **having previously been known reachable** — never on the very first check ever run for a machine (no prior state to transition *from*), and never on a tick that just confirms it's still unreachable. See `app.tasks.jobs._ping_all_machines` / `_check_machine_reachability_now`. | Yes |
 | `machine.reachable_again` | The mirror image — a machine goes from known-unreachable back to reachable. | Yes |
 | `machine.update_run.failed` | A triggered system-update run (`MachineUpdateRun`) finishes with `status=FAILED` — apt/flatpak/snap exited non-zero, or the machine couldn't be reached at all. See `app.tasks.jobs._run_machine_update`. | Yes |
+| `machine.update_run.succeeded` | The same run finishes with `status=SUCCEEDED` instead — its own event type so a rule can opt into just failures, just successes, or both. | Yes |
+| `machine.onboarded` | A machine finishes onboarding successfully (switches over to debcontrol's own SSH identity) — see `app.tasks.jobs._run_machine_onboarding`. | Yes |
 | `fleet_summary.generated` | The AI assistant's scheduled fleet summary (Settings → AI Assistant → Scheduled fleet summary) finishes generating a new report. Frequency/provider/model stay configured there — only "who hears about it" lives here. See `app.tasks.ai_jobs._generate_fleet_summary`. | **No** — matches every rule regardless of machine/machine-group scope, since there's no single machine to check it against. |
 
 **Adding another event is a three-step recipe**, documented on
@@ -145,6 +153,8 @@ What `{details}` actually contains, per event:
 |---|---|
 | `machine.unreachable` / `machine.reachable_again` | Empty — the subject/body wording alone already says what happened. |
 | `machine.update_run.failed` | The run's recorded error message (apt's exit status, or the connection failure) — `MachineUpdateRun.error`. |
+| `machine.update_run.succeeded` | The run's captured output. |
+| `machine.onboarded` | Empty — the subject/body wording alone already says what happened. |
 | `fleet_summary.generated` | The full generated report text (the same content shown on the Dashboard). |
 
 ## Templates: one subject/body pair per event, per your language
@@ -219,9 +229,8 @@ possible future optimization, not a correctness concern today.
 
 ## Audit logging
 
-Rule/group/template create-edit-delete are all audit-logged
+Rule/template create-edit-delete are all audit-logged
 (`notification_rule.create`/`.update`/`.delete`,
-`user_group.create`/`.update`/`.delete`,
 `notification_template.update`/`.reset`) — the same "every mutation gets
 an entry" convention every other admin-config page follows. **Actually
 sending a notification email is not itself audit-logged** — it's a
@@ -233,7 +242,7 @@ fact repeated per recipient.
 ## REST API
 
 Deliberately web-UI-only this round (see `api_v1.py`'s module docstring)
-— rules, groups, and templates are only reachable through the web UI
-today. This is new-and-not-yet-extended, not a permanent policy decision
+— rules and templates are only reachable through the web UI today. This
+is new-and-not-yet-extended, not a permanent policy decision
 the way SSH key rotation or LDAP/OIDC config are: a REST equivalent is a
 reasonable, expected follow-up once there's a concrete need for it.

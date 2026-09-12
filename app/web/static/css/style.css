@@ -369,6 +369,29 @@ p { margin: 0 0 var(--space-3); }
   font-size: 0.95rem;
 }
 
+/* A search box above a long permission-grid checklist (see
+   checklist-filter.js) — users/roles/machines/machine-groups on the
+   Notifications rule form, any of which can run into the hundreds. */
+.checklist-filter-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin: var(--space-2) 0 var(--space-4);
+  max-height: 260px;
+  overflow-y: auto;
+}
+.checklist-filter-group input[type="search"] {
+  position: sticky;
+  top: calc(var(--space-3) * -1);
+  margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) var(--space-3);
+  width: calc(100% + var(--space-3) * 2);
+  border-radius: var(--radius) var(--radius) 0 0;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+}
+.checklist-filter-group .permission-grid { margin: 0; }
+.checklist-filter-group [data-checklist-empty] { margin: 0; }
+
 .container {
   max-width: 1080px;
   margin: 0 auto;

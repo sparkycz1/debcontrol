@@ -1,8 +1,10 @@
 """Notifications — rules ("when X happens, tell these people about these
-machines"), the user groups a rule can target, and per-event email
-templates. See `app.db.models.notification_rule`'s module docstring for
-the data model and `app.services.notifications` for how a rule actually
-turns into a sent email.
+machines") and per-event email templates. See
+`app.db.models.notification_rule`'s module docstring for the data model
+(recipients are directly-listed users plus every active user holding one
+of the rule's target roles — no separate notification-only grouping
+concept) and `app.services.notifications` for how a rule actually turns
+into a sent email.
 
 Web-UI-only this round, same as LDAP/OIDC/syslog config (see
 `api_v1.py`'s module docstring) — a REST equivalent is a reasonable
@@ -31,14 +33,12 @@ from app.db.models.notification_rule import (
     NotificationRule,
     NotificationTemplate,
 )
-from app.db.models.role import Permission
+from app.db.models.role import Permission, Role
 from app.db.models.user import User
-from app.db.models.user_group import UserGroup
 from app.db.session import get_db
 from app.schemas.notification import (
     NotificationRuleCreate,
     NotificationTemplateUpdate,
-    UserGroupCreate,
 )
 from app.services.notifications import default_template
 from app.web.templating import templates
@@ -62,20 +62,13 @@ async def _get_rule_or_404(rule_id: uuid.UUID, db: AsyncSession) -> Notification
     return rule
 
 
-async def _get_group_or_404(group_id: uuid.UUID, db: AsyncSession) -> UserGroup:
-    group = await db.get(UserGroup, group_id)
-    if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User group not found.")
-    return group
-
-
 async def _all_users(db: AsyncSession) -> list[User]:
     result = await db.execute(select(User).order_by(User.username))
     return list(result.scalars().all())
 
 
-async def _all_user_groups(db: AsyncSession) -> list[UserGroup]:
-    result = await db.execute(select(UserGroup).order_by(UserGroup.name))
+async def _all_roles(db: AsyncSession) -> list[Role]:
+    result = await db.execute(select(Role).order_by(Role.name))
     return list(result.scalars().all())
 
 
@@ -94,7 +87,7 @@ def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object
         "event_types": list(NotificationEventType),
         "selected_event_types": [e.value for e in rule.event_type_enums] if rule else [],
         "selected_user_ids": [str(u.id) for u in rule.users] if rule else [],
-        "selected_user_group_ids": [str(g.id) for g in rule.user_groups] if rule else [],
+        "selected_role_ids": [str(r.id) for r in rule.roles] if rule else [],
         "selected_machine_ids": [str(m.id) for m in rule.machines] if rule else [],
         "selected_machine_group_ids": [str(g.id) for g in rule.machine_groups] if rule else [],
     }
@@ -126,11 +119,11 @@ async def _resolve_users(db: AsyncSession, raw_ids: list[str]) -> list[User]:
     return list(result.scalars().all())
 
 
-async def _resolve_user_groups(db: AsyncSession, raw_ids: list[str]) -> list[UserGroup]:
+async def _resolve_roles(db: AsyncSession, raw_ids: list[str]) -> list[Role]:
     ids = _parse_ids(raw_ids)
     if not ids:
         return []
-    result = await db.execute(select(UserGroup).where(UserGroup.id.in_(ids)))
+    result = await db.execute(select(Role).where(Role.id.in_(ids)))
     return list(result.scalars().all())
 
 
@@ -156,7 +149,7 @@ async def list_notifications(request: Request, db: AsyncSession = Depends(get_db
         select(NotificationRule)
         .options(
             selectinload(NotificationRule.users),
-            selectinload(NotificationRule.user_groups),
+            selectinload(NotificationRule.roles),
             selectinload(NotificationRule.machines),
             selectinload(NotificationRule.machine_groups),
         )
@@ -183,7 +176,7 @@ async def new_rule_form(request: Request, db: AsyncSession = Depends(get_db)) ->
         {
             "rule": None,
             "all_users": await _all_users(db),
-            "all_user_groups": await _all_user_groups(db),
+            "all_roles": await _all_roles(db),
             "all_machines": await _all_machines(db),
             "all_machine_groups": await _all_machine_groups(db),
             "errors": [],
@@ -202,12 +195,12 @@ async def _apply_rule_recipients_and_scope(
     rule: NotificationRule,
     *,
     user_ids: list[str],
-    user_group_ids: list[str],
+    role_ids: list[str],
     machine_ids: list[str],
     machine_group_ids: list[str],
 ) -> None:
     rule.users = await _resolve_users(db, user_ids)
-    rule.user_groups = await _resolve_user_groups(db, user_group_ids)
+    rule.roles = await _resolve_roles(db, role_ids)
     rule.machines = await _resolve_machines(db, machine_ids)
     rule.machine_groups = await _resolve_machine_groups(db, machine_group_ids)
 
@@ -221,7 +214,7 @@ async def create_rule(
     enabled: str = Form(""),
     event_types: list[str] = Form(default=[]),
     user_ids: list[str] = Form(default=[]),
-    user_group_ids: list[str] = Form(default=[]),
+    role_ids: list[str] = Form(default=[]),
     machine_ids: list[str] = Form(default=[]),
     machine_group_ids: list[str] = Form(default=[]),
 ) -> Response:
@@ -233,7 +226,7 @@ async def create_rule(
             {
                 "rule": None,
                 "all_users": await _all_users(db),
-                "all_user_groups": await _all_user_groups(db),
+                "all_roles": await _all_roles(db),
                 "all_machines": await _all_machines(db),
                 "all_machine_groups": await _all_machine_groups(db),
                 "errors": errors,
@@ -242,7 +235,7 @@ async def create_rule(
                 "event_types": list(NotificationEventType),
                 "selected_event_types": event_types,
                 "selected_user_ids": user_ids,
-                "selected_user_group_ids": user_group_ids,
+                "selected_role_ids": role_ids,
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
             },
@@ -272,7 +265,7 @@ async def create_rule(
         db,
         rule,
         user_ids=user_ids,
-        user_group_ids=user_group_ids,
+        role_ids=role_ids,
         machine_ids=machine_ids,
         machine_group_ids=machine_group_ids,
     )
@@ -312,7 +305,7 @@ async def edit_rule_form(
         {
             "rule": rule,
             "all_users": await _all_users(db),
-            "all_user_groups": await _all_user_groups(db),
+            "all_roles": await _all_roles(db),
             "all_machines": await _all_machines(db),
             "all_machine_groups": await _all_machine_groups(db),
             "errors": [],
@@ -340,7 +333,7 @@ async def update_rule(
     enabled: str = Form(""),
     event_types: list[str] = Form(default=[]),
     user_ids: list[str] = Form(default=[]),
-    user_group_ids: list[str] = Form(default=[]),
+    role_ids: list[str] = Form(default=[]),
     machine_ids: list[str] = Form(default=[]),
     machine_group_ids: list[str] = Form(default=[]),
 ) -> Response:
@@ -354,7 +347,7 @@ async def update_rule(
             {
                 "rule": rule,
                 "all_users": await _all_users(db),
-                "all_user_groups": await _all_user_groups(db),
+                "all_roles": await _all_roles(db),
                 "all_machines": await _all_machines(db),
                 "all_machine_groups": await _all_machine_groups(db),
                 "errors": errors,
@@ -363,7 +356,7 @@ async def update_rule(
                 "event_types": list(NotificationEventType),
                 "selected_event_types": event_types,
                 "selected_user_ids": user_ids,
-                "selected_user_group_ids": user_group_ids,
+                "selected_role_ids": role_ids,
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
             },
@@ -391,7 +384,7 @@ async def update_rule(
         db,
         rule,
         user_ids=user_ids,
-        user_group_ids=user_group_ids,
+        role_ids=role_ids,
         machine_ids=machine_ids,
         machine_group_ids=machine_group_ids,
     )
@@ -436,199 +429,6 @@ async def delete_rule(
         target_label=name,
     )
     return RedirectResponse(url="/notifications", status_code=status.HTTP_303_SEE_OTHER)
-
-
-# --- User groups -------------------------------------------------------
-
-
-@router.get("/groups")
-async def list_groups(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    return templates.TemplateResponse(
-        request,
-        "notifications/groups.html",
-        {
-            "groups": await _all_user_groups(db),
-            "csrf_token": request.state.csrf_token,
-        },
-    )
-
-
-@router.get("/groups/new")
-async def new_group_form(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
-    csrf_token, new_cookie = get_or_create_csrf_token(request)
-    response = templates.TemplateResponse(
-        request,
-        "notifications/group_form.html",
-        {
-            "group": None,
-            "all_users": await _all_users(db),
-            "selected_user_ids": [],
-            "errors": [],
-            "form": {},
-            "csrf_token": csrf_token,
-        },
-    )
-    if new_cookie:
-        set_csrf_cookie(response, new_cookie)
-    return response
-
-
-@router.post("/groups", dependencies=[_manage, Depends(verify_csrf)])
-async def create_group(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    name: str = Form(...),
-    description: str = Form(""),
-    user_ids: list[str] = Form(default=[]),
-) -> Response:
-    async def _rerender(errors: list[str], status_code: int) -> Response:
-        csrf_token, new_cookie = get_or_create_csrf_token(request)
-        response = templates.TemplateResponse(
-            request,
-            "notifications/group_form.html",
-            {
-                "group": None,
-                "all_users": await _all_users(db),
-                "selected_user_ids": user_ids,
-                "errors": errors,
-                "form": {"name": name, "description": description},
-                "csrf_token": csrf_token,
-            },
-            status_code=status_code,
-        )
-        if new_cookie:
-            set_csrf_cookie(response, new_cookie)
-        return response
-
-    try:
-        payload = UserGroupCreate(name=name, description=description or None)
-    except ValueError as exc:
-        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
-
-    group = UserGroup(name=payload.name, description=payload.description)
-    group.members = await _resolve_users(db, user_ids)
-    db.add(group)
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        return await _rerender(
-            [f'A user group named "{payload.name}" already exists.'], status.HTTP_409_CONFLICT
-        )
-    await db.refresh(group)
-
-    await log_event(
-        db,
-        request=request,
-        action="user_group.create",
-        summary=f'Created user group "{group.name}"',
-        target_type="user_group",
-        target_id=group.id,
-        target_label=group.name,
-    )
-    return RedirectResponse(url="/notifications/groups", status_code=status.HTTP_303_SEE_OTHER)
-
-
-@router.get("/groups/{group_id}/edit")
-async def edit_group_form(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
-) -> Response:
-    group = await _get_group_or_404(group_id, db)
-    csrf_token, new_cookie = get_or_create_csrf_token(request)
-    response = templates.TemplateResponse(
-        request,
-        "notifications/group_form.html",
-        {
-            "group": group,
-            "all_users": await _all_users(db),
-            "selected_user_ids": [str(u.id) for u in group.members],
-            "errors": [],
-            "form": {"name": group.name, "description": group.description},
-            "csrf_token": csrf_token,
-        },
-    )
-    if new_cookie:
-        set_csrf_cookie(response, new_cookie)
-    return response
-
-
-@router.post("/groups/{group_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
-async def update_group(
-    request: Request,
-    group_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    name: str = Form(...),
-    description: str = Form(""),
-    user_ids: list[str] = Form(default=[]),
-) -> Response:
-    group = await _get_group_or_404(group_id, db)
-
-    async def _rerender(errors: list[str], status_code: int) -> Response:
-        csrf_token, new_cookie = get_or_create_csrf_token(request)
-        response = templates.TemplateResponse(
-            request,
-            "notifications/group_form.html",
-            {
-                "group": group,
-                "all_users": await _all_users(db),
-                "selected_user_ids": user_ids,
-                "errors": errors,
-                "form": {"name": name, "description": description},
-                "csrf_token": csrf_token,
-            },
-            status_code=status_code,
-        )
-        if new_cookie:
-            set_csrf_cookie(response, new_cookie)
-        return response
-
-    try:
-        payload = UserGroupCreate(name=name, description=description or None)
-    except ValueError as exc:
-        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
-
-    group.name = payload.name
-    group.description = payload.description
-    group.members = await _resolve_users(db, user_ids)
-
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        return await _rerender(
-            [f'A user group named "{payload.name}" already exists.'], status.HTTP_409_CONFLICT
-        )
-
-    await log_event(
-        db,
-        request=request,
-        action="user_group.update",
-        summary=f'Updated user group "{group.name}"',
-        target_type="user_group",
-        target_id=group.id,
-        target_label=group.name,
-    )
-    return RedirectResponse(url="/notifications/groups", status_code=status.HTTP_303_SEE_OTHER)
-
-
-@router.post("/groups/{group_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
-async def delete_group(
-    request: Request, group_id: uuid.UUID, db: AsyncSession = Depends(get_db)
-) -> Response:
-    group = await _get_group_or_404(group_id, db)
-    name = group.name
-    await db.delete(group)
-    await db.commit()
-    await log_event(
-        db,
-        request=request,
-        action="user_group.delete",
-        summary=f'Deleted user group "{name}"',
-        target_type="user_group",
-        target_id=group_id,
-        target_label=name,
-    )
-    return RedirectResponse(url="/notifications/groups", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Templates -----------------------------------------------------------

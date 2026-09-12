@@ -6,7 +6,6 @@
   <div class="page-header">
     <h1>{{ t(request, "notifications.title") }}</h1>
     <div>
-      <a class="button button-secondary" href="/notifications/groups">{{ t(request, "notifications.groups_link") }}</a>
       <a class="button button-secondary" href="/notifications/templates">{{ t(request, "notifications.templates_link") }}</a>
       <a class="button" href="/notifications/rules/new">{{ t(request, "notifications.add_rule") }}</a>
     </div>
@@ -36,7 +35,7 @@
           <tr>
             <td><a href="/notifications/rules/{{ rule.id }}/edit">{{ rule.name }}</a></td>
             <td>{{ rule.event_type_enums | map(attribute='value') | join(', ') }}</td>
-            <td>{{ rule.users | length }} {{ t(request, "notifications.users_word") }}, {{ rule.user_groups | length }} {{ t(request, "notifications.groups_word") }}</td>
+            <td>{{ rule.users | length }} {{ t(request, "notifications.users_word") }}, {{ rule.roles | length }} {{ t(request, "notifications.roles_word") }}</td>
             <td>
               {% if not rule.machines and not rule.machine_groups %}
                 {{ t(request, "notifications.scope_all") }}

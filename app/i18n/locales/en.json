@@ -915,7 +915,6 @@
 
     "notifications.title": "Notifications",
     "notifications.add_rule": "Add rule",
-    "notifications.groups_link": "User groups",
     "notifications.templates_link": "Templates",
     "notifications.back_to_rules": "Back to rules",
     "notifications.smtp_not_configured": "No SMTP relay is configured, so notification emails won't actually send yet.",
@@ -931,7 +930,7 @@
     "notifications.delete_confirm": "Delete notification rule \"{name}\"?",
     "notifications.no_rules": "No notification rules yet.",
     "notifications.users_word": "user(s)",
-    "notifications.groups_word": "group(s)",
+    "notifications.roles_word": "role(s)",
     "notifications.machines_word": "machine(s)",
     "notifications.machine_groups_word": "machine group(s)",
     "notifications.scope_all": "all machines",
@@ -943,26 +942,16 @@
     "notifications.rule.enabled_label": "Enabled",
     "notifications.rule.events_label": "Notify on",
     "notifications.rule.recipients_users_label": "Notify these users",
-    "notifications.rule.recipients_groups_label": "Notify these user groups",
+    "notifications.rule.recipients_roles_label": "Notify everyone with these roles",
+    "notifications.rule.recipients_hint": "A recipient is anyone listed directly above, or any active account holding one of the roles above — no separate group to maintain.",
     "notifications.rule.scope_machines_label": "Limit to these machines",
     "notifications.rule.scope_groups_label": "Limit to these machine groups",
     "notifications.rule.scope_hint": "Leave both unchecked to match every machine. Ticking one or more limits this rule to those machines/groups only.",
     "notifications.rule.no_email": "no email set",
     "notifications.rule.no_users": "No user accounts exist yet.",
-    "notifications.rule.no_user_groups": "No user groups exist yet.",
-
-    "notifications.groups.title": "Notification user groups",
-    "notifications.groups.add": "Add group",
-    "notifications.groups.table.name": "Name",
-    "notifications.groups.table.members": "Members",
-    "notifications.groups.no_groups": "No user groups yet — a group lets a rule target several people at once.",
-    "notifications.groups.delete_confirm": "Delete user group \"{name}\"?",
-
-    "notifications.group.new_title": "Add user group",
-    "notifications.group.edit_title": "Edit user group",
-    "notifications.group.name_label": "Name",
-    "notifications.group.description_label": "Description",
-    "notifications.group.members_label": "Members",
+    "notifications.rule.no_roles": "No roles exist yet.",
+    "notifications.rule.filter_placeholder": "Filter…",
+    "notifications.rule.filter_no_matches": "Nothing matches.",
 
     "notifications.templates.title": "Email templates",
     "notifications.templates.hint": "One template per event, used to render the subject/body of a notification email. An event with no customized template uses the built-in default shown here.",
@@ -983,6 +972,8 @@
     "notifications.event.machine_unreachable": "Machine became unreachable",
     "notifications.event.machine_reachable_again": "Machine reachable again",
     "notifications.event.update_run_failed": "Update run failed",
+    "notifications.event.update_run_succeeded": "Update run succeeded",
+    "notifications.event.machine_onboarded": "Machine finished onboarding",
     "notifications.event.fleet_summary_generated": "Scheduled fleet summary generated"
   }
 }
