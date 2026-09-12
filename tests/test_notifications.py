@@ -10,6 +10,7 @@ from app.core.security import encrypt_secret
 from app.db.models.app_settings import AppSettings, SmtpEncryption
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.notification_rule import (
+    NotificationCustomTemplate,
     NotificationEventType,
     NotificationRule,
     NotificationTemplate,
@@ -44,6 +45,21 @@ async def test_list_notifications_renders(client):
     response = await client.get("/notifications")
     assert response.status_code == 200
     assert "Notifications" in response.text
+
+
+async def test_new_rule_form_lists_custom_templates_and_empty_conditions_hint(
+    client, db_session_factory
+):
+    async with db_session_factory() as db:
+        db.add(NotificationCustomTemplate(name="Weekend on-call", subject="s", body="b"))
+        await db.commit()
+
+    response = await client.get("/notifications/rules/new")
+    assert response.status_code == 200
+    assert "Weekend on-call" in response.text
+    # A brand new rule starts with zero condition rows (no more pre-filled
+    # blank rows) — the "add a condition" empty-state hint should show.
+    assert "No conditions yet" in response.text
 
 
 async def test_create_rule_persists_recipients_and_scope(client, db_session_factory):
@@ -126,6 +142,146 @@ async def test_create_rule_targeting_a_role(client, db_session_factory):
     async with db_session_factory() as db:
         rule = (await db.execute(select(NotificationRule))).scalar_one()
         assert [r.id for r in rule.roles] == [role_id]
+
+
+async def test_create_and_select_custom_template(client, db_session_factory):
+    csrf_token = client.cookies.get("csrftoken")
+    if csrf_token is None:
+        await client.get("/notifications")
+        csrf_token = client.cookies.get("csrftoken")
+
+    create = await client.post(
+        "/notifications/templates/custom",
+        data={
+            "name": "Urgent CPU alert",
+            "subject": "URGENT: {machine_name} is on fire",
+            "body": "{machine_name} tripped a condition: {details}",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert create.status_code == 303
+
+    async with db_session_factory() as db:
+        template = (await db.execute(select(NotificationCustomTemplate))).scalar_one()
+        assert template.name == "Urgent CPU alert"
+        template_id = template.id
+
+    # Duplicate name is rejected, not silently overwritten.
+    dupe = await client.post(
+        "/notifications/templates/custom",
+        data={
+            "name": "Urgent CPU alert",
+            "subject": "x",
+            "body": "y",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert dupe.status_code == 409
+
+    templates_page = await client.get("/notifications/templates")
+    assert "Urgent CPU alert" in templates_page.text
+
+    rule_response = await client.post(
+        "/notifications/rules",
+        data={
+            "name": "cpu rule",
+            "event_types": [NotificationEventType.MACHINE_UNREACHABLE.value],
+            "custom_template_id": str(template_id),
+            "csrf_token": csrf_token,
+        },
+    )
+    assert rule_response.status_code == 303
+
+    async with db_session_factory() as db:
+        rule = (await db.execute(select(NotificationRule))).scalar_one()
+        assert rule.custom_template_id == template_id
+
+    edit_page = await client.get(f"/notifications/rules/{rule.id}/edit")
+    assert f'value="{template_id}" selected' in edit_page.text
+
+
+async def test_deleting_custom_template_clears_rule_reference(client, db_session_factory):
+    async with db_session_factory() as db:
+        template = NotificationCustomTemplate(name="Temp", subject="s", body="b")
+        db.add(template)
+        await db.flush()
+        rule = NotificationRule(
+            name="uses temp template",
+            enabled=True,
+            event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
+            custom_template_id=template.id,
+        )
+        db.add(rule)
+        await db.commit()
+        rule_id, template_id = rule.id, template.id
+
+    csrf_token = client.cookies.get("csrftoken")
+    if csrf_token is None:
+        await client.get("/notifications")
+        csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        f"/notifications/templates/custom/{template_id}/delete",
+        data={"csrf_token": csrf_token},
+    )
+    assert response.status_code == 303
+
+    async with db_session_factory() as db:
+        refreshed = await db.get(NotificationRule, rule_id)
+        assert refreshed is not None
+        assert refreshed.custom_template_id is None
+
+
+async def test_notify_uses_rules_own_custom_template(db_session_factory, monkeypatch):
+    sent: list[tuple[str, str]] = []
+
+    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001 - test double
+        sent.append((subject, body))
+
+    import app.services.notifications as notifications_module
+
+    monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)
+
+    async with db_session_factory() as db:
+        db.add(_smtp_ready_settings())
+        role = await _make_role(db, "role-custom-template")
+        recipient = User(
+            username="templated", auth_provider="local", email="templated@example.com", role=role
+        )
+        machine = Machine(
+            name="web9",
+            ip_address="10.0.0.20",
+            port=22,
+            username="root",
+            auth_method=AuthMethod.PASSWORD,
+        )
+        db.add_all([recipient, machine])
+        await db.flush()
+
+        custom = NotificationCustomTemplate(
+            name="Custom unreachable",
+            subject="Custom subject for {machine_name}",
+            body="Custom body",
+        )
+        db.add(custom)
+        await db.flush()
+
+        rule = NotificationRule(
+            name="uses custom template",
+            enabled=True,
+            event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
+            custom_template_id=custom.id,
+        )
+        rule.roles = [role]
+        db.add(rule)
+        await db.commit()
+
+        await notify(db, NotificationEventType.MACHINE_UNREACHABLE, machine=machine)
+
+    assert len(sent) == 1
+    subject, body = sent[0]
+    assert subject == "Custom subject for web9"
+    assert body == "Custom body"
 
 
 async def test_template_default_then_override_then_reset(client, db_session_factory):

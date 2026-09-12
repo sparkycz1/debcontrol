@@ -176,13 +176,18 @@ the sample. A condition can optionally require the match to hold
 continuously for `sustained_seconds` before it fires, to ignore a brief
 spike.
 
-**Configuring conditions — form or YAML, on the same rule.** The rule form
-has a repeatable field/operator/value/mount/sustained-seconds table, plus
-a "conditions as YAML" textarea for pasting more than the table's rows —
-whichever is filled in wins. Beyond that, a **whole rule** (name,
-description, events, conditions, recipients-by-email/role-name,
-scope-by-machine-name/group-name) can be exported and re-imported as
-YAML — `GET /notifications/rules/{id}/export` (one) or
+**Configuring conditions — form or YAML, on the same rule.** The rule
+form's **Trigger** section holds both the fixed-event checkboxes and
+conditions together — a rule fires on either, so they live in one place
+rather than two. A new rule starts with **no** condition rows; click
+"+ Add condition" (`app/web/static/js/notification-conditions.js` clones a
+blank row client-side — progressive enhancement only, nothing here is
+required to submit the form) to add as many as needed, or use the "…or as
+YAML" textarea below the rows to paste several at once — whichever is
+filled in wins. Beyond that, a **whole rule** (name, description, events,
+conditions, recipients-by-email/role-name, scope-by-machine-name/group-name,
+template-by-name — see "Custom templates" below) can be exported and
+re-imported as YAML — `GET /notifications/rules/{id}/export` (one) or
 `GET /notifications/rules/export` (all), and `GET`/`POST
 /notifications/rules/import` to paste one back in. Import **upserts by
 `name`** (the same unique key the form already enforces) — re-importing
@@ -202,7 +207,13 @@ recipients:
   roles: [Operators]
 scope:
   machine_groups: [Web]
+template_name: High CPU alert
 ```
+
+`template_name` is optional — omit it to use the per-event default/override
+(see "Custom templates" below); when present, it must match an existing
+`NotificationCustomTemplate.name` or the import fails with a clear error
+rather than silently dropping it.
 
 Same web-UI-only scope as the rest of this page — see "REST API" below.
 
@@ -269,6 +280,20 @@ Shipped locales for the built-in defaults today: English and Czech
 (`app.services.notifications._DEFAULT_TEMPLATES`) — the same two locales
 `app/i18n/locales/` ships for the rest of the UI.
 
+### Custom templates: a named template any rule can pick
+
+Beyond the one-per-event default/override above, `/notifications/templates`
+also lists **custom templates** (`NotificationCustomTemplate`: `name`
+unique, `subject`, `body` — same plain-text `{placeholder}` substitution,
+no localization of its own since it's one admin-written value regardless
+of recipient) — "Add template" there creates one. A rule's **Delivery**
+section has an "Email template" picker: leave it on "— default for event —"
+to keep using the per-event default/override exactly as before, or pick a
+custom template to use its subject/body instead, for that rule alone,
+regardless of which event actually fired. Deleting a custom template that's
+in use just falls the referencing rule(s) back to their per-event default
+— never blocked, never leaves a rule broken.
+
 ## Delivery: SMTP, one email per recipient
 
 Settings → Integrations has the SMTP relay section (`AppSettings.smtp_*`
@@ -288,15 +313,25 @@ email:
 1. Bail out immediately if SMTP isn't enabled/configured.
 2. Find every **enabled** rule listing this event type whose scope
    includes `machine` (or has no scope at all).
-3. Resolve those rules' recipients (deduplicated, email-having, active
-   accounts only).
-4. For each recipient, render the subject/body — admin override if one
-   exists, otherwise the built-in default in *that recipient's* locale —
+3. For **each matching rule** (not once for the union of every rule's
+   recipients — see below), resolve that rule's own recipients
+   (deduplicated, email-having, active accounts only).
+4. For each recipient, render the subject/body — that rule's own
+   `custom_template` if it set one, else the per-event admin override if
+   one exists, else the built-in default in *that recipient's* locale —
    and send **one individual email** via stdlib `smtplib` (STARTTLS/
    SSL-TLS/none, matching the configured encryption), run through
    `asyncio.to_thread` (the same sync-library/async-caller seam every
    Celery task in `app.tasks.jobs` already crosses — no new SMTP client
    dependency for this one feature).
+
+**Rendered per rule, not deduplicated across every matching rule.** Since a
+rule can now select its own template, two rules that both match the same
+event for the same person are two legitimately different emails to send,
+not one to collapse — so a recipient targeted by more than one rule for
+the same event now gets one email per rule, each in that rule's own
+wording. A fleet with the common "one rule per event" setup sees no change
+at all; this only affects a deliberately overlapping setup.
 
 **Every failure here is caught and logged, never raised** — no SMTP
 configured, no matching rule, no recipient with an email, the SMTP server
@@ -317,7 +352,9 @@ possible future optimization, not a correctness concern today.
 
 Rule/template create-edit-delete are all audit-logged
 (`notification_rule.create`/`.update`/`.delete`/`.import`,
-`notification_template.update`/`.reset`) — the same "every mutation gets
+`notification_template.update`/`.reset`,
+`notification_custom_template.create`/`.update`/`.delete`) — the same
+"every mutation gets
 an entry" convention every other admin-config page follows. **Actually
 sending a notification email is not itself audit-logged** — it's a
 downstream *consequence* of an event that (where relevant) already has

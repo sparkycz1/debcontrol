@@ -1,5 +1,46 @@
 {% extends "base.html" %}
 
+{% macro condition_row(request, row, condition_field_choices, condition_operator_choices) %}
+  <div class="condition-row" data-condition-row>
+    <div class="condition-field">
+      <label>{{ t(request, "notifications.rule.conditions_field") }}</label>
+      <select name="condition_field">
+        <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
+        {% for key, label_key in condition_field_choices %}
+          <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
+            {{ t(request, "notifications.condition_field." ~ label_key) }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="condition-field">
+      <label>{{ t(request, "notifications.rule.conditions_operator") }}</label>
+      <select name="condition_operator">
+        {% for opkey in condition_operator_choices %}
+          <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
+            {{ t(request, "notifications.condition_operator." ~ opkey) }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="condition-field condition-field-value">
+      <label>{{ t(request, "notifications.rule.conditions_value") }}</label>
+      <input type="text" name="condition_value" maxlength="255" value="{{ row.value or '' }}">
+    </div>
+    <div class="condition-field condition-field-mount">
+      <label>{{ t(request, "notifications.rule.conditions_mount") }}</label>
+      <input type="text" name="condition_mount" maxlength="255" placeholder="/var" value="{{ row.mount_point or '' }}">
+    </div>
+    <div class="condition-field condition-field-sustained">
+      <label>{{ t(request, "notifications.rule.conditions_sustained") }}</label>
+      <input type="number" name="condition_sustained" min="0" max="86400"
+             value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}">
+    </div>
+    <button type="button" class="condition-remove" data-condition-remove
+            aria-label="{{ t(request, 'notifications.rule.conditions_remove') }}">×</button>
+  </div>
+{% endmacro %}
+
 {% block title %}{{ t(request, "notifications.rule.edit_title") if rule else t(request, "notifications.rule.new_title") }} — debcontrol{% endblock %}
 
 {% block content %}
@@ -32,7 +73,8 @@
     </div>
 
     <div class="panel">
-      <h2>{{ t(request, "notifications.rule.section_events") }}</h2>
+      <h2>{{ t(request, "notifications.rule.section_trigger") }}</h2>
+      <p class="hint">{{ t(request, "notifications.rule.trigger_hint") }}</p>
 
       <label>{{ t(request, "notifications.rule.events_label") }}</label>
       <div class="permission-grid">
@@ -44,53 +86,26 @@
           </label>
         {% endfor %}
       </div>
-    </div>
 
-    <div class="panel">
-      <h2>{{ t(request, "notifications.rule.section_conditions") }}</h2>
+      <label>{{ t(request, "notifications.rule.conditions_label") }}</label>
       <p class="hint">{{ t(request, "notifications.rule.conditions_hint") }}</p>
 
-      <table class="data-table">
-        <thead>
-            <tr>
-              <th>{{ t(request, "notifications.rule.conditions_field") }}</th>
-              <th>{{ t(request, "notifications.rule.conditions_operator") }}</th>
-              <th>{{ t(request, "notifications.rule.conditions_value") }}</th>
-              <th>{{ t(request, "notifications.rule.conditions_mount") }}</th>
-              <th>{{ t(request, "notifications.rule.conditions_sustained") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in condition_rows %}
-              <tr>
-                <td>
-                  <select name="condition_field">
-                    <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
-                    {% for key, label_key in condition_field_choices %}
-                      <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
-                        {{ t(request, "notifications.condition_field." ~ label_key) }}
-                      </option>
-                    {% endfor %}
-                  </select>
-                </td>
-                <td>
-                  <select name="condition_operator">
-                    {% for opkey in condition_operator_choices %}
-                      <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
-                        {{ t(request, "notifications.condition_operator." ~ opkey) }}
-                      </option>
-                    {% endfor %}
-                  </select>
-                </td>
-                <td><input type="text" name="condition_value" maxlength="255" value="{{ row.value or '' }}"></td>
-                <td><input type="text" name="condition_mount" maxlength="255" placeholder="/var"
-                           value="{{ row.mount_point or '' }}"></td>
-                <td><input type="number" name="condition_sustained" min="0" max="86400"
-                           value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}"></td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div data-condition-rows>
+        <div data-condition-row-list class="condition-rows">
+          {% for row in condition_rows %}
+            {{ condition_row(request, row, condition_field_choices, condition_operator_choices) }}
+          {% endfor %}
+        </div>
+        <p class="hint" data-condition-empty {{ 'hidden' if condition_rows else '' }}>
+          {{ t(request, "notifications.rule.conditions_empty") }}
+        </p>
+        <template data-condition-row-template>
+          {{ condition_row(request, {'field': '', 'operator': '', 'value': '', 'mount_point': none, 'sustained_seconds': none}, condition_field_choices, condition_operator_choices) }}
+        </template>
+        <button type="button" class="button button-secondary" data-condition-add>
+          {{ t(request, "notifications.rule.conditions_add") }}
+        </button>
+      </div>
       <p class="hint">{{ t(request, "notifications.rule.conditions_and_hint") }}</p>
 
       <label for="conditions_yaml">{{ t(request, "notifications.rule.conditions_yaml_label") }}</label>
@@ -107,6 +122,20 @@
         <option>{{ t(request, "notifications.rule.send_via_smtp") }}</option>
       </select>
       <p class="hint">{{ t(request, "notifications.rule.send_via_hint") }}</p>
+
+      <label for="custom_template_id">{{ t(request, "notifications.rule.template_label") }}</label>
+      <select id="custom_template_id" name="custom_template_id">
+        <option value="">{{ t(request, "notifications.rule.template_default") }}</option>
+        {% for template in all_custom_templates %}
+          <option value="{{ template.id }}" {{ 'selected' if selected_custom_template_id == template.id | string else '' }}>
+            {{ template.name }}
+          </option>
+        {% endfor %}
+      </select>
+      <p class="hint">
+        {{ t(request, "notifications.rule.template_hint_before") }}
+        <a href="/notifications/templates">{{ t(request, "notifications.templates_link") }}</a>{{ t(request, "notifications.rule.template_hint_after") }}
+      </p>
     </div>
 
     <div class="panel">

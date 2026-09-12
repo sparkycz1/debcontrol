@@ -165,6 +165,15 @@ class NotificationRule(Base):
         back_populates="rule", cascade="all, delete-orphan", lazy="selectin"
     )
 
+    # A named, reusable template this rule sends instead of the per-event
+    # default/override (`NotificationTemplate` below) — see
+    # `NotificationCustomTemplate`'s own docstring. `None` (the default)
+    # keeps a rule's existing behavior unchanged.
+    custom_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("notification_custom_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    custom_template: Mapped[NotificationCustomTemplate | None] = relationship(lazy="selectin")
+
     @property
     def event_type_enums(self) -> list[NotificationEventType]:
         """`event_types`, parsed — silently drops any value that isn't a
@@ -208,3 +217,34 @@ class NotificationTemplate(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"NotificationTemplate(event_type={self.event_type!r})"
+
+
+class NotificationCustomTemplate(Base):
+    """A named, reusable subject/body an admin writes once and any number of
+    `NotificationRule`s can opt into via `NotificationRule.custom_template_id`
+    — distinct from `NotificationTemplate` above, which is a single
+    per-event-type override applied to *every* rule that fires that event.
+    A rule with no `custom_template_id` keeps using that per-event
+    default/override exactly as before ("missing config = no change" — same
+    spirit as everywhere else in this module); setting one overrides it for
+    that rule alone, regardless of which event actually fired. Same plain-
+    text `{placeholder}` substitution as `NotificationTemplate`
+    (`app.services.notifications.render_template`) — every placeholder
+    listed there works here too. Deleting a template in use just clears the
+    referencing rule(s) back to their per-event default (`ondelete="SET
+    NULL"` on the FK), never breaks them."""
+
+    __tablename__ = "notification_custom_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    subject: Mapped[str] = mapped_column(String(500), nullable=False)
+    body: Mapped[str] = mapped_column(String(4000), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return f"NotificationCustomTemplate(name={self.name!r})"

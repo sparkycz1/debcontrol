@@ -7,29 +7,73 @@
     <h1>{{ t(request, "notifications.templates.title") }}</h1>
     <a class="button button-secondary" href="/notifications">{{ t(request, "notifications.back_to_rules") }}</a>
   </div>
-  <p class="hint">{{ t(request, "notifications.templates.hint") }}</p>
 
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>{{ t(request, "notifications.templates.table.event") }}</th>
-        <th>{{ t(request, "notifications.templates.table.subject") }}</th>
-        <th>{{ t(request, "notifications.templates.table.status") }}</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in rows %}
+  <section class="panel-group">
+    <h2>{{ t(request, "notifications.templates.per_event_heading") }}</h2>
+    <p class="hint">{{ t(request, "notifications.templates.hint") }}</p>
+
+    <table class="data-table">
+      <thead>
         <tr>
-          <td>{{ t(request, "notifications.event." ~ row.event_type.name | lower) }}</td>
-          <td>{{ row.subject }}</td>
-          <td>
-            {{ t(request, "notifications.templates.status_custom") if row.is_override
-               else t(request, "notifications.templates.status_default") }}
-          </td>
-          <td><a href="/notifications/templates/{{ row.event_type.value }}/edit">{{ t(request, "notifications.templates.edit") }}</a></td>
+          <th>{{ t(request, "notifications.templates.table.event") }}</th>
+          <th>{{ t(request, "notifications.templates.table.subject") }}</th>
+          <th>{{ t(request, "notifications.templates.table.status") }}</th>
+          <th></th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ t(request, "notifications.event." ~ row.event_type.name | lower) }}</td>
+            <td>{{ row.subject }}</td>
+            <td>
+              {{ t(request, "notifications.templates.status_custom") if row.is_override
+                 else t(request, "notifications.templates.status_default") }}
+            </td>
+            <td><a href="/notifications/templates/{{ row.event_type.value }}/edit">{{ t(request, "notifications.templates.edit") }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel-group">
+    <div class="page-header">
+      <h2>{{ t(request, "notifications.templates.custom_heading") }}</h2>
+      <a class="button button-secondary" href="/notifications/templates/custom/new">
+        {{ t(request, "notifications.templates.add_custom") }}
+      </a>
+    </div>
+    <p class="hint">{{ t(request, "notifications.templates.custom_hint") }}</p>
+
+    {% if custom_templates %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "notifications.templates.table.name") }}</th>
+            <th>{{ t(request, "notifications.templates.table.subject") }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for template in custom_templates %}
+            <tr>
+              <td>{{ template.name }}</td>
+              <td>{{ template.subject }}</td>
+              <td>
+                <a href="/notifications/templates/custom/{{ template.id }}/edit">{{ t(request, "notifications.templates.edit") }}</a>
+                <form method="post" action="/notifications/templates/custom/{{ template.id }}/delete" class="inline-form"
+                      data-confirm="{{ t(request, 'notifications.templates.delete_confirm', name=(template.name | e)) | safe }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button button-danger">{{ t(request, "notifications.templates.delete") }}</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "notifications.templates.no_custom") }}</p>
+    {% endif %}
+  </section>
 {% endblock %}

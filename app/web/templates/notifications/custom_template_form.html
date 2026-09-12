@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "notifications.templates.custom_edit_title") if template else t(request, "notifications.templates.custom_new_title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "notifications.templates.custom_edit_title") if template else t(request, "notifications.templates.custom_new_title") }}</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post"
+        action="{{ '/notifications/templates/custom/' ~ template.id ~ '/edit' if template else '/notifications/templates/custom' }}"
+        class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">{{ t(request, "notifications.templates.table.name") }}</label>
+    <input type="text" id="name" name="name" required maxlength="255" value="{{ form.name or '' }}">
+
+    <label for="subject">{{ t(request, "notifications.template.subject_label") }}</label>
+    <input type="text" id="subject" name="subject" required maxlength="500" value="{{ form.subject or '' }}">
+
+    <label for="body">{{ t(request, "notifications.template.body_label") }}</label>
+    <textarea id="body" name="body" rows="8" required>{{ form.body or '' }}</textarea>
+    <p class="hint">{{ t(request, "notifications.template.body_hint") }}</p>
+
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/notifications/templates">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

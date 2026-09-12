@@ -45,6 +45,7 @@ from app.core.security import decrypt_secret
 from app.db.models.app_settings import AppSettings, SmtpEncryption
 from app.db.models.machine import Machine
 from app.db.models.notification_rule import (
+    NotificationCustomTemplate,
     NotificationEventType,
     NotificationRule,
     NotificationTemplate,
@@ -164,7 +165,7 @@ def default_template(
 
 def render_template(
     event_type: NotificationEventType,
-    template: NotificationTemplate | None,
+    template: NotificationTemplate | NotificationCustomTemplate | None,
     context: dict[str, Any],
     *,
     locale: str = DEFAULT_LOCALE_CODE,
@@ -175,6 +176,10 @@ def render_template(
     engine, so an admin-edited body can never execute code or reach
     outside its own string (see `NotificationTemplate`'s docstring).
     Missing placeholders are left as literal text rather than raising.
+    `template` is either the per-event default/override or a rule's own
+    `NotificationCustomTemplate` (see `NotificationRule.custom_template`) —
+    both expose the same plain `subject`/`body` strings, so either renders
+    identically here.
 
     Placeholders every event type provides: `{event}` (the event type's
     code, e.g. "machine.unreachable"), `{timestamp}` (UTC ISO-8601).
@@ -283,10 +288,18 @@ async def notify(
     context: dict[str, Any] | None = None,
 ) -> None:
     """Fire `event_type` — find every enabled rule that lists it and whose
-    scope includes `machine` (or has no scope at all), resolve their
-    recipients, and email each one. A complete no-op when SMTP isn't
-    enabled, no rule matches, or no recipient has an email address — see
-    the module docstring for why this never raises."""
+    scope includes `machine` (or has no scope at all), resolve each rule's
+    own recipients, and email each one using that rule's own template. A
+    complete no-op when SMTP isn't enabled, no rule matches, or no
+    recipient has an email address — see the module docstring for why this
+    never raises.
+
+    Rendered per *rule*, not once for the deduplicated recipient set across
+    every matching rule — a rule can select its own `custom_template`
+    (`NotificationRule.custom_template_id`), so two rules that both match
+    this event for the same person are two legitimately different emails,
+    not a duplicate to collapse. A rule with no `custom_template_id` uses
+    the shared per-event default/override exactly as before."""
     try:
         app_settings = await get_or_create_app_settings(db)
         if not app_settings.smtp_enabled or not app_settings.smtp_host:
@@ -294,11 +307,8 @@ async def notify(
         rules = await _matching_rules(db, event_type, machine)
         if not rules:
             return
-        recipients = await _recipients(db, rules)
-        if not recipients:
-            return
 
-        template = (
+        default_template = (
             await db.execute(
                 select(NotificationTemplate).where(
                     NotificationTemplate.event_type == event_type.value
@@ -313,24 +323,33 @@ async def notify(
             full_context.setdefault("machine_name", machine.name)
             full_context.setdefault("machine_ip", machine.ip_address)
 
-        # Rendered once per recipient, in *their* own UI language
-        # (`User.locale`, same field the rest of the app already uses for
-        # this) rather than once for everyone — an admin-set template
-        # override is still a single value regardless of locale (see the
-        # module-level note above `_DEFAULT_TEMPLATES`).
-        for user in recipients:
-            assert user.email is not None  # guaranteed by `_recipients`
-            subject, body = render_template(
-                event_type, template, full_context, locale=user.locale or DEFAULT_LOCALE_CODE
-            )
-            try:
-                await asyncio.to_thread(
-                    _send_smtp_message, app_settings, user.email, subject, body
+        for rule in rules:
+            recipients = await _recipients(db, [rule])
+            if not recipients:
+                continue
+            rule_template = rule.custom_template if rule.custom_template_id else default_template
+
+            # Rendered once per recipient, in *their* own UI language
+            # (`User.locale`, same field the rest of the app already uses
+            # for this) rather than once for everyone — an admin-set
+            # template is still a single value regardless of locale (see
+            # the module-level note above `_DEFAULT_TEMPLATES`).
+            for user in recipients:
+                assert user.email is not None  # guaranteed by `_recipients`
+                subject, body = render_template(
+                    event_type,
+                    rule_template,
+                    full_context,
+                    locale=user.locale or DEFAULT_LOCALE_CODE,
                 )
-            except Exception:
-                logger.warning(
-                    "Failed to send notification email to %s", user.email, exc_info=True
-                )
+                try:
+                    await asyncio.to_thread(
+                        _send_smtp_message, app_settings, user.email, subject, body
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to send notification email to %s", user.email, exc_info=True
+                    )
     except Exception:
         logger.warning(
             "Notification dispatch failed for event=%s", event_type.value, exc_info=True

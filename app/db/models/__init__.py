@@ -18,6 +18,7 @@ from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.notification_condition import NotificationCondition, NotificationConditionState
 from app.db.models.notification_rule import (
+    NotificationCustomTemplate,
     NotificationEventType,
     NotificationRule,
     NotificationTemplate,
@@ -63,6 +64,7 @@ __all__ = [
     "MachineUpdateRun",
     "NotificationCondition",
     "NotificationConditionState",
+    "NotificationCustomTemplate",
     "NotificationEventType",
     "NotificationRule",
     "NotificationTemplate",

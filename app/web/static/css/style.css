@@ -392,6 +392,62 @@ p { margin: 0 0 var(--space-3); }
 .checklist-filter-group .permission-grid { margin: 0; }
 .checklist-filter-group [data-checklist-empty] { margin: 0; }
 
+/* Notifications rule form's condition rows (app/web/templates/notifications/
+   rule_form.html, app/web/static/js/notification-conditions.js) — each row
+   is a labeled mini-form rather than a table row, so it stays legible when
+   it wraps onto multiple lines on a narrow viewport instead of needing a
+   horizontally-scrolling table for its five columns. */
+.condition-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.condition-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-raised);
+}
+
+.condition-row .condition-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 150px;
+  min-width: 120px;
+}
+.condition-row .condition-field-value,
+.condition-row .condition-field-mount { flex-basis: 110px; }
+.condition-row .condition-field-sustained { flex-basis: 140px; }
+
+.condition-row .condition-field label {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+.condition-row input, .condition-row select { width: 100%; }
+
+.condition-remove {
+  flex: 0 0 auto;
+  width: 2.2rem;
+  height: 2.2rem;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+}
+.condition-remove:hover { color: var(--color-danger); border-color: var(--color-danger); }
+
 .container {
   max-width: 1080px;
   margin: 0 auto;

@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,6 +32,7 @@ from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.notification_condition import NotificationCondition
 from app.db.models.notification_rule import (
+    NotificationCustomTemplate,
     NotificationEventType,
     NotificationRule,
     NotificationTemplate,
@@ -41,6 +42,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.notification import (
     NotificationConditionCreate,
+    NotificationCustomTemplateCreate,
     NotificationRuleCreate,
     NotificationTemplateUpdate,
 )
@@ -48,12 +50,14 @@ from app.services.condition_fields import ALL_OPERATORS, CONDITION_FIELDS
 from app.services.notifications import default_template
 from app.web.templating import templates
 
-# How many blank condition rows to pad the form with beyond however many a
-# rule already has — enough to add a few more conditions in one save
-# without needing JS to add rows one at a time (see rule_form.html's
-# "Conditions" table). The YAML textarea below it is the escape hatch for
-# anyone who needs more than that in one go.
-_BLANK_CONDITION_ROWS = 4
+# A rule starts with no condition rows at all — the "+ Add condition" button
+# on rule_form.html (app/web/static/js/notification-conditions.js) appends
+# blank rows client-side, and the "…or as YAML" textarea below the rows is
+# the no-JS fallback (see wiki/Notifications.md's "Condition-based rules"
+# section for the YAML shape). Kept as a module constant, not inlined,
+# purely so `_condition_rows_for_rule` below reads as "pad by this many"
+# rather than a bare `0` whose meaning isn't obvious at the call site.
+_BLANK_CONDITION_ROWS = 0
 
 router = APIRouter(
     prefix="/notifications",
@@ -92,6 +96,33 @@ async def _all_machines(db: AsyncSession) -> list[Machine]:
 async def _all_machine_groups(db: AsyncSession) -> list[MachineGroup]:
     result = await db.execute(select(MachineGroup).order_by(MachineGroup.name))
     return list(result.scalars().all())
+
+
+async def _all_custom_templates(db: AsyncSession) -> list[NotificationCustomTemplate]:
+    result = await db.execute(
+        select(NotificationCustomTemplate).order_by(NotificationCustomTemplate.name)
+    )
+    return list(result.scalars().all())
+
+
+async def _resolve_custom_template_id(
+    db: AsyncSession, raw: str
+) -> uuid.UUID | None:
+    """`""` (the "use the per-event default" option) and any id that no
+    longer matches an existing template both resolve to `None` — the same
+    permissive "silently drop what doesn't match" the scope/recipient
+    pickers already use, so a template deleted out from under a rule never
+    turns saving that rule into an error."""
+    if not raw.strip():
+        return None
+    try:
+        template_id = uuid.UUID(raw)
+    except ValueError:
+        return None
+    exists = await db.execute(
+        select(NotificationCustomTemplate.id).where(NotificationCustomTemplate.id == template_id)
+    )
+    return template_id if exists.scalar_one_or_none() is not None else None
 
 
 def _condition_row(
@@ -143,6 +174,9 @@ def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object
         "selected_role_ids": [str(r.id) for r in rule.roles] if rule else [],
         "selected_machine_ids": [str(m.id) for m in rule.machines] if rule else [],
         "selected_machine_group_ids": [str(g.id) for g in rule.machine_groups] if rule else [],
+        "selected_custom_template_id": (
+            str(rule.custom_template_id) if rule and rule.custom_template_id else ""
+        ),
         "condition_rows": _condition_rows_for_rule(rule),
         "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
         "condition_operator_choices": ALL_OPERATORS,
@@ -323,6 +357,7 @@ async def new_rule_form(request: Request, db: AsyncSession = Depends(get_db)) ->
             "all_roles": await _all_roles(db),
             "all_machines": await _all_machines(db),
             "all_machine_groups": await _all_machine_groups(db),
+            "all_custom_templates": await _all_custom_templates(db),
             "errors": [],
             "form": {"enabled": True},
             "csrf_token": csrf_token,
@@ -367,6 +402,7 @@ async def create_rule(
     condition_mount: list[str] = Form(default=[]),
     condition_sustained: list[str] = Form(default=[]),
     conditions_yaml: str = Form(""),
+    custom_template_id: str = Form(""),
 ) -> Response:
     async def _rerender(
         errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
@@ -381,6 +417,7 @@ async def create_rule(
                 "all_roles": await _all_roles(db),
                 "all_machines": await _all_machines(db),
                 "all_machine_groups": await _all_machine_groups(db),
+                "all_custom_templates": await _all_custom_templates(db),
                 "errors": errors,
                 "form": {
                     "name": name,
@@ -399,6 +436,7 @@ async def create_rule(
                 "selected_role_ids": role_ids,
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
+                "selected_custom_template_id": custom_template_id,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -453,6 +491,7 @@ async def create_rule(
         description=payload.description,
         enabled=payload.enabled,
         event_types=payload.event_types,
+        custom_template_id=await _resolve_custom_template_id(db, custom_template_id),
         conditions=[
             NotificationCondition(
                 field=c.field,
@@ -513,6 +552,7 @@ async def edit_rule_form(
             "all_roles": await _all_roles(db),
             "all_machines": await _all_machines(db),
             "all_machine_groups": await _all_machine_groups(db),
+            "all_custom_templates": await _all_custom_templates(db),
             "errors": [],
             "form": {
                 "name": rule.name,
@@ -547,6 +587,7 @@ async def update_rule(
     condition_mount: list[str] = Form(default=[]),
     condition_sustained: list[str] = Form(default=[]),
     conditions_yaml: str = Form(""),
+    custom_template_id: str = Form(""),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
@@ -563,6 +604,7 @@ async def update_rule(
                 "all_roles": await _all_roles(db),
                 "all_machines": await _all_machines(db),
                 "all_machine_groups": await _all_machine_groups(db),
+                "all_custom_templates": await _all_custom_templates(db),
                 "errors": errors,
                 "form": {
                     "name": name,
@@ -581,6 +623,7 @@ async def update_rule(
                 "selected_role_ids": role_ids,
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
+                "selected_custom_template_id": custom_template_id,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -632,6 +675,7 @@ async def update_rule(
     rule.description = payload.description
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
+    rule.custom_template_id = await _resolve_custom_template_id(db, custom_template_id)
     rule.conditions = [
         NotificationCondition(
             field=c.field,
@@ -737,6 +781,7 @@ def _rule_to_yaml_dict(rule: NotificationRule) -> dict[str, Any]:
             "machines": [m.name for m in rule.machines],
             "machine_groups": [g.name for g in rule.machine_groups],
         },
+        **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
     }
 
 
@@ -773,6 +818,23 @@ async def _apply_yaml_rule(db: AsyncSession, data: dict[str, Any]) -> tuple[Noti
     rule.description = payload.description
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
+
+    template_name = data.get("template_name")
+    if template_name:
+        template_result = await db.execute(
+            select(NotificationCustomTemplate).where(
+                NotificationCustomTemplate.name == str(template_name)
+            )
+        )
+        custom_template = template_result.scalar_one_or_none()
+        if custom_template is None:
+            raise ValueError(
+                f'Rule "{data["name"]}": no custom template named "{template_name}".'
+            )
+        rule.custom_template_id = custom_template.id
+    else:
+        rule.custom_template_id = None
+
     rule.conditions = [
         NotificationCondition(
             field=c.field,
@@ -942,9 +1004,19 @@ async def list_templates(request: Request, db: AsyncSession = Depends(get_db)) -
         }
         for event_type in NotificationEventType
     ]
-    return templates.TemplateResponse(
-        request, "notifications/templates.html", {"rows": rows}
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "notifications/templates.html",
+        {
+            "rows": rows,
+            "custom_templates": await _all_custom_templates(db),
+            "csrf_token": csrf_token,
+        },
     )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
 
 
 @router.get("/templates/{event_type}/edit")
@@ -1051,4 +1123,205 @@ async def reset_template(
             target_id=event_type.value,
             target_label=event_type.value,
         )
+    return RedirectResponse(url="/notifications/templates", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Custom templates ------------------------------------------------------
+#
+# A named, reusable template any rule can select instead of the per-event
+# default/override above — see `NotificationCustomTemplate`'s docstring.
+
+
+async def _get_custom_template_or_404(
+    template_id: uuid.UUID, db: AsyncSession
+) -> NotificationCustomTemplate:
+    template = await db.get(NotificationCustomTemplate, template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found.")
+    return template
+
+
+@router.get("/templates/custom/new")
+async def new_custom_template_form(request: Request) -> Response:
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "notifications/custom_template_form.html",
+        {
+            "template": None,
+            "form": {"name": "", "subject": "", "body": ""},
+            "errors": [],
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/templates/custom", dependencies=[_manage, Depends(verify_csrf)])
+async def create_custom_template(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    name: str = Form(...),
+    subject: str = Form(...),
+    body: str = Form(...),
+) -> Response:
+    async def _rerender(errors: list[str], status_code: int) -> Response:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "notifications/custom_template_form.html",
+            {
+                "template": None,
+                "form": {"name": name, "subject": subject, "body": body},
+                "errors": errors,
+                "csrf_token": csrf_token,
+            },
+            status_code=status_code,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    try:
+        payload = NotificationCustomTemplateCreate(name=name, subject=subject, body=body)
+    except ValueError as exc:
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    template = NotificationCustomTemplate(
+        name=payload.name, subject=payload.subject, body=payload.body
+    )
+    db.add(template)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return await _rerender(
+            [f'A template named "{payload.name}" already exists.'],
+            status.HTTP_409_CONFLICT,
+        )
+    await db.refresh(template)
+
+    await log_event(
+        db,
+        request=request,
+        action="notification_custom_template.create",
+        summary=f'Created notification template "{template.name}"',
+        target_type="notification_custom_template",
+        target_id=template.id,
+        target_label=template.name,
+    )
+    return RedirectResponse(url="/notifications/templates", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/templates/custom/{template_id}/edit")
+async def edit_custom_template_form(
+    request: Request, template_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    template = await _get_custom_template_or_404(template_id, db)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "notifications/custom_template_form.html",
+        {
+            "template": template,
+            "form": {"name": template.name, "subject": template.subject, "body": template.body},
+            "errors": [],
+            "csrf_token": csrf_token,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/templates/custom/{template_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
+async def update_custom_template(
+    request: Request,
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    name: str = Form(...),
+    subject: str = Form(...),
+    body: str = Form(...),
+) -> Response:
+    template = await _get_custom_template_or_404(template_id, db)
+
+    async def _rerender(errors: list[str], status_code: int) -> Response:
+        csrf_token, new_cookie = get_or_create_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "notifications/custom_template_form.html",
+            {
+                "template": template,
+                "form": {"name": name, "subject": subject, "body": body},
+                "errors": errors,
+                "csrf_token": csrf_token,
+            },
+            status_code=status_code,
+        )
+        if new_cookie:
+            set_csrf_cookie(response, new_cookie)
+        return response
+
+    try:
+        payload = NotificationCustomTemplateCreate(name=name, subject=subject, body=body)
+    except ValueError as exc:
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    template.name = payload.name
+    template.subject = payload.subject
+    template.body = payload.body
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return await _rerender(
+            [f'A template named "{payload.name}" already exists.'],
+            status.HTTP_409_CONFLICT,
+        )
+
+    await log_event(
+        db,
+        request=request,
+        action="notification_custom_template.update",
+        summary=f'Updated notification template "{template.name}"',
+        target_type="notification_custom_template",
+        target_id=template.id,
+        target_label=template.name,
+    )
+    return RedirectResponse(url="/notifications/templates", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post(
+    "/templates/custom/{template_id}/delete", dependencies=[_manage, Depends(verify_csrf)]
+)
+async def delete_custom_template(
+    request: Request, template_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    template = await _get_custom_template_or_404(template_id, db)
+    name = template.name
+    # Any rule using this template falls back to its per-event
+    # default/override rather than being blocked or broken. Done explicitly
+    # here (not left to the FK's `ondelete="SET NULL"` alone) since that's
+    # a database-level action SQLite — the test suite's own database
+    # (`tests/conftest.py`) — never enforces without an explicit `PRAGMA
+    # foreign_keys=ON` this app doesn't set; Postgres would apply it too,
+    # but this keeps behavior identical on both.
+    await db.execute(
+        update(NotificationRule)
+        .where(NotificationRule.custom_template_id == template_id)
+        .values(custom_template_id=None)
+    )
+    await db.delete(template)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="notification_custom_template.delete",
+        summary=f'Deleted notification template "{name}"',
+        target_type="notification_custom_template",
+        target_id=template_id,
+        target_label=name,
+    )
     return RedirectResponse(url="/notifications/templates", status_code=status.HTTP_303_SEE_OTHER)

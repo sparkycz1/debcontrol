@@ -65,3 +65,13 @@ class NotificationRuleCreate(BaseModel):
 class NotificationTemplateUpdate(BaseModel):
     subject: str = Field(min_length=1, max_length=500)
     body: str = Field(min_length=1, max_length=4000)
+
+
+class NotificationCustomTemplateCreate(BaseModel):
+    """A named, reusable template (see `NotificationCustomTemplate`) — same
+    fields as `NotificationTemplateUpdate` plus the name that makes it
+    selectable from a rule."""
+
+    name: str = Field(min_length=1, max_length=255)
+    subject: str = Field(min_length=1, max_length=500)
+    body: str = Field(min_length=1, max_length=4000)
