@@ -34,19 +34,30 @@ then asks:
 5. **Administrator password** — blank = generated + printed once at the end.
 6. **Host port** (default 8080).
 
-Then writes `.env`, `docker compose up -d --build` (+ Caddy overlay if
-chosen), waits healthy, creates `admin`. Prints URL/username/password —
-save it now, shown once.
+Then writes `.env`, **`docker compose down -v` first** (drops any previous
+containers/volumes — harmless if there's nothing to remove), then
+`docker compose up -d --build` (+ Caddy overlay if chosen), waits healthy,
+creates `admin`. Prints URL/username/password — save it now, shown once.
+
+The `down -v` step matters whenever fresh secrets are about to be written
+(every first run, and every "yes, overwrite" re-run below): a fresh
+`POSTGRES_PASSWORD` means nothing against an *old* `pg_data` volume left
+over from any earlier attempt (this script run before, a manual
+`docker compose up` before ever running this script, ...) — Postgres only
+ever applies that variable while initializing an empty data directory, so
+without this step every container fails with "password authentication
+failed" the moment `migrate` runs. If `docker compose up` still fails
+after that, this script now prints a diagnosis instead of a raw
+traceback — reading straight from `docker compose logs migrate`,
+specifically flagging this exact scenario if it's still the cause (e.g. a
+`pg_data` volume under a *different* compose project name).
 
 Re-running on an existing `.env`:
-- **Yes, overwrite** — regenerates every secret, asks everything again,
-  **and runs `docker compose down -v` first**. Necessary: a fresh
-  `POSTGRES_PASSWORD` means nothing against the *old* `pg_data` volume
-  (Postgres only applies that variable to an empty data directory) —
-  otherwise every container fails with "password authentication failed"
-  the moment `migrate` runs.
+- **Yes, overwrite** — regenerates every secret, asks everything again.
 - **No** — just tops `.env` up (adds missing `.env.example` vars, touches
-  nothing existing) and starts the stack as-is. No secrets regenerated, no new admin.
+  nothing existing) and starts the stack as-is, no `down -v` (no new
+  secrets are being written, so the existing `pg_data` volume already
+  matches). No secrets regenerated, no new admin.
 
 ## 🔧 Option B — manual setup
 

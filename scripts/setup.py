@@ -160,6 +160,57 @@ def _read_env_value(path: Path, key: str) -> str | None:
     return None
 
 
+def _compose_up(docker_path: str, compose_files: list[str]) -> None:
+    """`docker compose up -d --build`, or a clear, actionable diagnosis
+    instead of a raw traceback if it fails. The single most common failure
+    here is `migrate` dying with "password authentication failed" — Postgres
+    only ever applies `POSTGRES_PASSWORD` while initializing an *empty*
+    `pg_data` volume, so a volume left over from any earlier attempt (this
+    script run before, a manual `docker compose up`, ...) still has a
+    different password baked in than whatever `.env` has now. The `down -v`
+    right before this call already guards against that for a normal run of
+    this script; this is the fallback explanation for whatever's left
+    (e.g. the volume belongs to a *different* compose project name, or
+    something else entirely)."""
+    print("==> Building and starting the stack (this can take a few minutes)...")
+    build_env = {**os.environ, "GIT_COMMIT": _git_commit()}
+    try:
+        subprocess.run(  # noqa: S603 - fixed args plus this run's own choices, no user input
+            [docker_path, "compose", *compose_files, "up", "-d", "--build"],
+            cwd=REPO_ROOT,
+            env=build_env,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        logs = subprocess.run(  # noqa: S603 - fixed args, no user input
+            [docker_path, "compose", *compose_files, "logs", "migrate"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        print(file=sys.stderr)
+        if "password authentication failed" in logs:
+            print(
+                "error: Postgres rejected the password in .env — almost always a "
+                "leftover `pg_data` Docker volume from an earlier attempt, still "
+                "holding a *different* password than the one .env has now "
+                "(Postgres only applies POSTGRES_PASSWORD while initializing an "
+                "empty data directory). Fix:\n"
+                "    docker compose down -v\n"
+                "then re-run this script.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "error: the stack failed to start. 'docker compose logs migrate' "
+                "output:",
+                file=sys.stderr,
+            )
+            print(logs, file=sys.stderr)
+        raise SystemExit(1) from None
+
+
 def _sync_and_start(docker_path: str) -> None:
     """The path taken when an existing `.env` is kept rather than
     regenerated: top it up with whatever `.env.example` variables it's
@@ -181,14 +232,7 @@ def _sync_and_start(docker_path: str) -> None:
     if use_caddy:
         compose_files += ["-f", "docker-compose.caddy.yml"]
 
-    print("==> Building and starting the stack (this can take a few minutes)...")
-    build_env = {**os.environ, "GIT_COMMIT": _git_commit()}
-    subprocess.run(  # noqa: S603 - fixed args plus this run's own choices, no user input
-        [docker_path, "compose", *compose_files, "up", "-d", "--build"],
-        cwd=REPO_ROOT,
-        env=build_env,
-        check=True,
-    )
+    _compose_up(docker_path, compose_files)
 
     print("==> Waiting for the app to become healthy...")
     if not _wait_until_healthy(port):
@@ -315,32 +359,30 @@ def main() -> None:
     if use_caddy:
         compose_files += ["-f", "docker-compose.caddy.yml"]
 
-    if env_existed:
-        # We just generated a fresh POSTGRES_PASSWORD/REDIS_PASSWORD above, but
-        # Postgres only ever applies POSTGRES_PASSWORD while initializing an
-        # *empty* data directory — if a `pg_data` volume already exists from an
-        # earlier run of this script (e.g. one that failed partway through),
-        # it still has the old password baked in, and every container that
-        # connects with the new one fails with "password authentication
-        # failed" the moment `migrate` tries to connect. Since we're about to
-        # overwrite .env's secrets anyway, drop any previous containers and
-        # volumes first so the new ones start from a clean, matching state.
-        print("==> .env is being replaced — removing any previous containers/volumes "
-              "so the new secrets start from a clean database...")
-        subprocess.run(  # noqa: S603 - fixed args, no user input
-            [docker_path, "compose", *compose_files, "down", "-v"],
-            cwd=REPO_ROOT,
-            check=False,
-        )
-
-    print("==> Building and starting the stack (this can take a few minutes)...")
-    build_env = {**os.environ, "GIT_COMMIT": _git_commit()}
-    subprocess.run(  # noqa: S603 - fixed args plus this run's own choices, no user input
-        [docker_path, "compose", *compose_files, "up", "-d", "--build"],
+    # We just generated a fresh POSTGRES_PASSWORD/REDIS_PASSWORD above, but
+    # Postgres only ever applies POSTGRES_PASSWORD while initializing an
+    # *empty* data directory — if a `pg_data` volume already exists from an
+    # earlier attempt (this script run before and got this far, a manual
+    # `docker compose up` before ever running this script, one that failed
+    # partway through and had its `.env` deleted by hand before rerunning,
+    # ...), it still has the old password baked in, and every container that
+    # connects with the new one fails with "password authentication failed"
+    # the moment `migrate` tries to connect — regardless of whether `.env`
+    # itself already existed a moment ago (`env_existed` above only tracks
+    # the *file*, not whatever Docker volumes are separately still sitting
+    # on disk from any earlier attempt). Since new secrets are always being
+    # written at this point in the script, always drop any previous
+    # containers/volumes first so they start from a clean, matching state —
+    # a harmless no-op if there's nothing to remove.
+    print("==> Removing any previous containers/volumes so the new secrets "
+          "start from a clean database...")
+    subprocess.run(  # noqa: S603 - fixed args, no user input
+        [docker_path, "compose", *compose_files, "down", "-v"],
         cwd=REPO_ROOT,
-        env=build_env,
-        check=True,
+        check=False,
     )
+
+    _compose_up(docker_path, compose_files)
 
     print("==> Waiting for the app to become healthy...")
     if not _wait_until_healthy(port):
