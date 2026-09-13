@@ -1394,6 +1394,20 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   stroke-dasharray: 3 3;
 }
 
+/* A configured condition-based notification's own trigger level, drawn
+   directly on the chart it's about (macros/charts.html's `trend_chart`,
+   `threshold`/`threshold_label` params) — warn-colored since crossing it
+   is exactly what would fire an alert. */
+.trend-chart-threshold {
+  stroke: var(--color-warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+}
+.trend-chart-threshold-label {
+  fill: var(--color-warn);
+  font-size: 10px;
+}
+
 .trend-chart-tooltip {
   position: absolute;
   top: 0.25rem;

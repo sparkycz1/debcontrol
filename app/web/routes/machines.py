@@ -61,6 +61,7 @@ from app.services.machine_tags import (
     remove_tags_from_machines,
     set_machine_tags,
 )
+from app.services.notifications import condition_thresholds_for_machine
 from app.services.saved_views import (
     DuplicateViewNameError,
     build_query_string,
@@ -1183,6 +1184,10 @@ async def machine_monitoring(
             "time_ranges": monitoring_history.TIME_RANGES,
             "range_key": range_key,
             "service_counts": await _get_service_counts(machine_id, db),
+            # A configured condition-based notification's own trigger
+            # level, drawn as a reference line on the matching chart below
+            # — see app.services.notifications.condition_thresholds_for_machine.
+            "condition_thresholds": await condition_thresholds_for_machine(db, machine),
         },
     )
     if new_cookie:

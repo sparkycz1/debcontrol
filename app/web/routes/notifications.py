@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
@@ -25,12 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_current_user, require_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.notification_condition import NotificationCondition
+from app.db.models.notification_log import NotificationDeliveryChannel, NotificationLog
 from app.db.models.notification_rule import (
     NotificationCustomTemplate,
     NotificationEventType,
@@ -47,7 +49,7 @@ from app.schemas.notification import (
     NotificationTemplateUpdate,
 )
 from app.services.condition_fields import ALL_OPERATORS, CONDITION_FIELDS
-from app.services.notifications import default_template
+from app.services.notifications import default_template, send_test_notification
 from app.web.templating import templates
 
 # A rule starts with no condition rows at all — the "+ Add condition" button
@@ -177,6 +179,10 @@ def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object
         "selected_custom_template_id": (
             str(rule.custom_template_id) if rule and rule.custom_template_id else ""
         ),
+        "selected_delivery_channel": (
+            rule.delivery_channel if rule else NotificationDeliveryChannel.EMAIL.value
+        ),
+        "selected_webhook_url": rule.webhook_url if rule else "",
         "condition_rows": _condition_rows_for_rule(rule),
         "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
         "condition_operator_choices": ALL_OPERATORS,
@@ -403,6 +409,8 @@ async def create_rule(
     condition_sustained: list[str] = Form(default=[]),
     conditions_yaml: str = Form(""),
     custom_template_id: str = Form(""),
+    delivery_channel: str = Form(NotificationDeliveryChannel.EMAIL.value),
+    webhook_url: str = Form(""),
 ) -> Response:
     async def _rerender(
         errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
@@ -437,6 +445,8 @@ async def create_rule(
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
                 "selected_custom_template_id": custom_template_id,
+                "selected_delivery_channel": delivery_channel,
+                "selected_webhook_url": webhook_url,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -479,6 +489,8 @@ async def create_rule(
             description=description or None,
             enabled=bool(enabled),
             event_types=resolved_event_types,
+            delivery_channel=delivery_channel,
+            webhook_url=webhook_url or None,
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -492,6 +504,8 @@ async def create_rule(
         enabled=payload.enabled,
         event_types=payload.event_types,
         custom_template_id=await _resolve_custom_template_id(db, custom_template_id),
+        delivery_channel=payload.delivery_channel,
+        webhook_url=payload.webhook_url,
         conditions=[
             NotificationCondition(
                 field=c.field,
@@ -560,12 +574,55 @@ async def edit_rule_form(
                 "enabled": rule.enabled,
             },
             "csrf_token": csrf_token,
+            "test_sent": request.query_params.get("test_sent") is not None,
+            "test_error": request.query_params.get("test_error"),
             **_rule_form_context(rule),
         },
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post("/rules/{rule_id}/test", dependencies=[_manage, Depends(verify_csrf)])
+async def test_rule(
+    request: Request,
+    rule_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """"Send test" button on a rule's edit page — one synthetic delivery
+    through the rule's own configured channel/template, never its real
+    recipients (email goes only to the admin clicking the button — see
+    `app.services.notifications.send_test_notification`). Redirects back
+    to the edit page with a query-string result flag rather than an inline
+    partial, since a full navigation already happened to get here and the
+    result is a one-line pass/fail, not worth an extra htmx round trip."""
+    rule = await _get_rule_or_404(rule_id, db)
+    ok, error = await send_test_notification(
+        db,
+        rule,
+        to_email=current_user.email,
+        locale=request.state.locale.code,
+    )
+    await log_event(
+        db,
+        request=request,
+        action="notification_rule.test",
+        summary=f'Sent a test notification for rule "{rule.name}"',
+        target_type="notification_rule",
+        target_id=rule.id,
+        target_label=rule.name,
+        details={"ok": ok, "channel": rule.delivery_channel},
+    )
+    if ok:
+        query = "test_sent=1"
+    else:
+        query = "test_error=" + quote(error or "Unknown error")
+    return RedirectResponse(
+        url=f"/notifications/rules/{rule_id}/edit?{query}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.post("/rules/{rule_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
@@ -588,6 +645,8 @@ async def update_rule(
     condition_sustained: list[str] = Form(default=[]),
     conditions_yaml: str = Form(""),
     custom_template_id: str = Form(""),
+    delivery_channel: str = Form(NotificationDeliveryChannel.EMAIL.value),
+    webhook_url: str = Form(""),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
@@ -624,6 +683,8 @@ async def update_rule(
                 "selected_machine_ids": machine_ids,
                 "selected_machine_group_ids": machine_group_ids,
                 "selected_custom_template_id": custom_template_id,
+                "selected_delivery_channel": delivery_channel,
+                "selected_webhook_url": webhook_url,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -664,6 +725,8 @@ async def update_rule(
             description=description or None,
             enabled=bool(enabled),
             event_types=resolved_event_types,
+            delivery_channel=delivery_channel,
+            webhook_url=webhook_url or None,
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -676,6 +739,8 @@ async def update_rule(
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
     rule.custom_template_id = await _resolve_custom_template_id(db, custom_template_id)
+    rule.delivery_channel = payload.delivery_channel
+    rule.webhook_url = payload.webhook_url
     rule.conditions = [
         NotificationCondition(
             field=c.field,
@@ -781,6 +846,8 @@ def _rule_to_yaml_dict(rule: NotificationRule) -> dict[str, Any]:
             "machines": [m.name for m in rule.machines],
             "machine_groups": [g.name for g in rule.machine_groups],
         },
+        "delivery_channel": rule.delivery_channel,
+        **({"webhook_url": rule.webhook_url} if rule.webhook_url else {}),
         **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
     }
 
@@ -811,6 +878,8 @@ async def _apply_yaml_rule(db: AsyncSession, data: dict[str, Any]) -> tuple[Noti
             description=data.get("description") or None,
             enabled=bool(data.get("enabled", True)),
             event_types=resolved_event_types,
+            delivery_channel=str(data.get("delivery_channel") or "email"),
+            webhook_url=(str(data["webhook_url"]) if data.get("webhook_url") else None),
         )
     except ValueError as exc:
         raise ValueError(f'Rule "{data["name"]}": {exc}') from exc
@@ -818,6 +887,8 @@ async def _apply_yaml_rule(db: AsyncSession, data: dict[str, Any]) -> tuple[Noti
     rule.description = payload.description
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
+    rule.delivery_channel = payload.delivery_channel
+    rule.webhook_url = payload.webhook_url
 
     template_name = data.get("template_name")
     if template_name:
@@ -982,6 +1053,22 @@ async def import_rules(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+# --- Delivery history -------------------------------------------------------
+
+
+@router.get("/history")
+async def notification_history(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    """The last 200 `NotificationLog` rows, newest first — one row per
+    actual send attempt (real or "Send test"), for troubleshooting "did
+    that alert actually go out." See `AppSettings.notification_log_retention_days`
+    for how long these are kept (Settings → Checks & retention)."""
+    result = await db.execute(
+        select(NotificationLog).order_by(NotificationLog.sent_at.desc()).limit(200)
+    )
+    logs = result.scalars().all()
+    return templates.TemplateResponse(request, "notifications/history.html", {"logs": logs})
 
 
 # --- Templates -----------------------------------------------------------

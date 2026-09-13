@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "notifications.history.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "notifications.history.title") }}</h1>
+    <a class="button button-secondary" href="/notifications">{{ t(request, "notifications.back_to_rules") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "notifications.history.hint") }}</p>
+
+  {% if logs %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "notifications.history.table.sent_at") }}</th>
+          <th>{{ t(request, "notifications.history.table.rule") }}</th>
+          <th>{{ t(request, "notifications.history.table.event") }}</th>
+          <th>{{ t(request, "notifications.history.table.channel") }}</th>
+          <th>{{ t(request, "notifications.history.table.target") }}</th>
+          <th>{{ t(request, "notifications.history.table.status") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in logs %}
+          <tr>
+            <td>{{ entry.sent_at }}</td>
+            <td>
+              {{ entry.rule_name }}
+              {% if entry.is_test %}<span class="badge badge-tag">{{ t(request, "notifications.history.test_badge") }}</span>{% endif %}
+            </td>
+            <td>{{ entry.event_type }}</td>
+            <td>{{ t(request, "notifications.rule.send_via_webhook") if entry.channel == "webhook" else t(request, "notifications.rule.send_via_email") }}</td>
+            <td>{{ entry.target }}</td>
+            <td>
+              {% if entry.status == "sent" %}
+                <span class="badge badge-ok">{{ t(request, "notifications.history.status_sent") }}</span>
+              {% else %}
+                <span class="badge badge-error" title="{{ entry.error or '' }}">{{ t(request, "notifications.history.status_failed") }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="hint">{{ t(request, "notifications.history.empty") }}</p>
+  {% endif %}
+{% endblock %}

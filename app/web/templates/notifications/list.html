@@ -7,6 +7,7 @@
     <h1>{{ t(request, "notifications.title") }}</h1>
     <div>
       <a class="button button-secondary" href="/notifications/templates">{{ t(request, "notifications.templates_link") }}</a>
+      <a class="button button-secondary" href="/notifications/history">{{ t(request, "notifications.history_link") }}</a>
       {% if rules %}
         <a class="button button-secondary" href="/notifications/rules/export">{{ t(request, "notifications.rule.export_all_yaml") }}</a>
       {% endif %}
@@ -43,7 +44,13 @@
                 <span class="badge badge-tag">{{ t(request, "notifications.event." ~ event.name | lower) }}</span>
               {% endfor %}
             </td>
-            <td>{{ rule.users | length }} {{ t(request, "notifications.users_word") }}, {{ rule.roles | length }} {{ t(request, "notifications.roles_word") }}</td>
+            <td>
+              {% if rule.delivery_channel == "webhook" %}
+                <span class="badge badge-tag">{{ t(request, "notifications.rule.send_via_webhook") }}</span>
+              {% else %}
+                {{ rule.users | length }} {{ t(request, "notifications.users_word") }}, {{ rule.roles | length }} {{ t(request, "notifications.roles_word") }}
+              {% endif %}
+            </td>
             <td>
               {% if not rule.machines and not rule.machine_groups %}
                 {{ t(request, "notifications.scope_all") }}

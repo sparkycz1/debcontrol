@@ -1,10 +1,10 @@
 # 🔔 Notifications
 
-*Rule-based email alerts: which events to fire on, who to notify, which
-machines to limit a rule to, and the SMTP relay + templates behind
-delivery. Split out of [Architecture](Architecture.md) so this one topic
-is easier to search — start there for the rest (auth/RBAC, machine
-management, audit log, HTTP hardening).*
+*Rule-based alerts (email or webhook): which events to fire on, who to
+notify, which machines to limit a rule to, and the templates/delivery
+history behind it. Split out of [Architecture](Architecture.md) so this
+one topic is easier to search — start there for the rest (auth/RBAC,
+machine management, audit log, HTTP hardening).*
 
 ## What this is
 
@@ -294,39 +294,53 @@ regardless of which event actually fired. Deleting a custom template that's
 in use just falls the referencing rule(s) back to their per-event default
 — never blocked, never leaves a rule broken.
 
-## Delivery: SMTP, one email per recipient
+## Delivery: email (SMTP) or webhook, per rule
 
-Settings → Integrations has the SMTP relay section (`AppSettings.smtp_*`
-— host/port/encryption/username/password/from address/from name), same
-encrypted-secret convention as LDAP/OIDC next to it. Switching the
-**Encryption** dropdown there fills in the conventional port for that
-choice (25 for none, 587 for STARTTLS, 465 for SSL/TLS) — still a plain,
-editable number field, so a nonstandard port stays possible.
-`smtp_enabled` gates everything below it: with it off, or no host set,
-notification dispatch is a complete, silent no-op — nothing is queued or
-retried, it simply doesn't try.
+Each rule picks a **delivery channel** (`NotificationRule.delivery_channel`,
+its Delivery section): **email** (the default — recipients/roles below
+apply) or **webhook** (`webhook_url` — a plain JSON POST, recipients/roles
+are ignored entirely, only scope still narrows which machines fire it).
+
+**Email.** Settings → Integrations has the SMTP relay section
+(`AppSettings.smtp_*` — host/port/encryption/username/password/from
+address/from name), same encrypted-secret convention as LDAP/OIDC next to
+it. Switching the **Encryption** dropdown there fills in the conventional
+port for that choice (25 for none, 587 for STARTTLS, 465 for SSL/TLS) —
+still a plain, editable number field, so a nonstandard port stays
+possible. `smtp_enabled` gates only the email channel: with it off, or no
+host set, an email rule's dispatch is a complete, silent no-op — a webhook
+rule on the same event still fires.
+
+**Webhook.** One JSON POST per matching rule (not per recipient — a
+webhook has no concept of "recipients"): `{"event", "rule_name",
+"subject", "body", "machine_name", "machine_ip", "timestamp"}`. No
+signature/bearer-auth scheme of its own — embed a token or secret path
+segment in `webhook_url` itself (the way a Slack or Discord incoming
+webhook link already works), since that URL is admin-authored config
+requiring `notification.manage`, not untrusted input.
 
 `app.services.notifications.notify(db, event_type, *, machine=None,
-context=None)` is the one function that turns a fired event into sent
-email:
+context=None)` is the one function that turns a fired event into an
+actual send:
 
-1. Bail out immediately if SMTP isn't enabled/configured.
-2. Find every **enabled** rule listing this event type whose scope
+1. Find every **enabled** rule listing this event type whose scope
    includes `machine` (or has no scope at all).
-3. For **each matching rule** (not once for the union of every rule's
-   recipients — see below), resolve that rule's own recipients
-   (deduplicated, email-having, active accounts only).
-4. For each recipient, render the subject/body — that rule's own
-   `custom_template` if it set one, else the per-event admin override if
-   one exists, else the built-in default in *that recipient's* locale —
-   and send **one individual email** via stdlib `smtplib` (STARTTLS/
-   SSL-TLS/none, matching the configured encryption), run through
-   `asyncio.to_thread` (the same sync-library/async-caller seam every
-   Celery task in `app.tasks.jobs` already crosses — no new SMTP client
-   dependency for this one feature).
+2. For **each matching rule** (not once for the union of every rule's
+   recipients — see below):
+   - **Webhook rule**: POST once to its `webhook_url`, using its own
+     `custom_template` (or the per-event default) for the `subject`/`body`
+     fields in the payload.
+   - **Email rule**: skip it if SMTP isn't enabled/configured; otherwise
+     resolve its own recipients (deduplicated, email-having, active
+     accounts only) and, for each, render the subject/body — its own
+     `custom_template` if set, else the per-event admin override, else the
+     built-in default in *that recipient's* locale — and send one
+     individual email via stdlib `smtplib`, run through `asyncio.to_thread`
+     (the same sync-library/async-caller seam every Celery task in
+     `app.tasks.jobs` already crosses).
 
 **Rendered per rule, not deduplicated across every matching rule.** Since a
-rule can now select its own template, two rules that both match the same
+rule can select its own template, two rules that both match the same
 event for the same person are two legitimately different emails to send,
 not one to collapse — so a recipient targeted by more than one rule for
 the same event now gets one email per rule, each in that rule's own
@@ -335,32 +349,70 @@ at all; this only affects a deliberately overlapping setup.
 
 **Every failure here is caught and logged, never raised** — no SMTP
 configured, no matching rule, no recipient with an email, the SMTP server
-itself refusing the connection, a single recipient's send failing while
-others succeed. A notification that fails to send must never be able to
-break the background job that triggered it, the same "best-effort, never
-load-bearing" spirit `app.audit_syslog.forward_to_syslog` already has for
-the audit log's own external mirror. There is no retry and no delivery
-queue — a failed send is simply logged (`app.services.notifications`'s
-own logger) and moved past.
+or webhook endpoint itself refusing the connection, a single recipient's
+send failing while others succeed. A notification that fails to send must
+never be able to break the background job that triggered it, the same
+"best-effort, never load-bearing" spirit `app.audit_syslog.forward_to_syslog`
+already has for the audit log's own external mirror. There is no retry
+and no delivery queue — a failed send is logged and recorded (see
+"Delivery history" below) and moved past.
 
 One connection is opened per recipient rather than one shared connection
-for a multi-recipient send — simple and correct at the small recipient
-counts a notification rule realistically has; reusing a connection is a
-possible future optimization, not a correctness concern today.
+for a multi-recipient email send — simple and correct at the small
+recipient counts a notification rule realistically has; reusing a
+connection is a possible future optimization, not a correctness concern
+today.
+
+## Delivery history and testing
+
+Every send *attempt* — real or "Send test" — is recorded to
+`NotificationLog` (`app.db.models.notification_log`): rule, event, channel,
+target (recipient email or webhook URL), status (`sent`/`failed`, with the
+error for a failure), and whether it was a test. `/notifications/history`
+lists the last 200, newest first — for "did that alert actually go out"
+troubleshooting that the audit log (which only records rule
+create/edit/delete, not individual sends) doesn't cover. Purged on its own
+schedule (`AppSettings.notification_log_retention_days`, Settings → Checks
+& retention → Notifications, default 90 days — `app.tasks.jobs.
+purge_old_notification_logs`).
+
+**"Send test"** on a rule's edit page (`app.services.notifications.
+send_test_notification`) fires one synthetic notification through that
+rule's own configured channel/template, bypassing its real
+recipients/scope entirely: email goes only to the admin clicking the
+button (never the rule's actual audience), a webhook rule still POSTs to
+its real `webhook_url`. Lets an admin verify SMTP/webhook config and
+template wording actually work without waiting for a real alert. Logged
+with `is_test=True` so it's clearly distinguishable in the history list.
+
+## Condition thresholds on the Monitoring tab
+
+A machine's Monitoring tab charts (CPU, RAM, per-filesystem-mount usage —
+`machines/monitoring.html`) draw a dashed reference line at the lowest
+matching `gt`/`gte` condition threshold configured for that machine
+(`app.services.notifications.condition_thresholds_for_machine`), so "where
+would this actually alert" is visible directly on the trend, not just as a
+number on the Notifications page. The RAM chart's line additionally shows
+the absolute value (e.g. "Alert ≥ 90% (3.6 GB)") using that machine's
+latest known total RAM, since a bare percentage doesn't say what the
+actual ceiling is. Best-effort and visual only — `lt`/`lte`/`eq`/other
+operators aren't representable as a ceiling line and are simply not drawn;
+this never affects whether the condition itself fires.
 
 ## Audit logging
 
 Rule/template create-edit-delete are all audit-logged
-(`notification_rule.create`/`.update`/`.delete`/`.import`,
+(`notification_rule.create`/`.update`/`.delete`/`.import`/`.test`,
 `notification_template.update`/`.reset`,
 `notification_custom_template.create`/`.update`/`.delete`) — the same
-"every mutation gets
-an entry" convention every other admin-config page follows. **Actually
-sending a notification email is not itself audit-logged** — it's a
-downstream *consequence* of an event that (where relevant) already has
-its own audit entry, not a new auditable action of its own; logging every
-individual email send would flood the trail with what's really the same
-fact repeated per recipient.
+"every mutation gets an entry" convention every other admin-config page
+follows. **Actually sending a notification is not itself audit-logged**
+— it's a downstream *consequence* of an event that (where relevant)
+already has its own audit entry, not a new auditable action of its own;
+logging every individual send here would flood the trail with what's
+really the same fact repeated per recipient. That per-send record lives
+in `NotificationLog` instead — see "Delivery history" above, a
+troubleshooting log, not an audit trail.
 
 ## REST API
 

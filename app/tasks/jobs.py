@@ -47,6 +47,7 @@ from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.notification_condition import NotificationConditionState
+from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.fleet_stats import compute_fleet_stats
@@ -1861,3 +1862,51 @@ async def _purge_old_machine_update_runs() -> None:
 @celery_app.task(name="app.tasks.jobs.purge_old_machine_update_runs")
 def purge_old_machine_update_runs() -> None:
     asyncio.run(_purge_old_machine_update_runs())
+
+
+_NOTIFICATION_LOG_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def _purge_old_notification_logs() -> None:
+    """Delete `NotificationLog` rows older than `AppSettings.
+    notification_log_retention_days` — same shape as
+    `_purge_old_machine_update_runs` above, including being skipped
+    entirely when retention is unset (`None` = keep forever). This is
+    delivery history only; the `notification_rule.*` audit trail for
+    rule/template changes is a separate table with its own retention."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        retention_days = app_settings.notification_log_retention_days
+        if not retention_days:
+            return
+
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        count_result = await session.execute(
+            select(func.count())
+            .select_from(NotificationLog)
+            .where(NotificationLog.sent_at < cutoff)
+        )
+        deleted_count = count_result.scalar_one()
+        if not deleted_count:
+            return
+
+        await session.execute(
+            delete(NotificationLog).where(NotificationLog.sent_at < cutoff)
+        )
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_NOTIFICATION_LOG_PURGE_ACTOR,
+            action="notification_logs.purge",
+            summary=(
+                f"Purged {deleted_count} notification log entr"
+                f"{'ies' if deleted_count != 1 else 'y'} older than {retention_days} day(s)"
+            ),
+            details={"deleted_count": deleted_count, "retention_days": retention_days},
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.purge_old_notification_logs")
+def purge_old_notification_logs() -> None:
+    asyncio.run(_purge_old_notification_logs())

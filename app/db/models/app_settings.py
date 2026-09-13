@@ -132,6 +132,19 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # Same idea again, for `NotificationLog` rows (app.tasks.jobs.
+    # purge_old_notification_logs) — one row per actual send attempt (per
+    # recipient for email, per rule for webhook), which on a large fleet
+    # with frequent condition-based rules can accumulate quickly. This is
+    # delivery history for troubleshooting ("did that alert actually go
+    # out"), not the audit-worthy fact itself (that already has its own
+    # `notification_rule.*` audit entries with their own retention), so it
+    # defaults to a bounded window (90 days) for the same reason
+    # dashboard_trends_retention_days does. NULL still means "keep forever."
+    notification_log_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=90
+    )
+
     # --- Background checks (moved here from environment variables — see
     # app.core.config's module docstring and wiki/Development.md's
     # "Settings vs. environment" note). Defaults match what used to be the

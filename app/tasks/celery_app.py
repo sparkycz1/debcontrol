@@ -308,6 +308,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.ai_jobs.generate_fleet_summary",
         "schedule": crontab(hour=6, minute=0),
     },
+    "purge-old-notification-logs": {
+        "task": "app.tasks.jobs.purge_old_notification_logs",
+        "schedule": crontab(hour=3, minute=25),
+    },
     "purge-old-fleet-summaries": {
         "task": "app.tasks.ai_jobs.purge_old_fleet_summaries",
         "schedule": crontab(hour=3, minute=20),

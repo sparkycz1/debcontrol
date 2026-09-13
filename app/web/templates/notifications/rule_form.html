@@ -117,11 +117,29 @@
     <div class="panel">
       <h2>{{ t(request, "notifications.rule.section_delivery") }}</h2>
 
-      <label for="send_via">{{ t(request, "notifications.rule.send_via_label") }}</label>
-      <select id="send_via" disabled>
-        <option>{{ t(request, "notifications.rule.send_via_smtp") }}</option>
+      {% if test_sent %}
+        <div class="alert alert-ok"><p>{{ t(request, "notifications.rule.test_sent") }}</p></div>
+      {% elif test_error %}
+        <div class="alert alert-error"><p>{{ t(request, "notifications.rule.test_failed", error=test_error) }}</p></div>
+      {% endif %}
+
+      <label for="delivery_channel">{{ t(request, "notifications.rule.send_via_label") }}</label>
+      <select id="delivery_channel" name="delivery_channel" data-delivery-channel-select>
+        <option value="email" {{ 'selected' if selected_delivery_channel == 'email' else '' }}>
+          {{ t(request, "notifications.rule.send_via_email") }}
+        </option>
+        <option value="webhook" {{ 'selected' if selected_delivery_channel == 'webhook' else '' }}>
+          {{ t(request, "notifications.rule.send_via_webhook") }}
+        </option>
       </select>
       <p class="hint">{{ t(request, "notifications.rule.send_via_hint") }}</p>
+
+      <div data-delivery-webhook-field {{ 'hidden' if selected_delivery_channel != 'webhook' else '' }}>
+        <label for="webhook_url">{{ t(request, "notifications.rule.webhook_url_label") }}</label>
+        <input type="text" id="webhook_url" name="webhook_url" maxlength="2048"
+               placeholder="https://example.com/hooks/debcontrol" value="{{ selected_webhook_url or '' }}">
+        <p class="hint">{{ t(request, "notifications.rule.webhook_url_hint") }}</p>
+      </div>
 
       <label for="custom_template_id">{{ t(request, "notifications.rule.template_label") }}</label>
       <select id="custom_template_id" name="custom_template_id">
@@ -136,6 +154,14 @@
         {{ t(request, "notifications.rule.template_hint_before") }}
         <a href="/notifications/templates">{{ t(request, "notifications.templates_link") }}</a>{{ t(request, "notifications.rule.template_hint_after") }}
       </p>
+
+      {% if rule %}
+        <form method="post" action="/notifications/rules/{{ rule.id }}/test" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-secondary">{{ t(request, "notifications.rule.send_test") }}</button>
+        </form>
+        <p class="hint">{{ t(request, "notifications.rule.send_test_hint") }}</p>
+      {% endif %}
     </div>
 
     <div class="panel">

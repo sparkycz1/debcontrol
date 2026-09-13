@@ -91,8 +91,16 @@
    have no natural ceiling). `unit` is a display-only suffix the hover
    tooltip appends after each formatted number (e.g. " B/s"); pass
    `bytes_rate=True` instead for throughput series, so the JS formats them
-   as KB/s-MB/s rather than a raw byte count. #}
-{% macro trend_chart(series, timestamps, width=560, height=140, pad=14, fixed_max=none, unit='', bytes_rate=False) %}
+   as KB/s-MB/s rather than a raw byte count. `threshold` (a plain number
+   in the chart's own Y units — e.g. a percent for a `fixed_max=100`
+   chart) draws a dashed reference line with `threshold_label` next to it
+   (falls back to `"{threshold}{unit}"`) — used by machines/monitoring.html
+   to show a configured condition-based notification's own trigger level
+   (`app.services.notifications.condition_thresholds_for_machine`)
+   directly on the chart it's about, rather than only as a number on the
+   Notifications page. Silently omitted if it falls outside the chart's
+   own `[vmin, vmax]` range. #}
+{% macro trend_chart(series, timestamps, width=560, height=140, pad=14, fixed_max=none, unit='', bytes_rate=False, threshold=none, threshold_label=none) %}
   {% set n = timestamps | length %}
   {% set step = ((width - 2 * pad) / (n - 1)) if n > 1 else 0 %}
   {% if fixed_max is not none %}
@@ -139,6 +147,12 @@
                     points="{{ segment }}"></polyline>
         {% endfor %}
       {% endfor %}
+      {% if threshold is not none and threshold >= vmin and threshold <= vmax %}
+        {% set ty = (height - pad - ((threshold - vmin) / vrange) * (height - 2 * pad)) | round(1) %}
+        <line class="trend-chart-threshold" x1="{{ pad }}" y1="{{ ty }}" x2="{{ width - pad }}" y2="{{ ty }}"></line>
+        <text class="trend-chart-threshold-label" x="{{ width - pad }}" y="{{ (ty - 4) | round(1) }}"
+              text-anchor="end">{{ threshold_label or (threshold ~ unit) }}</text>
+      {% endif %}
       <line class="trend-chart-cursor" x1="0" y1="0" x2="0" y2="{{ height }}" hidden></line>
     </svg>
     <div class="trend-chart-tooltip" hidden></div>

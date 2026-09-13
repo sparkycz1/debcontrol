@@ -22,12 +22,16 @@ machine at all (none currently exist, but the model doesn't assume one
 always will) matches every scope, since there's nothing to check it
 against.
 
-**Delivery** is email only, for now, through the SMTP relay configured in
-Settings → Integrations (`AppSettings.smtp_*`) — see
-`app.services.notifications.send_notification_email`. A rule with no
-matching recipients, or an SMTP relay that isn't enabled, is a silent
-no-op rather than an error: notification delivery must never be able to
-break whatever background job the triggering event happened during.
+**Delivery** is email (through the SMTP relay configured in Settings →
+Integrations, `AppSettings.smtp_*`) or a webhook (`webhook_url`, plain
+JSON POST) — one or the other per rule, `delivery_channel` says which.
+For email, a rule with no matching recipients, or an SMTP relay that
+isn't enabled, is a silent no-op; a webhook rule with SMTP disabled still
+fires (the two channels don't depend on each other). Either way, a
+delivery attempt is never able to break whatever background job the
+triggering event happened during — see `app.services.notifications.notify`
+— and every attempt (success or failure) is recorded in
+`app.db.models.notification_log.NotificationLog` for troubleshooting.
 """
 
 from __future__ import annotations
@@ -173,6 +177,15 @@ class NotificationRule(Base):
         ForeignKey("notification_custom_templates.id", ondelete="SET NULL"), nullable=True
     )
     custom_template: Mapped[NotificationCustomTemplate | None] = relationship(lazy="selectin")
+
+    # "email" (default) or "webhook" — see the module docstring's Delivery
+    # section. Plain string, not a native DB enum, same "small code-defined
+    # set" reasoning as `event_types` above: adding a third channel later
+    # needs no migration to widen a DB-level enum type.
+    delivery_channel: Mapped[str] = mapped_column(String(16), default="email", nullable=False)
+    # Required (validated in app/web/routes/notifications.py) when
+    # delivery_channel is "webhook"; unused/ignored for "email".
+    webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
     @property
     def event_type_enums(self) -> list[NotificationEventType]:

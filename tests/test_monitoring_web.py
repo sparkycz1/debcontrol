@@ -114,6 +114,35 @@ async def test_monitoring_tab_renders_graphs_once_samples_exist(client, db_sessi
     assert "sda" in response.text
 
 
+async def test_monitoring_tab_shows_condition_threshold_line(client, db_session_factory):
+    from app.db.models.notification_condition import NotificationCondition
+    from app.db.models.notification_rule import NotificationEventType, NotificationRule
+
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="thresholded")
+    await _pin_host_key(db_session_factory, machine_id)
+    await _add_monitoring_sample(db_session_factory, machine_id)
+
+    async with db_session_factory() as db:
+        rule = NotificationRule(
+            name="cpu alert",
+            enabled=True,
+            event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
+            conditions=[
+                NotificationCondition(field="monitoring.cpu_percent", operator="gt", value="90")
+            ],
+        )
+        db.add(rule)
+        await db.commit()
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "trend-chart-threshold" in response.text
+    assert "90" in response.text
+
+
 async def test_monitoring_tab_time_range_selector_accepts_a_bad_value(
     client, db_session_factory
 ):

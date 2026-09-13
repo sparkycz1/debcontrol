@@ -65,7 +65,10 @@
         <h2>{{ t(request, "monitoring.cpu.heading") }}</h2>
         {% if history.cpu_percent %}
           <h3>{{ t(request, "monitoring.cpu.utilization") }}</h3>
-          {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_percent}], history.bucket_timestamps, fixed_max=100, unit='%') }}
+          {% set cpu_threshold = condition_thresholds.get('monitoring.cpu_percent') %}
+          {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_percent}], history.bucket_timestamps, fixed_max=100, unit='%',
+             threshold=cpu_threshold,
+             threshold_label=(t(request, "monitoring.threshold_percent", value=(cpu_threshold | round(0) | int)) if cpu_threshold is not none else none)) }}
           <p class="hint">
             {{ t(request, "monitoring.current_percent", value=('%.1f' % history.latest_cpu_percent if history.latest_cpu_percent is not none else '—')) }}
           </p>
@@ -92,7 +95,17 @@
       <section class="panel">
         <h2>{{ t(request, "monitoring.memory.heading") }}</h2>
         {% if history.ram_percent %}
-          {{ trend_chart([{'label': 'RAM', 'color': palette[0], 'points': history.ram_percent}], history.bucket_timestamps, fixed_max=100, unit='%') }}
+          {% set ram_threshold = condition_thresholds.get('monitoring.ram_percent') %}
+          {% set ram_threshold_label = none %}
+          {% if ram_threshold is not none %}
+            {% if history.latest_ram_total_bytes %}
+              {% set ram_threshold_label = t(request, "monitoring.threshold_percent_gb", value=(ram_threshold | round(0) | int), gb=('%.1f' % (ram_threshold / 100 * history.latest_ram_total_bytes / 1073741824))) %}
+            {% else %}
+              {% set ram_threshold_label = t(request, "monitoring.threshold_percent", value=(ram_threshold | round(0) | int)) %}
+            {% endif %}
+          {% endif %}
+          {{ trend_chart([{'label': 'RAM', 'color': palette[0], 'points': history.ram_percent}], history.bucket_timestamps, fixed_max=100, unit='%',
+             threshold=ram_threshold, threshold_label=ram_threshold_label) }}
           <p class="hint">
             {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
               {{ t(request, "monitoring.memory.current", used=('%.1f GB' % (history.latest_ram_used_bytes / 1073741824)), available=('%.1f GB' % ((history.latest_ram_total_bytes - history.latest_ram_used_bytes) / 1073741824)), total=('%.1f GB' % (history.latest_ram_total_bytes / 1073741824)), percent=('%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100))) }}
@@ -150,7 +163,10 @@
           {% for mount, series in history.filesystem_usage_by_mount.items() %}
             {% set current = history.latest_filesystems.get(mount) %}
             <h4><code>{{ mount }}</code></h4>
-            {{ trend_chart([{'label': mount, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, fixed_max=100, unit='%') }}
+            {% set mount_threshold = condition_thresholds.get('monitoring.filesystem_use_percent:' ~ mount) %}
+            {{ trend_chart([{'label': mount, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, fixed_max=100, unit='%',
+               threshold=mount_threshold,
+               threshold_label=(t(request, "monitoring.threshold_percent", value=(mount_threshold | round(0) | int)) if mount_threshold is not none else none)) }}
             <p class="hint">
               {% if current %}
                 {{ t(request, "monitoring.disk.usage_current", used=('%.1f GB' % (current.used_bytes / 1073741824)), size=('%.1f GB' % (current.size_bytes / 1073741824))) }}

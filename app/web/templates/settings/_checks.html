@@ -97,6 +97,20 @@
         <button type="submit" class="button">{{ t(request, "settings.checks.save_background_checks") }}</button>
       </form>
     </div>
+
+    <div class="panel">
+      <h3>{{ t(request, "settings.checks.notification_log_history") }}</h3>
+      <p class="hint">{{ t(request, "settings.checks.notification_log_hint") }}</p>
+      <form method="post" action="/settings/notification-log-retention" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="notification_log_retention_days">{{ t(request, "settings.checks.keep_notification_log_days") }}</label>
+        <input type="number" id="notification_log_retention_days" name="retention_days" min="0" step="1"
+               placeholder="{{ t(request, 'settings.checks.forever') }}"
+               value="{{ app_settings.notification_log_retention_days if app_settings.notification_log_retention_days is not none else '' }}">
+        <p class="hint">{{ t(request, "settings.checks.keep_notification_log_hint") }}</p>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    </div>
   </section>
 
   <section class="panel-group">

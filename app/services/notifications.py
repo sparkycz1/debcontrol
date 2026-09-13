@@ -1,17 +1,22 @@
-"""Notification dispatch and email delivery — the "when X happens, tell
-these people" pipeline behind Notifications (`app/web/routes/notifications.py`,
-`app.db.models.notification_rule`). See that model module's docstring for
-what a rule/template actually holds; this module is the one place that
-reads them and turns a matching event into a sent email.
+"""Notification dispatch and delivery (email or webhook) — the "when X
+happens, tell someone" pipeline behind Notifications
+(`app/web/routes/notifications.py`, `app.db.models.notification_rule`).
+See that model module's docstring for what a rule/template actually
+holds; this module is the one place that reads them and turns a matching
+event into an actual send.
 
 Call `notify(db, event_type, machine=..., context=...)` right after the
 triggering fact is committed. Every failure here — no SMTP configured, no
 matching rule, no recipient with an email set, the SMTP server itself
-refusing the connection — is caught and logged, never raised: a
-notification that fails to send must never break the background job that
-triggered it, the same "best-effort, never load-bearing" spirit
-`app.audit_syslog.forward_to_syslog` already has for the audit log's own
-external mirror.
+refusing the connection, a webhook URL that times out — is caught and
+logged, never raised: a notification that fails to send must never break
+the background job that triggered it, the same "best-effort, never
+load-bearing" spirit `app.audit_syslog.forward_to_syslog` already has for
+the audit log's own external mirror. Every attempt (success or failure)
+is additionally recorded to `NotificationLog`
+(`app.db.models.notification_log`) for the Notifications → History page —
+`send_test_notification` (the "Send test" button on a rule's edit page)
+writes there too, flagged `is_test=True`.
 
 Current call sites (see `NotificationEventType`'s own docstring for how to
 add another):
@@ -35,8 +40,10 @@ import logging
 import smtplib
 from datetime import UTC, datetime
 from email.message import EmailMessage
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Protocol
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,8 +51,13 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.security import decrypt_secret
 from app.db.models.app_settings import AppSettings, SmtpEncryption
 from app.db.models.machine import Machine
+from app.db.models.notification_condition import NotificationCondition
+from app.db.models.notification_log import (
+    NotificationDeliveryChannel,
+    NotificationDeliveryStatus,
+    NotificationLog,
+)
 from app.db.models.notification_rule import (
-    NotificationCustomTemplate,
     NotificationEventType,
     NotificationRule,
     NotificationTemplate,
@@ -163,9 +175,20 @@ def default_template(
     return _DEFAULT_TEMPLATES.get(locale, _DEFAULT_TEMPLATES[DEFAULT_LOCALE_CODE])[event_type]
 
 
+class _TemplateLike(Protocol):
+    """Structural type for `render_template`'s `template` argument — a
+    `NotificationTemplate`, a `NotificationCustomTemplate`, or (only from
+    `send_test_notification` below, for a rule with no custom template of
+    its own) a throwaway `SimpleNamespace(subject=..., body=...)` all
+    satisfy this without needing a real shared base class."""
+
+    subject: str
+    body: str
+
+
 def render_template(
     event_type: NotificationEventType,
-    template: NotificationTemplate | NotificationCustomTemplate | None,
+    template: _TemplateLike | None,
     context: dict[str, Any],
     *,
     locale: str = DEFAULT_LOCALE_CODE,
@@ -192,6 +215,45 @@ def render_template(
         subject_tpl, body_tpl = default_template(event_type, locale)
     safe_context = _SafeDict({k: "" if v is None else str(v) for k, v in context.items()})
     return subject_tpl.format_map(safe_context), body_tpl.format_map(safe_context)
+
+
+async def condition_thresholds_for_machine(
+    db: AsyncSession, machine: Machine
+) -> dict[str, float]:
+    """The lowest `gt`/`gte` numeric condition threshold configured for
+    `machine`, keyed by `NotificationCondition.field` (a mount-scoped
+    field — `monitoring.filesystem_use_percent` — as `"field:mount"`) —
+    used to draw a reference line on that machine's Monitoring tab charts
+    (`app/web/routes/machines.py`, `macros/charts.html`'s `trend_chart`).
+    Only "notify when *above* this" operators make sense as a chart
+    ceiling line; `lt`/`lte`/`eq`/etc. conditions are skipped, not an
+    error — a chart threshold line is a nice-to-have visual aid, not a
+    complete rendering of every condition. Best-effort: an unparseable
+    `value` is skipped the same way."""
+    result = await db.execute(
+        select(NotificationCondition, NotificationRule)
+        .join(NotificationRule, NotificationCondition.rule_id == NotificationRule.id)
+        .where(
+            NotificationRule.enabled.is_(True),
+            NotificationCondition.operator.in_(["gt", "gte"]),
+        )
+    )
+    thresholds: dict[str, float] = {}
+    for condition, rule in result.all():
+        if not _rule_matches_scope(rule, machine):
+            continue
+        try:
+            value = float(condition.value)
+        except ValueError:
+            continue
+        key = (
+            f"{condition.field}:{condition.mount_point}"
+            if condition.mount_point
+            else condition.field
+        )
+        if key not in thresholds or value < thresholds[key]:
+            thresholds[key] = value
+    return thresholds
 
 
 def _rule_matches_scope(rule: NotificationRule, machine: Machine | None) -> bool:
@@ -280,6 +342,68 @@ def _send_smtp_message(
         client.send_message(message)
 
 
+async def _send_webhook(
+    url: str,
+    event_type: str,
+    rule_name: str,
+    subject: str,
+    body: str,
+    context: dict[str, Any],
+) -> tuple[NotificationDeliveryStatus, str | None]:
+    """POST one JSON payload to a rule's `webhook_url`. No signature or
+    bearer-auth scheme of its own — a URL with an embedded token/path
+    secret (a common convention for webhook receivers — Slack incoming
+    webhooks, Discord, a private endpoint) covers that; `url` is
+    admin-authored config requiring `Permission.NOTIFICATION_MANAGE`, the
+    same trust level `AppSettings`' other outbound integrations (SMTP
+    relay, syslog forwarding) already have, not untrusted input — see
+    wiki/Notifications.md. Returns `(status, error)` rather than raising;
+    the caller logs and never lets a bad webhook break the triggering
+    job."""
+    payload = {
+        "event": event_type,
+        "rule_name": rule_name,
+        "subject": subject,
+        "body": body,
+        "machine_name": context.get("machine_name"),
+        "machine_ip": context.get("machine_ip"),
+        "timestamp": context.get("timestamp"),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(url, json=payload)
+        if response.status_code >= 400:
+            return NotificationDeliveryStatus.FAILED, f"HTTP {response.status_code}"
+        return NotificationDeliveryStatus.SENT, None
+    except Exception as exc:  # noqa: BLE001 - logged as a delivery failure, never raised
+        return NotificationDeliveryStatus.FAILED, str(exc)[:2000]
+
+
+def _delivery_log(
+    *,
+    rule: NotificationRule | None,
+    rule_name: str,
+    event_type: str,
+    channel: NotificationDeliveryChannel,
+    target: str,
+    machine: Machine | None,
+    status: NotificationDeliveryStatus,
+    error: str | None,
+    is_test: bool = False,
+) -> NotificationLog:
+    return NotificationLog(
+        rule_id=rule.id if rule else None,
+        rule_name=rule_name,
+        event_type=event_type,
+        channel=channel.value,
+        target=target,
+        machine_name=machine.name if machine else None,
+        status=status.value,
+        error=error,
+        is_test=is_test,
+    )
+
+
 async def notify(
     db: AsyncSession,
     event_type: NotificationEventType,
@@ -288,11 +412,13 @@ async def notify(
     context: dict[str, Any] | None = None,
 ) -> None:
     """Fire `event_type` — find every enabled rule that lists it and whose
-    scope includes `machine` (or has no scope at all), resolve each rule's
-    own recipients, and email each one using that rule's own template. A
-    complete no-op when SMTP isn't enabled, no rule matches, or no
-    recipient has an email address — see the module docstring for why this
-    never raises.
+    scope includes `machine` (or has no scope at all), and deliver
+    through each matching rule's own channel: email to its own resolved
+    recipients, or one webhook POST if it's set to that instead. A
+    complete no-op when nothing matches; every failure along the way — no
+    SMTP configured, no recipient has an email address, the SMTP server or
+    the webhook endpoint refuses the connection — is caught, logged to
+    `NotificationLog`, and never raised (see the module docstring).
 
     Rendered per *rule*, not once for the deduplicated recipient set across
     every matching rule — a rule can select its own `custom_template`
@@ -302,8 +428,6 @@ async def notify(
     the shared per-event default/override exactly as before."""
     try:
         app_settings = await get_or_create_app_settings(db)
-        if not app_settings.smtp_enabled or not app_settings.smtp_host:
-            return
         rules = await _matching_rules(db, event_type, machine)
         if not rules:
             return
@@ -323,11 +447,40 @@ async def notify(
             full_context.setdefault("machine_name", machine.name)
             full_context.setdefault("machine_ip", machine.ip_address)
 
+        logs: list[NotificationLog] = []
         for rule in rules:
+            rule_template = rule.custom_template if rule.custom_template_id else default_template
+
+            if rule.delivery_channel == NotificationDeliveryChannel.WEBHOOK.value:
+                if not rule.webhook_url:
+                    continue
+                subject, body = render_template(event_type, rule_template, full_context)
+                status, error = await _send_webhook(
+                    rule.webhook_url, event_type.value, rule.name, subject, body, full_context
+                )
+                if status is NotificationDeliveryStatus.FAILED:
+                    logger.warning(
+                        "Webhook delivery failed for rule=%s: %s", rule.name, error
+                    )
+                logs.append(
+                    _delivery_log(
+                        rule=rule,
+                        rule_name=rule.name,
+                        event_type=event_type.value,
+                        channel=NotificationDeliveryChannel.WEBHOOK,
+                        target=rule.webhook_url,
+                        machine=machine,
+                        status=status,
+                        error=error,
+                    )
+                )
+                continue
+
+            if not app_settings.smtp_enabled or not app_settings.smtp_host:
+                continue
             recipients = await _recipients(db, [rule])
             if not recipients:
                 continue
-            rule_template = rule.custom_template if rule.custom_template_id else default_template
 
             # Rendered once per recipient, in *their* own UI language
             # (`User.locale`, same field the rest of the app already uses
@@ -346,11 +499,149 @@ async def notify(
                     await asyncio.to_thread(
                         _send_smtp_message, app_settings, user.email, subject, body
                     )
-                except Exception:
+                except Exception as exc:
                     logger.warning(
                         "Failed to send notification email to %s", user.email, exc_info=True
                     )
+                    logs.append(
+                        _delivery_log(
+                            rule=rule,
+                            rule_name=rule.name,
+                            event_type=event_type.value,
+                            channel=NotificationDeliveryChannel.EMAIL,
+                            target=user.email,
+                            machine=machine,
+                            status=NotificationDeliveryStatus.FAILED,
+                            error=str(exc)[:2000],
+                        )
+                    )
+                else:
+                    logs.append(
+                        _delivery_log(
+                            rule=rule,
+                            rule_name=rule.name,
+                            event_type=event_type.value,
+                            channel=NotificationDeliveryChannel.EMAIL,
+                            target=user.email,
+                            machine=machine,
+                            status=NotificationDeliveryStatus.SENT,
+                            error=None,
+                        )
+                    )
+        if logs:
+            db.add_all(logs)
+            await db.commit()
     except Exception:
         logger.warning(
             "Notification dispatch failed for event=%s", event_type.value, exc_info=True
         )
+
+
+_TEST_MESSAGE = {
+    "en": (
+        "[TEST] debcontrol notification test",
+        'This is a test of rule "{rule_name}" — if you received this, delivery is working.',
+    ),
+    "cs": (
+        "[TEST] Testovací notifikace debcontrol",
+        'Toto je test pravidla "{rule_name}" — pokud jste ji obdrželi, doručování funguje.',
+    ),
+}
+
+
+async def send_test_notification(
+    db: AsyncSession,
+    rule: NotificationRule,
+    *,
+    to_email: str | None,
+    locale: str = DEFAULT_LOCALE_CODE,
+) -> tuple[bool, str | None]:
+    """Send one synthetic test notification through `rule`'s own configured
+    channel/template — the "Send test" button on its edit page
+    (`app/web/routes/notifications.py`). Ignores the rule's real
+    recipients/scope entirely: for email, goes only to `to_email` (the
+    admin clicking the button, never the rule's actual audience, so
+    testing never spams real recipients); for webhook, POSTs to the
+    rule's own `webhook_url`, same as a real event would. Returns
+    `(ok, error)` so the route can show an inline result instead of a
+    generic "check the history page" — logged to `NotificationLog` either
+    way (`is_test=True`), so a test send shows up in the delivery history
+    but is clearly marked apart from real ones."""
+    subject_tpl, body_tpl = _TEST_MESSAGE.get(locale, _TEST_MESSAGE[DEFAULT_LOCALE_CODE])
+    context = {
+        "event": "test",
+        "timestamp": datetime.now(UTC).isoformat(),
+        "details": "",
+        "machine_name": "test-machine",
+        "machine_ip": "203.0.113.10",
+        "rule_name": rule.name,
+    }
+    template = (
+        rule.custom_template
+        if rule.custom_template_id
+        else SimpleNamespace(subject=subject_tpl, body=body_tpl)
+    )
+    subject, body = render_template(NotificationEventType.MACHINE_UNREACHABLE, template, context)
+    if not rule.custom_template_id:
+        subject = f"[TEST] {subject}" if not subject.startswith("[TEST]") else subject
+
+    if rule.delivery_channel == NotificationDeliveryChannel.WEBHOOK.value:
+        if not rule.webhook_url:
+            return False, "No webhook URL configured on this rule."
+        status, error = await _send_webhook(
+            rule.webhook_url, "test", rule.name, subject, body, context
+        )
+        db.add(
+            _delivery_log(
+                rule=rule,
+                rule_name=rule.name,
+                event_type="test",
+                channel=NotificationDeliveryChannel.WEBHOOK,
+                target=rule.webhook_url,
+                machine=None,
+                status=status,
+                error=error,
+                is_test=True,
+            )
+        )
+        await db.commit()
+        return status is NotificationDeliveryStatus.SENT, error
+
+    if not to_email:
+        return False, "Your account has no email address set."
+    app_settings = await get_or_create_app_settings(db)
+    if not app_settings.smtp_enabled or not app_settings.smtp_host:
+        return False, "SMTP isn't configured/enabled in Settings."
+    try:
+        await asyncio.to_thread(_send_smtp_message, app_settings, to_email, subject, body)
+    except Exception as exc:
+        db.add(
+            _delivery_log(
+                rule=rule,
+                rule_name=rule.name,
+                event_type="test",
+                channel=NotificationDeliveryChannel.EMAIL,
+                target=to_email,
+                machine=None,
+                status=NotificationDeliveryStatus.FAILED,
+                error=str(exc)[:2000],
+                is_test=True,
+            )
+        )
+        await db.commit()
+        return False, str(exc)
+    db.add(
+        _delivery_log(
+            rule=rule,
+            rule_name=rule.name,
+            event_type="test",
+            channel=NotificationDeliveryChannel.EMAIL,
+            target=to_email,
+            machine=None,
+            status=NotificationDeliveryStatus.SENT,
+            error=None,
+            is_test=True,
+        )
+    )
+    await db.commit()
+    return True, None

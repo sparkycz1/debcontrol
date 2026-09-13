@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import encrypt_secret
 from app.db.models.app_settings import AppSettings, SmtpEncryption
 from app.db.models.machine import AuthMethod, Machine
+from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import (
     NotificationCustomTemplate,
     NotificationEventType,
@@ -282,6 +283,134 @@ async def test_notify_uses_rules_own_custom_template(db_session_factory, monkeyp
     subject, body = sent[0]
     assert subject == "Custom subject for web9"
     assert body == "Custom body"
+
+
+async def test_notify_webhook_channel_posts_and_logs(db_session_factory, monkeypatch):
+    posted: list[tuple[str, dict[str, str]]] = []
+
+    import app.services.notifications as notifications_module
+    from app.db.models.notification_log import NotificationDeliveryStatus
+
+    async def _fake_post(url, event_type, rule_name, subject, body, context):  # noqa: ANN001
+        posted.append((url, {"event": event_type, "rule_name": rule_name}))
+        return NotificationDeliveryStatus.SENT, None
+
+    monkeypatch.setattr(notifications_module, "_send_webhook", _fake_post)
+
+    async with db_session_factory() as db:
+        # A webhook rule fires regardless of SMTP — no _smtp_ready_settings() here.
+        machine = Machine(
+            name="web10",
+            ip_address="10.0.0.21",
+            port=22,
+            username="root",
+            auth_method=AuthMethod.PASSWORD,
+        )
+        db.add(machine)
+        await db.flush()
+
+        rule = NotificationRule(
+            name="webhook rule",
+            enabled=True,
+            event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
+            delivery_channel="webhook",
+            webhook_url="https://hooks.example.com/abc",
+        )
+        db.add(rule)
+        await db.commit()
+
+        await notify(db, NotificationEventType.MACHINE_UNREACHABLE, machine=machine)
+
+    assert len(posted) == 1
+    assert posted[0][0] == "https://hooks.example.com/abc"
+    assert posted[0][1]["rule_name"] == "webhook rule"
+
+    async with db_session_factory() as db:
+        log = (await db.execute(select(NotificationLog))).scalar_one()
+        assert log.channel == "webhook"
+        assert log.target == "https://hooks.example.com/abc"
+        assert log.status == "sent"
+        assert log.is_test is False
+
+
+async def test_send_test_notification_email_logs_and_targets_caller_only(
+    db_session_factory, monkeypatch
+):
+    sent: list[str] = []
+
+    import app.services.notifications as notifications_module
+
+    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001
+        sent.append(to_address)
+
+    monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)
+
+    async with db_session_factory() as db:
+        db.add(_smtp_ready_settings())
+        role = await _make_role(db, "role-real-recipient")
+        real_recipient = User(
+            username="real", auth_provider="local", email="real@example.com", role=role
+        )
+        rule = NotificationRule(
+            name="tested rule",
+            enabled=True,
+            event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
+        )
+        rule.roles = [role]
+        db.add_all([real_recipient, rule])
+        await db.commit()
+        await db.refresh(rule)
+
+        ok, error = await notifications_module.send_test_notification(
+            db, rule, to_email="admin@example.com"
+        )
+
+    assert ok is True
+    assert error is None
+    # Only the admin clicking the button gets the test, never the rule's
+    # real recipients.
+    assert sent == ["admin@example.com"]
+
+    async with db_session_factory() as db:
+        log = (await db.execute(select(NotificationLog))).scalar_one()
+        assert log.is_test is True
+        assert log.target == "admin@example.com"
+        assert log.status == "sent"
+
+
+async def test_create_webhook_rule_requires_url(client):
+    await client.get("/notifications/rules/new")
+    csrf_token = client.cookies.get("csrftoken")
+
+    response = await client.post(
+        "/notifications/rules",
+        data={
+            "name": "bad webhook rule",
+            "event_types": [NotificationEventType.MACHINE_UNREACHABLE.value],
+            "delivery_channel": "webhook",
+            "csrf_token": csrf_token,
+        },
+    )
+    assert "webhook URL is required" in response.text
+
+
+async def test_notification_history_page_lists_entries(client, db_session_factory):
+    async with db_session_factory() as db:
+        db.add(
+            NotificationLog(
+                rule_name="history rule",
+                event_type="machine.unreachable",
+                channel="email",
+                target="someone@example.com",
+                status="sent",
+            )
+        )
+        await db.commit()
+
+    response = await client.get("/notifications/history")
+    assert response.status_code == 200
+    assert "history rule" in response.text
+    assert "someone@example.com" in response.text
 
 
 async def test_template_default_then_override_then_reset(client, db_session_factory):

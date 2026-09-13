@@ -17,6 +17,11 @@ from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.notification_condition import NotificationCondition, NotificationConditionState
+from app.db.models.notification_log import (
+    NotificationDeliveryChannel,
+    NotificationDeliveryStatus,
+    NotificationLog,
+)
 from app.db.models.notification_rule import (
     NotificationCustomTemplate,
     NotificationEventType,
@@ -65,6 +70,9 @@ __all__ = [
     "NotificationCondition",
     "NotificationConditionState",
     "NotificationCustomTemplate",
+    "NotificationDeliveryChannel",
+    "NotificationDeliveryStatus",
+    "NotificationLog",
     "NotificationEventType",
     "NotificationRule",
     "NotificationTemplate",
