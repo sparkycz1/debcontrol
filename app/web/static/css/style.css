@@ -1004,6 +1004,19 @@ p { margin: 0 0 var(--space-3); }
 
 .form button, .form .button { margin-top: var(--space-4); align-self: flex-start; }
 
+/* A collapsible "advanced" section inside a .form (e.g. a machine's own
+   interval overrides on machines/edit.html) — plain <details>/<summary>
+   would otherwise render with no border or spacing, out of place next to
+   the styled fields around it. */
+.form-advanced {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.form-advanced summary { cursor: pointer; font-weight: 500; }
+.form-advanced[open] summary { margin-bottom: var(--space-2); }
+
 /* --- Detail lists / panels --- */
 
 .detail-list {
@@ -1305,6 +1318,11 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   margin: var(--space-3) 0 0;
 }
 .chat-bubble-action:last-child { margin-bottom: 0; }
+
+/* The assistant's "still thinking" bubble (app/web/templates/partials/
+   ai_messages_panel.html) — dimmed slightly so it visually reads as
+   provisional next to already-finished messages above it. */
+.chat-bubble-pending { opacity: 0.85; }
 
 /* --- Dashboard: scheduled fleet summary (Settings -> AI tab) --- */
 .fleet-summary-content {
