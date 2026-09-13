@@ -1059,16 +1059,31 @@ async def import_rules(
 
 
 @router.get("/history")
-async def notification_history(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+async def notification_history(
+    request: Request, db: AsyncSession = Depends(get_db), rule_id: uuid.UUID | None = None
+) -> Response:
     """The last 200 `NotificationLog` rows, newest first — one row per
     actual send attempt (real or "Send test"), for troubleshooting "did
     that alert actually go out." See `AppSettings.notification_log_retention_days`
-    for how long these are kept (Settings → Checks & retention)."""
-    result = await db.execute(
-        select(NotificationLog).order_by(NotificationLog.sent_at.desc()).limit(200)
-    )
+    for how long these are kept (Settings → Checks & retention).
+
+    Optionally narrowed to one rule via `?rule_id=` (linked from that rule's
+    own edit page) — `NotificationLog.rule_id` carries an index specifically
+    for this filter, since without one this scan would only get slower as
+    delivery history accumulates."""
+    query = select(NotificationLog).order_by(NotificationLog.sent_at.desc()).limit(200)
+    rule_filter_name: str | None = None
+    if rule_id is not None:
+        query = query.where(NotificationLog.rule_id == rule_id)
+        rule = await db.get(NotificationRule, rule_id)
+        rule_filter_name = rule.name if rule is not None else str(rule_id)
+    result = await db.execute(query)
     logs = result.scalars().all()
-    return templates.TemplateResponse(request, "notifications/history.html", {"logs": logs})
+    return templates.TemplateResponse(
+        request,
+        "notifications/history.html",
+        {"logs": logs, "rule_filter_name": rule_filter_name},
+    )
 
 
 # --- Templates -----------------------------------------------------------

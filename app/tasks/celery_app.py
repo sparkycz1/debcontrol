@@ -298,6 +298,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.purge_old_monitoring_samples",
         "schedule": crontab(hour=3, minute=15),
     },
+    # Thins out (not purges — see the task's own docstring) monitoring
+    # samples old enough that a chart only ever renders them bucketed
+    # anyway. Runs shortly before the purge above so a sample newly past
+    # the retention window on the same night is deleted outright rather
+    # than downsampled first for no benefit.
+    "downsample-old-monitoring-samples": {
+        "task": "app.tasks.jobs.downsample_old_monitoring_samples",
+        "schedule": crontab(hour=3, minute=12),
+    },
     # Off by default (AppSettings.fleet_summary_frequency) — this tick is a
     # cheap no-op check unless an admin opted in. Runs once a day regardless
     # of whether the chosen frequency is "daily" or "weekly": the task

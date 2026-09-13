@@ -125,16 +125,33 @@ The worker's `NullPool` (fresh connection per task, see
 [Architecture](Architecture.md#fork-safety-the-db-engine-is-rebuilt-in-every-worker-child))
 bounds its contribution by tasks running at once, not fleet size directly.
 
-Raise `max_connections` via a `command:` override on `db`:
+Raise `max_connections` via a `command:` override on `db` (`docker-compose.yml`'s
+`db` service already sets `shared_buffers`/`effective_cache_size`/`work_mem`/
+`maintenance_work_mem`/the two `autovacuum_*_scale_factor`s from `.env`
+variables — `POSTGRES_SHARED_BUFFERS` etc., see `.env.example` — each
+defaulting to Postgres' own stock value, so add `max_connections` to that
+same list rather than a separate override):
 
-```yaml
-db:
-  command: ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=1GB"]
+```
+# .env
+POSTGRES_SHARED_BUFFERS=1GB
 ```
 
 (`shared_buffers` — standard Postgres guidance is roughly 25% of the
 container's available RAM; adjust to match whatever you actually give the
-`db` container.)
+`db` container. `max_connections` itself isn't one of the pre-wired knobs —
+add it with your own `command:` override on `db` if you need to raise it
+above Postgres' default 100.) Lowering the two `autovacuum_*_scale_factor`
+knobs (stock defaults 0.2/0.1) below their stock values makes autovacuum
+run more often on large, frequently-purged tables like
+`machine_monitoring_samples`/`notification_logs`/`audit_log_entries` —
+worth doing at fleet sizes where the daily retention purges delete a large
+fraction of those tables' rows each night, so dead tuples don't accumulate
+between autovacuum runs.
+
+Similarly, `worker`'s `--concurrency` (default 10, see point 2 above) is
+set from `CELERY_WORKER_CONCURRENCY` in `.env` — raise it there instead of
+editing `docker-compose.yml` directly.
 
 ## 💾 Disk growth
 
@@ -161,6 +178,17 @@ roles, groups, scheduled tasks, machine rows) stays small regardless.
   10,000 machines, 90 GB at 90-day default retention. Shorten *retention*
   first (not the sample interval, which trades off trend-graph
   granularity); `machine_services` (a replaced snapshot) stays small.
+  A second, cheaper lever before reaching for either: **downsampling**
+  (`Settings → Checks & retention → Monitoring`,
+  `AppSettings.monitoring_downsample_after_days`/`_interval_minutes`,
+  default 7 days / 60-minute buckets,
+  `app.tasks.jobs.downsample_old_monitoring_samples`) thins samples older
+  than a few days down to one per bucket instead of deleting them outright
+  — a chart already buckets old data for display (`app.services.
+  monitoring_history._bucket_average`), so full-resolution rows from weeks
+  ago cost storage for detail nothing renders. Shrinks the table without
+  shortening retention or losing trend shape; tighten retention on top of
+  that if storage is still tight.
 
 The audit log is hash-chained and append-only (tampering breaks the
 chain from that point — see

@@ -22,7 +22,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.scheduling.targets import task_within_scope
 from app.services.access_scope import allowed_group_ids, count_visible_groups
-from app.services.fleet_stats import compute_fleet_stats
+from app.services.dashboard_cache import cached_fleet_stats
 from app.web.templating import templates
 
 router = APIRouter()
@@ -43,7 +43,8 @@ async def show_dashboard(
     scope = await allowed_group_ids(db, user)
 
     if user.has_permission(Permission.MACHINE_VIEW):
-        stats = await compute_fleet_stats(db, scope)
+        redis = getattr(request.app.state, "redis", None)
+        stats = await cached_fleet_stats(db, redis, scope)
         pending_count = (
             await db.execute(select(func.count()).select_from(PendingMachine))
         ).scalar_one()

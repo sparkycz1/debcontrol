@@ -102,19 +102,28 @@ def celery_calls(monkeypatch: pytest.MonkeyPatch) -> RecordedCeleryCalls:
 
 class FakeRedis:
     """Stand-in for `app.state.redis` — the plain Redis connection
-    `app.main`'s lifespan opens for the login rate limiter (and nothing
-    else). Minimal INCR/EXPIRE only, with no real TTL behaviour (counters
-    never expire within a test), which is fine since each test gets its own
+    `app.main`'s lifespan opens for the login rate limiter and the
+    Dashboard's short-TTL fleet-stats cache (`app.services.dashboard_cache`).
+    Minimal INCR/EXPIRE/GET/SET only, with no real TTL behaviour (nothing
+    ever expires within a test), which is fine since each test gets its own
     fresh instance anyway."""
 
     def __init__(self) -> None:
         self._counters: dict[str, int] = {}
+        self._values: dict[str, str] = {}
 
     async def incr(self, key: str) -> int:
         self._counters[key] = self._counters.get(key, 0) + 1
         return self._counters[key]
 
     async def expire(self, key: str, seconds: int) -> bool:
+        return True
+
+    async def get(self, key: str) -> str | None:
+        return self._values.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        self._values[key] = value
         return True
 
 

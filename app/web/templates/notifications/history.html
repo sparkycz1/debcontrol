@@ -9,6 +9,13 @@
   </div>
   <p class="hint">{{ t(request, "notifications.history.hint") }}</p>
 
+  {% if rule_filter_name %}
+    <p class="hint">
+      {{ t(request, "notifications.history.filtered_to_rule", rule_name=rule_filter_name) }}
+      <a href="/notifications/history">{{ t(request, "notifications.history.clear_filter") }}</a>
+    </p>
+  {% endif %}
+
   {% if logs %}
     <table class="data-table">
       <thead>

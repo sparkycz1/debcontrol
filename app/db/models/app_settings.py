@@ -204,6 +204,24 @@ class AppSettings(Base):
         Integer, nullable=True, default=90
     )
 
+    # Thins out `MachineMonitoringSample` rows older than this many days,
+    # keeping only the first sample in each `monitoring_downsample_interval_
+    # minutes`-wide bucket per machine and deleting the rest — see
+    # `app.tasks.jobs.downsample_old_monitoring_samples`. A chart's own
+    # display-side bucketing already coarsens old data down to a handful of
+    # points before it's ever drawn (`app.services.monitoring_history.
+    # _bucket_average`), so keeping every raw sample from months ago costs
+    # storage for resolution nothing renders. NULL disables downsampling
+    # entirely (every sample kept at full resolution until the retention
+    # purge above deletes it outright); default keeps a week at full
+    # resolution before thinning starts.
+    monitoring_downsample_after_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=7
+    )
+    monitoring_downsample_interval_minutes: Mapped[int] = mapped_column(
+        Integer, default=60, nullable=False
+    )
+
     # How often (seconds) condition-based notification rules (CPU/RAM/
     # disk/etc. thresholds — see app.db.models.notification_condition and
     # app.services.notifications) are re-evaluated against the fleet's

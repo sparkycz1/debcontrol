@@ -47,7 +47,7 @@ class NotificationLog(Base):
     # should stay readable ("what did this rule used to send") rather than
     # vanish or block the delete, so the FK is SET NULL rather than CASCADE.
     rule_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("notification_rules.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("notification_rules.id", ondelete="SET NULL"), nullable=True, index=True
     )
     rule_name: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)

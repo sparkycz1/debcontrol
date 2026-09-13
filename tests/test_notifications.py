@@ -413,6 +413,47 @@ async def test_notification_history_page_lists_entries(client, db_session_factor
     assert "someone@example.com" in response.text
 
 
+async def test_notification_history_can_be_filtered_to_one_rule(client, db_session_factory):
+    async with db_session_factory() as db:
+        rule = NotificationRule(
+            name="rule A",
+            enabled=True,
+            event_types=[NotificationEventType.MACHINE_UNREACHABLE.value],
+        )
+        db.add(rule)
+        await db.flush()
+        db.add(
+            NotificationLog(
+                rule_id=rule.id,
+                rule_name="rule A",
+                event_type="machine.unreachable",
+                channel="email",
+                target="a@example.com",
+                status="sent",
+            )
+        )
+        db.add(
+            NotificationLog(
+                rule_name="rule B",
+                event_type="machine.unreachable",
+                channel="email",
+                target="b@example.com",
+                status="sent",
+            )
+        )
+        await db.commit()
+        rule_id = rule.id
+
+    unfiltered = await client.get("/notifications/history")
+    assert "rule A" in unfiltered.text
+    assert "rule B" in unfiltered.text
+
+    filtered = await client.get(f"/notifications/history?rule_id={rule_id}")
+    assert filtered.status_code == 200
+    assert "rule A" in filtered.text
+    assert "rule B" not in filtered.text
+
+
 async def test_template_default_then_override_then_reset(client, db_session_factory):
     response = await client.get("/notifications/templates")
     assert response.status_code == 200

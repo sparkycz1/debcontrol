@@ -371,9 +371,12 @@ target (recipient email or webhook URL), status (`sent`/`failed`, with the
 error for a failure), and whether it was a test. `/notifications/history`
 lists the last 200, newest first — for "did that alert actually go out"
 troubleshooting that the audit log (which only records rule
-create/edit/delete, not individual sends) doesn't cover. Purged on its own
-schedule (`AppSettings.notification_log_retention_days`, Settings → Checks
-& retention → Notifications, default 90 days — `app.tasks.jobs.
+create/edit/delete, not individual sends) doesn't cover. Add `?rule_id=`
+(a "View delivery history for this rule" link on that rule's own edit page)
+to narrow it to one rule's attempts — `NotificationLog.rule_id` carries its
+own index specifically for this filter. Purged on its own schedule
+(`AppSettings.notification_log_retention_days`, Settings → Checks &
+retention → Notifications, default 90 days — `app.tasks.jobs.
 purge_old_notification_logs`).
 
 **"Send test"** on a rule's edit page (`app.services.notifications.

@@ -435,6 +435,50 @@ async def update_monitoring_retention(
     return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/monitoring-downsampling", dependencies=[_manage, Depends(verify_csrf)])
+async def update_monitoring_downsampling(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    after_days: str = Form(""),
+    interval_minutes: str = Form(""),
+) -> Response:
+    """`AppSettings.monitoring_downsample_after_days`/`_interval_minutes` —
+    see `app.tasks.jobs.downsample_old_monitoring_samples`'s own docstring
+    for what this actually does (thin, not purge). `after_days` follows the
+    same "empty = disabled" shape as the retention fields above;
+    `interval_minutes` is a bounded interval like the background-check
+    fields, not a retention window."""
+    app_settings = await get_or_create_app_settings(db)
+    new_after_days, error = _parse_retention_days(after_days)
+    if error:
+        return await _render_settings(request, db, [error], tab="checks")
+
+    new_interval, interval_error = _parse_bounded_int(
+        interval_minutes, label="Downsample bucket interval", minimum=1, maximum=1440
+    )
+    if interval_error:
+        return await _render_settings(request, db, [interval_error], tab="checks")
+    assert new_interval is not None
+
+    app_settings.monitoring_downsample_after_days = new_after_days
+    app_settings.monitoring_downsample_interval_minutes = new_interval
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.monitoring_downsampling.update",
+        summary=(
+            f"Set monitoring downsampling to start after {new_after_days} day(s), "
+            f"{new_interval}-minute buckets"
+            if new_after_days is not None
+            else "Disabled monitoring downsampling"
+        ),
+    )
+
+    return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/audit-verify", dependencies=[_manage, Depends(verify_csrf)])
 async def verify_audit_chain(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
     """Recompute the audit log's hash chain on demand — see

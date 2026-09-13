@@ -161,6 +161,7 @@
           <button type="submit" class="button button-secondary">{{ t(request, "notifications.rule.send_test") }}</button>
         </form>
         <p class="hint">{{ t(request, "notifications.rule.send_test_hint") }}</p>
+        <p class="hint"><a href="/notifications/history?rule_id={{ rule.id }}">{{ t(request, "notifications.rule.view_history") }}</a></p>
       {% endif %}
     </div>
 

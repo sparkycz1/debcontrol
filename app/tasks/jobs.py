@@ -1266,6 +1266,88 @@ def purge_old_monitoring_samples() -> None:
     asyncio.run(_purge_old_monitoring_samples())
 
 
+async def _downsample_old_monitoring_samples() -> None:
+    """Thin out `MachineMonitoringSample` rows older than
+    `AppSettings.monitoring_downsample_after_days`, keeping only the first
+    sample in each `monitoring_downsample_interval_minutes`-wide bucket per
+    machine and deleting the rest — a Monitoring tab chart's own
+    display-side bucketing (`app.services.monitoring_history._bucket_average`)
+    already coarsens old data down to a handful of points before it's ever
+    drawn, so keeping every raw sample from months ago costs storage for
+    resolution nothing renders. The delta-based rate series (network/disk
+    I/O — `app.services.monitoring_history._combined_rate_series`) work from
+    whatever consecutive pair of samples exists, so a coarser gap between
+    old samples doesn't corrupt those either.
+
+    Runs independently of `purge_old_monitoring_samples` above (that one
+    still deletes rows entirely once they're past the fleet/per-machine
+    retention window; downsampling only shrinks the *raw* row count for
+    samples that are old but not old enough to purge yet). Only `id`/
+    `sampled_at` are ever fetched into memory — not the full row with its
+    JSON columns — so this scales with how many old samples exist, not
+    their size."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        after_days = app_settings.monitoring_downsample_after_days
+        if not after_days:
+            return
+        interval = timedelta(minutes=app_settings.monitoring_downsample_interval_minutes)
+        cutoff = datetime.now(UTC) - timedelta(days=after_days)
+
+        machine_ids = (
+            await session.execute(select(MachineMonitoringSample.machine_id).distinct())
+        ).scalars().all()
+
+        total_deleted = 0
+        for machine_id in machine_ids:
+            rows = (
+                await session.execute(
+                    select(MachineMonitoringSample.id, MachineMonitoringSample.sampled_at)
+                    .where(
+                        MachineMonitoringSample.machine_id == machine_id,
+                        MachineMonitoringSample.sampled_at < cutoff,
+                    )
+                    .order_by(MachineMonitoringSample.sampled_at)
+                )
+            ).all()
+
+            to_delete: list[uuid.UUID] = []
+            next_bucket_start: datetime | None = None
+            for sample_id, sampled_at in rows:
+                if next_bucket_start is None or sampled_at >= next_bucket_start:
+                    # First sample seen in this bucket — keep it, start the next.
+                    next_bucket_start = sampled_at + interval
+                else:
+                    to_delete.append(sample_id)
+
+            if to_delete:
+                await session.execute(
+                    delete(MachineMonitoringSample).where(MachineMonitoringSample.id.in_(to_delete))
+                )
+                total_deleted += len(to_delete)
+
+        if not total_deleted:
+            return
+
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_MONITORING_SAMPLE_PURGE_ACTOR,
+            action="monitoring_samples.downsample",
+            summary=(
+                f"Downsampled {total_deleted} monitoring sample"
+                f"{'s' if total_deleted != 1 else ''} older than {after_days} day(s)"
+            ),
+            details={"deleted_count": total_deleted},
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.downsample_old_monitoring_samples")
+def downsample_old_monitoring_samples() -> None:
+    asyncio.run(_downsample_old_monitoring_samples())
+
+
 @celery_app.task(name="app.tasks.jobs.refresh_all_machine_packages")
 def refresh_all_machine_packages() -> None:
     asyncio.run(_refresh_all_machine_packages())
