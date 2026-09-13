@@ -18,7 +18,7 @@ optional Caddy reverse proxy.
 ```bash
 git clone https://github.com/sparkycz1/debcontrol.git
 cd debcontrol
-python scripts/setup.py
+python3 scripts/setup.py
 ```
 
 One interactive wizard does everything: copies `.env.example` to `.env`,
@@ -52,7 +52,7 @@ Re-running on an existing `.env`:
 
 ```bash
 cp .env.example .env
-python scripts/generate_secrets.py
+python3 scripts/generate_secrets.py
 ```
 
 Copy the printed `SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, and
@@ -89,7 +89,7 @@ Then start the stack and create the first admin yourself — "2. Run" and
 | `APP_PORT` | web | Host port the app is published on. Default 8080. |
 | `APP_BIND_ADDRESS` | web | Host interface the port above is published on. Default `0.0.0.0` (every interface); set to `127.0.0.1` to only allow local connections, no `docker-compose.yml` edit needed. |
 | `TRUSTED_PROXY_IPS` | app | Which reverse proxy peers to trust `X-Forwarded-Proto` from, to fix WebAuthn/passkeys and OIDC login behind any TLS-terminating proxy (bundled Caddy or your own) — see the `[!WARNING]` above. Default `*` (any peer); narrow to a comma-separated IP/CIDR list to restrict it. |
-| `TRUST_FORWARDED_FOR` | app | Also trust `X-Forwarded-For` from a `TRUSTED_PROXY_IPS` peer, so the audit log and the login/TOTP rate limiter see the real client's IP instead of the proxy's — needed any time your proxy runs as its own separate host/container rather than sharing this app's own network namespace (e.g. Traefik or nginx on a different machine). Default `false` — turn on only once `TRUSTED_PROXY_IPS` is also narrowed to your real proxy's address, not left at `*`; see `app/core/proxy_headers.py`. |
+| `TRUST_FORWARDED_FOR` | app | Also trust `X-Forwarded-For` from a `TRUSTED_PROXY_IPS` peer, so the audit log and the login/TOTP rate limiter see the real client's IP instead of the proxy's. Default `true` (a fresh install via `scripts/setup.py` assumes the bundled/your own reverse proxy is the only way in) — set back to `false`, or narrow `TRUSTED_PROXY_IPS` to your real proxy's address (not `*`), if this app's port could ever be reached directly, bypassing your proxy; see `app/core/proxy_headers.py`. |
 | `DOMAIN` | caddy | Public hostname to request a certificate for (Caddy stack only). |
 | `ACME_EMAIL` | caddy | Contact email for Let's Encrypt (Caddy stack only). |
 
@@ -165,10 +165,12 @@ address — see the relevant guide for details.
 > this, already on for every setup above.
 >
 > **Audit log / rate limiter showing the proxy's IP instead of the real
-> client?** A separate, off-by-default fix — `TRUST_FORWARDED_FOR` —
-> because trusting it from just anyone lets an attacker spoof a fresh
-> "source" per login attempt and dodge the rate limiter. Turn on only
-> once `TRUSTED_PROXY_IPS` is narrowed to your real proxy (not `*`).
+> client?** `TRUST_FORWARDED_FOR` fixes this — on by default for a fresh
+> install. If this app's own port is ever reachable directly (bypassing
+> your proxy), turn it back off or narrow `TRUSTED_PROXY_IPS` to your real
+> proxy's address (not `*`) first — trusting `X-Forwarded-For` from just
+> anyone lets an attacker spoof a fresh "source" per login attempt and
+> dodge the rate limiter.
 
 ### With the bundled Caddy (automatic HTTPS)
 

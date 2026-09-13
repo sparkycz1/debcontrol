@@ -43,7 +43,7 @@ fresh instance running.
 ```bash
 git clone https://github.com/sparkycz1/debcontrol.git
 cd debcontrol
-python scripts/setup.py
+python3 scripts/setup.py
 ```
 
 It generates every secret, asks a handful of questions (timezone, whether
@@ -56,7 +56,7 @@ details: [wiki/Installation.md](wiki/Installation.md).
 
 ```bash
 cp .env.example .env
-python scripts/generate_secrets.py
+python3 scripts/generate_secrets.py
 ```
 
 Paste the printed values (`SECRET_KEY`, `ENCRYPTION_KEY`,

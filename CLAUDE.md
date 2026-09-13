@@ -55,7 +55,7 @@ uv run alembic heads             # must show exactly one head before committing 
 ```
 
 There is no supported way to run the app itself outside Docker:
-`docker compose up -d --build` (or `python scripts/setup.py` for a guided
+`docker compose up -d --build` (or `python3 scripts/setup.py` for a guided
 first-time setup). See [wiki/Installation.md](wiki/Installation.md).
 
 **Before committing**, run the same gate this repo's history consistently

@@ -3,7 +3,7 @@
 recommended way to configure and start one for the first time.
 
 Usage (from a fresh git checkout, before anything else):
-    python scripts/setup.py
+    python3 scripts/setup.py
 
 What it does, in order: copies `.env.example` to `.env`, fills in every
 secret (`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`,
