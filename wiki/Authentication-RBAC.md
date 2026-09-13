@@ -342,8 +342,11 @@ issued immediately. Only a `user.manage` admin sets it.
 ### Per-user UI language (i18n)
 
 Each account has its own UI language (**My account → Language**),
-self-service, defaulting to English if never chosen (`User.locale` is
-nullable — `NULL` means "use the default," not a stored code).
+self-service, defaulting to the deployment's own configured default if
+never chosen (`User.locale` is nullable — `NULL` means "use the default,"
+not a stored code) — `DEFAULT_LANGUAGE` in `.env`, English (`en`) unless
+set otherwise; `scripts/setup.py` asks for this on a fresh install. See
+[Installation](Installation.md)'s env var table.
 `app.i18n` deliberately isn't `gettext`/Babel — a flat JSON file per
 locale is the lowest-friction format for a translator with no Python
 tooling, and there's no other i18n need (dates already render in

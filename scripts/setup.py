@@ -8,11 +8,12 @@ Usage (from a fresh git checkout, before anything else):
 What it does, in order: copies `.env.example` to `.env`, fills in every
 secret (`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`,
 `REDIS_PASSWORD`, `INFORM_TOKEN`) with freshly generated random values,
-asks a handful of questions (timezone, whether to use the bundled Caddy
-reverse proxy and its domain/email if so, whether the app's own port
-should only accept local connections, the two background-check intervals,
-the Administrator account's password — or auto-generates one — and the
-host port to publish), writes `.env`, brings the stack up with
+asks a handful of questions (timezone, the default UI language for
+accounts that haven't picked one for themselves, whether to use the
+bundled Caddy reverse proxy and its domain/email if so, whether the app's
+own port should only accept local connections, the two background-check
+intervals, the Administrator account's password — or auto-generates one —
+and the host port to publish), writes `.env`, brings the stack up with
 `docker compose`, waits for the app to become healthy, and creates the
 first Administrator account.
 
@@ -45,6 +46,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.i18n import available_locales  # noqa: E402 - needs the sys.path insert above
 from scripts.env_sync import sync_env  # noqa: E402 - needs the sys.path insert above
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -240,6 +242,21 @@ def main() -> None:
     print()
     tz = _prompt("Timezone (IANA name, e.g. Europe/Prague)", default="UTC")
     lines = _set_env_line(lines, "TZ", tz)
+
+    print()
+    locale_codes = [locale.code for locale in available_locales()]
+    print("Available languages: " + ", ".join(
+        f"{locale.code} ({locale.label})" for locale in available_locales()
+    ))
+    default_locale = _prompt(
+        "Default language for accounts that haven't picked one "
+        "(anyone can still switch for themselves later, in My account)",
+        default="en",
+    )
+    if default_locale not in locale_codes:
+        print(f"  (unrecognized code {default_locale!r} — falling back to English)")
+        default_locale = "en"
+    lines = _set_env_line(lines, "DEFAULT_LANGUAGE", default_locale)
 
     use_caddy = _prompt_yes_no(
         "Use the bundled Caddy reverse proxy for automatic HTTPS?", default=False

@@ -2,7 +2,7 @@
 """Generate secure random values for `.env` (SECRET_KEY, ENCRYPTION_KEY, passwords).
 
 Usage:
-    python scripts/generate_secrets.py
+    python3 scripts/generate_secrets.py
 
 Prints ready-to-paste lines for `.env` — it never edits the file for you,
 so you stay in control of what gets overwritten. Part of the manual setup

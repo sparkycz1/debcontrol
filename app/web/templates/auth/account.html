@@ -55,7 +55,7 @@
       <label for="locale">{{ t(request, "account.language.label") }}</label>
       <select id="locale" name="locale">
         {% for locale in available_locales %}
-          <option value="{{ locale.code }}" {% if (user.locale or 'en') == locale.code %}selected{% endif %}>{{ locale.label }}</option>
+          <option value="{{ locale.code }}" {% if (user.locale or request.state.locale.code) == locale.code %}selected{% endif %}>{{ locale.label }}</option>
         {% endfor %}
       </select>
       <p class="hint">{{ t(request, "account.language.help") }}</p>

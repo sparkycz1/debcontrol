@@ -48,6 +48,20 @@ def test_get_locale_returns_the_requested_one_when_it_exists():
     assert i18n.get_locale("cs").code == "cs"
 
 
+def test_get_locale_falls_back_to_the_given_default_when_no_code_chosen():
+    """`default` (Settings.default_locale / DEFAULT_LANGUAGE) is what an
+    account with no explicit `User.locale` of its own should render in —
+    distinct from DEFAULT_LOCALE_CODE, the always-English translation-gap
+    fallback (see the module docstring)."""
+    assert i18n.get_locale(None, default="cs").code == "cs"
+    # An explicit user choice still wins over the deploy-wide default.
+    assert i18n.get_locale("cs", default="en").code == "cs"
+
+
+def test_get_locale_falls_back_to_english_when_the_given_default_is_unknown():
+    assert i18n.get_locale(None, default="not-a-real-locale").code == "en"
+
+
 def test_translate_uses_the_requested_locale():
     cs = i18n.get_locale("cs")
     assert i18n.translate(cs, "nav.dashboard") == "Přehled"
@@ -119,6 +133,33 @@ async def test_switching_locale_translates_the_nav_bar(client):
 
 
 async def test_default_locale_is_english_for_a_user_who_never_chose_one(client):
+    response = await client.get("/dashboard")
+    assert "Dashboard" in response.text
+    assert 'lang="en"' in response.text
+
+
+async def test_default_language_setting_applies_to_a_user_who_never_chose_one(
+    client, monkeypatch
+):
+    """`DEFAULT_LANGUAGE` (Settings.default_locale) is what a fresh account
+    (`User.locale IS NULL`) — and an anonymous request — should render in,
+    instead of always English. See app.auth.middleware."""
+    from app.core.config import get_settings
+
+    settings = get_settings().model_copy(update={"default_locale": "cs"})
+    monkeypatch.setattr("app.auth.middleware.get_settings", lambda: settings)
+
+    response = await client.get("/dashboard")
+    assert "Přehled" in response.text
+    assert 'lang="cs"' in response.text
+
+
+async def test_default_language_setting_falls_back_to_english_when_invalid(client, monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings().model_copy(update={"default_locale": "not-a-real-locale"})
+    monkeypatch.setattr("app.auth.middleware.get_settings", lambda: settings)
+
     response = await client.get("/dashboard")
     assert "Dashboard" in response.text
     assert 'lang="en"' in response.text

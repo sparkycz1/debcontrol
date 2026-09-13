@@ -16,7 +16,7 @@ otherwise), together with whatever comment lines directly precede it in
 install would see.
 
 Usage:
-    python scripts/env_sync.py [--env PATH] [--example PATH]
+    python3 scripts/env_sync.py [--env PATH] [--example PATH]
 
 Prints one line per key added, or "Nothing to add — .env already has
 every .env.example variable." Exit code is always 0 (nothing here is

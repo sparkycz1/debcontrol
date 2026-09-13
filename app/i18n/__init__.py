@@ -124,13 +124,23 @@ def available_locales() -> list[Locale]:
     return [default, *rest]
 
 
-def get_locale(code: str | None) -> Locale:
-    """The requested locale, or the default if `code` is `None`/unknown — a
+def get_locale(code: str | None, *, default: str | None = None) -> Locale:
+    """The requested locale, or a fallback if `code` is `None`/unknown — a
     user who never chose one, or whose chosen locale's file was since
-    removed (see `User.locale`'s own docstring)."""
+    removed (see `User.locale`'s own docstring).
+
+    `default` is the deploy-wide starting locale (`Settings.default_locale`,
+    `DEFAULT_LANGUAGE` — what a fresh account or an anonymous request
+    should render in before anyone's picked a language for themselves), not
+    the same thing as `DEFAULT_LOCALE_CODE` above (the translation-gap
+    fallback, always English, never configurable). Omitted or itself
+    unrecognized, this falls back to `DEFAULT_LOCALE_CODE` exactly as
+    before."""
     locales = _registry()
     if code and code in locales:
         return locales[code]
+    if default and default in locales:
+        return locales[default]
     return locales[DEFAULT_LOCALE_CODE]
 
 

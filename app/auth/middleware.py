@@ -42,6 +42,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
+from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie
 from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
@@ -175,8 +176,9 @@ async def require_auth(
     # Default for every request, including the login page and every other
     # public/anonymous one — there's no account yet to have a preference.
     # Overwritten below once a session resolves to one that has chosen a
-    # non-default language. See app.i18n's module docstring.
-    request.state.locale = get_locale(None)
+    # non-default language. `Settings.default_locale` (DEFAULT_LANGUAGE)
+    # is the deploy-wide starting point; see app.i18n's module docstring.
+    request.state.locale = get_locale(None, default=get_settings().default_locale)
 
     if not _is_public(request.url.path):
         session = None
@@ -205,7 +207,9 @@ async def require_auth(
         request.state.user = session.user
         request.state.session = session
         request.state.impersonator = session.impersonator
-        request.state.locale = get_locale(session.user.locale)
+        request.state.locale = get_locale(
+            session.user.locale, default=get_settings().default_locale
+        )
 
         if _totp_enrollment_required(
             session.user, has_webauthn_credential=has_webauthn_credential

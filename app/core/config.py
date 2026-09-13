@@ -167,6 +167,22 @@ class Settings(BaseSettings):
     # every container's own OS timezone (see docker-compose.yml).
     tz: str = Field(default="UTC", alias="TZ")
 
+    # Locale *code* (e.g. "en", "cs" — matching a filename under
+    # app/i18n/locales/) an account with no explicit `User.locale` of its
+    # own renders in — a fresh account (or an anonymous request, before any
+    # account is known) rather than always English. Purely the starting
+    # point: "My account → Language" still lets anyone switch for
+    # themselves at any time, unaffected by this. An unrecognized code
+    # (typo, or a locale file removed after this was set) falls back to
+    # English exactly like an unrecognized `User.locale` already does — see
+    # `app.i18n.get_locale`'s `default` parameter.
+    default_locale: str = Field(default="en", alias="DEFAULT_LANGUAGE")
+
+    @field_validator("default_locale")
+    @classmethod
+    def _normalize_default_locale(cls, value: str) -> str:
+        return value.strip().lower()
+
     @field_validator("secret_key", "encryption_key", "inform_token")
     @classmethod
     def _reject_placeholder_secrets(cls, value: SecretStr) -> SecretStr:
