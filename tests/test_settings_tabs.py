@@ -1,6 +1,6 @@
 """Settings' tab split (General / Checks & retention / Security /
 Integrations / AI) — see app/web/routes/settings.py's module comment
-above `_TABS`. Unlike the machine/group tabs, there's one GET route for
+above `_tabs`. Unlike the machine/group tabs, there's one GET route for
 all five (`?tab=...`), so these tests focus on: each tab shows only its
 own content, a POST handler redirects back to *its own* tab (not always
 "General"), and an unknown tab value falls back cleanly instead of

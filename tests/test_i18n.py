@@ -136,6 +136,40 @@ async def test_machines_list_translates_into_czech(client):
     assert "Tabulka" in response.text and "Seznam" in response.text and "Karty" in response.text
 
 
+async def test_settings_tab_labels_translate_into_czech(client):
+    """Regression test: the (key, label, url) tab tuples built in
+    `app/web/routes/settings.py`/`machines.py`/`machine_groups.py` used to be
+    hardcoded English strings that never went through `t()` — only each
+    tab's own page content was translated, not the tab bar itself."""
+    await client.get("/account")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/account/locale", data={"locale": "cs", "csrf_token": csrf_token})
+
+    response = await client.get("/settings")
+
+    assert 'href="/settings?tab=general"' in response.text
+    assert "Obecné" in response.text
+    assert "Kontroly a uchovávání" in response.text
+    assert "Zabezpečení" in response.text
+    assert "Integrace" in response.text
+
+
+async def test_machine_tab_labels_translate_into_czech(client):
+    await client.get("/account")
+    csrf_token = client.cookies.get("csrftoken")
+    await client.post("/account/locale", data={"locale": "cs", "csrf_token": csrf_token})
+    await client.get("/machines/new")
+    from tests.test_web import _create_machine
+
+    machine_id = await _create_machine(client, csrf_token, name="cs-tabs")
+
+    response = await client.get(f"/machines/{machine_id}")
+
+    assert "Přehled" in response.text
+    assert "Aktualizace" in response.text
+    assert "Nastavení" in response.text
+
+
 async def test_machines_empty_search_message_translates_and_keeps_literal_quotes(client):
     """A regression test for a real bug: the translation string's own
     literal quote marks around `{query}` were getting HTML-entity-escaped

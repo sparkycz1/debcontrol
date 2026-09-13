@@ -82,7 +82,7 @@ from app.ssh.updates import PendingPackage
 from app.tasks import jobs as tasks
 from app.web.machine_search import apply_tag_filter, machine_search_clause
 from app.web.routes.audit import _csv_safe
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 # Typed phrase to confirm a power action against an arbitrary ad-hoc
 # selection from the machine list — unlike a group or "All machines", a
@@ -110,7 +110,7 @@ _terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
 
 
-def _machine_tabs(machine: Machine, user: User) -> list[tuple[str, str, str]]:
+def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[str, str, str]]:
     """The (key, label, url) tabs shown on every one of this machine's own
     pages — same set and order everywhere, so `partials/_tabnav.html` always
     highlights the right one. Terminal is left out entirely for a user
@@ -118,22 +118,22 @@ def _machine_tabs(machine: Machine, user: User) -> list[tuple[str, str, str]]:
     had tabs at all."""
     base = f"/machines/{machine.id}"
     tabs = [
-        ("overview", "Overview", base),
-        ("monitoring", "Monitoring", f"{base}/monitoring"),
-        ("updates", "Updates", f"{base}/updates"),
+        ("overview", t(request, "machine.tab.overview"), base),
+        ("monitoring", t(request, "machine.tab.monitoring"), f"{base}/monitoring"),
+        ("updates", t(request, "machine.tab.updates"), f"{base}/updates"),
     ]
     if user.has_permission(Permission.ACTION_TERMINAL):
-        tabs.append(("terminal", "Terminal", f"{base}/terminal"))
+        tabs.append(("terminal", t(request, "machine.tab.terminal"), f"{base}/terminal"))
         # Logs shares Terminal's permission gate rather than plain
         # `machine.view` — see the "Logs" route's own docstring for why.
-        tabs.append(("logs", "Logs", f"{base}/logs"))
+        tabs.append(("logs", t(request, "machine.tab.logs"), f"{base}/logs"))
     # No separate "Power" tab any more — reboot/shut down live directly on
     # Overview now (see `machine_detail`'s own template), the same one-page
     # placement a machine's few other one-off actions (test connection,
     # discover host key) already have, rather than a whole tab for two
     # buttons. `GET /{id}/power` itself still redirects there for anyone
     # with the old URL bookmarked/linked — see `power_tab`.
-    tabs.append(("settings", "Settings", f"{base}/edit"))
+    tabs.append(("settings", t(request, "machine.tab.settings"), f"{base}/edit"))
     return tabs
 
 
@@ -1091,7 +1091,7 @@ async def machine_detail(
         {
             "machine": machine,
             "csrf_token": csrf_token,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "overview",
             # The package *rows* themselves are deliberately not fetched
             # here — a machine can easily have several hundred installed
@@ -1175,7 +1175,7 @@ async def machine_monitoring(
         "machines/monitoring.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "monitoring",
             "csrf_token": csrf_token,
             "history": history,
@@ -1393,7 +1393,7 @@ async def edit_machine_form(
         "machines/edit.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "settings",
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db, current_user),
@@ -1469,7 +1469,7 @@ async def run_onboarding_endpoint(
         "machines/edit.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "settings",
             "auth_methods": list(AuthMethod),
             "groups": await _get_groups(db, current_user),
@@ -1715,7 +1715,7 @@ async def update_machine(
             "machines/edit.html",
             {
                 "machine": machine,
-                "tabs": _machine_tabs(machine, current_user),
+                "tabs": _machine_tabs(request, machine, current_user),
                 "active_tab": "settings",
                 "auth_methods": list(AuthMethod),
                 "groups": await _get_groups(db, current_user),
@@ -2346,7 +2346,7 @@ async def machine_update_history(
         "machines/update_history.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "updates",
             "csrf_token": csrf_token,
             "runs": runs,
@@ -2439,7 +2439,7 @@ async def terminal_page(
         "machines/terminal.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "terminal",
         },
     )
@@ -2522,7 +2522,7 @@ async def machine_logs(
         "machines/logs.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "logs",
             "csrf_token": csrf_token,
             "output": output,
@@ -2633,7 +2633,7 @@ async def machine_logs_browse(
         "machines/logs_browse.html",
         {
             "machine": machine,
-            "tabs": _machine_tabs(machine, current_user),
+            "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "logs",
             "current_path": current_path,
             "parent_path": parent_path,

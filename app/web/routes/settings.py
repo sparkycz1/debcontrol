@@ -53,7 +53,7 @@ from app.ssh.identity import (
     get_or_create_identity,
 )
 from app.tasks.jobs import push_pending_ssh_key
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/settings", dependencies=[Depends(require_permission(Permission.SETTINGS_VIEW))]
@@ -71,15 +71,19 @@ _manage = Depends(require_permission(Permission.SETTINGS_MANAGE))
 # string param is simpler and gets the same result — every handler below
 # just needs to know which tab *it itself* belongs to, to redirect back to
 # `/settings?tab=<that tab>` instead of losing your place on every save.
-_TABS: list[tuple[str, str, str]] = [
-    ("general", "General", "/settings?tab=general"),
-    ("checks", "Checks & retention", "/settings?tab=checks"),
-    ("security", "Security", "/settings?tab=security"),
-    ("integrations", "Integrations", "/settings?tab=integrations"),
-    ("ai", "AI", "/settings?tab=ai"),
-]
-_VALID_TABS = {key for key, _, _ in _TABS}
+_TAB_KEYS = ["general", "checks", "security", "integrations", "ai"]
+_VALID_TABS = set(_TAB_KEYS)
 _DEFAULT_TAB = "general"
+
+
+def _tabs(request: Request) -> list[tuple[str, str, str]]:
+    """The (key, label, url) tabs rendered by `partials/_tabnav.html` —
+    labels resolved per-request so they follow the viewer's own locale, same
+    as `_machine_tabs`/`_group_tabs` in app/web/routes/machines.py/
+    machine_groups.py."""
+    return [
+        (key, t(request, f"settings.tab.{key}"), f"/settings?tab={key}") for key in _TAB_KEYS
+    ]
 
 
 def _normalize_tab(tab: str) -> str:
@@ -116,7 +120,7 @@ async def _render_settings(
         "ai_configs": [ai_configs[kind] for kind in AiProviderKind if kind in ai_configs],
         "openai_compatible_kind": AiProviderKind.OPENAI_COMPATIBLE.value,
         "selectable_models": await get_selectable_models(db),
-        "tabs": _TABS,
+        "tabs": _tabs(request),
         "active_tab": tab,
         **extra,
     }

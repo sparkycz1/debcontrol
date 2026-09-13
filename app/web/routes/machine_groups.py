@@ -38,7 +38,7 @@ from app.services.machine_actions import (
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
 from app.web.routes.machines import _MACHINE_LIST_PAGE_SIZE
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/machine-groups", dependencies=[Depends(require_permission(Permission.GROUP_VIEW))]
@@ -52,7 +52,7 @@ _power = Depends(require_permission(Permission.ACTION_POWER))
 ALL_MACHINES_CONFIRM_PHRASE = "ALL MACHINES"
 
 
-def _group_tabs(group: MachineGroup) -> list[tuple[str, str, str]]:
+def _group_tabs(request: Request, group: MachineGroup) -> list[tuple[str, str, str]]:
     """The (key, label, url) tabs shown on every one of this group's own
     pages — mirrors `app.web.routes.machines._machine_tabs`. No "Settings"
     tab: unlike a machine, a group has nothing else to configure yet beyond
@@ -60,9 +60,9 @@ def _group_tabs(group: MachineGroup) -> list[tuple[str, str, str]]:
     single button on the Overview tab."""
     base = f"/machine-groups/{group.id}"
     return [
-        ("overview", "Overview", base),
-        ("updates", "Updates", f"{base}/updates"),
-        ("power", "Power", f"{base}/power"),
+        ("overview", t(request, "machine.tab.overview"), base),
+        ("updates", t(request, "machine.tab.updates"), f"{base}/updates"),
+        ("power", t(request, "group.tab.power"), f"{base}/power"),
     ]
 
 
@@ -464,7 +464,7 @@ async def group_detail(
         "machine_groups/detail.html",
         {
             "group": group,
-            "tabs": _group_tabs(group),
+            "tabs": _group_tabs(request, group),
             "active_tab": "overview",
             "machines": machines,
             "available_machines": available_machines,
@@ -559,7 +559,7 @@ async def group_updates_tab(
         "machine_groups/updates.html",
         {
             "group": group,
-            "tabs": _group_tabs(group),
+            "tabs": _group_tabs(request, group),
             "active_tab": "updates",
             "csrf_token": csrf_token,
         },
@@ -582,7 +582,7 @@ async def group_power_tab(
         "machine_groups/power.html",
         {
             "group": group,
-            "tabs": _group_tabs(group),
+            "tabs": _group_tabs(request, group),
             "active_tab": "power",
             "power_skipped": request.query_params.get("power_skipped"),
         },
