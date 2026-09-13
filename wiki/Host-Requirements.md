@@ -125,29 +125,37 @@ The worker's `NullPool` (fresh connection per task, see
 [Architecture](Architecture.md#fork-safety-the-db-engine-is-rebuilt-in-every-worker-child))
 bounds its contribution by tasks running at once, not fleet size directly.
 
-Raise `max_connections` via a `command:` override on `db` (`docker-compose.yml`'s
-`db` service already sets `shared_buffers`/`effective_cache_size`/`work_mem`/
-`maintenance_work_mem`/the two `autovacuum_*_scale_factor`s from `.env`
-variables — `POSTGRES_SHARED_BUFFERS` etc., see `.env.example` — each
-defaulting to Postgres' own stock value, so add `max_connections` to that
-same list rather than a separate override):
+`docker-compose.yml`'s `db` service already sets `shared_buffers`/
+`effective_cache_size`/`work_mem`/`maintenance_work_mem`/the two
+`autovacuum_*_scale_factor`s from `.env` variables (`POSTGRES_SHARED_BUFFERS`
+etc., see `.env.example`) — **active from the first start**, not opt-in:
+the shipped defaults (256MB/768MB/8MB/128MB/0.05/0.02) are already tuned
+for a fleet up to roughly 100 machines on a modest host, well below
+Postgres' own stock defaults (128MB/4GB/4MB/64MB/0.2/0.1, sized for either
+a tiny dev instance or a dedicated DB server with GBs to spare) — chosen to
+stay RAM-efficient rather than pre-allocate more than this fleet size
+needs. The two `autovacuum_*_scale_factor` knobs are lower than stock so
+autovacuum keeps up with large, frequently-purged tables like
+`machine_monitoring_samples`/`notification_logs`/`audit_log_entries` —
+worth doing at any fleet size, since the daily retention purges delete a
+large fraction of those tables' rows each night and dead tuples otherwise
+accumulate between autovacuum runs.
+
+Raise all of these together for a bigger fleet/host via `.env`:
 
 ```
 # .env
 POSTGRES_SHARED_BUFFERS=1GB
+POSTGRES_EFFECTIVE_CACHE_SIZE=3GB
+POSTGRES_WORK_MEM=16MB
+POSTGRES_MAINTENANCE_WORK_MEM=256MB
 ```
 
 (`shared_buffers` — standard Postgres guidance is roughly 25% of the
 container's available RAM; adjust to match whatever you actually give the
 `db` container. `max_connections` itself isn't one of the pre-wired knobs —
-add it with your own `command:` override on `db` if you need to raise it
-above Postgres' default 100.) Lowering the two `autovacuum_*_scale_factor`
-knobs (stock defaults 0.2/0.1) below their stock values makes autovacuum
-run more often on large, frequently-purged tables like
-`machine_monitoring_samples`/`notification_logs`/`audit_log_entries` —
-worth doing at fleet sizes where the daily retention purges delete a large
-fraction of those tables' rows each night, so dead tuples don't accumulate
-between autovacuum runs.
+add it with your own `command:` override on `db`, alongside the rest, if
+you need to raise it above Postgres' default 100.)
 
 Similarly, `worker`'s `--concurrency` (default 10, see point 2 above) is
 set from `CELERY_WORKER_CONCURRENCY` in `.env` — raise it there instead of

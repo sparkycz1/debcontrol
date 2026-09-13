@@ -34,27 +34,35 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       TZ: ${TZ:-UTC}
-    # Tunable via .env — every value below defaults to Postgres' own stock
-    # default, so an existing deployment sees no behavior change until it
-    # opts in. Worth raising for a fleet in the hundreds/thousands (more
-    # monitoring/audit/notification-log writes and purges per day churn
-    # more pages than the stock defaults, sized for a small dev instance,
-    # comfortably handle) — see wiki/Host-Requirements.md's Postgres tuning
-    # section for sizing guidance matched to fleet size.
+    # Tuned out of the box for a fleet up to roughly 100 machines (see
+    # wiki/Host-Requirements.md's Quick reference table) on a modest host —
+    # not Postgres' own stock defaults (128MB/4GB/4MB/64MB/0.2/0.1), which
+    # assume either a tiny local dev instance or a dedicated DB server with
+    # GBs to spare. shared_buffers/maintenance_work_mem/work_mem below are
+    # sized to stay well under ~512MB of Postgres' own RAM use at this
+    # fleet size (shared_buffers is allocated once at startup;
+    # maintenance_work_mem/work_mem are per-operation ceilings, not
+    # standing allocations) rather than the stock "assume a big dedicated
+    # box" numbers. The two autovacuum_*_scale_factor values are lower
+    # than stock so autovacuum keeps up with this app's own nightly
+    # retention purges (monitoring/audit/notification-log tables can lose
+    # a large fraction of their rows in one purge run). Override any of
+    # these via .env for a bigger fleet/host — see wiki/Host-Requirements.md's
+    # Postgres tuning section for how to size them up.
     command:
       - postgres
       - -c
-      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-128MB}
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
       - -c
-      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-4GB}
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-768MB}
       - -c
-      - work_mem=${POSTGRES_WORK_MEM:-4MB}
+      - work_mem=${POSTGRES_WORK_MEM:-8MB}
       - -c
-      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-128MB}
       - -c
-      - autovacuum_vacuum_scale_factor=${POSTGRES_AUTOVACUUM_VACUUM_SCALE_FACTOR:-0.2}
+      - autovacuum_vacuum_scale_factor=${POSTGRES_AUTOVACUUM_VACUUM_SCALE_FACTOR:-0.05}
       - -c
-      - autovacuum_analyze_scale_factor=${POSTGRES_AUTOVACUUM_ANALYZE_SCALE_FACTOR:-0.1}
+      - autovacuum_analyze_scale_factor=${POSTGRES_AUTOVACUUM_ANALYZE_SCALE_FACTOR:-0.02}
     # Mounted at the parent directory, not .../data — as of the postgres:18
     # image, PGDATA defaults to a major-version-specific subdirectory it
     # manages itself (/var/lib/postgresql/18/docker), mirroring
