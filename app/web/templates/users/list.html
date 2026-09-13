@@ -16,12 +16,25 @@
     <div class="alert alert-error"><p>{{ bulk_error }}</p></div>
   {% endif %}
 
+  {# The bulk-actions <form> itself stays empty — HTML forbids nesting a
+     <form> inside another <form> (a browser silently drops the inner
+     start tag rather than erroring, which used to make each row's own
+     impersonate mini-form below submit to *this* form instead — no
+     `action` here means "current URL", so it silently hit POST /users,
+     the create-user endpoint, with none of its required fields). Every
+     control that logically belongs to this form (the row checkboxes, the
+     bulk buttons, the role <select>) instead references it from outside
+     via the standard `form="bulk-actions-form"` attribute, so the table
+     — and each row's own separate, non-nested <form> — can sit as a
+     sibling rather than a descendant. #}
   <form method="post" class="form form-wide" id="bulk-actions-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <table class="data-table">
+  </form>
+
+  <table class="data-table">
       <thead>
         <tr>
-          <th><input type="checkbox" data-select-all="user_ids" aria-label="{{ t(request, 'users.bulk.select_all') }}"></th>
+          <th><input type="checkbox" data-select-all="user_ids" form="bulk-actions-form" aria-label="{{ t(request, 'users.bulk.select_all') }}"></th>
           <th>{{ t(request, "users.table.username") }}</th>
           <th>{{ t(request, "users.table.role") }}</th>
           <th>{{ t(request, "users.table.login_method") }}</th>
@@ -37,7 +50,7 @@
           <tr>
             <td>
               {% if u.id != current_user.id %}
-                <input type="checkbox" name="user_ids" value="{{ u.id }}" aria-label="{{ t(request, 'users.bulk.select_one', name=(u.display_name or u.username)) }}">
+                <input type="checkbox" name="user_ids" value="{{ u.id }}" form="bulk-actions-form" aria-label="{{ t(request, 'users.bulk.select_one', name=(u.display_name or u.username)) }}">
               {% endif %}
             </td>
             <td>{{ u.display_name or u.username }}</td>
@@ -66,27 +79,26 @@
           </tr>
         {% endfor %}
       </tbody>
-    </table>
+  </table>
 
-    <div class="page-header-actions" id="bulk-actions-bar">
+  <div class="page-header-actions stack-gap" id="bulk-actions-bar">
       <span class="hint">{{ t(request, "users.bulk.with_selected") }}</span>
-      <button type="submit" formaction="/users/bulk/deactivate" class="button button-secondary">
+      <button type="submit" form="bulk-actions-form" formaction="/users/bulk/deactivate" class="button button-secondary">
         {{ t(request, "users.bulk.deactivate") }}
       </button>
-      <button type="submit" formaction="/users/bulk/activate" class="button button-secondary">
+      <button type="submit" form="bulk-actions-form" formaction="/users/bulk/activate" class="button button-secondary">
         {{ t(request, "users.bulk.activate") }}
       </button>
-      <button type="submit" formaction="/users/bulk/sign-out" class="button button-secondary">
+      <button type="submit" form="bulk-actions-form" formaction="/users/bulk/sign-out" class="button button-secondary">
         {{ t(request, "users.bulk.sign_out") }}
       </button>
-      <select name="role_id" aria-label="{{ t(request, 'users.bulk.role_for') }}">
+      <select name="role_id" form="bulk-actions-form" aria-label="{{ t(request, 'users.bulk.role_for') }}">
         {% for role in roles %}
           <option value="{{ role.id }}">{{ role.name }}</option>
         {% endfor %}
       </select>
-      <button type="submit" formaction="/users/bulk/role" class="button">
+      <button type="submit" form="bulk-actions-form" formaction="/users/bulk/role" class="button">
         {{ t(request, "users.bulk.set_role") }}
       </button>
-    </div>
-  </form>
+  </div>
 {% endblock %}

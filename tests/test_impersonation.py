@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from httpx import AsyncClient
@@ -75,7 +76,6 @@ async def test_impersonation_requires_permission(client, login_as):
 
 
 async def test_cannot_impersonate_self(client):
-    import re
 
     from tests.conftest import ADMIN_USERNAME
 
@@ -137,3 +137,64 @@ async def test_impersonation_is_audit_logged(client, db_session_factory):
     audit_page = await client.get("/audit")
     assert "user.impersonate.start" in audit_page.text
     assert "user.impersonate.stop" in audit_page.text
+
+
+def _has_nested_form(html: str) -> bool:
+    """True if any `<form>` element in `html` contains another `<form>`
+    start tag before its own closing `</form>` — invalid HTML a browser
+    silently "fixes" by dropping the inner start tag, which then makes
+    the inner form's own controls (its action, its hidden CSRF input)
+    belong to the *outer* form instead. A real regression this way once
+    made the per-row "Impersonate" button on /users silently submit to
+    POST /users (the create-user endpoint, whose action-less outer
+    <form> wraps the whole table) instead of its own
+    `/users/{id}/impersonate` — see users/list.html's own comment on the
+    fix. Deliberately not a full HTML parser: just enough to catch this
+    exact class of nesting bug in any page's markup, without adding a new
+    dependency for it."""
+    depth = 0
+    for match in re.finditer(r"<(/?)form\b", html):
+        if match.group(1):
+            depth -= 1
+        else:
+            if depth > 0:
+                return True
+            depth += 1
+    return False
+
+
+async def test_users_list_has_no_nested_forms(client, db_session_factory):
+    """Regression test for the exact bug above: render /users with an
+    impersonatable target present (the per-row form only renders at all
+    once one exists — see users/list.html) and check the whole page for
+    any <form> nested inside another."""
+
+    await _make_user(
+        db_session_factory, username="impersonatable", permissions={Permission.MACHINE_VIEW}
+    )
+
+    users_page = await client.get("/users")
+    # A missing i18n key would mean the button never renders at all — a
+    # different bug, checked here so this test fails loudly rather than
+    # silently passing by finding nothing to check.
+    assert "users.impersonate" not in users_page.text
+    assert not _has_nested_form(users_page.text), users_page.text
+
+
+async def test_impersonate_button_posts_to_its_own_url_not_the_page_url(
+    client, db_session_factory
+):
+    """The rendered per-row form's own `action` must be
+    `/users/{id}/impersonate`, distinct from the page's own `/users` URL a
+    nested-form bug would have silently redirected it to (see the test
+    above and users/list.html's own comment)."""
+
+    target, _ = await _make_user(
+        db_session_factory, username="impersonate-target", permissions={Permission.MACHINE_VIEW}
+    )
+
+    users_page = await client.get("/users")
+    row = next(r for r in users_page.text.split("<tr>") if f">{target.username}<" in r)
+    match = re.search(r'action="(/users/[0-9a-f-]{36}/impersonate)"', row)
+    assert match is not None, row
+    assert match.group(1) == f"/users/{target.id}/impersonate"
