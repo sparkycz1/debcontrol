@@ -23,6 +23,11 @@ async def _add_monitoring_sample(
     machine_id: uuid.UUID,
     *,
     filesystems: list[dict[str, object]] | None = None,
+    sensor_temps: list[dict[str, object]] | None = None,
+    sensor_fans: list[dict[str, object]] | None = None,
+    smart_disks: list[dict[str, object]] | None = None,
+    cpu_energy_uj: int | None = None,
+    gpu_power_watts: float | None = None,
 ) -> None:
     async with db_session_factory() as session:
         session.add(
@@ -39,6 +44,11 @@ async def _add_monitoring_sample(
                 disk_io=[{"device": "sda", "read_bytes": 2000, "write_bytes": 1000}],
                 filesystems=filesystems if filesystems is not None else [],
                 failed_services_count=1,
+                sensor_temps=sensor_temps if sensor_temps is not None else [],
+                sensor_fans=sensor_fans if sensor_fans is not None else [],
+                smart_disks=smart_disks if smart_disks is not None else [],
+                cpu_energy_uj=cpu_energy_uj,
+                gpu_power_watts=gpu_power_watts,
             )
         )
         machine = await session.get(Machine, machine_id)
@@ -250,3 +260,52 @@ async def test_monitoring_tab_shows_unreachable_status(client, db_session_factor
 
     assert response.status_code == 200
     assert "unreachable" in response.text
+
+
+async def test_monitoring_tab_shows_hardware_panel_for_physical_machine(
+    client, db_session_factory
+):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="physical-box")
+    await _pin_host_key(db_session_factory, machine_id)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.is_physical = True
+        await session.commit()
+    await _add_monitoring_sample(
+        db_session_factory,
+        machine_id,
+        sensor_temps=[{"name": "Package id 0", "celsius": 45.0}],
+        sensor_fans=[{"name": "fan1", "rpm": 1200.0}],
+        smart_disks=[{"device": "sda", "healthy": True}, {"device": "nvme0n1", "healthy": False}],
+        gpu_power_watts=45.2,
+    )
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "<h2>Hardware</h2>" in response.text
+    assert "Package id 0: 45°C" in response.text
+    assert "fan1: 1200 RPM" in response.text
+    assert "sda" in response.text and "nvme0n1" in response.text
+    assert "45.2 W" in response.text
+
+
+async def test_monitoring_tab_hides_hardware_panel_for_vm(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="virtual-box")
+    await _pin_host_key(db_session_factory, machine_id)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.is_physical = False
+        await session.commit()
+    await _add_monitoring_sample(db_session_factory, machine_id)
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "<h2>Hardware</h2>" not in response.text

@@ -20,6 +20,7 @@ not a separate connection.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, TypedDict
 
@@ -27,6 +28,60 @@ from app.db.models.machine import Machine
 from app.ssh.client import open_connection
 
 _SECTION_MARKERS = ("CPU", "LOAD", "RAM_KB", "NET", "DISKIO", "FILESYSTEMS", "FAILED_SERVICES")
+
+# Appended to MONITORING_COMMAND only for a machine with `is_physical`
+# True (app.ssh.facts's systemd-detect-virt probe) — none of this is
+# meaningful, and S.M.A.R.T. in particular actively misleading, against a
+# virtual disk. Its own section markers, split the same way as the base
+# command above.
+_HARDWARE_SECTION_MARKERS = ("SENSORS", "SMART", "CPU_ENERGY_UJ", "GPU_POWER")
+
+# SENSORS: `sensors -j` (lm-sensors, no root needed — reads hwmon sysfs
+# directly) — parsed in Python (_parse_sensors_json) rather than the
+# human-readable default output, since the JSON schema is documented and
+# stable while the plain-text layout varies by chip/version.
+#
+# SMART: per-whole-disk (via `lsblk -d`, same tool the base command
+# already uses) S.M.A.R.T. overall-health via smartctl -H — needs root on
+# most systems (see app.ssh.onboarding's sudoers grant); `sudo -n`
+# failing (no grant, or a hardened image with no usable sudo at all —
+# same class of gap `app.ssh.readiness` already documents for dmidecode)
+# just means that disk's health is never reported, not a crash.
+#
+# CPU_ENERGY_UJ: Intel RAPL's own cumulative package-energy counter
+# (microjoules since some arbitrary reference point, typically boot) —
+# read as a plain gauge here, same as network/disk-I/O's cumulative
+# byte counters; the *rate* (average watts) is computed downstream from
+# consecutive samples (app.services.monitoring_history), not here, so
+# this needs no extra sleep of its own. AMD has no equivalent standard
+# userspace interface without extra tooling this app doesn't assume is
+# installed — silently absent there, not an error.
+#
+# GPU_POWER: `nvidia-smi`'s own instantaneous power draw — already a rate
+# (watts), not a counter, so no downstream computation needed for it.
+_HARDWARE_COMMAND = (
+    "echo ===SENSORS===; "
+    "if command -v sensors >/dev/null 2>&1; then sensors -j 2>/dev/null; fi; "
+    "echo ===SMART===; "
+    "if command -v smartctl >/dev/null 2>&1; then "
+    "for d in $(lsblk -d -n -o NAME,TYPE 2>/dev/null | awk '$2==\"disk\"{print $1}'); do "
+    "status=\"$( (sudo -n smartctl -H /dev/$d 2>/dev/null || smartctl -H /dev/$d 2>/dev/null) "
+    "| awk -F': ' '/overall-health/{print $2}')\"; "
+    "if [ -n \"$status\" ]; then echo \"$d $status\"; fi; "
+    "done; "
+    "fi; "
+    "echo ===CPU_ENERGY_UJ===; "
+    "for f in /sys/class/powercap/intel-rapl:*/energy_uj; do "
+    "[ -f \"$f\" ] || continue; "
+    "d=\"$(dirname \"$f\")\"; "
+    "printf '%s ' \"$(cat \"$d/name\" 2>/dev/null || basename \"$d\")\"; "
+    "cat \"$f\" 2>/dev/null || echo; "
+    "done; "
+    "echo ===GPU_POWER===; "
+    "if command -v nvidia-smi >/dev/null 2>&1; then "
+    "nvidia-smi --query-gpu=name,power.draw --format=csv,noheader,nounits 2>/dev/null; "
+    "fi"
+)
 
 # CPU percent needs two samples of /proc/stat a moment apart — computed
 # entirely in the one round trip (a 1-second `sleep`) rather than as two
@@ -110,13 +165,33 @@ class MonitoringSample(TypedDict):
     filesystems: list[dict[str, Any]]
     # None = couldn't tell (no systemd), not "zero failed".
     failed_services_count: int | None
+    # --- Hardware — only ever populated for a physical machine
+    # (Machine.is_physical); always [] / None on a VM, meaning "not
+    # applicable", not "nothing found". ---
+    # Each {"name": ..., "celsius": ...}.
+    sensor_temps: list[dict[str, Any]]
+    # Each {"name": ..., "rpm": ...}.
+    sensor_fans: list[dict[str, Any]]
+    # Each {"device": ..., "healthy": bool | None} — None = smartctl ran
+    # but its output didn't say PASSED/FAILED in the expected place.
+    smart_disks: list[dict[str, Any]]
+    # Cumulative RAPL package-energy counter, microjoules — see
+    # _HARDWARE_COMMAND's own CPU_ENERGY_UJ comment for why this is a
+    # counter here, not a rate.
+    cpu_energy_uj: int | None
+    # Already a rate (watts) straight from nvidia-smi, not a counter.
+    gpu_power_watts: float | None
 
 
-def _split_sections(raw: str) -> dict[str, str]:
-    pattern = "|".join(f"==={name}===" for name in _SECTION_MARKERS)
+def _split_sections(raw: str, markers: tuple[str, ...] = _SECTION_MARKERS) -> dict[str, str]:
+    """Pairs chunks against `markers` positionally — the caller's raw
+    output must carry every one of `markers` in that exact order (a
+    trailing suffix can be missing, e.g. a connection that dropped
+    mid-command, but not one skipped from the middle)."""
+    pattern = "|".join(f"==={name}===" for name in markers)
     parts = re.split(f"(?:{pattern})", raw)
     body = parts[1:]
-    return dict(zip(_SECTION_MARKERS, (chunk.strip() for chunk in body), strict=False))
+    return dict(zip(markers, (chunk.strip() for chunk in body), strict=False))
 
 
 _FLOAT_RE = re.compile(r"^-?\d+(\.\d+)?$")
@@ -126,12 +201,20 @@ def _parse_float(value: str) -> float | None:
     return float(value) if _FLOAT_RE.match(value) else None
 
 
-def parse_monitoring_output(raw: str) -> MonitoringSample:
-    """Parse `MONITORING_COMMAND`'s output. Pure function, no I/O — kept
-    separate from `gather_monitoring_sample` so it can be unit-tested
-    against canned output, same convention as `app.ssh.facts.
-    parse_facts_output`."""
+def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> MonitoringSample:
+    """Parse `MONITORING_COMMAND`'s output (plus `_HARDWARE_COMMAND`'s,
+    appended in the same round trip when `is_physical`). Pure function, no
+    I/O — kept separate from `gather_monitoring_sample` so it can be
+    unit-tested against canned output, same convention as `app.ssh.facts.
+    parse_facts_output`. The hardware section markers only ever appear in
+    `raw` when the caller actually appended `_HARDWARE_COMMAND` (i.e.
+    `is_physical` was true for *this* SSH round trip) — `is_physical`
+    determines where `_split_sections` looks for them, not whether the
+    command produced hardware output."""
     sections = _split_sections(raw)
+    hardware_sections = (
+        _split_sections(raw, _HARDWARE_SECTION_MARKERS) if is_physical else {}
+    )
 
     cpu_percent = _parse_float(sections.get("CPU", ""))
 
@@ -187,9 +270,22 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
         )
 
     failed_services_count: int | None = None
-    failed_line = sections.get("FAILED_SERVICES", "")
+    # `.splitlines()[0]`, not the whole (stripped) chunk: when
+    # `is_physical` appends `_HARDWARE_COMMAND` to the same round trip,
+    # this first pass's own marker pattern doesn't recognize the hardware
+    # markers, so this last base section's raw text runs straight into
+    # everything after it (the hardware output is parsed out separately,
+    # below, against its own marker set) — only the first line is ever
+    # this section's own value.
+    failed_lines = sections.get("FAILED_SERVICES", "").splitlines()
+    failed_line = failed_lines[0] if failed_lines else ""
     if failed_line.isdigit():
         failed_services_count = int(failed_line)
+
+    sensor_temps, sensor_fans = _parse_sensors_json(hardware_sections.get("SENSORS", ""))
+    smart_disks = _parse_smart(hardware_sections.get("SMART", ""))
+    cpu_energy_uj = _parse_cpu_energy(hardware_sections.get("CPU_ENERGY_UJ", ""))
+    gpu_power_watts = _parse_gpu_power(hardware_sections.get("GPU_POWER", ""))
 
     return MonitoringSample(
         cpu_percent=cpu_percent,
@@ -202,20 +298,115 @@ def parse_monitoring_output(raw: str) -> MonitoringSample:
         disk_io=disk_io,
         filesystems=filesystems,
         failed_services_count=failed_services_count,
+        sensor_temps=sensor_temps,
+        sensor_fans=sensor_fans,
+        smart_disks=smart_disks,
+        cpu_energy_uj=cpu_energy_uj,
+        gpu_power_watts=gpu_power_watts,
     )
+
+
+def _parse_sensors_json(raw: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`sensors -j`'s shape: `{chip: {"Adapter": "...", feature_label: {key:
+    value, ...}, ...}, ...}` — every `*_input` reading under a feature
+    whose key starts with `temp`/`fan` is one temperature/fan reading,
+    labeled with that feature's own name (e.g. "Core 0", "fan1"), not the
+    chip name — the chip is an implementation detail (which sensor chip
+    happens to expose it), the feature label is what a human would
+    recognize. Malformed/empty input (not JSON, no `sensors` binary,
+    unexpected shape) yields two empty lists rather than raising — a
+    monitoring sample must never fail outright over an optional reading."""
+    temps: list[dict[str, Any]] = []
+    fans: list[dict[str, Any]] = []
+    if not raw.strip():
+        return temps, fans
+    try:
+        chips = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return temps, fans
+    if not isinstance(chips, dict):
+        return temps, fans
+
+    for features in chips.values():
+        if not isinstance(features, dict):
+            continue
+        for label, readings in features.items():
+            if label == "Adapter" or not isinstance(readings, dict):
+                continue
+            for key, value in readings.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                if key.endswith("_input") and key.startswith("temp"):
+                    temps.append({"name": label, "celsius": float(value)})
+                elif key.endswith("_input") and key.startswith("fan"):
+                    fans.append({"name": label, "rpm": float(value)})
+    return temps, fans
+
+
+def _parse_smart(raw: str) -> list[dict[str, Any]]:
+    """Each line is `<device> <PASSED|FAILED|...>` (see _HARDWARE_COMMAND's
+    own SMART awk extraction). Anything other than a literal "PASSED"/
+    "FAILED" (a truncated/unexpected smartctl message) is recorded as
+    `healthy: None` — "ran, but couldn't tell" — rather than guessed at."""
+    disks: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        fields = line.split(maxsplit=1)
+        if len(fields) != 2:
+            continue
+        device, status = fields
+        if status == "PASSED":
+            healthy: bool | None = True
+        elif status == "FAILED":
+            healthy = False
+        else:
+            healthy = None
+        disks.append({"device": device, "healthy": healthy})
+    return disks
+
+
+def _parse_cpu_energy(raw: str) -> int | None:
+    """First RAPL domain found (typically the CPU package as a whole,
+    `package-0` — see _HARDWARE_COMMAND) whose energy_uj value parsed as a
+    whole number; further domains (per-core, DRAM, ...) aren't summed in,
+    to avoid double-counting a sub-domain that's already part of the
+    package total."""
+    for line in raw.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[1].isdigit():
+            return int(fields[1])
+    return None
+
+
+def _parse_gpu_power(raw: str) -> float | None:
+    """`nvidia-smi --query-gpu=name,power.draw --format=csv,noheader,
+    nounits` — first GPU's power draw in watts, already a rate (not a
+    counter, unlike CPU_ENERGY_UJ). Multiple GPUs report multiple lines;
+    only the first is kept — same "one representative reading, not a
+    per-device breakdown" scope as the rest of this first version."""
+    for line in raw.splitlines():
+        fields = [f.strip() for f in line.split(",")]
+        if len(fields) == 2:
+            watts = _parse_float(fields[1])
+            if watts is not None:
+                return watts
+    return None
 
 
 async def gather_monitoring_sample(
     machine: Machine, secret: str | None, timeout_seconds: int
 ) -> MonitoringSample:
     """Connect to a machine and take one CPU/load/RAM/network/disk-I/O/
-    failed-services sample. Requires a pinned host key. `timeout_seconds`
-    should comfortably exceed the `sleep 1` baked into `MONITORING_COMMAND`
-    — the same `ssh_connect_timeout` every other SSH round trip in this
-    app uses is already well above 1 second."""
+    failed-services sample — plus, only when `machine.is_physical`,
+    hardware sensors/fans/S.M.A.R.T./power draw (see _HARDWARE_COMMAND).
+    Requires a pinned host key. `timeout_seconds` should comfortably
+    exceed the `sleep 1` baked into `MONITORING_COMMAND` — the same
+    `ssh_connect_timeout` every other SSH round trip in this app uses is
+    already well above 1 second."""
+    is_physical = bool(machine.is_physical)
+    command = f"{MONITORING_COMMAND}; {_HARDWARE_COMMAND}" if is_physical else MONITORING_COMMAND
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(MONITORING_COMMAND, check=False, timeout=timeout_seconds)
+        result = await conn.run(command, check=False, timeout=timeout_seconds)
 
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()
-    return parse_monitoring_output(raw)
+    return parse_monitoring_output(raw, is_physical=is_physical)

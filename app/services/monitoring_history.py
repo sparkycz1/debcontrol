@@ -41,7 +41,7 @@ TIME_RANGES: tuple[tuple[str, str, timedelta], ...] = (
     ("30d", "Last 30 days", timedelta(days=30)),
     ("90d", "Last 90 days", timedelta(days=90)),
 )
-DEFAULT_TIME_RANGE = "24h"
+DEFAULT_TIME_RANGE = "1h"
 
 # A hard cap on how many raw rows one request will pull into memory before
 # downsampling — protects against a machine whose interval override is much
@@ -172,6 +172,24 @@ def _combined_rate_series(
     return rates
 
 
+def _scalar_rate_series(
+    values: list[int | None], timestamps: list[datetime], *, divisor: float = 1.0
+) -> list[float | None]:
+    """Same idea as `_combined_rate_series`, for a single cumulative
+    counter (e.g. `cpu_energy_uj`) rather than a dict of named fields —
+    `divisor` converts the counter's own unit into the rate's (microjoules
+    per second / 1e6 = watts)."""
+    rates: list[float | None] = [None]
+    for i in range(1, len(values)):
+        prev, cur = values[i - 1], values[i]
+        dt = (timestamps[i] - timestamps[i - 1]).total_seconds()
+        if prev is None or cur is None or dt <= 0 or cur < prev:  # counter reset
+            rates.append(None)
+        else:
+            rates.append((cur - prev) / divisor / dt)
+    return rates
+
+
 @dataclass
 class MonitoringHistory:
     range_key: str
@@ -213,6 +231,17 @@ class MonitoringHistory:
     latest_filesystems: dict[str, dict[str, Any]]
     latest_failed_services_count: int | None
     latest_sampled_at: datetime | None
+    # --- Hardware (app.ssh.monitoring's _HARDWARE_COMMAND) — only ever
+    # populated for a physical machine; empty/None throughout on a VM. ---
+    # Average watts, computed from consecutive `cpu_energy_uj` readings —
+    # a rate, same treatment as the network/disk-I/O series above, not a
+    # "latest" gauge (a single instantaneous energy-counter reading means
+    # nothing on its own).
+    cpu_power_watts: list[float | None]
+    latest_sensor_temps: list[dict[str, Any]]
+    latest_sensor_fans: list[dict[str, Any]]
+    latest_smart_disks: list[dict[str, Any]]
+    latest_gpu_power_watts: float | None
 
 
 def build_monitoring_history(
@@ -261,6 +290,13 @@ def build_monitoring_history(
         mount: _bucket_average(fs_raw_by_mount[mount], _TARGET_POINTS) for mount in fs_keys
     }
 
+    cpu_power_watts = _bucket_average(
+        _scalar_rate_series(
+            [s.cpu_energy_uj for s in samples], timestamps, divisor=1_000_000.0
+        ),
+        _TARGET_POINTS,
+    )
+
     latest = samples[-1] if samples else None
     latest_network_io = {
         iface: entries[-1] for iface, entries in net_by_key.items() if entries and entries[-1]
@@ -298,6 +334,11 @@ def build_monitoring_history(
         latest_filesystems=latest_filesystems,
         latest_failed_services_count=latest.failed_services_count if latest else None,
         latest_sampled_at=latest.sampled_at if latest else None,
+        cpu_power_watts=cpu_power_watts,
+        latest_sensor_temps=(latest.sensor_temps or []) if latest else [],
+        latest_sensor_fans=(latest.sensor_fans or []) if latest else [],
+        latest_smart_disks=(latest.smart_disks or []) if latest else [],
+        latest_gpu_power_watts=latest.gpu_power_watts if latest else None,
     )
 
 

@@ -5,7 +5,7 @@ in `GeoipDatabase`.
 
 Never bundled — MaxMind's GeoLite2 license forbids redistribution. Deploy-
 time config only decides *whether* GeoIP is on and *where* to download the
-database from (Settings → Security → GeoIP); the actual downloaded bytes
+database from (Settings → Integrations → GeoIP); the actual downloaded bytes
 live in the database (`GeoipDatabase`, a separate singleton table from
 `AppSettings` — see that model's own docstring for why).
 

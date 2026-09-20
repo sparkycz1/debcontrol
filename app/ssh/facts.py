@@ -30,6 +30,7 @@ _SECTION_MARKERS = (
     "PROCESSES",
     "FILESYSTEMS",
     "NETWORK",
+    "VIRT",
 )
 
 # One round trip: each section is delimited by a "===NAME===" marker so the
@@ -88,7 +89,20 @@ FACTS_COMMAND = (
     "df -B1 --output=target,size,used,avail,pcent "
     "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
     "echo ===NETWORK===; "
-    "ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}'"
+    "ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}'; "
+    # `systemd-detect-virt` prints "none" and exits 1 on bare metal, or the
+    # hypervisor/container technology name (and exits 0) inside one — the
+    # standard, widely-available way to tell (ships with systemd itself,
+    # already assumed present per this module's own conventions elsewhere).
+    # Gates whether app.ssh.monitoring also probes hardware sensors/fans/
+    # S.M.A.R.T./power draw, none of which is meaningful (S.M.A.R.T.
+    # actively misleading) against a virtual disk. Missing binary or any
+    # other failure leaves this empty — "couldn't tell", same convention
+    # as reboot_required/ram_speed_mhz above, never assumed either way.
+    "echo ===VIRT===; "
+    "if command -v systemd-detect-virt >/dev/null 2>&1; then "
+    "systemd-detect-virt 2>/dev/null || true; "
+    "fi"
 )
 
 
@@ -111,6 +125,10 @@ class MachineFacts(TypedDict):
     process_count: int | None
     filesystems: list[dict[str, Any]]
     network_interfaces: list[dict[str, Any]]
+    # True on bare metal, False inside a VM/container, None if it couldn't
+    # be determined at all (no systemd-detect-virt) — see FACTS_COMMAND's
+    # own VIRT comment.
+    is_physical: bool | None
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -196,6 +214,11 @@ def parse_facts_output(raw: str) -> MachineFacts:
         interface, address = fields
         network_interfaces.append({"interface": interface.rstrip(":"), "address": address})
 
+    virt_raw = sections.get("VIRT", "").strip().lower()
+    is_physical: bool | None = None
+    if virt_raw:
+        is_physical = virt_raw == "none"
+
     return MachineFacts(
         hostname=sections.get("HOSTNAME") or None,
         os_version=sections.get("OS") or None,
@@ -212,6 +235,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
         process_count=process_count,
         filesystems=filesystems,
         network_interfaces=network_interfaces,
+        is_physical=is_physical,
     )
 
 

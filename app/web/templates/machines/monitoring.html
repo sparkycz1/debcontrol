@@ -182,6 +182,59 @@
       </section>
     {% endif %}
 
+    {% if machine.is_physical and machine.monitoring_updated_at %}
+      <section class="panel">
+        <h2>{{ t(request, "monitoring.hardware.heading") }}</h2>
+
+        <h3>{{ t(request, "monitoring.hardware.temperatures") }}</h3>
+        {% if history.latest_sensor_temps %}
+          <div class="badge-list">
+            {% for sensor in history.latest_sensor_temps %}
+              <span class="badge">{{ sensor.name }}: {{ '%.0f°C' % sensor.celsius if sensor.celsius is not none else '—' }}</span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="hint">{{ t(request, "monitoring.hardware.none_found") }}</p>
+        {% endif %}
+
+        <h3>{{ t(request, "monitoring.hardware.fans") }}</h3>
+        {% if history.latest_sensor_fans %}
+          <div class="badge-list">
+            {% for fan in history.latest_sensor_fans %}
+              <span class="badge">{{ fan.name }}: {{ '%.0f RPM' % fan.rpm if fan.rpm is not none else '—' }}</span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="hint">{{ t(request, "monitoring.hardware.none_found") }}</p>
+        {% endif %}
+
+        <h3>{{ t(request, "monitoring.hardware.smart") }}</h3>
+        {% if history.latest_smart_disks %}
+          <div class="badge-list">
+            {% for disk in history.latest_smart_disks %}
+              <span class="badge {{ 'badge-ok' if disk.healthy else ('badge-error' if disk.healthy is sameas false else '') }}">
+                <code>{{ disk.device }}</code>:
+                {% if disk.healthy is sameas true %}{{ t(request, "monitoring.hardware.smart_passed") }}
+                {% elif disk.healthy is sameas false %}{{ t(request, "monitoring.hardware.smart_failed") }}
+                {% else %}{{ t(request, "monitoring.hardware.smart_unknown") }}{% endif %}
+              </span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="hint">{{ t(request, "monitoring.hardware.none_found") }}</p>
+        {% endif %}
+
+        <h3>{{ t(request, "monitoring.hardware.power") }}</h3>
+        {% if history.cpu_power_watts | select('number') | list %}
+          {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_power_watts}], history.bucket_timestamps, unit='W') }}
+        {% endif %}
+        <p class="hint">
+          {{ t(request, "monitoring.hardware.power_current",
+               gpu=('%.1f W' % history.latest_gpu_power_watts if history.latest_gpu_power_watts is not none else '—')) }}
+        </p>
+      </section>
+    {% endif %}
+
     {% if availability.sample_count %}
       <section class="panel">
         <h2>{{ t(request, "monitoring.availability.heading") }}</h2>

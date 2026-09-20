@@ -1,41 +1,42 @@
 {% extends "base.html" %}
 
 {% macro condition_row(request, row, condition_field_choices, condition_operator_choices) %}
+  {# Reads left-to-right as one sentence — "IF <field> <operator> <value>
+     [on <mount>] [sustained for <seconds>s]" — rather than five stacked,
+     separately-labeled boxes that read like a spreadsheet row. The
+     connecting words are plain visible text (not just an aria-label), so
+     a sighted user gets the same "if CPU is above 90" sense a screen
+     reader already got from each control's own accessible name. #}
   <div class="condition-row" data-condition-row>
-    <div class="condition-field">
-      <label>{{ t(request, "notifications.rule.conditions_field") }}</label>
-      <select name="condition_field">
-        <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
-        {% for key, label_key in condition_field_choices %}
-          <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
-            {{ t(request, "notifications.condition_field." ~ label_key) }}
-          </option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="condition-field">
-      <label>{{ t(request, "notifications.rule.conditions_operator") }}</label>
-      <select name="condition_operator">
-        {% for opkey in condition_operator_choices %}
-          <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
-            {{ t(request, "notifications.condition_operator." ~ opkey) }}
-          </option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="condition-field condition-field-value">
-      <label>{{ t(request, "notifications.rule.conditions_value") }}</label>
-      <input type="text" name="condition_value" maxlength="255" value="{{ row.value or '' }}">
-    </div>
-    <div class="condition-field condition-field-mount">
-      <label>{{ t(request, "notifications.rule.conditions_mount") }}</label>
-      <input type="text" name="condition_mount" maxlength="255" placeholder="/var" value="{{ row.mount_point or '' }}">
-    </div>
-    <div class="condition-field condition-field-sustained">
-      <label>{{ t(request, "notifications.rule.conditions_sustained") }}</label>
-      <input type="number" name="condition_sustained" min="0" max="86400"
-             value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}">
-    </div>
+    <span class="condition-word">{{ t(request, "notifications.rule.conditions_if") }}</span>
+    <select name="condition_field" class="condition-field-select"
+            aria-label="{{ t(request, 'notifications.rule.conditions_field') }}">
+      <option value="">{{ t(request, "notifications.rule.conditions_none") }}</option>
+      {% for key, label_key in condition_field_choices %}
+        <option value="{{ key }}" {{ 'selected' if row.field == key else '' }}>
+          {{ t(request, "notifications.condition_field." ~ label_key) }}
+        </option>
+      {% endfor %}
+    </select>
+    <input type="text" name="condition_mount" class="condition-field-mount" maxlength="255"
+           placeholder="/var" value="{{ row.mount_point or '' }}"
+           aria-label="{{ t(request, 'notifications.rule.conditions_mount') }}">
+    <select name="condition_operator" class="condition-field-operator"
+            aria-label="{{ t(request, 'notifications.rule.conditions_operator') }}">
+      {% for opkey in condition_operator_choices %}
+        <option value="{{ opkey }}" {{ 'selected' if row.operator == opkey else '' }}>
+          {{ t(request, "notifications.condition_operator." ~ opkey) }}
+        </option>
+      {% endfor %}
+    </select>
+    <input type="text" name="condition_value" class="condition-field-value" maxlength="255"
+           value="{{ row.value or '' }}"
+           aria-label="{{ t(request, 'notifications.rule.conditions_value') }}">
+    <span class="condition-word">{{ t(request, "notifications.rule.conditions_for") }}</span>
+    <input type="number" name="condition_sustained" class="condition-field-sustained" min="0" max="86400"
+           placeholder="0" value="{{ row.sustained_seconds if row.sustained_seconds is not none else '' }}"
+           aria-label="{{ t(request, 'notifications.rule.conditions_sustained') }}">
+    <span class="condition-word">{{ t(request, "notifications.rule.conditions_seconds") }}</span>
     <button type="button" class="condition-remove" data-condition-remove
             aria-label="{{ t(request, 'notifications.rule.conditions_remove') }}">×</button>
   </div>
@@ -74,9 +75,9 @@
 
     <div class="panel">
       <h2>{{ t(request, "notifications.rule.section_trigger") }}</h2>
-      <p class="hint">{{ t(request, "notifications.rule.trigger_hint") }}</p>
 
-      <label>{{ t(request, "notifications.rule.events_label") }}</label>
+      <h3 class="trigger-subheading">{{ t(request, "notifications.rule.events_heading") }}</h3>
+      <p class="hint">{{ t(request, "notifications.rule.events_hint") }}</p>
       <div class="permission-grid">
         {% for event in event_types %}
           <label>
@@ -87,7 +88,9 @@
         {% endfor %}
       </div>
 
-      <label>{{ t(request, "notifications.rule.conditions_label") }}</label>
+      <p class="trigger-or-divider">{{ t(request, "notifications.rule.trigger_or") }}</p>
+
+      <h3 class="trigger-subheading">{{ t(request, "notifications.rule.conditions_heading") }}</h3>
       <p class="hint">{{ t(request, "notifications.rule.conditions_hint") }}</p>
 
       <div data-condition-rows>
@@ -106,12 +109,17 @@
           {{ t(request, "notifications.rule.conditions_add") }}
         </button>
       </div>
-      <p class="hint">{{ t(request, "notifications.rule.conditions_and_hint") }}</p>
+      {% if condition_rows | length > 1 %}
+        <p class="hint">{{ t(request, "notifications.rule.conditions_and_hint") }}</p>
+      {% endif %}
 
-      <label for="conditions_yaml">{{ t(request, "notifications.rule.conditions_yaml_label") }}</label>
-      <textarea id="conditions_yaml" name="conditions_yaml" rows="4"
-                placeholder="- field: monitoring.cpu_percent&#10;  operator: gt&#10;  value: &quot;90&quot;&#10;  sustained_seconds: 300">{{ form.conditions_yaml or '' }}</textarea>
-      <p class="hint">{{ t(request, "notifications.rule.conditions_yaml_hint") }}</p>
+      <details class="conditions-yaml-details" {{ 'open' if form.conditions_yaml else '' }}>
+        <summary>{{ t(request, "notifications.rule.conditions_yaml_summary") }}</summary>
+        <label for="conditions_yaml">{{ t(request, "notifications.rule.conditions_yaml_label") }}</label>
+        <textarea id="conditions_yaml" name="conditions_yaml" rows="4"
+                  placeholder="- field: monitoring.cpu_percent&#10;  operator: gt&#10;  value: &quot;90&quot;&#10;  sustained_seconds: 300">{{ form.conditions_yaml or '' }}</textarea>
+        <p class="hint">{{ t(request, "notifications.rule.conditions_yaml_hint") }}</p>
+      </details>
     </div>
 
     <div class="panel">

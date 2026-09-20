@@ -43,6 +43,93 @@ def test_parse_monitoring_output_full():
         }
     ]
     assert sample["failed_services_count"] == 2
+    # No hardware fields without `is_physical=True` — even though the
+    # default here is a VM.
+    assert sample["sensor_temps"] == []
+    assert sample["sensor_fans"] == []
+    assert sample["smart_disks"] == []
+    assert sample["cpu_energy_uj"] is None
+    assert sample["gpu_power_watts"] is None
+
+
+def test_parse_monitoring_output_hardware_full():
+    sensors_json = (
+        '{"coretemp-isa-0000": {"Adapter": "ISA adapter", '
+        '"Package id 0": {"temp1_input": 45.0, "temp1_max": 100.0}, '
+        '"Core 0": {"temp2_input": 43.0}}, '
+        '"nct6779-isa-0a20": {"Adapter": "ISA adapter", '
+        '"fan1": {"fan1_input": 1200.0}, "fan2": {"fan2_input": 0.0}}}'
+    )
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n3\n"
+        "===SENSORS===\n"
+        f"{sensors_json}\n"
+        "===SMART===\n"
+        "sda PASSED\n"
+        "nvme0n1 FAILED\n"
+        "===CPU_ENERGY_UJ===\n"
+        "package-0 123456789\n"
+        "===GPU_POWER===\n"
+        "NVIDIA GeForce RTX 3060, 45.20\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    # A trailing hardware round trip glued onto FAILED_SERVICES's own
+    # section must not break its own (unrelated) parsing.
+    assert sample["failed_services_count"] == 3
+    assert {"name": "Package id 0", "celsius": 45.0} in sample["sensor_temps"]
+    assert {"name": "Core 0", "celsius": 43.0} in sample["sensor_temps"]
+    assert {"name": "fan1", "rpm": 1200.0} in sample["sensor_fans"]
+    assert {"name": "fan2", "rpm": 0.0} in sample["sensor_fans"]
+    assert sample["smart_disks"] == [
+        {"device": "sda", "healthy": True},
+        {"device": "nvme0n1", "healthy": False},
+    ]
+    assert sample["cpu_energy_uj"] == 123456789
+    assert sample["gpu_power_watts"] == 45.20
+
+
+def test_parse_monitoring_output_hardware_gracefully_empty_on_a_vm():
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
+        "===SENSORS===\n===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["sensor_temps"] == []
+    assert sample["sensor_fans"] == []
+    assert sample["smart_disks"] == []
+    assert sample["cpu_energy_uj"] is None
+    assert sample["gpu_power_watts"] is None
+
+
+def test_parse_monitoring_output_sensors_malformed_json_is_ignored():
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
+        "===SENSORS===\nnot json at all\n===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["sensor_temps"] == []
+    assert sample["sensor_fans"] == []
+
+
+def test_parse_monitoring_output_smart_unrecognized_status_is_none():
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
+        "===SENSORS===\n===SMART===\nsda UNKNOWN\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["smart_disks"] == [{"device": "sda", "healthy": None}]
 
 
 def test_parse_monitoring_output_multiple_interfaces_and_disks():

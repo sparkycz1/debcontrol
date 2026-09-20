@@ -94,6 +94,38 @@ Missing command (e.g. a minimal rootfs without `util-linux`/`iproute2`)?
 That one fact is left empty, not a failed refresh. Filesystem usage
 excludes pseudo-filesystems (`tmpfs`, `devtmpfs`, `squashfs`, `overlay`).
 
+## 🌡️ Hardware monitoring — physical machines only, optional packages
+
+One extra fact, `is_physical` (`systemd-detect-virt`, standard on any
+systemd host), decides whether the Monitoring tab's **Hardware** panel
+appears at all — a VM never runs the probes below, since a virtual
+disk's S.M.A.R.T. status is meaningless and there's usually no real
+sensor/RAPL data to read.
+
+On a physical machine, every reading below is best-effort — a missing
+package just means that one reading is empty, not a failed sample:
+
+| Reading | Command | Package | Root? |
+|---|---|---|---|
+| Temperatures + fan speeds | `sensors -j` | `lm-sensors` (run `sensors-detect` once after install) | No |
+| S.M.A.R.T. disk health | `smartctl -H` per disk | `smartmontools` | **Yes**, see below |
+| CPU power | `/sys/class/powercap/intel-rapl:*/energy_uj` | kernel (Intel RAPL only — AMD/other CPUs have no reading) | No |
+| GPU power | `nvidia-smi --query-gpu=...` | NVIDIA driver (first GPU only — no non-NVIDIA/multi-GPU probe yet) | No |
+
+S.M.A.R.T. is the one exception needing root, added to the same sudoers
+line as `dmidecode` — **machines onboarded through this app already have
+it**; a pre-existing/externally-provisioned machine needs the line added
+by hand (or simply re-onboarded):
+
+```
+# /etc/sudoers.d/debcontrol
+debcontrol ALL=(root) NOPASSWD: /usr/sbin/dmidecode, /usr/sbin/smartctl
+```
+
+Every reading is gathered fresh on each monitoring sample, so a sensor,
+fan, or disk that's physically added or removed between samples is
+picked up automatically — nothing to reconcile by hand.
+
 ## 📦 Installed packages — also no agent, no root
 
 **Machines → a machine → Installed packages** lists every apt package,
@@ -131,7 +163,7 @@ only for the apt part — flatpak/snap listing is read-only. See
 - **(Recommended)** Non-root user, scoped passwordless sudo:
   ```
   # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
-  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode, /usr/sbin/smartctl
   # Only if flatpak/snap are installed and you want them kept updated too:
   debcontrol ALL=(root) NOPASSWD: /usr/bin/flatpak, /usr/bin/snap
   ```

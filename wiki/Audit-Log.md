@@ -36,7 +36,7 @@ self-registration token, a rejected form, a failed/locked-out login).
 
 ### 🌍 GeoIP: resolving a source IP to a country/city
 
-Off by default — **Settings → Security → GeoIP**. When enabled,
+Off by default — **Settings → Integrations → GeoIP**. When enabled,
 `log_event()` resolves `ip_address` to a country/city/lat-long via
 `app.services.geoip`, once at write time, and stores it on the entry
 (`geo_country`/`geo_country_code`/`geo_city`/`geo_latitude`/

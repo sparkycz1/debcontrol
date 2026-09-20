@@ -342,7 +342,7 @@ async def update_geoip_settings(
         errors.append("Enabling GeoIP needs at least a primary database URL.")
 
     if errors:
-        return await _render_settings(request, db, errors, tab="security")
+        return await _render_settings(request, db, errors, tab="integrations")
 
     app_settings.geoip_enabled = bool(geoip_enabled)
     if primary_url:
@@ -360,7 +360,7 @@ async def update_geoip_settings(
         action="settings.geoip.update",
         summary=f"Updated GeoIP settings ({enabled_label})",
     )
-    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/geoip/download", dependencies=[_manage, Depends(verify_csrf)])
@@ -371,7 +371,7 @@ async def download_geoip_database_now(
     app_settings = await get_or_create_app_settings(db)
     if not app_settings.geoip_primary_url_encrypted:
         return await _render_settings(
-            request, db, ["No GeoIP database URL is configured yet."], tab="security"
+            request, db, ["No GeoIP database URL is configured yet."], tab="integrations"
         )
 
     async_result = refresh_geoip_database_task.delay(force=True)
@@ -382,11 +382,11 @@ async def download_geoip_database_now(
             request,
             db,
             ["The download is still running in the background — check back in a moment."],
-            tab="security",
+            tab="integrations",
         )
     except Exception as exc:
         return await _render_settings(
-            request, db, [f"GeoIP download failed: {exc}"], tab="security"
+            request, db, [f"GeoIP download failed: {exc}"], tab="integrations"
         )
 
     await log_event(
@@ -395,7 +395,7 @@ async def download_geoip_database_now(
         action="settings.geoip.download_now",
         summary="Manually triggered a GeoIP database download",
     )
-    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?tab=integrations", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/dashboard-trends-retention", dependencies=[_manage, Depends(verify_csrf)])

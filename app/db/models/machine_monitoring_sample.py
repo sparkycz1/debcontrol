@@ -75,3 +75,19 @@ class MachineMonitoringSample(Base):
     # None = couldn't tell (no `systemctl` — see app.ssh.monitoring), not
     # "zero failed services".
     failed_services_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # --- Hardware — only ever populated for a physical machine
+    # (Machine.is_physical); empty/None on a VM (not "nothing found") —
+    # see app.ssh.monitoring's own _HARDWARE_COMMAND. ---
+    # Each {"name": ..., "celsius": ...}.
+    sensor_temps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Each {"name": ..., "rpm": ...}.
+    sensor_fans: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Each {"device": ..., "healthy": bool | None}.
+    smart_disks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Cumulative RAPL package-energy counter, microjoules — a rate (watts)
+    # is computed from consecutive samples the same way network/disk I/O
+    # already is, see app.services.monitoring_history.
+    cpu_energy_uj: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Already a rate (watts) straight from nvidia-smi, not a counter.
+    gpu_power_watts: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -281,6 +281,13 @@ snapshots below each have their own equivalent button:
   global-scope (not loopback/link-local) IPv4 addresses. `iproute2` is
   standard on any non-minimal Debian/Ubuntu install; missing entirely just
   yields an empty list, same graceful degradation as every other fact.
+- **Physical vs. virtual** (`Machine.is_physical`): `systemd-detect-virt`
+  — prints `none` and exits non-zero on bare metal, or the hypervisor name
+  and exits 0 inside a VM/container. `None` (unknown) if the binary itself
+  is missing. Gates the hardware-monitoring probe below — self-healing on
+  every facts refresh, so a machine physically migrated between bare metal
+  and a VM (or vice versa) picks up the right behavior on its own next
+  sweep, no manual toggle.
 
 ### flatpak and snap: optional, guarded, never blocking apt
 
@@ -336,6 +343,49 @@ trip's `sleep 1`, plus 1/5/15-min load average), **Memory** (utilization
 from cumulative counters), **Disk** (same diffing, **and** filesystem
 usage per mount, historized), **Availability** (a wholly different
 table/cadence — see below).
+
+### Hardware monitoring: physical machines only, self-healing
+
+A sixth category, **Hardware**, appears on the Monitoring tab only when
+`Machine.is_physical` is true (see Facts gathered, above) — a VM's
+`sensors`/S.M.A.R.T./RAPL/`nvidia-smi` readings would be either absent or
+actively misleading (a virtual disk has no real S.M.A.R.T. attributes),
+so the panel and its probe are skipped entirely rather than shown empty.
+
+When `is_physical`, the same monitoring SSH round trip appends a second
+`_HARDWARE_COMMAND` (`app/ssh/monitoring.py`) to the existing one:
+
+- **Temperature sensors** and **fan speeds**: `sensors -j` (lm-sensors),
+  parsed from its own JSON — each chip → feature → `*_input` reading,
+  bucketed into temps vs. fans by whether the feature name starts with
+  `temp`/`fan`. Missing `sensors` (not installed) or malformed/empty JSON
+  both degrade to an empty list, never an error.
+- **S.M.A.R.T. disk health**: `smartctl -H` per physical disk found in
+  facts' `disks`, via the same `sudo -n` pattern already used for
+  apt/flatpak/snap/`dmidecode`/`shutdown` — the sudoers-grant line
+  (`app/ssh/onboarding.py`) includes `smartctl` for any *newly* onboarded
+  machine; an already-onboarded one only gets the grant after being
+  re-onboarded (self-healing, not a crash — the probe just can't tell
+  PASSED/FAILED without it and reports `unknown`). PASSED → healthy,
+  FAILED → unhealthy, anything else (including "couldn't ask") → unknown.
+- **CPU power**: Intel RAPL's `/sys/class/powercap/intel-rapl:*/energy_uj`
+  — a cumulative microjoule counter since boot, world-readable, no root.
+  Stored raw per sample (`MachineMonitoringSample.cpu_energy_uj`); the
+  Monitoring tab computes a watts *rate* from the delta between
+  consecutive samples, the same downstream-rate pattern network/disk I/O
+  already use (see `app.services.monitoring_history`) — avoids adding a
+  measurement window to the SSH round trip. AMD/non-Intel CPUs without
+  RAPL simply report no reading.
+- **GPU power**: `nvidia-smi --query-gpu=name,power.draw
+  --format=csv,noheader,nounits`, first GPU only, already a rate (not a
+  counter) — no equivalent probe for non-NVIDIA GPUs or multi-GPU
+  machines yet.
+
+Every one of these self-heals the same way facts' `disks`/`network_interfaces`
+already do: sensors/fans/disks appearing or disappearing between sweeps
+(a fan replaced, a disk added) is reflected automatically on the next
+sample, no reconciliation step needed, since each sample stores its own
+full snapshot rather than diffing against the previous one's shape.
 
 Unlike every table earlier, `MachineMonitoringSample` genuinely is a
 history: one row appended per `MONITORING_INTERVAL_SECONDS` tick, purged

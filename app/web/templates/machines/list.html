@@ -2,6 +2,7 @@
 {% from "partials/_os_badge.html" import render as render_os_badge %}
 
 {% block title %}{{ t(request, 'machines.title') }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% macro status_badge(machine) %}
   {% if machine.is_reachable is none %}
@@ -305,6 +306,8 @@
         <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
           {{ t(request, 'machines.bulk.shutdown') }}
         </button>
+        <span class="bulk-actions-divider" aria-hidden="true"></span>
+        <span class="hint">{{ t(request, 'machines.bulk.tags_label') }}</span>
         <input type="text" name="tags" class="inline-text-input" placeholder="{{ t(request, 'machines.bulk.tags_placeholder') }}"
                aria-label="{{ t(request, 'machines.bulk.tags_aria') }}">
         <button type="submit" formaction="/machines/bulk/tags/add" class="button button-secondary">

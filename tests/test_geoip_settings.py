@@ -7,7 +7,7 @@ from __future__ import annotations
 
 
 async def test_geoip_panel_appears_on_security_tab(client):
-    response = await client.get("/settings?tab=security")
+    response = await client.get("/settings?tab=integrations")
     assert response.status_code == 200
     assert "GeoIP" in response.text
     assert 'name="geoip_primary_url"' in response.text
@@ -29,9 +29,9 @@ async def test_saving_geoip_settings_redirects_back_to_security_tab(client):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/settings?tab=security"
+    assert response.headers["location"] == "/settings?tab=integrations"
 
-    page = await client.get("/settings?tab=security")
+    page = await client.get("/settings?tab=integrations")
     assert 'checked' in page.text  # the enabled checkbox
     assert 'value="24"' in page.text
 
@@ -71,7 +71,7 @@ async def test_geoip_refresh_interval_out_of_range_is_rejected(client):
 
 
 async def test_download_now_without_a_configured_url_shows_an_error(client):
-    response = await client.get("/settings?tab=security")
+    response = await client.get("/settings?tab=integrations")
     csrf_token = client.cookies.get("csrftoken")
     response = await client.post(
         "/settings/geoip/download",

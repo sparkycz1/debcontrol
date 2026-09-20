@@ -792,6 +792,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.process_count = facts["process_count"]
         machine.filesystems = facts["filesystems"]
         machine.network_interfaces = facts["network_interfaces"]
+        machine.is_physical = facts["is_physical"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
         await publish_machine_event(machine_id, KIND_FACTS)
@@ -1009,6 +1010,11 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
                 disk_io=sample["disk_io"],
                 filesystems=sample["filesystems"],
                 failed_services_count=sample["failed_services_count"],
+                sensor_temps=sample["sensor_temps"],
+                sensor_fans=sample["sensor_fans"],
+                smart_disks=sample["smart_disks"],
+                cpu_energy_uj=sample["cpu_energy_uj"],
+                gpu_power_watts=sample["gpu_power_watts"],
             )
         )
         machine.monitoring_updated_at = now
@@ -2009,7 +2015,7 @@ async def _refresh_geoip_database(*, force: bool = False) -> None:
     genuinely sub-daily intervals bootstrapped once at Beat startup
     (`_bootstrap_interval_settings` in `app.tasks.celery_app`).
 
-    `force=True` (Settings → Security → GeoIP's "Download now" button)
+    `force=True` (Settings → Integrations → GeoIP's "Download now" button)
     skips both the `geoip_enabled` and staleness checks — an admin testing
     a freshly-pasted URL before ever saving "enabled", or wanting an
     immediate refresh ahead of the next scheduled one, expects the button

@@ -138,6 +138,14 @@ class Machine(Base):
     # and IPv4 addresses per network interface (via `ip addr`).
     filesystems: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     network_interfaces: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Detected via `systemd-detect-virt` (see app.ssh.facts) — True on bare
+    # metal, False inside a VM/container, None if it couldn't be
+    # determined (no systemd-detect-virt binary). Gates whether the
+    # Monitoring sample round trip also probes hardware sensors/fans/
+    # S.M.A.R.T./power draw (app.ssh.monitoring) — none of that is
+    # meaningful, and S.M.A.R.T. in particular is actively misleading,
+    # against a virtual disk.
+    is_physical: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---

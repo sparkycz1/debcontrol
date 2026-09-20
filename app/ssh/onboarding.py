@@ -65,7 +65,16 @@ def build_onboarding_command(public_key: str) -> str:
         f'chown {user}:{user} "$home/.ssh/authorized_keys"; '
         f"cat > /etc/sudoers.d/{user} <<'DEBCONTROL_SUDOERS_APT'\n"
         f"{user} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, "
-        "/usr/sbin/dmidecode\n"
+        # smartctl (smartmontools) — S.M.A.R.T. health status for physical
+        # disks, part of the hardware-monitoring round trip
+        # (app.ssh.monitoring), gated on Machine.is_physical. `sensors`
+        # (lm-sensors) and the RAPL powercap sysfs files it also reads
+        # need no root at all, unlike this one. Missing entirely on an
+        # already-onboarded machine from before this grant existed is
+        # harmless and self-healing, same as the dmidecode grant above —
+        # `sudo -n smartctl ...` just fails and that disk's health simply
+        # isn't reported, never a crash.
+        "/usr/sbin/dmidecode, /usr/sbin/smartctl\n"
         "DEBCONTROL_SUDOERS_APT\n"
         f"chmod 440 /etc/sudoers.d/{user}; "
         f"visudo -cf /etc/sudoers.d/{user}; "

@@ -393,10 +393,47 @@ p { margin: 0 0 var(--space-3); }
 .checklist-filter-group [data-checklist-empty] { margin: 0; }
 
 /* Notifications rule form's condition rows (app/web/templates/notifications/
-   rule_form.html, app/web/static/js/notification-conditions.js) — each row
-   is a labeled mini-form rather than a table row, so it stays legible when
-   it wraps onto multiple lines on a narrow viewport instead of needing a
-   horizontally-scrolling table for its five columns. */
+   rule_form.html, app/web/static/js/notification-conditions.js). Each row
+   reads left-to-right as one sentence — "IF <field> <operator> <value>
+   [on <mount>] FOR <seconds>s" — rather than a grid of separately-labeled
+   boxes (the connecting words are plain `.condition-word` spans, not form
+   labels); wraps onto multiple lines on a narrow viewport rather than
+   needing a horizontally-scrolling table. */
+
+/* The Trigger section's own "1. a fixed event / 2. a threshold" split —
+   two genuinely different ways a rule can fire, previously stacked one
+   under the other with no visual separation beyond a paragraph of hint
+   text. */
+.trigger-subheading {
+  margin: var(--space-4) 0 var(--space-1);
+  font-size: 0.95rem;
+}
+.trigger-subheading:first-of-type { margin-top: 0; }
+
+.trigger-or-divider {
+  margin: var(--space-4) 0;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+/* The condition rows' raw-YAML escape hatch — collapsed by default (open
+   only when it already holds something, i.e. an existing rule was
+   authored/edited via YAML) so the common case only shows the row
+   builder, not a raw config textarea sitting right below it. */
+.conditions-yaml-details {
+  margin-top: var(--space-3);
+}
+.conditions-yaml-details summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: 0.88rem;
+}
+.conditions-yaml-details textarea { font-family: var(--font-mono, monospace); }
+
 .condition-rows {
   display: flex;
   flex-direction: column;
@@ -407,32 +444,31 @@ p { margin: 0 0 var(--space-3); }
 .condition-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface-raised);
 }
 
-.condition-row .condition-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  flex: 1 1 150px;
-  min-width: 120px;
-}
-.condition-row .condition-field-value,
-.condition-row .condition-field-mount { flex-basis: 110px; }
-.condition-row .condition-field-sustained { flex-basis: 140px; }
-
-.condition-row .condition-field label {
-  margin: 0;
-  font-size: 0.78rem;
+.condition-word {
   color: var(--color-muted);
+  font-size: 0.88rem;
   font-weight: 500;
+  white-space: nowrap;
 }
-.condition-row input, .condition-row select { width: 100%; }
+
+.condition-row select,
+.condition-row input {
+  width: auto;
+  flex: 0 0 auto;
+}
+.condition-field-select { flex-basis: 220px; }
+.condition-field-mount { flex-basis: 90px; }
+.condition-field-operator { flex-basis: 160px; }
+.condition-field-value { flex-basis: 100px; }
+.condition-field-sustained { flex-basis: 80px; }
 
 .condition-remove {
   flex: 0 0 auto;
@@ -452,6 +488,16 @@ p { margin: 0 0 var(--space-3); }
   max-width: 1080px;
   margin: 0 auto;
   padding: var(--space-6) var(--space-5);
+}
+
+/* Opt-in wider content width (via `{% block main_class %}container-wide{%
+   endblock %}`) for a page whose own table/toolbar genuinely needs more
+   horizontal room than the standard 1080px reading-width cap — e.g. the
+   Machines list's own Tags column and its "With selected" bulk-action row,
+   which otherwise wraps its trailing controls onto a second line on a
+   typical desktop viewport. */
+.container-wide {
+  max-width: 1400px;
 }
 
 .site-footer {
@@ -480,6 +526,18 @@ p { margin: 0 0 var(--space-3); }
   gap: var(--space-2);
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* A thin vertical rule inside a .page-header-actions row (e.g. the
+   Machines list's "With selected" bar) marking a genuine change of
+   subject within one row — update/power actions vs. the tag input+
+   buttons that follow it — rather than a plain visual gap that reads the
+   same as the spacing between any two ordinary buttons. */
+.bulk-actions-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--color-border);
+  margin: 0 var(--space-1);
 }
 
 /* --- Detail sub-navigation (machine / group tabs) ---
@@ -693,6 +751,18 @@ p { margin: 0 0 var(--space-3); }
   font-weight: 600;
   line-height: 1.4;
   white-space: nowrap;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+
+/* A wrapping row of `.badge`s, e.g. the Monitoring tab's per-sensor
+   temperature/fan/S.M.A.R.T. readings — one badge per reading, no fixed
+   count. */
+.badge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
 }
 
 .badge-ok { background: rgba(70, 191, 138, 0.16); color: var(--color-ok); }

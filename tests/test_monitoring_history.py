@@ -3,6 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.services.monitoring_history import (
@@ -25,6 +27,11 @@ def _sample(
     disk_io: list[dict[str, object]] | None = None,
     filesystems: list[dict[str, object]] | None = None,
     failed: int | None = 0,
+    sensor_temps: list[dict[str, object]] | None = None,
+    sensor_fans: list[dict[str, object]] | None = None,
+    smart_disks: list[dict[str, object]] | None = None,
+    cpu_energy_uj: int | None = None,
+    gpu_power_watts: float | None = None,
 ) -> MachineMonitoringSample:
     return MachineMonitoringSample(
         id=uuid.uuid4(),
@@ -40,12 +47,17 @@ def _sample(
         disk_io=disk_io if disk_io is not None else [],
         filesystems=filesystems if filesystems is not None else [],
         failed_services_count=failed,
+        sensor_temps=sensor_temps if sensor_temps is not None else [],
+        sensor_fans=sensor_fans if sensor_fans is not None else [],
+        smart_disks=smart_disks if smart_disks is not None else [],
+        cpu_energy_uj=cpu_energy_uj,
+        gpu_power_watts=gpu_power_watts,
     )
 
 
 def test_time_range_delta_known_and_unknown_keys():
     assert time_range_delta("1h") == timedelta(hours=1)
-    assert time_range_delta("bogus") == time_range_delta("24h")
+    assert time_range_delta("bogus") == time_range_delta("1h")  # DEFAULT_TIME_RANGE
 
 
 def test_build_monitoring_history_empty():
@@ -225,6 +237,48 @@ def test_latest_failed_services_count():
     history = build_monitoring_history(samples, "1h")
 
     assert history.latest_failed_services_count == 3
+
+
+def test_latest_hardware_fields_reflect_the_most_recent_sample():
+    samples = [
+        _sample(1, sensor_temps=[{"name": "old", "celsius": 30.0}]),
+        _sample(
+            0,
+            sensor_temps=[{"name": "Package id 0", "celsius": 45.0}],
+            sensor_fans=[{"name": "fan1", "rpm": 1200.0}],
+            smart_disks=[{"device": "sda", "healthy": True}],
+            gpu_power_watts=45.2,
+        ),
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.latest_sensor_temps == [{"name": "Package id 0", "celsius": 45.0}]
+    assert history.latest_sensor_fans == [{"name": "fan1", "rpm": 1200.0}]
+    assert history.latest_smart_disks == [{"device": "sda", "healthy": True}]
+    assert history.latest_gpu_power_watts == 45.2
+
+
+def test_cpu_power_watts_computed_from_consecutive_energy_counters():
+    # 1,000,000 uJ over 60s = 1,000,000 / 1e6 / 60 = ~0.0167 W... use a
+    # bigger delta so the rate is easy to eyeball: 60,000,000 uJ over 60s
+    # = 60 J/s = 1 W.
+    samples = [
+        _sample(1, cpu_energy_uj=1_000_000_000),
+        _sample(0, cpu_energy_uj=1_060_000_000),
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.cpu_power_watts[-1] == pytest.approx(1.0, rel=0.01)
+
+
+def test_cpu_power_watts_gap_on_counter_reset():
+    samples = [_sample(1, cpu_energy_uj=5_000_000), _sample(0, cpu_energy_uj=1_000_000)]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.cpu_power_watts[-1] is None
 
 
 def _reachability_sample(

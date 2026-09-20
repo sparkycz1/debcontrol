@@ -127,6 +127,7 @@ async def test_refresh_facts_publishes_a_facts_event(
             "process_count": 5,
             "filesystems": [],
             "network_interfaces": [],
+            "is_physical": True,
         }
 
     monkeypatch.setattr(jobs, "gather_facts", _fake_gather_facts)

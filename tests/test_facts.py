@@ -159,6 +159,39 @@ def test_parse_facts_output_empty_string():
     assert facts["process_count"] is None
     assert facts["filesystems"] == []
     assert facts["network_interfaces"] == []
+    assert facts["is_physical"] is None
+
+
+def _raw_up_to_network(virt_body: str) -> str:
+    """`_split_sections` pairs chunks against `_SECTION_MARKERS`
+    positionally, so a fixture testing a later section (VIRT, the last
+    marker) needs every earlier marker present too, in order — dropping
+    one from the *middle* (unlike dropping a trailing suffix, which
+    `test_parse_facts_output_handles_missing_sections` above covers) would
+    silently misalign every section after the gap."""
+    return (
+        "===HOSTNAME===\nweb1\n===OS===\n===OS_ID===\n===KERNEL===\n"
+        "===KERNEL_LATEST===\n===ARCH===\n===CPU===\n===CPU_MODEL===\n"
+        "===RAM_KB===\n===RAM_SPEED===\n===DISKS===\n===UPTIME===\n"
+        "===PROCESSES===\n===FILESYSTEMS===\n===NETWORK===\n"
+        f"===VIRT===\n{virt_body}"
+    )
+
+
+def test_parse_facts_output_virt_none_means_physical():
+    facts = parse_facts_output(_raw_up_to_network("none\n"))
+    assert facts["is_physical"] is True
+
+
+def test_parse_facts_output_virt_kvm_means_not_physical():
+    facts = parse_facts_output(_raw_up_to_network("kvm\n"))
+    assert facts["is_physical"] is False
+
+
+def test_parse_facts_output_virt_missing_binary_is_unknown():
+    # command not found: VIRT section body is empty.
+    facts = parse_facts_output(_raw_up_to_network(""))
+    assert facts["is_physical"] is None
 
 
 def test_parse_facts_output_filesystems_ignores_malformed_lines():
