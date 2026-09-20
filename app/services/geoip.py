@@ -109,6 +109,25 @@ async def _fetch_one(url: str) -> bytes:
         return _extract_mmdb(response.content)
 
 
+def _describe_error(exc: Exception) -> str:
+    """A short, safe-to-log description of `exc` that never includes the
+    configured download URL — a MaxMind "permalink" embeds a license key
+    in its query string, and `httpx.HTTPStatusError`/`ConnectError`/etc.
+    all put the full request URL straight into their own `str()`. This
+    description is what ends up in the application log, the audit log
+    (`app.tasks.jobs._refresh_geoip_database`, readable by anyone with
+    `audit.view`, not just `settings.manage`), and the Settings page's own
+    error banner — none of which should ever leak a secret embedded in an
+    admin-entered URL."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timed out"
+    if isinstance(exc, httpx.HTTPError):
+        return f"{type(exc).__name__} (network error)"
+    return f"{type(exc).__name__}: could not parse the downloaded file"
+
+
 async def download_geoip_database(app_settings: AppSettings) -> bytes:
     """Downloads and validates the configured GeoIP database — the primary
     URL first, falling back to the backup only on outright failure
@@ -127,6 +146,7 @@ async def download_geoip_database(app_settings: AppSettings) -> bytes:
     if not primary:
         raise GeoipDownloadError("No primary GeoIP database URL is configured.")
 
+    last_description: str | None = None
     last_error: Exception | None = None
     for label, url in (("primary", primary), ("backup", backup)):
         if not url:
@@ -135,11 +155,14 @@ async def download_geoip_database(app_settings: AppSettings) -> bytes:
             data = await _fetch_one(url)
             _validate_mmdb(data)
         except Exception as exc:
-            logger.warning("GeoIP %s database download failed: %s", label, exc)
+            last_description = _describe_error(exc)
             last_error = exc
+            logger.warning("GeoIP %s database download failed: %s", label, last_description)
         else:
             return data
-    raise GeoipDownloadError(f"Both GeoIP database URLs failed: {last_error}") from last_error
+    raise GeoipDownloadError(
+        f"Both GeoIP database URLs failed ({last_description})"
+    ) from last_error
 
 
 async def refresh_geoip_database(db: AsyncSession, app_settings: AppSettings) -> None:

@@ -14,6 +14,7 @@ import gzip
 import io
 import tarfile
 
+import httpx
 import pytest
 
 from app.core.security import encrypt_secret
@@ -124,6 +125,32 @@ async def test_download_raises_when_both_urls_fail(monkeypatch):
 async def test_download_raises_when_no_primary_url_is_configured():
     with pytest.raises(geoip.GeoipDownloadError, match="No primary"):
         await geoip.download_geoip_database(_settings())
+
+
+async def test_download_failure_never_leaks_the_url_or_its_license_key(monkeypatch):
+    """A MaxMind "permalink" embeds a license key in its query string —
+    httpx's own exceptions (HTTPStatusError, ConnectError, ...) put the
+    full request URL straight into their str(), and that error ends up in
+    the audit log (readable by anyone with audit.view, not just
+    settings.manage) via app.tasks.jobs._refresh_geoip_database. The
+    raised GeoipDownloadError's own message must never contain the URL."""
+    secret_url = "https://updates.maxmind.com/geoip/databases?license_key=TOP-SECRET-KEY-123"
+
+    async def _fake_fetch(url: str) -> bytes:
+        request = httpx.Request("GET", url)
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("boom", request=request, response=response)
+
+    monkeypatch.setattr(geoip, "_fetch_one", _fake_fetch)
+
+    settings = _settings(geoip_primary_url_encrypted=encrypt_secret(secret_url))
+    with pytest.raises(geoip.GeoipDownloadError) as exc_info:
+        await geoip.download_geoip_database(settings)
+
+    message = str(exc_info.value)
+    assert "TOP-SECRET-KEY-123" not in message
+    assert secret_url not in message
+    assert "404" in message
 
 
 async def test_refresh_geoip_database_stores_the_downloaded_bytes(monkeypatch, db_session_factory):
