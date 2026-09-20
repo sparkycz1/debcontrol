@@ -109,8 +109,8 @@ package just means that one reading is empty, not a failed sample:
 |---|---|---|---|
 | Temperatures + fan speeds | `sensors -j` | `lm-sensors` (run `sensors-detect` once after install) | No |
 | S.M.A.R.T. disk health | `smartctl -H` per disk | `smartmontools` | **Yes**, see below |
-| CPU power | `/sys/class/powercap/intel-rapl:*/energy_uj` | kernel (Intel RAPL only — AMD/other CPUs have no reading) | No |
-| GPU power | `nvidia-smi --query-gpu=...` | NVIDIA driver (first GPU only — no non-NVIDIA/multi-GPU probe yet) | No |
+| CPU power | `/sys/class/powercap/*-rapl:*/energy_uj` | kernel (Intel or AMD RAPL — a CPU with neither has no reading) | No |
+| GPU power | `nvidia-smi --query-gpu=...` (NVIDIA), else `sensors -j`'s `amdgpu`/`i915`/`xe` chip (AMD/Intel) | NVIDIA driver, or `lm-sensors` (first GPU only — no multi-GPU probe yet) | No |
 
 S.M.A.R.T. is the one exception needing root, added to the same sudoers
 line as `dmidecode` — **machines onboarded through this app already have

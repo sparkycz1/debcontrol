@@ -432,7 +432,7 @@ p { margin: 0 0 var(--space-3); }
   color: var(--color-accent);
   font-size: 0.88rem;
 }
-.conditions-yaml-details textarea { font-family: var(--font-mono, monospace); }
+.conditions-yaml-details textarea { font-family: "SFMono-Regular", Consolas, monospace; }
 
 .condition-rows {
   display: flex;

@@ -120,6 +120,57 @@ def test_parse_monitoring_output_sensors_malformed_json_is_ignored():
     assert sample["sensor_fans"] == []
 
 
+def test_parse_monitoring_output_amd_gpu_power_from_sensors_when_no_nvidia():
+    # amdgpu's own hwmon power reading, surfaced through `sensors -j` —
+    # no nvidia-smi output at all (an AMD-only machine).
+    sensors_json = (
+        '{"amdgpu-pci-0300": {"Adapter": "PCI adapter", '
+        '"edge": {"temp1_input": 50.0}, "PPT": {"power1_average": 65.3}}}'
+    )
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
+        f"===SENSORS===\n{sensors_json}\n"
+        "===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["gpu_power_watts"] == 65.3
+
+
+def test_parse_monitoring_output_nvidia_gpu_power_preferred_over_sensors():
+    sensors_json = '{"amdgpu-pci-0300": {"PPT": {"power1_average": 65.3}}}'
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
+        f"===SENSORS===\n{sensors_json}\n"
+        "===SMART===\n===CPU_ENERGY_UJ===\n"
+        "===GPU_POWER===\nNVIDIA GeForce RTX 3060, 45.20\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["gpu_power_watts"] == 45.20
+
+
+def test_parse_monitoring_output_cpu_chip_power_reading_not_mistaken_for_gpu():
+    # k10temp (AMD CPU temp sensor) has no power reading in practice, but
+    # even if some other non-GPU chip exposed a "power*" key, it must not
+    # be picked up as gpu_power_watts — only amdgpu/i915/xe chips count.
+    sensors_json = '{"k10temp-pci-00c3": {"Tctl": {"temp1_input": 40.0}}}'
+    raw = (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
+        f"===SENSORS===\n{sensors_json}\n"
+        "===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["gpu_power_watts"] is None
+
+
 def test_parse_monitoring_output_smart_unrecognized_status_is_none():
     raw = (
         "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"

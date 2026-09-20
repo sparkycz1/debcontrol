@@ -48,17 +48,23 @@ _HARDWARE_SECTION_MARKERS = ("SENSORS", "SMART", "CPU_ENERGY_UJ", "GPU_POWER")
 # same class of gap `app.ssh.readiness` already documents for dmidecode)
 # just means that disk's health is never reported, not a crash.
 #
-# CPU_ENERGY_UJ: Intel RAPL's own cumulative package-energy counter
-# (microjoules since some arbitrary reference point, typically boot) —
-# read as a plain gauge here, same as network/disk-I/O's cumulative
-# byte counters; the *rate* (average watts) is computed downstream from
-# consecutive samples (app.services.monitoring_history), not here, so
-# this needs no extra sleep of its own. AMD has no equivalent standard
-# userspace interface without extra tooling this app doesn't assume is
-# installed — silently absent there, not an error.
+# CPU_ENERGY_UJ: RAPL's own cumulative package-energy counter (microjoules
+# since some arbitrary reference point, typically boot) — read as a plain
+# gauge here, same as network/disk-I/O's cumulative byte counters; the
+# *rate* (average watts) is computed downstream from consecutive samples
+# (app.services.monitoring_history), not here, so this needs no extra
+# sleep of its own. The glob covers both `intel-rapl:*` (Intel) and
+# `amd-rapl:*` (AMD Zen 2+, kernel 5.8+, exposed the same way as Intel's
+# once present) — a CPU with neither (older AMD, non-x86) is silently
+# absent here, not an error.
 #
-# GPU_POWER: `nvidia-smi`'s own instantaneous power draw — already a rate
-# (watts), not a counter, so no downstream computation needed for it.
+# GPU_POWER: NVIDIA via `nvidia-smi`'s own instantaneous power draw —
+# already a rate (watts), no downstream computation needed. AMD/Intel
+# GPUs have no equivalent standalone CLI this app assumes is installed;
+# their power draw (when the kernel driver exposes it — amdgpu always has,
+# i915/xe only on newer kernels) comes through the same `sensors -j` dump
+# SENSORS already captures, parsed by `_parse_sensors_json`'s power
+# handling below, so nothing extra is added to this command for them.
 _HARDWARE_COMMAND = (
     "echo ===SENSORS===; "
     "if command -v sensors >/dev/null 2>&1; then sensors -j 2>/dev/null; fi; "
@@ -71,7 +77,7 @@ _HARDWARE_COMMAND = (
     "done; "
     "fi; "
     "echo ===CPU_ENERGY_UJ===; "
-    "for f in /sys/class/powercap/intel-rapl:*/energy_uj; do "
+    "for f in /sys/class/powercap/*-rapl:*/energy_uj; do "
     "[ -f \"$f\" ] || continue; "
     "d=\"$(dirname \"$f\")\"; "
     "printf '%s ' \"$(cat \"$d/name\" 2>/dev/null || basename \"$d\")\"; "
@@ -179,7 +185,9 @@ class MonitoringSample(TypedDict):
     # _HARDWARE_COMMAND's own CPU_ENERGY_UJ comment for why this is a
     # counter here, not a rate.
     cpu_energy_uj: int | None
-    # Already a rate (watts) straight from nvidia-smi, not a counter.
+    # Already a rate (watts), not a counter — from nvidia-smi (NVIDIA) or,
+    # falling back, the kernel driver's own hwmon power reading surfaced
+    # through `sensors -j` (AMD/Intel) — see `_parse_sensors_json`.
     gpu_power_watts: float | None
 
 
@@ -282,10 +290,22 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     if failed_line.isdigit():
         failed_services_count = int(failed_line)
 
-    sensor_temps, sensor_fans = _parse_sensors_json(hardware_sections.get("SENSORS", ""))
+    sensor_temps, sensor_fans, amd_intel_gpu_power_watts = _parse_sensors_json(
+        hardware_sections.get("SENSORS", "")
+    )
     smart_disks = _parse_smart(hardware_sections.get("SMART", ""))
     cpu_energy_uj = _parse_cpu_energy(hardware_sections.get("CPU_ENERGY_UJ", ""))
-    gpu_power_watts = _parse_gpu_power(hardware_sections.get("GPU_POWER", ""))
+    # NVIDIA (nvidia-smi) tried first since it's the more precise,
+    # purpose-built reading; AMD/Intel's sensors-derived one is the
+    # fallback for whichever vendor's GPU is actually present. An explicit
+    # `is not None` check (not `or`) since 0.0 W — an idle GPU — is a
+    # genuine reading, not "missing".
+    nvidia_gpu_power_watts = _parse_gpu_power(hardware_sections.get("GPU_POWER", ""))
+    gpu_power_watts = (
+        nvidia_gpu_power_watts
+        if nvidia_gpu_power_watts is not None
+        else amd_intel_gpu_power_watts
+    )
 
     return MonitoringSample(
         cpu_percent=cpu_percent,
@@ -306,30 +326,50 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     )
 
 
-def _parse_sensors_json(raw: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+# Chip-name prefixes lm-sensors uses for the kernel drivers that expose a
+# GPU's own power draw (as opposed to a CPU's, e.g. `k10temp` never has
+# one) — `amdgpu` (AMD, always has one when the driver's loaded), `i915`/
+# `xe` (Intel, only on kernels new enough to register the hwmon power
+# reading). NVIDIA's proprietary driver never registers here — that's
+# `_parse_gpu_power`'s `nvidia-smi` job instead, tried first by the caller.
+_GPU_SENSOR_CHIP_PREFIXES = ("amdgpu", "i915", "xe")
+
+
+def _parse_sensors_json(
+    raw: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float | None]:
     """`sensors -j`'s shape: `{chip: {"Adapter": "...", feature_label: {key:
     value, ...}, ...}, ...}` — every `*_input` reading under a feature
     whose key starts with `temp`/`fan` is one temperature/fan reading,
     labeled with that feature's own name (e.g. "Core 0", "fan1"), not the
     chip name — the chip is an implementation detail (which sensor chip
     happens to expose it), the feature label is what a human would
-    recognize. Malformed/empty input (not JSON, no `sensors` binary,
-    unexpected shape) yields two empty lists rather than raising — a
-    monitoring sample must never fail outright over an optional reading."""
+    recognize. A `power`-prefixed reading under a GPU chip (see
+    `_GPU_SENSOR_CHIP_PREFIXES`) is this machine's AMD/Intel GPU power
+    draw, already in watts (lm-sensors' own JSON, unlike raw sysfs
+    microwatts) — first one found, same "one representative reading"
+    scope `_parse_gpu_power` already has for NVIDIA. Malformed/empty input
+    (not JSON, no `sensors` binary, unexpected shape) yields empty/None
+    rather than raising — a monitoring sample must never fail outright
+    over an optional reading."""
     temps: list[dict[str, Any]] = []
     fans: list[dict[str, Any]] = []
+    gpu_power_watts: float | None = None
     if not raw.strip():
-        return temps, fans
+        return temps, fans, gpu_power_watts
     try:
         chips = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
-        return temps, fans
+        return temps, fans, gpu_power_watts
     if not isinstance(chips, dict):
-        return temps, fans
+        return temps, fans, gpu_power_watts
 
-    for features in chips.values():
+    for chip_name, features in chips.items():
         if not isinstance(features, dict):
             continue
+        is_gpu_chip = isinstance(chip_name, str) and chip_name.startswith(
+            _GPU_SENSOR_CHIP_PREFIXES
+        )
         for label, readings in features.items():
             if label == "Adapter" or not isinstance(readings, dict):
                 continue
@@ -340,7 +380,9 @@ def _parse_sensors_json(raw: str) -> tuple[list[dict[str, Any]], list[dict[str, 
                     temps.append({"name": label, "celsius": float(value)})
                 elif key.endswith("_input") and key.startswith("fan"):
                     fans.append({"name": label, "rpm": float(value)})
-    return temps, fans
+                elif is_gpu_chip and gpu_power_watts is None and key.startswith("power"):
+                    gpu_power_watts = float(value)
+    return temps, fans, gpu_power_watts
 
 
 def _parse_smart(raw: str) -> list[dict[str, Any]]:

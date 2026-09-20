@@ -368,18 +368,27 @@ When `is_physical`, the same monitoring SSH round trip appends a second
   re-onboarded (self-healing, not a crash — the probe just can't tell
   PASSED/FAILED without it and reports `unknown`). PASSED → healthy,
   FAILED → unhealthy, anything else (including "couldn't ask") → unknown.
-- **CPU power**: Intel RAPL's `/sys/class/powercap/intel-rapl:*/energy_uj`
-  — a cumulative microjoule counter since boot, world-readable, no root.
-  Stored raw per sample (`MachineMonitoringSample.cpu_energy_uj`); the
-  Monitoring tab computes a watts *rate* from the delta between
-  consecutive samples, the same downstream-rate pattern network/disk I/O
-  already use (see `app.services.monitoring_history`) — avoids adding a
-  measurement window to the SSH round trip. AMD/non-Intel CPUs without
-  RAPL simply report no reading.
-- **GPU power**: `nvidia-smi --query-gpu=name,power.draw
-  --format=csv,noheader,nounits`, first GPU only, already a rate (not a
-  counter) — no equivalent probe for non-NVIDIA GPUs or multi-GPU
-  machines yet.
+- **CPU power** (Intel and AMD): RAPL's
+  `/sys/class/powercap/*-rapl:*/energy_uj` — the glob matches both
+  `intel-rapl:*` and `amd-rapl:*` (AMD Zen 2+, kernel 5.8+, exposed the
+  same way once present), a cumulative microjoule counter since boot,
+  world-readable, no root. Stored raw per sample
+  (`MachineMonitoringSample.cpu_energy_uj`); the Monitoring tab computes a
+  watts *rate* from the delta between consecutive samples, the same
+  downstream-rate pattern network/disk I/O already use (see
+  `app.services.monitoring_history`) — avoids adding a measurement window
+  to the SSH round trip. A CPU with neither RAPL variant (older AMD,
+  non-x86) simply reports no reading.
+- **GPU power** (NVIDIA, AMD, Intel), first GPU only, already a rate (not
+  a counter): NVIDIA via `nvidia-smi --query-gpu=name,power.draw
+  --format=csv,noheader,nounits`, tried first; AMD (`amdgpu`, always
+  exposes it when the driver's loaded) and Intel (`i915`/`xe`, only on
+  kernels new enough to register the hwmon power reading) both come from
+  the same `sensors -j` dump the temperature/fan readings above already
+  parse — `_parse_sensors_json` picks out any `power*`-prefixed reading
+  under a chip name starting with `amdgpu`/`i915`/`xe`, falling back to it
+  only when `nvidia-smi` found nothing. No probe for a multi-GPU machine
+  (first one found wins) yet.
 
 Every one of these self-heals the same way facts' `disks`/`network_interfaces`
 already do: sensors/fans/disks appearing or disappearing between sweeps
