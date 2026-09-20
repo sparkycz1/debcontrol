@@ -98,4 +98,4 @@ class AiProviderConfig(Base):
 # process happening to have imported it first — which is exactly the kind of
 # thing that holds in the web app and then breaks in a Celery worker with a
 # narrower import graph.
-from app.db.models.ai_model import AiModel  # noqa: E402, F401  (see above)
+from app.db.models.ai_model import AiModel  # noqa: E402  (see above)

@@ -8,6 +8,7 @@ from app.db.models.app_settings import AppSettings, FleetSummaryFrequency
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.fleet_summary import FleetSummary
+from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
@@ -60,6 +61,7 @@ __all__ = [
     "FleetSnapshot",
     "FleetSummary",
     "FleetSummaryFrequency",
+    "GeoipDatabase",
     "Machine",
     "MachineGroup",
     "MachineMonitoringSample",
@@ -72,8 +74,8 @@ __all__ = [
     "NotificationCustomTemplate",
     "NotificationDeliveryChannel",
     "NotificationDeliveryStatus",
-    "NotificationLog",
     "NotificationEventType",
+    "NotificationLog",
     "NotificationRule",
     "NotificationTemplate",
     "PendingActionStatus",
@@ -81,13 +83,13 @@ __all__ = [
     "Permission",
     "Role",
     "RolePermission",
+    "SSHIdentity",
     "SavedAuditView",
     "SavedMachineView",
     "ScheduleTargetType",
     "ScheduledTask",
     "ScheduledTaskRun",
     "ScheduledTaskRunStatus",
-    "SSHIdentity",
     "Tag",
     "TemporaryPermissionGrant",
     "TotpRecoveryCode",

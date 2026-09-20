@@ -34,6 +34,44 @@ self-registration token, a rejected form, a failed/locked-out login).
   before raising the 403 — see "CSRF protection" below.
 - **No pagination cursor beyond offset.**
 
+### 🌍 GeoIP: resolving a source IP to a country/city
+
+Off by default — **Settings → Security → GeoIP**. When enabled,
+`log_event()` resolves `ip_address` to a country/city/lat-long via
+`app.services.geoip`, once at write time, and stores it on the entry
+(`geo_country`/`geo_country_code`/`geo_city`/`geo_latitude`/
+`geo_longitude`) — shown next to the IP on the Audit log page and
+included in both export formats.
+
+- **Never bundled** — MaxMind's GeoLite2 license forbids redistribution.
+  Settings takes a primary (and optional backup) download URL for a
+  MaxMind-DB-format (`.mmdb`, `.mmdb.gz`, or `.tar.gz`) database — a
+  GeoLite2 "permalink" (embeds a license key) is the typical choice,
+  encrypted at rest like every other secret here (`app.core.security`).
+  A "Download now" button fetches immediately; otherwise a daily Celery
+  Beat tick (`app.tasks.jobs.refresh_geoip_database`) re-downloads once
+  `AppSettings.geoip_refresh_interval_hours` has elapsed since the last
+  successful download — the task itself decides its own due-ness rather
+  than the interval being a Beat-schedule value, so changing it takes
+  effect on the next daily tick, no Beat restart needed.
+- **Only ever a public IP** — a machine's own LAN address, or a login
+  through an internal reverse proxy, has no real-world location and is
+  never looked up (`ipaddress.ip_address(...).is_global` gates every
+  lookup).
+- **The downloaded bytes live in `GeoipDatabase`**, a separate singleton
+  table from `AppSettings` (which is read on essentially every request —
+  a multi-megabyte blob there would be a cost every caller pays). Each
+  process caches a parsed reader in memory, revalidated against
+  `GeoipDatabase.updated_at` at most hourly, so the overwhelming majority
+  of lookups cost one wall-clock comparison, not a database round trip.
+- **Resolved once, historically accurate** — a later database update (or
+  GeoIP being turned off) never retroactively changes an already-written
+  entry's geo columns.
+- **Deliberately excluded from `entry_hash`'s canonical payload** —
+  display enrichment, not part of the tamper-evident record (see the
+  hash-chaining section below). A GeoIP lookup failure is only ever
+  logged, never breaks the audit write it's enriching.
+
 ### Audit log integrity: hash chaining, and its actual guarantee
 
 Every entry is linked into a hash chain (`sequence`, `prev_hash`,

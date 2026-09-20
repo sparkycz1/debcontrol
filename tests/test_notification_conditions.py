@@ -22,13 +22,13 @@ from app.tasks.jobs import _evaluate_notification_conditions
 
 
 def _machine(**overrides: object) -> Machine:
-    defaults: dict[str, object] = dict(
-        name="db1",
-        ip_address="10.0.0.5",
-        port=22,
-        username="root",
-        auth_method=AuthMethod.PASSWORD,
-    )
+    defaults: dict[str, object] = {
+        "name": "db1",
+        "ip_address": "10.0.0.5",
+        "port": 22,
+        "username": "root",
+        "auth_method": AuthMethod.PASSWORD,
+    }
     defaults.update(overrides)
     return Machine(**defaults)
 

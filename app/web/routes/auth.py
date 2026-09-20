@@ -96,6 +96,10 @@ _OIDC_ERROR_MESSAGES = {
         "No enabled debcontrol account matches your OIDC identity. "
         "Ask an administrator to check the account is set up for OIDC login."
     ),
+    "discovery_failed": (
+        "Couldn't reach the OIDC provider's discovery document. "
+        "Ask an administrator to check the Issuer URL in Settings."
+    ),
 }
 
 
@@ -722,6 +726,24 @@ async def oidc_login(request: Request, db: AsyncSession = Depends(get_db)) -> Re
     except OidcNotConfiguredError:
         return RedirectResponse(
             url="/login?oidc_error=not_configured", status_code=status.HTTP_303_SEE_OTHER
+        )
+    except Exception:
+        # Most commonly a bad Issuer URL (a discovery document that 404s or
+        # doesn't parse, an unreachable host) — Authlib/httpx can raise many
+        # different exception types for this, none of them worth
+        # distinguishing to the user. oidc_callback already handles this
+        # same class of failure broadly; oidc_login didn't, so a
+        # misconfigured Issuer URL 500'd instead of redirecting back to the
+        # login page.
+        await log_event(
+            db,
+            request=request,
+            action="user.login",
+            summary="OIDC login couldn't start: failed to reach the provider's discovery document",
+            outcome=AuditOutcome.DENIED,
+        )
+        return RedirectResponse(
+            url="/login?oidc_error=discovery_failed", status_code=status.HTTP_303_SEE_OTHER
         )
 
 

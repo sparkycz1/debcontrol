@@ -10,6 +10,7 @@ half of this feature's contract. See `app/services/access_scope.py` and
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -569,7 +570,7 @@ async def test_ai_resolve_target_refuses_an_out_of_scope_machine(
     async with db_session_factory() as db:
         user = await db.get(User, restricted.id)
         assert user is not None
-        with pytest.raises(Exception, match='No machine named "machine-b" exists.'):
+        with pytest.raises(Exception, match=re.escape('No machine named "machine-b" exists.')):
             await resolve_target(db, user, "machine", "machine-b")
         # ...and the in-scope one still resolves.
         resolved = await resolve_target(db, user, "machine", "machine-a")

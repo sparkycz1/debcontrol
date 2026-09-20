@@ -38,7 +38,7 @@ from sqlalchemy import delete, func, select
 from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.db import session as db_session
-from app.db.models.audit_log import AuditLogEntry
+from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
@@ -1992,3 +1992,73 @@ async def _purge_old_notification_logs() -> None:
 @celery_app.task(name="app.tasks.jobs.purge_old_notification_logs")
 def purge_old_notification_logs() -> None:
     asyncio.run(_purge_old_notification_logs())
+
+
+_GEOIP_REFRESH_ACTOR = "GeoIP refresh (automatic)"
+
+
+async def _refresh_geoip_database(*, force: bool = False) -> None:
+    """Downloads the configured GeoIP database and stores it, if GeoIP is
+    enabled and due for a refresh — see
+    `app.services.geoip.refresh_geoip_database`. Runs on a fixed daily Beat
+    entry (like `generate_fleet_summary`'s own "off by default, cheap no-op
+    check otherwise" pattern) rather than a configurable Beat interval:
+    `AppSettings.geoip_refresh_interval_hours` decides *this task's own*
+    due-ness against `GeoipDatabase.updated_at`, so changing it takes
+    effect on the very next daily tick, no Beat restart needed — unlike the
+    genuinely sub-daily intervals bootstrapped once at Beat startup
+    (`_bootstrap_interval_settings` in `app.tasks.celery_app`).
+
+    `force=True` (Settings → Security → GeoIP's "Download now" button)
+    skips both the `geoip_enabled` and staleness checks — an admin testing
+    a freshly-pasted URL before ever saving "enabled", or wanting an
+    immediate refresh ahead of the next scheduled one, expects the button
+    to actually do something regardless of either.
+
+    A download failure (bad URL, network error, an expired MaxMind license
+    key) is only ever logged, same as any other best-effort background
+    sweep here — the last successfully downloaded database (if any) stays
+    in use until the next due attempt or a manual "Download now" succeeds.
+    """
+    from app.db.models.geoip_database import SINGLETON_ID, GeoipDatabase
+
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        if not force:
+            if not app_settings.geoip_enabled:
+                return
+
+            existing = await session.get(GeoipDatabase, SINGLETON_ID)
+            if existing is not None:
+                due_at = existing.updated_at + timedelta(
+                    hours=app_settings.geoip_refresh_interval_hours
+                )
+                if datetime.now(UTC) < due_at:
+                    return
+
+        from app.services.geoip import GeoipDownloadError
+        from app.services.geoip import refresh_geoip_database as _download_and_store
+
+        try:
+            await _download_and_store(session, app_settings)
+        except GeoipDownloadError as exc:
+            await log_event(
+                session,
+                actor=_GEOIP_REFRESH_ACTOR,
+                action="geoip.refresh",
+                summary=f"GeoIP database refresh failed: {exc}",
+                outcome=AuditOutcome.FAILURE,
+            )
+            return
+
+        await log_event(
+            session,
+            actor=_GEOIP_REFRESH_ACTOR,
+            action="geoip.refresh",
+            summary="Refreshed the GeoIP database",
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.refresh_geoip_database")
+def refresh_geoip_database(*, force: bool = False) -> None:
+    asyncio.run(_refresh_geoip_database(force=force))

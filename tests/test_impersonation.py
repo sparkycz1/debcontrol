@@ -130,7 +130,7 @@ async def test_impersonation_is_audit_logged(client, db_session_factory):
     await client.post("/logout", data={"csrf_token": logout_csrf})
 
     # Log back in as an admin (full permissions) to read the audit log.
-    admin2, admin2_token = await _make_user(
+    _admin2, admin2_token = await _make_user(
         db_session_factory, username="audit-reader", permissions=set(Permission)
     )
     client.cookies.set(SESSION_COOKIE_NAME, admin2_token)

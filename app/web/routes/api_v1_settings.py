@@ -34,6 +34,12 @@ token:
   still a live security-monitoring integration point; left for the web UI
   for the same "changing where audit data flows shouldn't be a one-token
   API call" reasoning, pending an explicit ask.
+- **GeoIP configuration** (`/settings/geoip`, `/settings/geoip/download`)
+  — same reasoning as syslog: the download URLs carry an encrypted secret
+  (a MaxMind "permalink" embeds a license key), and "Download now"
+  triggers an outbound network fetch on demand. The *result* of GeoIP
+  being enabled (each audit entry's `geo_*` columns) is already exposed
+  read-only via `/api/v1/audit`, same as `ip_address` itself.
 
 If a future need justifies any of these over the API, they should get
 their own deliberate design pass (e.g. requiring a fresh confirmation

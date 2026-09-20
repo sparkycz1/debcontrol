@@ -63,7 +63,7 @@ async def _make_user_with_role(
 
 async def test_role_require_totp_blocks_non_enrolled_user(db_session_factory):
     _configure_app_for_tests(db_session_factory)
-    user, raw_token = await _make_user_with_role(
+    _user, raw_token = await _make_user_with_role(
         db_session_factory, username="needs-totp", require_totp=True, totp_enabled=False
     )
 
@@ -90,7 +90,7 @@ async def test_logout_stays_reachable_while_totp_enrollment_is_blocked(db_sessio
     """A user blocked pending TOTP enrollment must still be able to end their
     own session — not be trapped on the enrollment page with no way out."""
     _configure_app_for_tests(db_session_factory)
-    user, raw_token = await _make_user_with_role(
+    _user, raw_token = await _make_user_with_role(
         db_session_factory, username="wants-to-leave", require_totp=True, totp_enabled=False
     )
 
@@ -112,7 +112,7 @@ async def test_logout_stays_reachable_while_totp_enrollment_is_blocked(db_sessio
 
 async def test_enrolling_totp_lifts_the_block_without_re_login(db_session_factory):
     _configure_app_for_tests(db_session_factory)
-    user, raw_token = await _make_user_with_role(
+    _user, raw_token = await _make_user_with_role(
         db_session_factory, username="enrolls-now", require_totp=True, totp_enabled=False
     )
 
@@ -175,7 +175,7 @@ async def test_toggling_role_flag_on_blocks_on_next_request(db_session_factory):
 
 async def test_oidc_accounts_are_exempt_from_require_totp(db_session_factory):
     _configure_app_for_tests(db_session_factory)
-    user, raw_token = await _make_user_with_role(
+    _user, raw_token = await _make_user_with_role(
         db_session_factory,
         username="oidc-user",
         require_totp=True,

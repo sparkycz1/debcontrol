@@ -16,6 +16,7 @@ SSH flow.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 
@@ -38,15 +39,13 @@ async def check_reachable(
     started = time.monotonic()
     try:
         async with asyncio.timeout(timeout_seconds):
-            reader, writer = await asyncio.open_connection(ip_address, port)
+            _reader, writer = await asyncio.open_connection(ip_address, port)
     except (OSError, TimeoutError):
         return ReachabilityResult(reachable=False, latency_ms=None)
 
     latency_ms = (time.monotonic() - started) * 1000
 
     writer.close()
-    try:
+    with contextlib.suppress(OSError):
         await writer.wait_closed()
-    except OSError:
-        pass
     return ReachabilityResult(reachable=True, latency_ms=latency_ms)

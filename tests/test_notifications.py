@@ -236,7 +236,7 @@ async def test_deleting_custom_template_clears_rule_reference(client, db_session
 async def test_notify_uses_rules_own_custom_template(db_session_factory, monkeypatch):
     sent: list[tuple[str, str]] = []
 
-    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001 - test double
+    def _fake_send(app_settings, to_address, subject, body):
         sent.append((subject, body))
 
     import app.services.notifications as notifications_module
@@ -291,7 +291,7 @@ async def test_notify_webhook_channel_posts_and_logs(db_session_factory, monkeyp
     import app.services.notifications as notifications_module
     from app.db.models.notification_log import NotificationDeliveryStatus
 
-    async def _fake_post(url, event_type, rule_name, subject, body, context):  # noqa: ANN001
+    async def _fake_post(url, event_type, rule_name, subject, body, context):
         posted.append((url, {"event": event_type, "rule_name": rule_name}))
         return NotificationDeliveryStatus.SENT, None
 
@@ -340,7 +340,7 @@ async def test_send_test_notification_email_logs_and_targets_caller_only(
 
     import app.services.notifications as notifications_module
 
-    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001
+    def _fake_send(app_settings, to_address, subject, body):
         sent.append(to_address)
 
     monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)
@@ -519,7 +519,7 @@ def test_render_template_leaves_unknown_placeholder_literal():
 async def test_notify_sends_to_matching_recipients_only(db_session_factory, monkeypatch):
     sent: list[tuple[str, str, str]] = []
 
-    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001 - test double
+    def _fake_send(app_settings, to_address, subject, body):
         sent.append((to_address, subject, body))
 
     import app.services.notifications as notifications_module
@@ -572,7 +572,7 @@ async def test_notify_sends_to_matching_recipients_only(db_session_factory, monk
         await notify(db, NotificationEventType.UPDATE_RUN_FAILED, machine=in_scope)
 
     assert len(sent) == 1
-    to_address, subject, body = sent[0]
+    to_address, subject, _body = sent[0]
     assert to_address == "oncall@example.com"
     assert "web1" in subject
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import DateTime, MetaData
 from sqlalchemy.orm import DeclarativeBase
@@ -31,4 +32,4 @@ class Base(DeclarativeBase):
     # very first login. See the migration that added `timezone=True` to
     # every existing timestamp column for the one-time data-side fix this
     # pairs with.
-    type_annotation_map = {datetime: DateTime(timezone=True)}
+    type_annotation_map: ClassVar = {datetime: DateTime(timezone=True)}

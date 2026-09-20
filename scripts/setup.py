@@ -46,8 +46,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.i18n import available_locales  # noqa: E402 - needs the sys.path insert above
-from scripts.env_sync import sync_env  # noqa: E402 - needs the sys.path insert above
+from app.i18n import available_locales
+from scripts.env_sync import sync_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = REPO_ROOT / ".env"
@@ -250,7 +250,7 @@ def _wait_until_healthy(port: str) -> bool:
     url = f"http://localhost:{port}/healthz"
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
+            with urllib.request.urlopen(url, timeout=3) as response:
                 if response.status == 200:
                     return True
         except (urllib.error.URLError, OSError):

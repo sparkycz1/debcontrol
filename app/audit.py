@@ -171,7 +171,38 @@ async def log_event(
     entry_id = uuid.uuid4()
     created_at = datetime.now(UTC)
 
+    geo = None
     try:
+        # Read once, reused below for both GeoIP enrichment and syslog
+        # forwarding — this used to be two separate reads (one per
+        # feature); every audit write already pays for one, so there's no
+        # reason for a second. Imported locally to avoid a circular import
+        # (app.core.app_settings -> app.db.models.app_settings, and this
+        # module is imported very early — before app.db.models is fully
+        # set up — by some background-job call sites). Inside this same
+        # try/except as the rest of the write: a failure here must never
+        # take down the action being audited any more than a failure
+        # further down already doesn't.
+        from app.core.app_settings import get_or_create_app_settings
+
+        app_settings = await get_or_create_app_settings(db)
+
+        # GeoIP enrichment (app.services.geoip) — resolved here, once,
+        # rather than re-derived later, so it stays historically accurate
+        # even after the underlying database updates. Deliberately NOT
+        # part of `_canonical_payload`/`entry_hash` below: display
+        # enrichment, not part of the tamper-evident record (see
+        # AuditLogEntry's own docstring).
+        if app_settings.geoip_enabled:
+            try:
+                from app.services.geoip import resolve_ip
+
+                geo = await resolve_ip(db, app_settings, resolved_ip)
+            except Exception:
+                logger.warning(
+                    "GeoIP lookup failed while recording an audit entry", exc_info=True
+                )
+
         state = await _get_locked_chain_state(db)
         sequence = state.entry_count + 1
         payload = _canonical_payload(
@@ -205,6 +236,11 @@ async def log_event(
             sequence=sequence,
             prev_hash=state.last_hash,
             entry_hash=entry_hash,
+            geo_country=geo.country if geo else None,
+            geo_country_code=geo.country_code if geo else None,
+            geo_city=geo.city if geo else None,
+            geo_latitude=geo.latitude if geo else None,
+            geo_longitude=geo.longitude if geo else None,
         )
         state.last_hash = entry_hash
         state.entry_count = sequence
@@ -213,12 +249,13 @@ async def log_event(
 
         # Best-effort live mirror to an external syslog server/SIEM, if
         # configured — see app.audit_syslog's module docstring for why a
-        # delivery failure here is only ever logged, never raised.
+        # delivery failure here is only ever logged, never raised. Reuses
+        # `app_settings` fetched above (the session's `expire_on_commit=
+        # False`, so it's still valid after the commit above) rather than
+        # reading it a second time.
         from app.audit_syslog import forward_to_syslog  # local: avoid an import cycle
-        from app.core.app_settings import get_or_create_app_settings
 
         try:
-            app_settings = await get_or_create_app_settings(db)
             await forward_to_syslog(app_settings, entry)
         except Exception:
             logger.warning("Failed to forward audit entry to syslog", exc_info=True)

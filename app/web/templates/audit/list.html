@@ -97,7 +97,12 @@
           <tr>
             <td>{{ entry.created_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
             <td>{{ entry.actor or '—' }}</td>
-            <td>{{ entry.ip_address or '—' }}</td>
+            <td>
+              {{ entry.ip_address or '—' }}
+              {% if entry.geo_country %}
+                <span class="hint">({{ entry.geo_city ~ ', ' if entry.geo_city }}{{ entry.geo_country }})</span>
+              {% endif %}
+            </td>
             <td><code>{{ entry.action }}</code></td>
             <td>
               {% if entry.target_label %}

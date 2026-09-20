@@ -78,7 +78,7 @@ async def test_transition_to_unreachable_notifies(db_session_factory, monkeypatc
     sent: list[tuple[str, str, str]] = []
     import app.services.notifications as notifications_module
 
-    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001 - test double
+    def _fake_send(app_settings, to_address, subject, body):
         sent.append((to_address, subject, body))
 
     monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)

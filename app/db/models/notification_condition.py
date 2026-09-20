@@ -71,7 +71,7 @@ class NotificationCondition(Base):
 
 
 class NotificationConditionState(Base):
-    """Per rule×machine evaluation state, persisted across sweep ticks so a
+    """Per rule x machine evaluation state, persisted across sweep ticks so a
     condition notifies once on the true transition (and again after a
     false→true cycle) rather than on every tick that simply confirms
     "still matching" — the DB-backed equivalent of the in-memory

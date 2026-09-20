@@ -93,9 +93,7 @@ async def test_grant_temporary_permission_via_web_form(client, db_session_factor
     target = await login_as(client, permissions=frozenset(), username="temp-target")
     # `login_as` replaced the admin session with the restricted target's —
     # switch back to a real user.manage account to grant something.
-    from app.db.models.role import Permission as P
-
-    await login_as(client, permissions=set(P), username="admin-granter")
+    await login_as(client, permissions=set(Permission), username="admin-granter")
 
     await client.get(f"/users/{target.id}/edit")
     csrf_token = client.cookies.get("csrftoken")
@@ -114,10 +112,8 @@ async def test_grant_temporary_permission_via_web_form(client, db_session_factor
 
 
 async def test_grant_rejects_out_of_range_hours(client, db_session_factory, login_as):
-    from app.db.models.role import Permission as P
-
     target = await login_as(client, permissions=frozenset(), username="bad-hours-target")
-    await login_as(client, permissions=set(P), username="admin-granter-2")
+    await login_as(client, permissions=set(Permission), username="admin-granter-2")
 
     await client.get(f"/users/{target.id}/edit")
     csrf_token = client.cookies.get("csrftoken")
@@ -136,10 +132,8 @@ async def test_grant_rejects_out_of_range_hours(client, db_session_factory, logi
 
 
 async def test_revoke_temporary_permission_early(client, db_session_factory, login_as):
-    from app.db.models.role import Permission as P
-
     target = await login_as(client, permissions=frozenset(), username="revoke-target")
-    await login_as(client, permissions=set(P), username="admin-granter-3")
+    await login_as(client, permissions=set(Permission), username="admin-granter-3")
 
     await _grant(db_session_factory, target.id, permission=Permission.AUDIT_VIEW, hours_from_now=5)
     async with db_session_factory() as db:

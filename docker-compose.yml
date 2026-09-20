@@ -170,6 +170,19 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    # Overrides the image's own Dockerfile HEALTHCHECK (curls web's own
+    # :8080/healthz, a port this service never listens on — every worker
+    # container would otherwise show "unhealthy" permanently regardless of
+    # whether Celery itself is fine). scripts/healthcheck_celery.py checks
+    # /proc directly for a process with "worker" in its command line —
+    # deliberately not a broker-RPC check, so a slow/congested broker can't
+    # make this flap on its own.
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_celery.py", "worker"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
   # The periodic scheduler: it runs no work itself, it only publishes the
   # beat_schedule entries (fleet sweeps, the per-minute scheduled-task tick,
@@ -195,6 +208,14 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    # See the worker service's own comment above — same reasoning, just
+    # matching "beat" in the process's command line instead of "worker".
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_celery.py", "beat"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
 volumes:
   pg_data:

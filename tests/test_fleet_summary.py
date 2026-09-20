@@ -58,7 +58,7 @@ class _FakeSummaryClient:
         self.text = text
         self.calls: list[dict[str, Any]] = []
 
-    async def send(self, messages, tools, model, system_prompt):  # noqa: ANN001 - test double
+    async def send(self, messages, tools, model, system_prompt):
         self.calls.append({"messages": messages, "model": model, "system_prompt": system_prompt})
         return ChatTurnResult(text=self.text)
 
@@ -144,7 +144,7 @@ async def test_notify_fleet_summary_generated_recipient(db_session_factory, monk
 
     sent: list[tuple[str, str, str]] = []
 
-    def _fake_send(app_settings, to_address, subject, body):  # noqa: ANN001 - test double
+    def _fake_send(app_settings, to_address, subject, body):
         sent.append((to_address, subject, body))
 
     import app.services.notifications as notifications_module
@@ -184,7 +184,7 @@ async def test_notify_fleet_summary_generated_recipient(db_session_factory, monk
     await ai_jobs._generate_fleet_summary()
 
     assert len(sent) == 1
-    to_address, subject, body = sent[0]
+    to_address, _subject, body = sent[0]
     assert to_address == "summary-fan@example.com"
     assert "All quiet." in body
 

@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.58.2"
+version = "0.59.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -112,6 +112,11 @@ dependencies = [
     # attestation objects) and pyOpenSSL (certificate chain validation for
     # attestation) as transitive dependencies.
     "webauthn>=2.0.0",
+    # Reads MaxMind-DB-format (.mmdb) GeoIP databases — see
+    # app/services/geoip.py. Pure Python, no bundled database of its own
+    # (this app downloads one itself; MaxMind's GeoLite2 license forbids
+    # redistribution).
+    "maxminddb>=2.7.0",
 ]
 
 [dependency-groups]
@@ -137,11 +142,23 @@ target-version = "py314"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "S", "ASYNC"]
+select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "N", "C4", "SIM", "RET", "PIE", "PERF", "PTH", "RUF", "C90"]
 # S101: assert used (fine in tests).
 # B008: Depends()/Form() as a parameter default is the idiomatic, required
 # dependency-injection pattern in FastAPI, not a bug.
+# ARG (unused-argument) and T20 (no-print) are deliberately not selected —
+# both would mostly flag framework/CLI patterns that are correct here
+# (FastAPI/pytest fixtures, SQLAlchemy hooks, scripts/ intentionally
+# printing to a terminal).
 ignore = ["S101", "B008"]
+
+[tool.ruff.lint.mccabe]
+# Ratchet down over time, not an immediate rewrite demand — this is
+# whatever the worst offender is today (app/web/routes/users.py's
+# update_user, at 19 — a long but linear sequence of independent
+# per-field validation/update steps, not actually tangled control flow);
+# a new function shouldn't need to reach it.
+max-complexity = 19
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106"]

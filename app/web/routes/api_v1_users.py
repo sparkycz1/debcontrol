@@ -220,10 +220,9 @@ async def update_user_api(
     user.role_id = payload.role_id
     user.is_active = payload.is_active
     user.api_access_enabled = payload.api_access_enabled
-    if becoming_local:
-        if payload.password:
-            user.password_hash = hash_password(payload.password)
-            user.must_change_password = True
+    if becoming_local and payload.password:
+        user.password_hash = hash_password(payload.password)
+        user.must_change_password = True
     if losing_local:
         user.password_hash = None
         user.must_change_password = False

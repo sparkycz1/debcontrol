@@ -1,0 +1,39 @@
+name: OpenSSF Scorecard
+
+# Supply-chain security posture (branch protection, pinned dependencies,
+# CI/CD config, ...) — a broader check than any single tool above, since
+# it looks at how the *repo itself* is configured, not just this app's
+# code or dependencies. Results feed the badge in README.md and show up
+# under the repo's Security -> Code scanning tab (as "Scorecard").
+#
+# NOT wired to push/schedule yet — same reason as codeql.yml: the
+# `upload-sarif` step needs GitHub Advanced Security on this private repo,
+# which isn't enabled. Kept as a ready-to-go workflow_dispatch until it
+# is; restore the `push`/`branch_protection_rule`/`schedule` triggers below
+# at that point (see honeypot-shelf's own scorecard.yml for the live
+# version, on its public repo).
+on:
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc  # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4
+        with:
+          sarif_file: results.sarif

@@ -76,6 +76,21 @@ class AuditLogEntry(Base):
     actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # --- GeoIP enrichment (app.services.geoip) — resolved once, at write
+    # time, from `ip_address` (only ever for a public IP; a LAN address or
+    # a login through an internal reverse proxy has no real-world location
+    # and is left null). Historically accurate even after the underlying
+    # GeoIP database later updates, since it's never re-derived. Display
+    # enrichment only — deliberately NOT part of `entry_hash`'s canonical
+    # payload (see app.audit._canonical_payload), so a later GeoIP database
+    # update, or GeoIP being turned on/off, can never retroactively affect
+    # the tamper-evident chain. ---
+    geo_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    geo_country_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    geo_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    geo_latitude: Mapped[float | None] = mapped_column(nullable=True)
+    geo_longitude: Mapped[float | None] = mapped_column(nullable=True)
+
     # Short machine-readable code, e.g. "machine.power.reboot",
     # "scheduled_task.create" — see app.audit for the values in use.
     action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)

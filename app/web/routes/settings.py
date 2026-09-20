@@ -33,6 +33,7 @@ from app.core.security import encrypt_secret
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 from app.db.models.app_settings import (
+    DEFAULT_GEOIP_REFRESH_INTERVAL_HOURS,
     DEFAULT_LDAP_USER_SEARCH_FILTER,
     DEFAULT_OIDC_SCOPES,
     DEFAULT_OIDC_USERNAME_CLAIM,
@@ -43,6 +44,8 @@ from app.db.models.app_settings import (
     SyslogProtocol,
 )
 from app.db.models.audit_log import AuditOutcome
+from app.db.models.geoip_database import SINGLETON_ID as GEOIP_SINGLETON_ID
+from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.role import Permission
 from app.db.session import get_db
@@ -53,6 +56,7 @@ from app.ssh.identity import (
     get_or_create_identity,
 )
 from app.tasks.jobs import push_pending_ssh_key
+from app.tasks.jobs import refresh_geoip_database as refresh_geoip_database_task
 from app.web.templating import t, templates
 
 router = APIRouter(
@@ -106,11 +110,13 @@ async def _render_settings(
     # Creates the five AI provider rows on first visit — same lazy
     # singleton-row idea as `get_or_create_app_settings` above.
     ai_configs = await get_or_create_ai_provider_configs(db)
+    geoip_database = await db.get(GeoipDatabase, GEOIP_SINGLETON_ID)
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     context: dict[str, object] = {
         "identity": identity,
         "settings": get_settings(),
         "app_settings": app_settings,
+        "geoip_database": geoip_database,
         "csrf_token": csrf_token,
         "errors": errors,
         "syslog_protocols": list(SyslogProtocol),
@@ -305,6 +311,90 @@ async def update_audit_retention(
         ),
     )
 
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/geoip", dependencies=[_manage, Depends(verify_csrf)])
+async def update_geoip_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    geoip_enabled: str = Form(""),
+    geoip_primary_url: str = Form(""),
+    # Blank = keep the existing URL unchanged — same convention as
+    # oidc_client_secret/ldap_bind_password above, since a MaxMind
+    # "permalink" download URL embeds a license key.
+    geoip_backup_url: str = Form(""),
+    geoip_refresh_interval_hours: str = Form(str(DEFAULT_GEOIP_REFRESH_INTERVAL_HOURS)),
+) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+
+    try:
+        refresh_interval = int(geoip_refresh_interval_hours)
+        if not (1 <= refresh_interval <= 24 * 30):
+            raise ValueError
+    except ValueError:
+        errors.append("Refresh interval must be a whole number of hours between 1 and 720.")
+        refresh_interval = app_settings.geoip_refresh_interval_hours
+
+    primary_url = geoip_primary_url.strip()
+    if bool(geoip_enabled) and not primary_url and not app_settings.geoip_primary_url_encrypted:
+        errors.append("Enabling GeoIP needs at least a primary database URL.")
+
+    if errors:
+        return await _render_settings(request, db, errors, tab="security")
+
+    app_settings.geoip_enabled = bool(geoip_enabled)
+    if primary_url:
+        app_settings.geoip_primary_url_encrypted = encrypt_secret(primary_url)
+    backup_url = geoip_backup_url.strip()
+    if backup_url:
+        app_settings.geoip_backup_url_encrypted = encrypt_secret(backup_url)
+    app_settings.geoip_refresh_interval_hours = refresh_interval
+    await db.commit()
+
+    enabled_label = "enabled" if app_settings.geoip_enabled else "disabled"
+    await log_event(
+        db,
+        request=request,
+        action="settings.geoip.update",
+        summary=f"Updated GeoIP settings ({enabled_label})",
+    )
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/geoip/download", dependencies=[_manage, Depends(verify_csrf)])
+async def download_geoip_database_now(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    app_settings = await get_or_create_app_settings(db)
+    if not app_settings.geoip_primary_url_encrypted:
+        return await _render_settings(
+            request, db, ["No GeoIP database URL is configured yet."], tab="security"
+        )
+
+    async_result = refresh_geoip_database_task.delay(force=True)
+    try:
+        await asyncio.to_thread(async_result.get, timeout=_PUSH_WAIT_SECONDS)
+    except CeleryTimeoutError:
+        return await _render_settings(
+            request,
+            db,
+            ["The download is still running in the background — check back in a moment."],
+            tab="security",
+        )
+    except Exception as exc:
+        return await _render_settings(
+            request, db, [f"GeoIP download failed: {exc}"], tab="security"
+        )
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.geoip.download_now",
+        summary="Manually triggered a GeoIP database download",
+    )
     return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -585,7 +675,7 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
             outcome = await asyncio.to_thread(async_result.get, timeout=_PUSH_WAIT_SECONDS)  # type: ignore[attr-defined]
         except CeleryTimeoutError:
             return machine.name, "Timed out."
-        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        except Exception as exc:
             return machine.name, str(exc)
         if isinstance(outcome, dict) and outcome.get("ok"):
             return machine.name, None
@@ -641,7 +731,7 @@ async def update_ldap_settings(
     errors: list[str] = []
 
     server_uri = ldap_server_uri.strip()
-    if server_uri and not (server_uri.startswith("ldap://") or server_uri.startswith("ldaps://")):
+    if server_uri and not (server_uri.startswith(("ldap://", "ldaps://"))):
         errors.append('Server URI must start with "ldap://" or "ldaps://".')
 
     try:
@@ -700,7 +790,7 @@ async def update_oidc_settings(
     errors: list[str] = []
 
     issuer_url = oidc_issuer_url.strip()
-    if issuer_url and not (issuer_url.startswith("http://") or issuer_url.startswith("https://")):
+    if issuer_url and not (issuer_url.startswith(("http://", "https://"))):
         errors.append('Issuer URL must start with "http://" or "https://".')
 
     claim = oidc_username_claim.strip() or DEFAULT_OIDC_USERNAME_CLAIM
@@ -889,7 +979,7 @@ async def update_ai_provider(
     errors: list[str] = []
     url = base_url.strip()
     if config.kind == AiProviderKind.OPENAI_COMPATIBLE:
-        if url and not (url.startswith("http://") or url.startswith("https://")):
+        if url and not (url.startswith(("http://", "https://"))):
             errors.append('The base URL must start with "http://" or "https://".')
         if bool(enabled) and not url:
             errors.append("Enabling an OpenAI-compatible provider needs a base URL.")

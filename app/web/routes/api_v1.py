@@ -651,7 +651,7 @@ async def test_connection_api(
         )
     except CeleryTimeoutError:
         error = "The background job did not respond in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -759,7 +759,7 @@ async def refresh_facts_api(
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The background job did not respond in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     if error is None:
@@ -799,7 +799,7 @@ async def refresh_packages_api(
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The background job did not respond in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -836,7 +836,7 @@ async def refresh_services_api(
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The background job did not respond in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -880,7 +880,7 @@ async def run_onboarding_api(
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The setup script did not finish in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -925,7 +925,7 @@ async def fix_readiness_directly_api(
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "Timed out."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -1005,7 +1005,7 @@ async def machine_logs_api(
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The command did not finish in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -1071,7 +1071,7 @@ async def machine_logs_browse_api(
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The command did not finish in time."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(

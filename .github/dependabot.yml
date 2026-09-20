@@ -20,8 +20,11 @@ updates:
     labels:
       - "dependencies"
 
-  # No workflows exist yet, but this keeps any future GitHub Actions
-  # pinned-version usage covered from day one instead of being forgotten.
+  # Every action pinned by SHA (with the version kept as a trailing
+  # comment, e.g. `uses: actions/checkout@<sha>  # v7`) across every
+  # workflow file under .github/workflows/ — `directory: "/"` already
+  # covers all of them, Dependabot understands that comment convention
+  # well enough to bump both the SHA and its comment together.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

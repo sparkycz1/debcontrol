@@ -375,7 +375,7 @@ async def _send_webhook(
         if response.status_code >= 400:
             return NotificationDeliveryStatus.FAILED, f"HTTP {response.status_code}"
         return NotificationDeliveryStatus.SENT, None
-    except Exception as exc:  # noqa: BLE001 - logged as a delivery failure, never raised
+    except Exception as exc:
         return NotificationDeliveryStatus.FAILED, str(exc)[:2000]
 
 

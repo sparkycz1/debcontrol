@@ -675,7 +675,7 @@ async def export_machine_config_endpoint(
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    format: str = "json",  # noqa: A002
+    format: str = "json",
 ) -> Response:
     """Export every existing (non-pending) machine's and group's *structural*
     configuration — deliberately never `secret_encrypted` or
@@ -1441,7 +1441,7 @@ async def run_onboarding_endpoint(
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The setup script did not finish in time. Reload this page shortly."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -1559,7 +1559,7 @@ async def run_onboarding_with_credential_endpoint(
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "The setup script did not finish in time. Reload this page shortly."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     if error is not None:
@@ -1621,7 +1621,7 @@ async def fix_readiness_directly_endpoint(
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
         error = "Timed out. Reload this page shortly."
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         error = str(exc)
 
     await log_event(
@@ -2497,7 +2497,7 @@ async def machine_logs(
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
             error = "The command did not finish in time."
-        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        except Exception as exc:
             error = str(exc)
 
         await log_event(
@@ -2596,7 +2596,7 @@ async def machine_logs_browse(
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
             error = "The command did not finish in time."
-        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        except Exception as exc:
             error = str(exc)
 
     # Never offer a parent link above whichever allowed root contains

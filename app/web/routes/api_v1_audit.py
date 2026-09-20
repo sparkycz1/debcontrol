@@ -35,6 +35,11 @@ def _entry_to_dict(entry: AuditLogEntry) -> dict[str, Any]:
         "created_at": entry.created_at.isoformat(),
         "actor": entry.actor,
         "ip_address": entry.ip_address,
+        "geo_country": entry.geo_country,
+        "geo_country_code": entry.geo_country_code,
+        "geo_city": entry.geo_city,
+        "geo_latitude": entry.geo_latitude,
+        "geo_longitude": entry.geo_longitude,
         "action": entry.action,
         "outcome": entry.outcome.value,
         "summary": entry.summary,
@@ -81,7 +86,7 @@ async def export_audit_log_api(
     outcome: str = "",
     target_type: str = "",
     target_id: str = "",
-    format: str = "csv",  # noqa: A002
+    format: str = "csv",
 ) -> Response:
     query = apply_audit_filters(
         select(AuditLogEntry), q=q, outcome=outcome, target_type=target_type, target_id=target_id

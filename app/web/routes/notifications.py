@@ -615,10 +615,7 @@ async def test_rule(
         target_label=rule.name,
         details={"ok": ok, "channel": rule.delivery_channel},
     )
-    if ok:
-        query = "test_sent=1"
-    else:
-        query = "test_error=" + quote(error or "Unknown error")
+    query = "test_sent=1" if ok else "test_error=" + quote(error or "Unknown error")
     return RedirectResponse(
         url=f"/notifications/rules/{rule_id}/edit?{query}",
         status_code=status.HTTP_303_SEE_OTHER,

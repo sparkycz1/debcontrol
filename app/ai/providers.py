@@ -154,10 +154,12 @@ class AnthropicClient(BaseAiClient):
             page = await self._client.models.list(
                 limit=_ANTHROPIC_PAGE_LIMIT, timeout=MODELS_TIMEOUT_SECONDS
             )
-            async for entry in page:
-                models.append(
+            models.extend(
+                [
                     ModelInfo(id=entry.id, display_name=entry.display_name or None)
-                )
+                    async for entry in page
+                ]
+            )
         except anthropic.AnthropicError as exc:
             raise _wrap_provider_error("Anthropic", exc) from exc
         return models

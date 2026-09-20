@@ -1,0 +1,43 @@
+name: CodeQL
+
+# Static security analysis (SQL injection, XSS, SSRF, path traversal,
+# unsafe deserialization, ...) — a different class of check from the
+# `security` job in ci.yml, which only scans *dependencies* (pip-audit)
+# for known CVEs, not this app's own code. Results show up under the
+# repo's Security -> Code scanning tab.
+#
+# NOT wired to push/pull_request yet: debcontrol is a private repo and
+# code scanning's SARIF upload requires GitHub Advanced Security (a paid
+# feature) on a private repo — without it, `codeql-action/analyze` fails
+# outright, turning every push/PR red for no actionable reason. Kept as a
+# ready-to-go workflow_dispatch until GHAS is enabled here (see
+# honeypot-shelf's own codeql.yml — a public repo, where this runs on
+# every push/PR/weekly schedule for free) — at that point, restore the
+# `push`/`pull_request`/`schedule` triggers below.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    # Job-level permissions replace, not add to, the workflow-level ones
+    # above — contents:read has to be repeated here alongside the
+    # security-events:write this job actually needs (uploading its SARIF
+    # results), or checkout itself would have no read access.
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4
+        with:
+          languages: python
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4
+        with:
+          category: "/language:python"

@@ -162,6 +162,11 @@
         {{ t(request, "settings.integrations.issuer_url_hint") | safe }}
       </p>
 
+      <p class="hint">
+        {{ t(request, "settings.integrations.redirect_uri_hint") }}
+        <code>{{ request.url_for("oidc_callback") }}</code>
+      </p>
+
       <label for="oidc_client_id">{{ t(request, "settings.integrations.client_id") }}</label>
       <input type="text" id="oidc_client_id" name="oidc_client_id" value="{{ app_settings.oidc_client_id or '' }}">
 

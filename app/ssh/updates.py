@@ -156,17 +156,19 @@ async def run_system_update(
     """
     script = build_update_command(strategy)
     chunks: list[str] = []
-    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
-        async with await conn.create_process(script, stderr=asyncssh.STDOUT) as process:
-            async with asyncio.timeout(run_timeout_seconds):
-                while True:
-                    chunk = await process.stdout.read(65536)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    if on_output is not None:
-                        await on_output("".join(chunks))
-                completed = await process.wait()
+    async with (
+        await open_connection(machine, secret, connect_timeout_seconds) as conn,
+        await conn.create_process(script, stderr=asyncssh.STDOUT) as process,
+    ):
+        async with asyncio.timeout(run_timeout_seconds):
+            while True:
+                chunk = await process.stdout.read(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if on_output is not None:
+                    await on_output("".join(chunks))
+        completed = await process.wait()
 
     output = "".join(chunks)
     exit_status = completed.exit_status if completed.exit_status is not None else -1

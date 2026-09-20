@@ -699,7 +699,7 @@ async def _run_command_and_summarize(
         except CeleryTimeoutError:
             errors.append(f"{machine.name}: the command did not finish in time.")
             return f"### {machine.name}\n(the command did not finish in time)"
-        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        except Exception as exc:
             errors.append(f"{machine.name}: {exc}")
             return f"### {machine.name}\nfailed: {exc}"
 
@@ -730,7 +730,7 @@ async def _run_command_and_summarize(
             "The command ran, but the assistant's summary did not arrive in time — "
             "reload this page shortly."
         )
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+    except Exception as exc:
         errors.append(f"The command ran, but the assistant could not summarize it: {exc}")
     return errors
 

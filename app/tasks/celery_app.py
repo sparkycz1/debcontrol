@@ -66,6 +66,7 @@ from celery.signals import worker_process_init
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.db.models  # noqa: F401 — see the comment on `_bootstrap_interval_settings` below.
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -118,6 +119,24 @@ def _bootstrap_interval_settings() -> dict[str, int]:
     `beat` container still starts instead of crash-looping; the real
     configured values take effect on the next restart once the database is
     up.
+
+    The `import app.db.models` near the top of this module (before this
+    function ever runs, since it's called at module import time below) is
+    load-bearing, not decorative: SQLAlchemy configures every mapped
+    class's relationships the first time *any one* of them is queried, and
+    a relationship using a string/forward-reference annotation (every
+    relationship in this codebase, `from __future__ import annotations`)
+    needs its target class already registered in the shared declarative
+    registry at that exact moment. `AppSettings` itself has no
+    relationships, but whichever query path actually triggers this — a
+    plain `db.get(AppSettings, ...)` below — still configures every mapper
+    SQLAlchemy currently knows about, so a not-yet-imported model
+    elsewhere in the app could still blow this up with an unrelated-looking
+    `InvalidRequestError` on `beat`'s very first boot after adding it, if
+    it happened to be imported after this function's own module-level call
+    site. Importing the whole `app.db.models` package explicitly here
+    guarantees every model is registered first, rather than depending on
+    which particular import path happens to pull each one in.
     """
     if "beat" not in sys.argv:
         return dict(_INTERVAL_SETTING_DEFAULTS)
@@ -324,6 +343,16 @@ celery_app.conf.beat_schedule = {
     "purge-old-fleet-summaries": {
         "task": "app.tasks.ai_jobs.purge_old_fleet_summaries",
         "schedule": crontab(hour=3, minute=20),
+    },
+    # Off by default (AppSettings.geoip_enabled) — cheap no-op otherwise,
+    # same "task itself decides whether today's tick is actually due"
+    # pattern as generate-fleet-summary above (against
+    # AppSettings.geoip_refresh_interval_hours here instead of a fixed
+    # frequency), so changing the interval takes effect on the very next
+    # tick rather than needing a Beat restart.
+    "refresh-geoip-database": {
+        "task": "app.tasks.jobs.refresh_geoip_database",
+        "schedule": crontab(hour=4, minute=0),
     },
 }
 

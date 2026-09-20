@@ -41,6 +41,7 @@ SINGLETON_ID = 1
 DEFAULT_LDAP_USER_SEARCH_FILTER = "(uid={username})"
 DEFAULT_OIDC_USERNAME_CLAIM = "email"
 DEFAULT_OIDC_SCOPES = "openid email profile"
+DEFAULT_GEOIP_REFRESH_INTERVAL_HOURS = 168
 
 
 class SyslogProtocol(enum.StrEnum):
@@ -347,6 +348,21 @@ class AppSettings(Base):
     # reusing `smtp_username`.
     smtp_from_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     smtp_from_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # --- GeoIP lookups (app.services.geoip) — resolves a public source IP
+    # to a country/city/lat-long, once at audit-log write time
+    # (app.audit.log_event), from a MaxMind-DB-format (.mmdb) database this
+    # app downloads itself and caches in `GeoipDatabase`. Never bundled —
+    # MaxMind's GeoLite2 license forbids redistribution. The URLs are
+    # encrypted at rest like every other secret here: a MaxMind
+    # "permalink" download URL embeds a license key. ---
+    geoip_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    geoip_primary_url_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    geoip_backup_url_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Matches MaxMind's own GeoLite2 update cadence (weekly).
+    geoip_refresh_interval_hours: Mapped[int] = mapped_column(
+        Integer, default=DEFAULT_GEOIP_REFRESH_INTERVAL_HOURS, nullable=False
+    )
 
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False

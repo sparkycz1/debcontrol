@@ -29,8 +29,8 @@ from __future__ import annotations
 # result would depend on which *other* test modules pytest happened to
 # have already imported first, which is exactly the kind of accidental,
 # order-dependent pass this test exists to not be.
-import app.scheduling.jobs  # noqa: F401
-import app.tasks.ai_jobs  # noqa: F401
+import app.scheduling.jobs
+import app.tasks.ai_jobs
 import app.tasks.jobs  # noqa: F401
 from app.tasks.celery_app import celery_app
 

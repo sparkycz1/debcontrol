@@ -65,5 +65,5 @@ async def publish_machine_event(machine_id: str, kind: Kind) -> None:
             await client.publish(channel_for(machine_id), json.dumps({"kind": kind}))
         finally:
             await client.aclose()
-    except Exception:  # noqa: BLE001 - best-effort, see docstring
+    except Exception:
         logger.warning("live_updates: failed to publish %r for machine %s", kind, machine_id)
