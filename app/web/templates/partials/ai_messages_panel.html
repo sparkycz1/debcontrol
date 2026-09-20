@@ -7,12 +7,25 @@
    replaced. See GET /ai/conversations/{id}/messages-panel. #}
 <div
   id="ai-messages-panel"
+  data-ai-auto-confirm-root
+  data-conversation-id="{{ conversation.id }}"
   {% if awaiting_reply %}
   hx-get="/ai/conversations/{{ conversation.id }}/messages-panel"
   hx-trigger="every 2s"
   hx-swap="outerHTML"
   {% endif %}
 >
+  {% if any_action_confirmed %}
+    <div class="alert alert-error ai-auto-confirm-banner">
+      <p><strong>⚠ {{ t(request, "ai.chat.auto_confirm_title") }}</strong></p>
+      <p>{{ t(request, "ai.chat.auto_confirm_warning") }}</p>
+      <label class="ai-auto-confirm-label">
+        <input type="checkbox" data-ai-auto-confirm-toggle>
+        {{ t(request, "ai.chat.auto_confirm_toggle") }}
+      </label>
+    </div>
+  {% endif %}
+
   <section class="panel chat-panel">
     {% if messages %}
       <div class="chat-log">
@@ -55,6 +68,7 @@
                       <form method="post"
                             action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/confirm"
                             class="inline-form"
+                            data-ai-confirm-form
                             data-confirm="{{ t(request, 'ai.chat.really_run_confirm', count=(action.machine_names | length)) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="action_index" value="{{ loop.index0 }}">

@@ -508,6 +508,10 @@ exact `?tag=name`, saved views still capture `tag`/`tag_mode`, the REST
 API is unchanged. "All machines"/group pages keep their own single-tag
 `<select>` — a much shorter per-group list where a dropdown still pulls its weight.
 
+The table view's own **Tags** column shows every tag as its own badge,
+between Group and Status — tags used to render wrapped under a machine's
+name, cramped alongside its OS badge and link.
+
 **The machine list specifically** can filter by *several* tags at once —
 `?tag=prod&tag=web&tag_mode=and|or` — shared with the REST API. `or` is
 one `.any(Tag.name.in_(...))` clause; `and` is one independent

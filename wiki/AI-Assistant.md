@@ -150,6 +150,26 @@ Target names matched **case-insensitively but exactly** — no fuzzy/"did
 you mean" matching. Capped at **25 machines** — a bigger group is refused
 outright, never silently truncated.
 
+### "Auto-confirm further commands in this conversation"
+
+Once you've confirmed one command by hand in a conversation, a red
+"danger zone" banner offers a checkbox to skip the confirm click for
+whatever the assistant proposes *next*, in that same conversation.
+Deliberately narrow and never a persisted setting:
+
+- **Client-side only, this browser tab, this conversation** —
+  `sessionStorage` keyed by conversation id (`app/web/static/js/
+  ai-auto-confirm.js`). Closing the tab, opening a different
+  conversation, or just leaving the page turns it back off; nothing is
+  written to your account.
+- **Only ever offered after a manual confirmation** — the banner itself
+  doesn't render until `app.web.routes.ai._any_action_confirmed` finds at
+  least one `confirmed` action already in the conversation.
+- **Goes through the exact same `confirm_action` route** a manual click
+  does — same CSRF token, same three permission checks (see above), same
+  audit entry. The only thing skipped is the human pausing to read the
+  card first.
+
 ### After a confirmed shell command
 
 `run_ssh_command` is the one confirmed action debcontrol waits for —

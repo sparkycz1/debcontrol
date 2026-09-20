@@ -129,6 +129,22 @@ def _is_awaiting_reply(messages: list[AiMessage]) -> bool:
     return bool(messages) and messages[-1].role == AiMessageRole.USER
 
 
+def _any_action_confirmed(messages: list[AiMessage]) -> bool:
+    """True once at least one proposed action in this conversation has
+    already been confirmed by hand — gates the "auto-confirm further
+    commands in this conversation" control in
+    `partials/ai_messages_panel.html`. Per explicit product request, that
+    control only ever appears *after* a human has manually confirmed at
+    least one command here, never before the first one — it's an opt-in
+    convenience for a conversation already underway, not a way to skip
+    the very first confirmation."""
+    for message in messages:
+        for action in message.pending_actions or []:
+            if action.get("status") == PendingActionStatus.CONFIRMED.value:
+                return True
+    return False
+
+
 async def _render_conversation(
     request: Request, db: AsyncSession, conversation: AiConversation, errors: list[str]
 ) -> Response:
@@ -140,6 +156,7 @@ async def _render_conversation(
             "conversation": conversation,
             "messages": messages,
             "awaiting_reply": _is_awaiting_reply(messages),
+            "any_action_confirmed": _any_action_confirmed(messages),
             "errors": errors,
             "csrf_token": request.state.csrf_token,
         },
@@ -183,6 +200,7 @@ async def _render_messages_panel(
             "conversation": conversation,
             "messages": messages,
             "awaiting_reply": _is_awaiting_reply(messages),
+            "any_action_confirmed": _any_action_confirmed(messages),
             "csrf_token": request.state.csrf_token,
         },
     )

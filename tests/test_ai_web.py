@@ -491,6 +491,25 @@ async def test_a_proposed_update_is_pending_and_runs_nothing_until_confirmed(
     assert len(entries) == 1
     assert entries[0].details["machines"] == ["web1"]
 
+    # The "auto-confirm further commands" banner only appears *after* a
+    # human has confirmed at least one command by hand in this
+    # conversation — see app.web.routes.ai._any_action_confirmed.
+    assert "data-ai-auto-confirm-toggle" in response.text
+    assert "data-ai-confirm-form" not in response.text  # nothing pending right now
+
+
+async def test_auto_confirm_banner_absent_before_any_confirmation(
+    client, db_session_factory, use_test_db, monkeypatch, celery_calls
+):
+    conversation_id, _message_id, _actions, _machine_id = await _propose_update(
+        client, db_session_factory, monkeypatch
+    )
+    page = await client.get(f"/ai/conversations/{conversation_id}")
+    assert page.status_code == 200
+    assert "data-ai-auto-confirm-toggle" not in page.text
+    # The one still-pending action's own confirm form is there, though.
+    assert "data-ai-confirm-form" in page.text
+
 
 async def test_confirm_requires_a_csrf_token(
     client, db_session_factory, use_test_db, monkeypatch, celery_calls

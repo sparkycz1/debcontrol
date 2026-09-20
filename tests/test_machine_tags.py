@@ -444,6 +444,21 @@ async def test_machine_list_has_no_separate_tag_picker(client):
     assert '<select name="tag"' not in response.text
 
 
+async def test_machine_list_table_has_its_own_tags_column(client):
+    """Tags used to render wrapped under a machine's own name cell; now
+    a dedicated column between Group and Status."""
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    await _create_machine(client, csrf_token, name="tagged-web", tags="prod, web")
+
+    response = await client.get("/machines")
+
+    assert "Tags</th>" in response.text
+    row = next(r for r in response.text.split("<tr>") if "tagged-web" in r)
+    assert 'href="?tag=prod"' in row
+    assert 'href="?tag=web"' in row
+
+
 async def test_plain_search_box_also_matches_a_tag_name(client):
     """The machine list folds tag search into its one plain search field
     rather than a separate picker control — see machine_search_clause's

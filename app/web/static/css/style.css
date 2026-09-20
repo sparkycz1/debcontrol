@@ -781,6 +781,22 @@ p { margin: 0 0 var(--space-3); }
   font-size: 0.95rem;
 }
 
+/* A bare <select> in a horizontal button row (e.g. the Machines list's
+   "With selected" bar) keeps its native browser chrome, which sits
+   shorter than a styled .button unless given the same sizing — same idea
+   as .inline-text-input above, just for <select>. */
+.inline-select {
+  display: inline-block;
+  width: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  padding: 0.5rem 0.65rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+
 /* --- A small "More actions" dropdown (native <details>/<summary>, no JS)
    for a page-header's secondary actions, so the primary button doesn't
    drown in a wrapping row of 5-6 equally-weighted buttons. Overrides the
@@ -1004,6 +1020,19 @@ p { margin: 0 0 var(--space-3); }
 
 .form button, .form .button { margin-top: var(--space-4); align-self: flex-start; }
 
+/* The rule above is meant for a vertical .form's own submit button — it
+   was leaking into a horizontal .page-header-actions row (e.g. the
+   Machines list's "With selected" bulk-actions bar) that happens to sit
+   inside a <form class="form">, pinning its buttons to the row's top
+   while a bare <select> next to them stayed vertically centered on its
+   own container's `align-items: center`. Reset both back to that row's
+   own layout instead. */
+.form .page-header-actions button,
+.form .page-header-actions .button {
+  margin-top: 0;
+  align-self: center;
+}
+
 /* A collapsible "advanced" section inside a .form (e.g. a machine's own
    interval overrides on machines/edit.html) — plain <details>/<summary>
    would otherwise render with no border or spacing, out of place next to
@@ -1084,6 +1113,19 @@ p { margin: 0 0 var(--space-3); }
 
 .alert-warn { background: rgba(224, 171, 74, 0.1); border-color: rgba(224, 171, 74, 0.4); color: var(--color-text); }
 .alert-warn::before { content: "!"; color: var(--color-warn); }
+
+/* The AI chat's "auto-confirm further commands in this conversation"
+   banner (partials/ai_messages_panel.html) — an .alert-error already
+   reads as a danger zone; this just styles its own toggle to match rather
+   than falling back to a bare unstyled checkbox+label. */
+.ai-auto-confirm-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-weight: 600;
+  cursor: pointer;
+}
 
 .alert-ok { background: rgba(70, 191, 138, 0.1); border-color: rgba(70, 191, 138, 0.4); color: var(--color-text); }
 .alert-ok::before { content: "✓"; color: var(--color-ok); }

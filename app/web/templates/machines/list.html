@@ -248,6 +248,7 @@
               <th>{{ t(request, 'machines.table.ip') }}</th>
               <th>{{ t(request, 'machines.table.hostname') }}</th>
               <th>{{ t(request, 'machines.table.group') }}</th>
+              <th>{{ t(request, 'machines.table.tags') }}</th>
               <th>{{ t(request, 'machines.table.status') }}</th>
               <th>{{ t(request, 'machines.table.updates') }}</th>
               <th>{{ t(request, 'machines.table.host_key') }}</th>
@@ -261,16 +262,19 @@
                 <td>
                   {{ render_os_badge(machine.os_id) }}
                   <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>
-                  {% if machine.tags %}
-                    <br>
-                    {{ tag_chips(machine) }}
-                  {% endif %}
                 </td>
                 <td>{{ machine.ip_address }}</td>
                 <td>{{ machine.discovered_hostname or '—' }}</td>
                 <td>
                   {% if machine.group %}
                     <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
+                  {% else %}
+                    <span class="hint">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if machine.tags %}
+                    {{ tag_chips(machine) }}
                   {% else %}
                     <span class="hint">—</span>
                   {% endif %}
@@ -290,7 +294,7 @@
         <button type="submit" formaction="/machines/bulk/check-updates" class="button button-secondary">
           {{ t(request, 'machines.bulk.check_updates') }}
         </button>
-        <select name="strategy" aria-label="{{ t(request, 'machines.bulk.strategy_aria') }}">
+        <select name="strategy" class="inline-select" aria-label="{{ t(request, 'machines.bulk.strategy_aria') }}">
           <option value="dist_upgrade">dist-upgrade</option>
           <option value="full_upgrade">full-upgrade</option>
         </select>
