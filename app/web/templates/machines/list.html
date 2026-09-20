@@ -306,16 +306,6 @@
         <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
           {{ t(request, 'machines.bulk.shutdown') }}
         </button>
-        <span class="bulk-actions-divider" aria-hidden="true"></span>
-        <span class="hint">{{ t(request, 'machines.bulk.tags_label') }}</span>
-        <input type="text" name="tags" class="inline-text-input" placeholder="{{ t(request, 'machines.bulk.tags_placeholder') }}"
-               aria-label="{{ t(request, 'machines.bulk.tags_aria') }}">
-        <button type="submit" formaction="/machines/bulk/tags/add" class="button button-secondary">
-          {{ t(request, 'machines.bulk.add_tags') }}
-        </button>
-        <button type="submit" formaction="/machines/bulk/tags/remove" class="button button-secondary">
-          {{ t(request, 'machines.bulk.remove_tags') }}
-        </button>
       </div>
     </form>
 

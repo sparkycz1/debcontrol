@@ -528,18 +528,6 @@ p { margin: 0 0 var(--space-3); }
   flex-wrap: wrap;
 }
 
-/* A thin vertical rule inside a .page-header-actions row (e.g. the
-   Machines list's "With selected" bar) marking a genuine change of
-   subject within one row — update/power actions vs. the tag input+
-   buttons that follow it — rather than a plain visual gap that reads the
-   same as the spacing between any two ordinary buttons. */
-.bulk-actions-divider {
-  width: 1px;
-  align-self: stretch;
-  background: var(--color-border);
-  margin: 0 var(--space-1);
-}
-
 /* --- Detail sub-navigation (machine / group tabs) ---
    Same idea as the site header's own nav (a plain row of links, current one
    highlighted) — used to split a machine's or group's page into Overview /

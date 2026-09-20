@@ -586,16 +586,19 @@ REST API's saved-view creation endpoint accepts `tag` as either a single
 string or an array, for backward compatibility with a caller built
 against the pre-multi-tag shape.
 
-The machine list also has bulk **Add tags**/**Remove tags** buttons
+Bulk tag add/remove for an ad-hoc checkbox selection
 (`app.services.machine_tags.add_tags_to_machines`/
-`remove_tags_from_machines`, and the REST equivalents at `POST /api/v1/
-machines/bulk/tags/{add,remove}`) for an ad-hoc checkbox selection —
-additive/subtractive, unlike the create/edit form's `set_machine_tags`
-(which *replaces* one machine's whole tag set): adding leaves a machine's
-other tags untouched and creates any tag that doesn't exist yet; removing
-leaves other tags untouched, is a silent no-op for a machine that never
-had the tag, and still deletes a tag left with zero machines afterward,
-same as `set_machine_tags`.
+`remove_tags_from_machines`) is additive/subtractive, unlike the
+create/edit form's `set_machine_tags` (which *replaces* one machine's
+whole tag set): adding leaves a machine's other tags untouched and
+creates any tag that doesn't exist yet; removing leaves other tags
+untouched, is a silent no-op for a machine that never had the tag, and
+still deletes a tag left with zero machines afterward, same as
+`set_machine_tags`. **REST API only** (`POST /api/v1/machines/bulk/
+tags/{add,remove}`) — the machine list's own bulk-actions bar
+deliberately doesn't surface this, to keep that row to selection-wide
+actions (update/reboot/shutdown) and not blur into per-machine tag
+editing, which already has its own place (the create/edit form).
 
 Cards view (see the display-modes note below) shows each visible
 machine's *latest* monitoring sample as a small CPU/RAM bar — one batched
