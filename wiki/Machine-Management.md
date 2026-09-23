@@ -506,13 +506,33 @@ uptime-percent series (average of 100/0 per check) and a latency series
 
 ### Logs: no storage, gated behind `action.terminal`
 
-**Logs** is a live SSH round trip on every view — the journal by default,
-or one file under a configurable path allowlist. Nothing stored: only
-that a view happened is audit-logged, never the content. Gated behind
+**Logs** is a live SSH round trip on every view, from one of three
+sources picked at the top of the tab: the **system journal**
+(`journalctl`, the default), **one file** under a configurable path
+allowlist (typed, or picked with *Browse*), or **one Docker container**
+(`docker logs --timestamps`, stdout and stderr merged). Nothing stored:
+only that a view happened is audit-logged, never the content. Gated behind
 `action.terminal`, not the plain `machine.view` every read-only tab
 above uses — reading logs is a materially different trust level than a
 fact, even without root, and an admin who can already open the terminal
 could read any of it directly anyway.
+
+The Docker picker lists the containers from the latest monitoring sample
+(`Machine.docker_containers`, see *Docker containers* above) — no extra
+round trip just to fill a dropdown — and defaults to the first running
+one. The chosen name is validated against Docker's own naming rule
+(`[a-zA-Z0-9][a-zA-Z0-9_.-]*`) before it's ever sent, then shell-quoted
+like every other argument; Docker access uses the same `docker` group /
+`sudo -n docker` probe as monitoring. Searching filters the *whole* log
+(`grep -F`) and keeps the last N matches, like the file mode. Also on the
+REST API: `GET /api/v1/machines/{id}/logs?container=<name>`.
+
+The viewer numbers lines, colors ones that look like errors/warnings
+(`app/web/log_lines.py` — a word-boundary match on error/fail/fatal/…,
+warn/deprecated), highlights the search term exactly as the machine-side
+filter matched it, and starts scrolled to the newest line; *Wrap lines*
+and *Jump to end* are `static/js/log-viewer.js`. Log content is plain
+autoescaped text throughout — it comes from the managed machine.
 
 ### Live updates: a WebSocket doorbell, not a data feed
 

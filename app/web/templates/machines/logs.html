@@ -2,53 +2,125 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "machine.logs.title") }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
+  {% set base = "/machines/" ~ machine.id ~ "/logs" %}
   <div class="page-header">
     <h1>{{ machine.name }}</h1>
   </div>
 
   {{ render_tabnav(tabs, active_tab) }}
 
+  <nav class="log-sources" aria-label="{{ t(request, 'machine.logs.source') }}">
+    <a class="log-source {{ 'is-active' if source == 'journal' else '' }}" href="{{ base }}?source=journal"
+       {% if source == 'journal' %}aria-current="page"{% endif %}>
+      <span class="log-source-title">{{ t(request, "machine.logs.source_journal") }}</span>
+      <span class="log-source-hint">journalctl</span>
+    </a>
+    <a class="log-source {{ 'is-active' if source == 'file' else '' }}" href="{{ base }}?source=file"
+       {% if source == 'file' %}aria-current="page"{% endif %}>
+      <span class="log-source-title">{{ t(request, "machine.logs.source_file") }}</span>
+      <span class="log-source-hint">{% for prefix in allowed_paths %}{{ prefix }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+    </a>
+    <a class="log-source {{ 'is-active' if source == 'docker' else '' }}" href="{{ base }}?source=docker"
+       {% if source == 'docker' %}aria-current="page"{% endif %}>
+      <span class="log-source-title">Docker</span>
+      <span class="log-source-hint">
+        {% if machine.docker_status == 'ok' %}{{ t(request, "machine.logs.containers_count", count=(docker_containers | length)) }}
+        {% elif machine.docker_status == 'no_access' %}{{ t(request, "machine.logs.docker_no_access_short") }}
+        {% else %}{{ t(request, "machine.logs.docker_none_short") }}{% endif %}
+      </span>
+    </a>
+  </nav>
+
   {% if error %}
-    <div class="alert alert-error">
-      <p>{{ error }}</p>
-    </div>
+    <div class="alert alert-error"><p>{{ error }}</p></div>
   {% endif %}
 
-  <form method="get" action="/machines/{{ machine.id }}/logs" class="search-form">
-    <input type="search" name="search" value="{{ search }}" placeholder="{{ t(request, 'machine.logs.search_placeholder') }}">
-    <input type="number" name="lines" value="{{ lines }}" min="1" max="5000" title="{{ t(request, 'machine.logs.lines') }}" style="width: 6em">
-    {% if not path %}
-      <input type="text" name="since" value="{{ since }}" placeholder="{{ t(request, 'machine.logs.since_placeholder') }}">
-      <input type="text" name="until" value="{{ until }}" placeholder="{{ t(request, 'machine.logs.until_placeholder') }}">
+  <form method="get" action="{{ base }}" class="log-toolbar">
+    <input type="hidden" name="source" value="{{ source }}">
+
+    {% if source == 'docker' %}
+      {% if docker_containers %}
+        <label class="log-field log-field-grow">
+          <span>{{ t(request, "machine.logs.container") }}</span>
+          <select name="container" data-autosubmit>
+            {% for c in docker_containers %}
+              <option value="{{ c.name }}" {% if c.name == container %}selected{% endif %}>
+                {{ c.name }} — {{ c.state }}{% if c.health %} ({{ c.health }}){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+      {% else %}
+        <p class="hint log-field-grow">
+          {% if machine.docker_status == 'no_access' %}{{ t(request, "monitoring.containers.no_access") }}
+          {% elif machine.docker_status == 'ok' %}{{ t(request, "monitoring.containers.none") }}
+          {% else %}{{ t(request, "machine.logs.docker_unknown") }}{% endif %}
+        </p>
+      {% endif %}
+    {% elif source == 'file' %}
+      <label class="log-field log-field-grow">
+        <span>{{ t(request, "machine.logs.file_path") }}</span>
+        <input type="text" name="path" value="{{ path }}" placeholder="/var/log/syslog" spellcheck="false">
+      </label>
+      <a class="button button-secondary log-toolbar-button" href="{{ base }}/browse">{{ t(request, "machine.logs.browse") }}</a>
     {% endif %}
-    <input type="hidden" name="path" value="{{ path }}">
-    <button type="submit" class="button">
-      {{ t(request, "machine.logs.view_file") if path else t(request, "machine.logs.view_journal") }}
-    </button>
-    {% if path %}
-      <a class="button button-secondary" href="/machines/{{ machine.id }}/logs">{{ t(request, "machine.logs.back_to_journal") }}</a>
+
+    <label class="log-field log-field-grow">
+      <span>{{ t(request, "machine.logs.search") }}</span>
+      <input type="search" name="search" value="{{ search }}" placeholder="{{ t(request, 'machine.logs.search_placeholder') }}">
+    </label>
+    {% if source != 'file' %}
+      <label class="log-field">
+        <span>{{ t(request, "machine.logs.since") }}</span>
+        <input type="text" name="since" value="{{ since }}" placeholder="-1h" class="log-input-short">
+      </label>
+      <label class="log-field">
+        <span>{{ t(request, "machine.logs.until") }}</span>
+        <input type="text" name="until" value="{{ until }}" placeholder="now" class="log-input-short">
+      </label>
     {% endif %}
+    <label class="log-field">
+      <span>{{ t(request, "machine.logs.lines") }}</span>
+      <select name="lines">
+        {% for n in (100, 200, 500, 1000, 2000, 5000) %}
+          <option value="{{ n }}" {% if n == lines %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+        {% if lines not in (100, 200, 500, 1000, 2000, 5000) %}<option value="{{ lines }}" selected>{{ lines }}</option>{% endif %}
+      </select>
+    </label>
+    <button type="submit" class="button log-toolbar-button">{{ t(request, "machine.logs.show") }}</button>
   </form>
 
-  <details class="form-advanced">
-    <summary>{{ t(request, "machine.logs.view_specific_file") }}</summary>
-    <p class="hint">
-      {{ t(request, "machine.logs.restricted_to") }} {% for prefix in allowed_paths %}<code>{{ prefix }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-      {{ t(request, "machine.logs.configurable_via") | safe }}
-    </p>
-    <form method="get" action="/machines/{{ machine.id }}/logs" class="search-form">
-      <input type="text" name="path" placeholder="/var/log/nginx/access.log" value="{{ path }}" style="min-width: 24em">
-      <input type="hidden" name="lines" value="{{ lines }}">
-      <button type="submit" class="button">{{ t(request, "machine.logs.open") }}</button>
-    </form>
-    <p class="hint">
-      <a href="/machines/{{ machine.id }}/logs/browse">{{ t(request, "machine.logs.browse") }}</a>
-    </p>
-  </details>
-
   {% if output is not none %}
-    <pre class="log-output">{{ output if output else t(request, "machine.logs.no_output") }}</pre>
+    <section class="log-viewer" data-log-viewer>
+      <header class="log-viewer-header">
+        <div class="log-viewer-title">
+          {% if source == 'docker' %}<span class="badge">Docker</span> <code>{{ container }}</code>
+          {% elif source == 'file' %}<span class="badge">{{ t(request, "machine.logs.source_file") }}</span> <code>{{ path }}</code>
+          {% else %}<span class="badge">{{ t(request, "machine.logs.source_journal") }}</span>{% endif %}
+          <span class="log-viewer-count">{{ t(request, "machine.logs.line_count", count=(log_lines | length)) }}</span>
+        </div>
+        <div class="log-viewer-actions">
+          <button type="button" class="button button-secondary log-small-button" data-log-wrap aria-pressed="true">{{ t(request, "machine.logs.wrap") }}</button>
+          <button type="button" class="button button-secondary log-small-button" data-log-bottom>{{ t(request, "machine.logs.to_bottom") }}</button>
+        </div>
+      </header>
+      {% if log_lines %}
+        <ol class="log-lines is-wrapped" data-log-body>
+          {% for line in log_lines %}
+            <li class="log-line{% if line.level %} log-{{ line.level }}{% endif %}">{% for text, hit in line.segments %}{% if hit %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="log-empty">{{ t(request, "machine.logs.no_output") }}</p>
+      {% endif %}
+    </section>
   {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/log-viewer.js" defer></script>
 {% endblock %}

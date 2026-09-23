@@ -15,7 +15,7 @@
   {% if target_type and target_id %}
     <p class="hint">
       {% if target_label %}
-        {{ t(request, "audit.showing_for_labeled", target_type=target_type, target_label=(target_label | e)) | safe }}
+        {{ t(request, "audit.showing_for_labeled", target_type=(target_type | e), target_label=(target_label | e)) | safe }}
       {% else %}
         {{ t(request, "audit.showing_for", target_type=target_type) }}<code>{{ target_id }}</code>
       {% endif %}

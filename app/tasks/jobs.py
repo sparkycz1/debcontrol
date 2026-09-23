@@ -66,7 +66,13 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.identity import get_or_create_identity
-from app.ssh.logs import LogAccessError, list_directory, view_file, view_journal
+from app.ssh.logs import (
+    LogAccessError,
+    list_directory,
+    view_docker_logs,
+    view_file,
+    view_journal,
+)
 from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
@@ -298,6 +304,56 @@ async def _view_machine_log_file(
 )
 def view_machine_log_file(machine_id: str, *, path: str, lines: int, search: str) -> dict[str, Any]:
     return asyncio.run(_view_machine_log_file(machine_id, path=path, lines=lines, search=search))
+
+
+async def _view_machine_docker_logs(
+    machine_id: str, *, container: str, lines: int, search: str, since: str, until: str
+) -> dict[str, Any]:
+    """The Logs tab's Docker mode — one container's `docker logs`, same
+    no-persistence live round trip as the journal/file modes."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            output = await view_docker_logs(
+                machine,
+                secret,
+                app_settings.ssh_connect_timeout,
+                container=container,
+                lines=lines,
+                search=search,
+                since=since,
+                until=until,
+            )
+        except LogAccessError as exc:
+            return {"ok": False, "error": str(exc)}
+        except SSHConnectionError as exc:
+            logger.warning("view_machine_docker_logs failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "output": output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.view_machine_docker_logs",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def view_machine_docker_logs(
+    machine_id: str, *, container: str, lines: int, search: str, since: str, until: str
+) -> dict[str, Any]:
+    return asyncio.run(
+        _view_machine_docker_logs(
+            machine_id, container=container, lines=lines, search=search, since=since, until=until
+        )
+    )
 
 
 async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:

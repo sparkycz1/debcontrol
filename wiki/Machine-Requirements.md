@@ -256,6 +256,8 @@ materially different trust level than a plain fact, even without root.
   (`LOG_FILE_ALLOWED_PATHS`, default `/var/log,/var/lib/docker/containers`)
   — an app-side scope guardrail, not an SSH permission; shows whatever
   that account could already `tail`/`grep` at a prompt anyway.
+- **A Docker container's logs** need the same Docker access as container
+  monitoring (see *Docker containers* above) — no extra setup beyond that.
 
 ## Self-registration (optional, for future automation)
 

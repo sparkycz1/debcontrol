@@ -80,6 +80,7 @@ from app.ssh.updates import PendingPackage
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
 from app.tasks import jobs as tasks
+from app.web.log_lines import parse_log_lines
 from app.web.machine_search import apply_tag_filter, machine_search_clause
 from app.web.routes.audit import _csv_safe
 from app.web.templating import t, templates
@@ -2462,10 +2463,14 @@ async def machine_logs(
     search: str = "",
     since: str = "",
     until: str = "",
+    source: str = "",
+    container: str = "",
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    """The Logs tab — journal by default, or one allowed file when `path`
-    is given. A live SSH round trip on every load/filter change, same
+    """The Logs tab — journal by default, one allowed file when `path` is
+    given, or one Docker container's `docker logs` when `source=docker`
+    (the container picked from the latest monitoring sample's list,
+    `Machine.docker_containers`). A live SSH round trip on every load/filter change, same
     "gated behind `action.terminal`, not `machine.view`" reasoning
     `app.ssh.logs`'s module docstring lays out; see that module for the
     command-building and path-restriction logic itself. Audited (which
@@ -2475,14 +2480,33 @@ async def machine_logs(
     machine = await _get_machine_or_404(machine_id, db, current_user)
     app_settings = await get_or_create_app_settings(db)
 
+    if source not in ("journal", "file", "docker"):
+        source = "file" if path.strip() else "journal"
+    docker_containers = machine.docker_containers or []
+    if source == "docker" and not container and docker_containers:
+        running = [c for c in docker_containers if c.get("state") == "running"]
+        container = str((running or docker_containers)[0].get("name") or "")
+
     output: str | None = None
     error: str | None = None
+    fetch = not (source == "file" and not path.strip()) and not (
+        source == "docker" and not container
+    )
     if not machine.host_key_fingerprint:
         error = "Confirm the server's key fingerprint on the Overview tab first."
-    else:
+    elif fetch:
         clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
         try:
-            if path.strip():
+            if source == "docker":
+                async_result = tasks.view_machine_docker_logs.delay(
+                    str(machine.id),
+                    container=container,
+                    lines=clamped_lines,
+                    search=search,
+                    since=since,
+                    until=until,
+                )
+            elif source == "file":
                 async_result = tasks.view_machine_log_file.delay(
                     str(machine.id), path=path.strip(), lines=clamped_lines, search=search
                 )
@@ -2512,8 +2536,10 @@ async def machine_logs(
             request=request,
             action="machine.logs.view",
             summary=(
-                f'Viewed log file "{path.strip()}" on "{machine.name}"'
-                if path.strip()
+                f'Viewed Docker logs of "{container}" on "{machine.name}"'
+                if source == "docker"
+                else f'Viewed log file "{path.strip()}" on "{machine.name}"'
+                if source == "file"
                 else f'Viewed journal on "{machine.name}"'
             ),
             outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
@@ -2533,7 +2559,11 @@ async def machine_logs(
             "active_tab": "logs",
             "csrf_token": csrf_token,
             "output": output,
+            "log_lines": parse_log_lines(output, search),
             "error": error,
+            "source": source,
+            "container": container,
+            "docker_containers": docker_containers,
             "path": path,
             "lines": lines,
             "search": search,

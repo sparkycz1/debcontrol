@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.62.0"
+version = "0.63.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -80,14 +80,14 @@ dependencies = [
     # module's own docstring for the (two, as it happens) underlying HTTP
     # libraries these four build on, and how tests inject a mock transport
     # of the matching one.
-    "anthropic>=1.3.0",
+    "anthropic>=1.8.0",
     # Also used for plain OpenAI and any self-hosted "OpenAI-compatible"
     # endpoint (litellm, vLLM, a corporate gateway) — both speak this SDK's
     # exact wire format, differing only in `base_url` and whether a key is
     # required. See `OpenAICompatibleClient`. NOT used for OpenRouter
     # (below) even though OpenRouter's API is also OpenAI-compatible — it
     # has its own dedicated SDK, which is what this app uses for it instead.
-    "openai>=3.6.0",
+    "openai>=3.19.0",
     # OpenRouter's own SDK — see `OpenRouterClient`. 1.x (declared "stable
     # as of v1.0") pins `pydantic<2.13`, hence this project's own pydantic
     # floor above; 1.x also changed `models.list_async`'s response shape
@@ -96,9 +96,9 @@ dependencies = [
     # models endpoint — both handled in `OpenRouterClient.list_models`.
     # `chat.send_async`'s shape (`.choices`/`.usage`/tool-call parsing) is
     # unchanged from 0.x.
-    "openrouter>=1.1.139",
+    "openrouter>=1.2.21",
     # Google's SDK for Gemini — see `GeminiClient`.
-    "google-genai>=2.21.0",
+    "google-genai>=2.25.0",
     # Renders a machine's runbook (Overview tab) from Markdown to HTML —
     # pure Python, no C extension, no transitive dependencies. Used with
     # its default escape=True (raw HTML in the source is escaped to text,
@@ -136,6 +136,9 @@ dev = [
 
 [tool.uv]
 package = false
+# Never resolve to an alpha/beta/rc, even when a newer stable dependency
+# (e.g. redis-py beyond kombu's cap) is only satisfiable by one.
+prerelease = "disallow"
 
 [tool.ruff]
 target-version = "py314"

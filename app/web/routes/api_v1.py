@@ -1033,10 +1033,12 @@ async def machine_logs_api(
     search: str = "",
     since: str = "",
     until: str = "",
+    container: str = "",
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """The API equivalent of `GET /machines/{id}/logs` — journal by default,
-    or one allow-listed file when `path` is given. Gated behind
+    one allow-listed file when `path` is given, or one Docker container's
+    logs when `container` is given. Gated behind
     `ACTION_TERMINAL`, same as the web route, not `MACHINE_VIEW` — see
     `app.ssh.logs`'s module docstring for why. Never stored anywhere."""
     machine = await _get_machine_or_404(machine_id, db, user)
@@ -1052,7 +1054,16 @@ async def machine_logs_api(
     output: str | None = None
     error: str | None = None
     try:
-        if path.strip():
+        if container.strip():
+            async_result = tasks.view_machine_docker_logs.delay(
+                str(machine.id),
+                container=container.strip(),
+                lines=clamped_lines,
+                search=search,
+                since=since,
+                until=until,
+            )
+        elif path.strip():
             async_result = tasks.view_machine_log_file.delay(
                 str(machine.id), path=path.strip(), lines=clamped_lines, search=search
             )
@@ -1078,7 +1089,9 @@ async def machine_logs_api(
         request=request,
         action="machine.logs.view",
         summary=(
-            f'Viewed log file "{path.strip()}" on "{machine.name}"'
+            f'Viewed Docker logs of "{container.strip()}" on "{machine.name}"'
+            if container.strip()
+            else f'Viewed log file "{path.strip()}" on "{machine.name}"'
             if path.strip()
             else f'Viewed journal on "{machine.name}"'
         ),

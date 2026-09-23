@@ -22,6 +22,7 @@ that account itself; see that setting's own docstring in
 
 from __future__ import annotations
 
+import re
 import shlex
 
 from app.core.config import get_settings
@@ -30,6 +31,12 @@ from app.ssh.client import open_connection
 
 DEFAULT_LINE_LIMIT = 200
 MAX_LINE_LIMIT = 5000
+
+
+# Docker's own rule for container names (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`) —
+# checked before a name ever reaches the machine, on top of quoting it.
+_CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$")
+DOCKER_NO_ACCESS_MARKER = "@@NOACCESS"
 
 
 class LogAccessError(Exception):
@@ -175,3 +182,71 @@ async def list_directory(
         result = await conn.run(command, check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
     return parse_directory_listing(stdout if isinstance(stdout, str) else stdout.decode())
+
+
+def is_container_name_valid(name: str) -> bool:
+    return bool(_CONTAINER_NAME_RE.match(name))
+
+
+def build_docker_logs_command(
+    *, container: str, lines: int, search: str, since: str, until: str
+) -> str:
+    """`docker logs --timestamps` for one container, stdout and stderr
+    merged (a container's errors usually go to stderr). Same Docker access
+    probe as the monitoring sample (`app.ssh.monitoring`): plain `docker`
+    for an account in the `docker` group, else `sudo -n docker` when a
+    sudoers rule allows exactly that binary, else `DOCKER_NO_ACCESS_MARKER`.
+    Searching filters the *whole* log and keeps the last N matches, same as
+    `build_file_command`, rather than searching only the last N lines."""
+    if not is_container_name_valid(container):
+        raise LogAccessError(f'"{container}" is not a valid container name.')
+    clamped = _clamp_lines(lines)
+    options = ["--timestamps"]
+    if since.strip():
+        options += ["--since", shlex.quote(since.strip())]
+    if until.strip():
+        options += ["--until", shlex.quote(until.strip())]
+    if not search.strip():
+        options += ["--tail", str(clamped)]
+    logs = f"$D logs {' '.join(options)} {shlex.quote(container)} 2>&1"
+    if search.strip():
+        logs += f" | grep -F -- {shlex.quote(search.strip())} | tail -n {clamped}"
+    return (
+        "D=docker; "
+        "if ! docker ps -q >/dev/null 2>&1; then "
+        'DP="$(command -v docker)"; '
+        'if [ -n "$DP" ] && sudo -n -l "$DP" >/dev/null 2>&1; then D="sudo -n $DP"; '
+        f"else echo {DOCKER_NO_ACCESS_MARKER}; exit 0; fi; "
+        "fi; "
+        f"{logs}"
+    )
+
+
+async def view_docker_logs(
+    machine: Machine,
+    secret: str | None,
+    timeout_seconds: int,
+    *,
+    container: str,
+    lines: int = DEFAULT_LINE_LIMIT,
+    search: str = "",
+    since: str = "",
+    until: str = "",
+) -> str:
+    """Connect to a machine and return one container's recent log lines.
+    Requires a pinned host key. Raises `LogAccessError` for an invalid
+    container name (never sent to the machine) or when this account can't
+    reach the Docker daemon."""
+    command = build_docker_logs_command(
+        container=container, lines=lines, search=search, since=since, until=until
+    )
+    async with await open_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(command, check=False, timeout=timeout_seconds)
+    stdout = result.stdout or ""
+    output = stdout if isinstance(stdout, str) else stdout.decode()
+    if output.strip() == DOCKER_NO_ACCESS_MARKER:
+        raise LogAccessError(
+            "This account can't reach the Docker daemon (add it to the docker group, "
+            "or allow `sudo -n docker`)."
+        )
+    return output
