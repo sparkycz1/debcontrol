@@ -141,11 +141,16 @@ Talking to the Docker daemon needs one of:
   debcontrol ALL=(root) NOPASSWD: /usr/bin/docker
   ```
 
-Either one is effectively root on that machine (anyone who can start a
-container can mount the host's filesystem), which is why onboarding does
-**not** set it up for you — without it, the Monitoring tab just says
-Docker is present but not accessible. No Docker installed at all → the
-Docker cards simply don't appear.
+**Machines onboarded through this app get the sudoers rule
+automatically** when Docker is already installed (a separate
+`/etc/sudoers.d/debcontrol-docker`, pointing at wherever `docker` lives on
+that machine). Installed Docker later, or onboarded before this existed?
+Re-run onboarding, or add the line above by hand. Either option is
+effectively root on that machine (anyone who can start a container can
+mount the host's filesystem) — the same trust level the `apt-get` grant
+already implies. Without it, the Monitoring tab just says Docker is
+present but not accessible. No Docker installed at all → the Docker cards
+simply don't appear.
 
 ## 📦 Installed packages — also no agent, no root
 

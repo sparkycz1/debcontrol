@@ -46,6 +46,15 @@ def test_build_onboarding_command_grants_exactly_the_documented_sudoers_lines():
     assert "visudo -cf" in command
 
 
+def test_build_onboarding_command_grants_docker_only_when_installed():
+    command = build_onboarding_command("ssh-ed25519 AAAA test")
+
+    assert 'DP="$(command -v docker 2>/dev/null || true)"' in command
+    assert 'if [ -n "$DP" ]; then' in command
+    assert "> /etc/sudoers.d/debcontrol-docker" in command
+    assert "visudo -cf /etc/sudoers.d/debcontrol-docker" in command
+
+
 def test_build_onboarding_command_installs_ncurses_term_best_effort():
     command = build_onboarding_command("key")
 

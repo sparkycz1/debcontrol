@@ -393,9 +393,13 @@ has a `docker` CLI (VMs included — this isn't hardware): plain `docker`
 first (the account is in the `docker` group), else `sudo -n docker` when a
 sudoers rule allows exactly that binary (`sudo -n -l <path>` checks
 without prompting). Neither → `Machine.docker_status = "no_access"` and
-the tab explains how to grant it — onboarding deliberately does **not**
-grant Docker access, since the `docker` group (or sudo on `docker`) is
-root-equivalent. `docker ps -a` gives the table; `docker stats
+the tab explains how to grant it. Onboarding grants it when Docker is
+installed at onboarding time: a separate `/etc/sudoers.d/debcontrol-docker`
+for whatever path that machine's `docker` resolves to (same pattern as the
+flatpak/snap file). That's root-equivalent — anyone who can start a
+container can mount the host filesystem — but no more than the `apt-get`
+grant the account already has. A machine onboarded before this, or that
+got Docker afterwards, picks it up by re-running onboarding. `docker ps -a` gives the table; `docker stats
 --no-stream` the CPU/memory; network bytes come from each container's own
 namespace (`/proc/<pid>/net/dev`, exact counters) and only fall back to
 `docker stats`' rounded NetIO when that file isn't readable.

@@ -1109,7 +1109,7 @@
     "monitoring.containers.heading": "Všechny kontejnery",
     "monitoring.containers.hint": "Docker kontejnery podle posledního vzorku",
     "monitoring.containers.none": "Docker běží, ale nemá žádné kontejnery.",
-    "monitoring.containers.no_access": "Docker je nainstalovaný, ale tento účet se nedostane k Docker daemonu. Přidejte účet do skupiny docker, nebo mu povolte sudo -n docker — viz Požadavky na stroj.",
+    "monitoring.containers.no_access": "Docker je nainstalovaný, ale tento účet se nedostane k Docker daemonu. Spusťte znovu onboarding (přidá sudoers pravidlo pro docker), nebo přidejte účet do skupiny docker — viz Požadavky na stroj.",
     "monitoring.containers.name": "Název",
     "monitoring.containers.cpu": "Procesor",
     "monitoring.containers.memory": "Paměť",

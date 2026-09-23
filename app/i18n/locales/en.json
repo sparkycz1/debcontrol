@@ -1109,7 +1109,7 @@
     "monitoring.containers.heading": "All containers",
     "monitoring.containers.hint": "Docker containers as of the last sample",
     "monitoring.containers.none": "Docker is running, but there are no containers.",
-    "monitoring.containers.no_access": "Docker is installed, but this account can't reach the Docker daemon. Add the account to the docker group, or allow sudo -n docker for it — see Machine requirements.",
+    "monitoring.containers.no_access": "Docker is installed, but this account can't reach the Docker daemon. Re-run onboarding (it adds a sudoers rule for docker), or add the account to the docker group — see Machine requirements.",
     "monitoring.containers.name": "Name",
     "monitoring.containers.cpu": "CPU",
     "monitoring.containers.memory": "Memory",

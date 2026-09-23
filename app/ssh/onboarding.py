@@ -85,6 +85,19 @@ def build_onboarding_command(public_key: str) -> str:
         f"chmod 440 /etc/sudoers.d/{user}-flatpak-snap; "
         f"visudo -cf /etc/sudoers.d/{user}-flatpak-snap; "
         "fi; "
+        # Docker — container monitoring and container logs
+        # (app.ssh.monitoring / app.ssh.logs) try plain `docker`, then
+        # `sudo -n <docker path>`. Granted only when Docker is installed,
+        # for whatever path this machine's `docker` actually lives at. Note
+        # this is root-equivalent (anyone who can start a container can
+        # mount the host filesystem) — deliberate, the account already has
+        # apt-get as root; see wiki/Machine-Requirements.md.
+        'DP="$(command -v docker 2>/dev/null || true)"; '
+        'if [ -n "$DP" ]; then '
+        f"printf '%s ALL=(root) NOPASSWD: %s\\n' {user} \"$DP\" > /etc/sudoers.d/{user}-docker; "
+        f"chmod 440 /etc/sudoers.d/{user}-docker; "
+        f"visudo -cf /etc/sudoers.d/{user}-docker; "
+        "fi; "
         "(apt-get update -q >/dev/null 2>&1 && "
         "apt-get install -y ncurses-term >/dev/null 2>&1) || true; "
         f"echo {ONBOARD_SUCCESS_MARKER}"
