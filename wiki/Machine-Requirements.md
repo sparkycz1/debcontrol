@@ -97,8 +97,8 @@ excludes pseudo-filesystems (`tmpfs`, `devtmpfs`, `squashfs`, `overlay`).
 ## 🌡️ Hardware monitoring — physical machines only, optional packages
 
 One extra fact, `is_physical` (`systemd-detect-virt`, standard on any
-systemd host), decides whether the Monitoring tab's **Hardware** panel
-appears at all — a VM never runs the probes below, since a virtual
+systemd host), decides whether the Monitoring tab's hardware cards
+appear at all — a VM never runs the probes below, since a virtual
 disk's S.M.A.R.T. status is meaningless and there's usually no real
 sensor/RAPL data to read.
 
@@ -108,9 +108,9 @@ package just means that one reading is empty, not a failed sample:
 | Reading | Command | Package | Root? |
 |---|---|---|---|
 | Temperatures + fan speeds | `sensors -j` | `lm-sensors` (run `sensors-detect` once after install) | No |
-| S.M.A.R.T. disk health | `smartctl -H` per disk | `smartmontools` | **Yes**, see below |
+| S.M.A.R.T. health (every sample) and full detail (with facts) | `smartctl -H` / `smartctl -a -j` per disk | `smartmontools` | **Yes**, see below |
 | CPU power | `/sys/class/powercap/*-rapl:*/energy_uj` | kernel (Intel or AMD RAPL — a CPU with neither has no reading) | No |
-| GPU power | `nvidia-smi --query-gpu=...` (NVIDIA), else `sensors -j`'s `amdgpu`/`i915`/`xe` chip (AMD/Intel) | NVIDIA driver, or `lm-sensors` (first GPU only — no multi-GPU probe yet) | No |
+| GPU utilization, VRAM, power (per card) | `nvidia-smi` (NVIDIA); `/sys/class/drm/card*/device/` sysfs (AMD; Intel exposes only power, on newer kernels) | NVIDIA driver / kernel; `pciutils` (`lspci`) for the card's name | No |
 
 S.M.A.R.T. is the one exception needing root, added to the same sudoers
 line as `dmidecode` — **machines onboarded through this app already have
@@ -125,6 +125,27 @@ debcontrol ALL=(root) NOPASSWD: /usr/sbin/dmidecode, /usr/sbin/smartctl
 Every reading is gathered fresh on each monitoring sample, so a sensor,
 fan, or disk that's physically added or removed between samples is
 picked up automatically — nothing to reconcile by hand.
+
+## 🐳 Docker containers — optional, needs Docker access
+
+On any machine (VMs included) with a `docker` CLI, each monitoring sample
+also reads `docker ps -a` and `docker stats --no-stream` — per-container
+CPU/memory/network charts and a container table on the Monitoring tab.
+Talking to the Docker daemon needs one of:
+
+- the connecting account in the `docker` group
+  (`sudo usermod -aG docker debcontrol`), or
+- a sudoers rule for exactly the docker binary:
+  ```
+  # /etc/sudoers.d/debcontrol
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/docker
+  ```
+
+Either one is effectively root on that machine (anyone who can start a
+container can mount the host's filesystem), which is why onboarding does
+**not** set it up for you — without it, the Monitoring tab just says
+Docker is present but not accessible. No Docker installed at all → the
+Docker cards simply don't appear.
 
 ## 📦 Installed packages — also no agent, no root
 
@@ -298,6 +319,10 @@ playbook automates — do it by hand, or run that instead.
 - [ ] *(optional)* passwordless sudo for `flatpak`/`snap` too, if either is
       installed and you want debcontrol to keep it updated
 - [ ] *(optional)* `curl` installed, if using self-registration
+- [ ] *(optional, bare metal)* `lm-sensors` and `smartmontools` for
+      temperatures/fans and S.M.A.R.T. (smartctl via the sudoers line above)
+- [ ] *(optional)* `docker` group membership or a sudoers rule for
+      `/usr/bin/docker`, for container monitoring
 - [ ] *(optional)* `ncurses-term` installed, for 256-color depth
       specifically in the Terminal tab (colors/box-drawing already work
       without it)

@@ -89,5 +89,16 @@ class MachineMonitoringSample(Base):
     # is computed from consecutive samples the same way network/disk I/O
     # already is, see app.services.monitoring_history.
     cpu_energy_uj: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    # Already a rate (watts) straight from nvidia-smi, not a counter.
+    # Sum of every GPU's power draw — already a rate (watts), not a counter.
     gpu_power_watts: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Each {"id", "name", "vendor", "util_percent", "vram_used_bytes",
+    # "vram_total_bytes", "power_watts"} — one per GPU (app.ssh.monitoring).
+    gpus: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+    # Each {"name", "cpu_percent", "mem_bytes", "net_rx_bytes",
+    # "net_tx_bytes"} — running containers only, just the numbers the
+    # Monitoring tab charts (net bytes cumulative since container start, a
+    # rate computed downstream). The rest of each container's details
+    # (image/ports/health) is kept once on Machine.docker_containers, not
+    # repeated in every sample.
+    docker_stats: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)

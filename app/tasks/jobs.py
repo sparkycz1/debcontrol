@@ -74,7 +74,7 @@ from app.ssh.power import PowerAction, send_power_command
 from app.ssh.reachability import ReachabilityResult, check_reachable
 from app.ssh.readiness import DIRECT_FIX_COMMAND, missing_requirements
 from app.ssh.readiness import check_machine_readiness as run_readiness_probes
-from app.ssh.services import gather_services
+from app.ssh.services import ServiceEntry, gather_services
 from app.ssh.updates import (
     capture_package_snapshot,
     check_updates,
@@ -793,6 +793,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.filesystems = facts["filesystems"]
         machine.network_interfaces = facts["network_interfaces"]
         machine.is_physical = facts["is_physical"]
+        machine.smart_devices = facts["smart_devices"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
         await publish_machine_event(machine_id, KIND_FACTS)
@@ -907,6 +908,62 @@ async def _refresh_all_machine_packages() -> None:
         refresh_machine_packages.delay(str(machine_id))
 
 
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _service_usage(
+    entry: ServiceEntry,
+    previous: MachineService | None,
+    elapsed_seconds: float | None,
+    cpu_cores: int | None,
+) -> dict[str, Any]:
+    """This refresh's CPU%/memory columns for one unit. CPU% is the unit's
+    CPU-time delta since the previous refresh over the wall-clock time
+    between the two, as a share of the whole machine (all cores = 100%) —
+    so it's only computed when the previous row is from the *same* run of
+    the unit (same `active_enter_monotonic`) and the counter grew. Peaks
+    carry over only within that same run too."""
+    usage: dict[str, Any] = {
+        "cpu_usage_nsec": entry["cpu_usage_nsec"],
+        "active_enter_monotonic": entry["active_enter_monotonic"],
+        "memory_bytes": entry["memory_bytes"],
+        "cpu_percent": None,
+        "cpu_percent_peak": None,
+        "memory_peak_bytes": entry["memory_peak_bytes"],
+    }
+    same_run = (
+        previous is not None
+        and entry["active_enter_monotonic"] is not None
+        and previous.active_enter_monotonic == entry["active_enter_monotonic"]
+    )
+    if (
+        same_run
+        and previous is not None
+        and elapsed_seconds
+        and elapsed_seconds > 0
+        and entry["cpu_usage_nsec"] is not None
+        and previous.cpu_usage_nsec is not None
+        and entry["cpu_usage_nsec"] >= previous.cpu_usage_nsec
+    ):
+        busy_seconds = (entry["cpu_usage_nsec"] - previous.cpu_usage_nsec) / 1e9
+        usage["cpu_percent"] = round(
+            busy_seconds / elapsed_seconds / max(cpu_cores or 1, 1) * 100, 3
+        )
+    peaks = [usage["cpu_percent"]]
+    if same_run and previous is not None:
+        peaks.append(previous.cpu_percent_peak)
+    known_peaks = [p for p in peaks if p is not None]
+    usage["cpu_percent_peak"] = max(known_peaks) if known_peaks else None
+    if usage["memory_peak_bytes"] is None:
+        memory_peaks = [entry["memory_bytes"]]
+        if same_run and previous is not None:
+            memory_peaks.append(previous.memory_peak_bytes)
+        known = [m for m in memory_peaks if m is not None]
+        usage["memory_peak_bytes"] = max(known) if known else None
+    return usage
+
+
 async def _refresh_machine_services(machine_id: str) -> dict[str, Any]:
     """Connect to one machine and refresh its systemd service-unit
     snapshot. Requires a pinned host key — machines without one are
@@ -930,6 +987,17 @@ async def _refresh_machine_services(machine_id: str) -> dict[str, Any]:
             logger.warning("refresh_machine_services failed for %s: %s", machine.name, exc)
             return {"ok": False, "error": str(exc)}
 
+        now = datetime.now(UTC)
+        previous_result = await session.execute(
+            select(MachineService).where(MachineService.machine_id == machine.id)
+        )
+        previous = {row.unit: row for row in previous_result.scalars().all()}
+        elapsed_seconds = (
+            (now - _as_utc(machine.services_updated_at)).total_seconds()
+            if machine.services_updated_at
+            else None
+        )
+
         await session.execute(
             delete(MachineService).where(MachineService.machine_id == machine.id)
         )
@@ -941,10 +1009,13 @@ async def _refresh_machine_services(machine_id: str) -> dict[str, Any]:
                 active_state=entry["active_state"][:32],
                 sub_state=entry["sub_state"][:32],
                 description=entry["description"][:500],
+                **_service_usage(
+                    entry, previous.get(entry["unit"]), elapsed_seconds, machine.cpu_cores
+                ),
             )
             for entry in services
         )
-        machine.services_updated_at = datetime.now(UTC)
+        machine.services_updated_at = now
         await session.commit()
         await publish_machine_event(machine_id, KIND_SERVICES)
 
@@ -1015,7 +1086,23 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
                 smart_disks=sample["smart_disks"],
                 cpu_energy_uj=sample["cpu_energy_uj"],
                 gpu_power_watts=sample["gpu_power_watts"],
+                gpus=sample["gpus"],
+                docker_stats=[
+                    {
+                        "name": c["name"],
+                        "cpu_percent": c["cpu_percent"],
+                        "mem_bytes": c["mem_bytes"],
+                        "net_rx_bytes": c["net_rx_bytes"],
+                        "net_tx_bytes": c["net_tx_bytes"],
+                    }
+                    for c in sample["docker_containers"]
+                    if c["state"] == "running"
+                ],
             )
+        )
+        machine.docker_status = sample["docker_status"]
+        machine.docker_containers = (
+            sample["docker_containers"] if sample["docker_status"] == "ok" else None
         )
         machine.monitoring_updated_at = now
         await session.commit()

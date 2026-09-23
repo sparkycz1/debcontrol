@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import mistune
@@ -18,6 +19,7 @@ from app.core.config import get_settings
 from app.core.version import APP_VERSION, get_git_commit
 from app.i18n import get_locale
 from app.i18n import translate as _translate
+from app.web import charts
 from app.web.branding import favicon_href, logo_src
 from app.web.os_logos import badge_for
 
@@ -88,6 +90,19 @@ def iso_list(timestamps: list[datetime]) -> list[str]:
 
 
 templates.env.filters["iso_list"] = iso_list
+
+
+def _chart(*args: Any, **kwargs: Any) -> charts.Chart:
+    """`chart(...)` in a template: `app.web.charts.build_chart` with time
+    labels rendered in the configured display zone."""
+    kwargs.setdefault("time_label", local_time)
+    return charts.build_chart(*args, **kwargs)
+
+
+templates.env.globals["chart"] = _chart
+templates.env.globals["chart_palette"] = charts.PALETTE
+templates.env.filters["chart_value"] = charts.format_value
+templates.env.filters["bytes"] = charts.format_bytes
 
 
 def tojson_filter(value: object) -> Markup:

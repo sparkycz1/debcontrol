@@ -75,98 +75,90 @@
   </svg>
 {% endmacro %}
 
-{# The Monitoring tab's interactive chart: one or more series sharing the
-   same X axis (a timestamp per point — see
-   app.services.monitoring_history._bucket_timestamps), with a scrubbable
-   hover readout wired up by static/js/monitoring-chart.js (which finds
-   every `[data-chart]` element and does the rest — this macro only emits
-   markup + data attributes, no inline `<script>`, to keep the CSP simple).
-
-   `series` is a list of `{label, color, values}` dicts, `values` all the
-   same length as `timestamps` and each may contain `None` (a gap, drawn as
-   a polyline break rather than a fake dip to 0 — see `percent_sparkline`
-   above for why). `fixed_max` pins the Y axis to `[0, fixed_max]` (used for
-   percent series); left as `none`, the axis auto-scales to the tightest
-   range that fits every series (used for load average / throughput, which
-   have no natural ceiling). `unit` is a display-only suffix the hover
-   tooltip appends after each formatted number (e.g. " B/s"); pass
-   `bytes_rate=True` instead for throughput series, so the JS formats them
-   as KB/s-MB/s rather than a raw byte count. `threshold` (a plain number
-   in the chart's own Y units — e.g. a percent for a `fixed_max=100`
-   chart) draws a dashed reference line with `threshold_label` next to it
-   (falls back to `"{threshold}{unit}"`) — used by machines/monitoring.html
-   to show a configured condition-based notification's own trigger level
-   (`app.services.notifications.condition_thresholds_for_machine`)
-   directly on the chart it's about, rather than only as a number on the
-   Notifications page. Silently omitted if it falls outside the chart's
-   own `[vmin, vmax]` range. #}
-{% macro trend_chart(series, timestamps, width=560, height=140, pad=14, fixed_max=none, unit='', bytes_rate=False, threshold=none, threshold_label=none) %}
-  {% set n = timestamps | length %}
-  {% set step = ((width - 2 * pad) / (n - 1)) if n > 1 else 0 %}
-  {% if fixed_max is not none %}
-    {% set vmin = 0 %}
-    {% set vmax = fixed_max %}
-  {% else %}
-    {% set all_values = [] %}
-    {% for s in series %}
-      {% for v in s.points %}
-        {% if v is not none %}{% set _ = all_values.append(v) %}{% endif %}
-      {% endfor %}
-    {% endfor %}
-    {% set vmin = 0 %}
-    {% set vmax = (all_values | max) if all_values else 1 %}
-  {% endif %}
-  {% set vrange = (vmax - vmin) if vmax != vmin else 1 %}
-  <div class="trend-chart-wrap" data-chart
-       data-unit="{{ unit }}" data-bytes-rate="{{ 'true' if bytes_rate else 'false' }}"
-       data-timestamps='{{ timestamps | iso_list | tojson }}'
-       data-series='{{ series | map(attribute="points") | list | tojson }}'
-       data-labels='{{ series | map(attribute="label") | list | tojson }}'>
-    <svg viewBox="0 0 {{ width }} {{ height }}" width="100%" height="{{ height }}"
-         preserveAspectRatio="none" role="img" aria-label="Interactive trend chart"
-         class="trend-chart-svg">
-      {% for s in series %}
-        {% set segments = [] %}
-        {% set current = [] %}
-        {% for v in s.points %}
-          {% if v is none %}
-            {% if current %}
-              {% set _ = segments.append(current | join(' ')) %}
-              {% set current = [] %}
-            {% endif %}
-          {% else %}
-            {% set x = pad + loop.index0 * step %}
-            {% set y = height - pad - (([[v, vmin] | max, vmax] | min) - vmin) / vrange * (height - 2 * pad) %}
-            {% set _ = current.append((x | round(1) | string) ~ "," ~ (y | round(1) | string)) %}
-          {% endif %}
+{# The Monitoring tab's charts. All geometry comes from
+   `app.web.charts.build_chart` (the `chart(...)` template global) — this
+   only lays it out. The SVG carries no text (it's stretched to its box);
+   Y labels are a flex column and X labels a flex row, both
+   `justify-content: space-between` over evenly spaced ticks, so they line
+   up with the grid without any inline style. Hover, legend toggling and
+   the series filter are static/js/monitoring-chart.js, reading the
+   `data-chart` JSON. Every label/value here goes through autoescaping or
+   `tojson` — sensor/container names come from the managed machine. #}
+{% macro render_chart(chart) %}
+  <div class="chart" data-chart='{{ chart.data | tojson }}'>
+    <div class="chart-y" aria-hidden="true">
+      {% for label in chart.y_ticks %}<span>{{ label }}</span>{% endfor %}
+    </div>
+    <div class="chart-plot">
+      <svg class="chart-svg" viewBox="0 0 1000 100" preserveAspectRatio="none"
+           role="img" aria-label="{{ chart.series | map(attribute='label') | join(', ') }}">
+        {% for y in chart.grid_y %}
+          <line class="chart-grid" x1="0" x2="1000" y1="{{ y }}" y2="{{ y }}" vector-effect="non-scaling-stroke"></line>
         {% endfor %}
-        {% if current %}{% set _ = segments.append(current | join(' ')) %}{% endif %}
-        {% for segment in segments %}
-          <polyline fill="none" stroke="{{ s.color }}" stroke-width="2"
-                    stroke-linejoin="round" stroke-linecap="round"
-                    points="{{ segment }}"></polyline>
+        {% for s in chart.series %}
+          <g class="chart-series" data-series="{{ loop.index0 }}">
+            {% for d in s.area_paths %}
+              <path d="{{ d }}" fill="{{ s.color }}" fill-opacity="{{ '0.55' if chart.stacked else '0.2' }}" stroke="none"></path>
+            {% endfor %}
+            {% for d in s.line_paths %}
+              <path d="{{ d }}" fill="none" stroke="{{ s.color }}" stroke-width="1.6"
+                    stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+            {% endfor %}
+          </g>
         {% endfor %}
-      {% endfor %}
-      {% if threshold is not none and threshold >= vmin and threshold <= vmax %}
-        {% set ty = (height - pad - ((threshold - vmin) / vrange) * (height - 2 * pad)) | round(1) %}
-        <line class="trend-chart-threshold" x1="{{ pad }}" y1="{{ ty }}" x2="{{ width - pad }}" y2="{{ ty }}"></line>
-        <text class="trend-chart-threshold-label" x="{{ width - pad }}" y="{{ (ty - 4) | round(1) }}"
-              text-anchor="end">{{ threshold_label or (threshold ~ unit) }}</text>
-      {% endif %}
-      <line class="trend-chart-cursor" x1="0" y1="0" x2="0" y2="{{ height }}" hidden></line>
-    </svg>
-    <div class="trend-chart-tooltip" hidden></div>
-    {% if series | length > 1 %}
-      <div class="trend-chart-legend">
-        {% for s in series %}
-          <span class="trend-chart-legend-item">
-            <svg class="trend-chart-swatch" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-              <rect width="10" height="10" rx="2" fill="{{ s.color }}"></rect>
-            </svg>
-            {{ s.label }}
+        {% if chart.threshold_y is not none %}
+          <line class="chart-threshold" x1="0" x2="1000" y1="{{ chart.threshold_y }}" y2="{{ chart.threshold_y }}"
+                vector-effect="non-scaling-stroke"></line>
+        {% endif %}
+        <line class="chart-cursor" x1="0" x2="0" y1="0" y2="100" vector-effect="non-scaling-stroke" hidden></line>
+      </svg>
+      <div class="chart-tooltip" hidden></div>
+    </div>
+    <div class="chart-x" aria-hidden="true">
+      {% for label in chart.x_ticks %}<span>{{ label }}</span>{% endfor %}
+    </div>
+    {% if chart.series | length > 1 or chart.threshold_label %}
+      <div class="chart-legend">
+        {% if chart.series | length > 1 %}
+          {% for s in chart.series %}
+            <button type="button" class="chart-legend-item" data-series-toggle="{{ loop.index0 }}" aria-pressed="true">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="{{ s.color }}"></rect></svg>
+              {{ s.label }}
+            </button>
+          {% endfor %}
+        {% endif %}
+        {% if chart.threshold_label %}
+          <span class="chart-legend-item chart-legend-threshold">
+            <svg viewBox="0 0 14 10" width="14" height="10" aria-hidden="true"><line x1="0" y1="5" x2="14" y2="5" class="chart-threshold"></line></svg>
+            {{ chart.threshold_label }}
           </span>
-        {% endfor %}
+        {% endif %}
       </div>
     {% endif %}
   </div>
+{% endmacro %}
+
+{# A titled card around one chart (see `render_chart`). `filter` adds the
+   header's series filter box (worth it once a chart has many lines —
+   temperatures, containers); `footer` is an optional line of text under
+   the chart (the current reading, typically). #}
+{% macro chart_card(title, subtitle, chart, filter=false, footer=none, wide=false, empty_text='—') %}
+  <section class="chart-card{{ ' chart-card-wide' if wide else '' }}">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ title }}</h3>
+        {% if subtitle %}<p class="chart-card-subtitle">{{ subtitle }}</p>{% endif %}
+      </div>
+      {% if filter %}
+        <input type="search" class="chart-filter" data-chart-filter placeholder="{{ t(request, 'monitoring.filter_placeholder') }}"
+               aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+      {% endif %}
+    </header>
+    {% if chart.empty %}
+      <p class="hint chart-empty">{{ empty_text }}</p>
+    {% else %}
+      {{ render_chart(chart) }}
+    {% endif %}
+    {% if footer %}<p class="chart-card-footer">{{ footer }}</p>{% endif %}
+  </section>
 {% endmacro %}

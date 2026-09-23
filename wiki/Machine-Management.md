@@ -328,73 +328,148 @@ package refresh and a fresh update-availability check regardless of outcome.
 
 ### Systemd service snapshot
 
-**Show services** — `MachineService`, one row per
-`systemctl list-units --type=service --all` unit, same snapshot/replace
-pattern and cadence as packages — a full unit listing doesn't need to be
-fresher than facts. No root needed — listing unit state is allowed under
-systemd's default polkit policy.
+`MachineService`, one row per `systemctl list-units --type=service --all`
+unit, same snapshot/replace pattern and cadence as packages — a full unit
+listing doesn't need to be fresher than facts. No root needed — listing
+unit state is allowed under systemd's default polkit policy. Shown as the
+**systemd services** table at the bottom of the Monitoring tab (filter
+box, sortable columns), and at `GET /api/v1/machines/{id}/services`.
 
-### Monitoring: five categories — CPU, Memory, Network, Disk, Availability
+Each *running* unit also carries its own cgroup accounting, read in the
+same round trip with `systemctl show -p Id,CPUUsageNSec,MemoryCurrent,
+MemoryPeak,ActiveEnterTimestampMonotonic` (`app/ssh/services.py`):
 
-**Monitoring** is five always-open categories, each its own `<section>`:
-**CPU** (two `/proc/stat` reads a second apart, inside the one round
-trip's `sleep 1`, plus 1/5/15-min load average), **Memory** (utilization
-+ used/available/total), **Network** (bytes/sec per interface, diffed
-from cumulative counters), **Disk** (same diffing, **and** filesystem
-usage per mount, historized), **Availability** (a wholly different
-table/cadence — see below).
+- **CPU (avg)** — the unit's CPU-time delta since the *previous* snapshot
+  divided by the wall-clock time between the two, as a share of the whole
+  machine (all cores = 100%) — so on the default cadence, a 10-minute
+  average. Computed in `app.tasks.jobs._service_usage` from the previous
+  row before the snapshot is replaced; only when both rows belong to the
+  same run of the unit (`ActiveEnterTimestampMonotonic` unchanged —
+  otherwise the counter reset with the restart).
+- **Peak CPU** — the highest of those averages since the unit last
+  started.
+- **Memory** / **Peak memory** — `MemoryCurrent`, and systemd's own
+  `MemoryPeak` (systemd 255+), falling back to the highest `MemoryCurrent`
+  seen since the unit last started on older systemd.
+
+Not running, or accounting off → `N/A`, not zero. The Monitoring tab's
+**Refresh now** refreshes this snapshot too.
+
+### Monitoring tab layout
+
+A two-column grid of chart cards (one column below ~1000px), modeled on
+Beszel's system page, then full-width tables:
+
+- **CPU usage**, **Memory usage**, **Disk usage** (per mount), **Disk I/O**
+  and **Network** (read/write and received/sent as separate series per
+  device/interface), **Load average**, **Availability** and **Connect
+  latency** (the reachability history — see below).
+- **Docker** (any machine with a `docker` CLI): stacked per-container
+  **CPU**, **memory** and **network** charts plus an **All containers**
+  table (CPU, memory, network rate, health, ports, image, status).
+- **Hardware** (bare metal only — see below): **Temperature**, **Fans**,
+  **CPU power**, **GPU power**, and per GPU a **utilization** and **VRAM**
+  chart named after the card.
+- **S.M.A.R.T.** table (bare metal): device, model, capacity, status,
+  type, power-on time, power cycles, temperature — clicking a device opens
+  a side panel with every attribute smartctl reported.
+- **systemd services** table (above).
+
+Charts are drawn server-side by `app/web/charts.py` (smooth monotone
+curves, filled or stacked areas, round-number Y ticks, evenly spaced time
+labels) into a stretched, text-free SVG; axis labels are HTML laid out by
+flexbox, so nothing needs an inline style under the CSP.
+`static/js/monitoring-chart.js` adds the hover tooltip (every visible
+series at that point, highest first — built with `textContent`, since
+sensor/container names come from the managed machine), legend toggling,
+the per-card series filter, and the tables' filter/sort. A configured
+condition-based notification's threshold is drawn as a dashed line on the
+chart it's about, with its value in the legend.
+
+### Docker containers
+
+`MONITORING_COMMAND` ends with a `DOCKER` section on every machine that
+has a `docker` CLI (VMs included — this isn't hardware): plain `docker`
+first (the account is in the `docker` group), else `sudo -n docker` when a
+sudoers rule allows exactly that binary (`sudo -n -l <path>` checks
+without prompting). Neither → `Machine.docker_status = "no_access"` and
+the tab explains how to grant it — onboarding deliberately does **not**
+grant Docker access, since the `docker` group (or sudo on `docker`) is
+root-equivalent. `docker ps -a` gives the table; `docker stats
+--no-stream` the CPU/memory; network bytes come from each container's own
+namespace (`/proc/<pid>/net/dev`, exact counters) and only fall back to
+`docker stats`' rounded NetIO when that file isn't readable.
+Host-network containers are skipped there (their namespace is the host's).
+
+The latest full container list is kept once on `Machine.docker_containers`;
+each sample stores only the numbers the charts need
+(`MachineMonitoringSample.docker_stats`), so image names and port lists
+aren't repeated every two minutes.
 
 ### Hardware monitoring: physical machines only, self-healing
 
-A sixth category, **Hardware**, appears on the Monitoring tab only when
-`Machine.is_physical` is true (see Facts gathered, above) — a VM's
-`sensors`/S.M.A.R.T./RAPL/`nvidia-smi` readings would be either absent or
-actively misleading (a virtual disk has no real S.M.A.R.T. attributes),
-so the panel and its probe are skipped entirely rather than shown empty.
+The hardware cards appear only when `Machine.is_physical` is true (see
+Facts gathered, above) — a VM's `sensors`/S.M.A.R.T./RAPL/GPU readings
+would be either absent or actively misleading (a virtual disk has no real
+S.M.A.R.T. attributes), so the probe is skipped entirely rather than shown
+empty.
 
 When `is_physical`, the same monitoring SSH round trip appends a second
-`_HARDWARE_COMMAND` (`app/ssh/monitoring.py`) to the existing one:
+`_HARDWARE_COMMAND` (`app/ssh/monitoring.py`):
 
 - **Temperature sensors** and **fan speeds**: `sensors -j` (lm-sensors),
   parsed from its own JSON — each chip → feature → `*_input` reading,
   bucketed into temps vs. fans by whether the feature name starts with
-  `temp`/`fan`. Missing `sensors` (not installed) or malformed/empty JSON
-  both degrade to an empty list, never an error.
-- **S.M.A.R.T. disk health**: `smartctl -H` per physical disk found in
-  facts' `disks`, via the same `sudo -n` pattern already used for
-  apt/flatpak/snap/`dmidecode`/`shutdown` — the sudoers-grant line
-  (`app/ssh/onboarding.py`) includes `smartctl` for any *newly* onboarded
-  machine; an already-onboarded one only gets the grant after being
-  re-onboarded (self-healing, not a crash — the probe just can't tell
-  PASSED/FAILED without it and reports `unknown`). PASSED → healthy,
-  FAILED → unhealthy, anything else (including "couldn't ask") → unknown.
+  `temp`/`fan`, and named `<driver> <feature>` (`k10temp Tctl`, `nvme
+  Composite`) so identical feature names on different chips stay
+  distinct (a second identical name gets a ` (2)` suffix). Missing
+  `sensors` or malformed JSON degrade to an empty list, never an error.
+- **S.M.A.R.T. health**: `smartctl -H` per whole disk, the PASSED/FAILED
+  bit kept per sample. The full detail (model, serial, capacity, hours,
+  cycles, temperature, every attribute) is gathered with *facts* instead —
+  see below. Needs root: the onboarding sudoers line includes
+  `/usr/sbin/smartctl` for newly onboarded machines; an already-onboarded
+  one gets it after re-onboarding (until then: `unknown`, not a crash).
 - **CPU power** (Intel and AMD): RAPL's
-  `/sys/class/powercap/*-rapl:*/energy_uj` — the glob matches both
-  `intel-rapl:*` and `amd-rapl:*` (AMD Zen 2+, kernel 5.8+, exposed the
-  same way once present), a cumulative microjoule counter since boot,
-  world-readable, no root. Stored raw per sample
-  (`MachineMonitoringSample.cpu_energy_uj`); the Monitoring tab computes a
-  watts *rate* from the delta between consecutive samples, the same
-  downstream-rate pattern network/disk I/O already use (see
-  `app.services.monitoring_history`) — avoids adding a measurement window
-  to the SSH round trip. A CPU with neither RAPL variant (older AMD,
-  non-x86) simply reports no reading.
-- **GPU power** (NVIDIA, AMD, Intel), first GPU only, already a rate (not
-  a counter): NVIDIA via `nvidia-smi --query-gpu=name,power.draw
-  --format=csv,noheader,nounits`, tried first; AMD (`amdgpu`, always
-  exposes it when the driver's loaded) and Intel (`i915`/`xe`, only on
-  kernels new enough to register the hwmon power reading) both come from
-  the same `sensors -j` dump the temperature/fan readings above already
-  parse — `_parse_sensors_json` picks out any `power*`-prefixed reading
-  under a chip name starting with `amdgpu`/`i915`/`xe`, falling back to it
-  only when `nvidia-smi` found nothing. No probe for a multi-GPU machine
-  (first one found wins) yet.
+  `/sys/class/powercap/*-rapl:*/energy_uj` (`intel-rapl:*` and
+  `amd-rapl:*`, AMD Zen 2+ on kernel 5.8+), summed over the `package-*`
+  domains (sub-domains are already part of a package's total). A
+  cumulative microjoule counter, world-readable; stored raw per sample
+  (`cpu_energy_uj`) and turned into watts from consecutive samples, the
+  same downstream-rate pattern network/disk I/O use. A CPU with neither
+  RAPL variant reports nothing.
+- **GPUs** (NVIDIA, AMD, Intel), one entry per card
+  (`MachineMonitoringSample.gpus`): NVIDIA via `nvidia-smi` (utilization,
+  VRAM used/total, power); AMD/Intel via the DRM driver's sysfs —
+  `gpu_busy_percent` and `mem_info_vram_*` (amdgpu; i915/xe don't expose
+  these) and the hwmon `power1_average`/`power1_input` reading when the
+  driver registers one. The card's name comes from its `product_name`
+  file, else `lspci -mm` for its PCI slot (the bracketed marketing name,
+  vendor-prefixed — "AMD Radeon RX 550"), else the card id. Emulated
+  adapters (QEMU, VMware) and cards reporting no metric at all are skipped.
+  `gpu_power_watts` is the sum across cards, falling back to an
+  `amdgpu`/`i915`/`xe` chip's power reading in the `sensors -j` dump.
 
-Every one of these self-heals the same way facts' `disks`/`network_interfaces`
-already do: sensors/fans/disks appearing or disappearing between sweeps
-(a fan replaced, a disk added) is reflected automatically on the next
-sample, no reconciliation step needed, since each sample stores its own
-full snapshot rather than diffing against the previous one's shape.
+Every one of these self-heals: sensors, fans, disks or GPUs appearing or
+disappearing between sweeps is reflected on the next sample with no
+reconciliation step, since each sample stores its own full snapshot. On
+the charts, a series simply starts (or stops) where the device did.
+
+### S.M.A.R.T. detail (facts cadence)
+
+`FACTS_COMMAND` ends with a `SMART` section (`app/ssh/smart.py`): on bare
+metal only (checked in-shell with `systemd-detect-virt`) and only when
+`smartctl` exists, one `smartctl -a -j` per whole disk, stored as
+`Machine.smart_devices` — a snapshot replaced on every facts refresh
+(10 minutes by default), since none of it moves on a minutes scale and
+the full dump is far bigger than the health bit the 2-minute sample keeps.
+`sudo -n -l` checks for the sudoers grant *before* running, so smartctl
+runs once per disk — its exit status is a bitmask that's non-zero even on
+a readable disk with logged errors, so `sudo ... || plain ...` would have
+run it twice. ATA disks keep the classic id/value/worst/threshold/raw
+table (a currently-failing attribute is flagged); NVMe disks their flat
+health-log fields. Also at `GET /api/v1/machines/{id}/hardware`, with the
+Docker list and the latest sensor/GPU readings.
 
 Unlike every table earlier, `MachineMonitoringSample` genuinely is a
 history: one row appended per `MONITORING_INTERVAL_SECONDS` tick, purged

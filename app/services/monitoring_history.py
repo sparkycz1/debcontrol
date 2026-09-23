@@ -143,10 +143,51 @@ def _filesystem_usage_series(
     return keys, per_key
 
 
+def _gauge_series(
+    samples: list[MachineMonitoringSample],
+    list_attr: str,
+    key_field: str,
+    value_field: str,
+) -> dict[str, list[float | None]]:
+    """`{key: [value per sample]}` for a per-sample JSON list of gauges
+    (temperatures, fan speeds, GPU utilization, container CPU/memory, ...)
+    — one series per key seen anywhere in the window, first-seen order; a
+    sample that didn't report that key is a gap (`None`), never zero."""
+    keys, per_key = _cumulative_series(samples, list_attr, key_field)
+    series: dict[str, list[float | None]] = {}
+    for key in keys:
+        values: list[float | None] = []
+        for entry in per_key[key]:
+            value = entry.get(value_field) if entry else None
+            values.append(
+                float(value)
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                else None
+            )
+        series[key] = values
+    return series
+
+
+def _rate_series_by_key(
+    samples: list[MachineMonitoringSample],
+    timestamps: list[datetime],
+    list_attr: str,
+    key_field: str,
+    value_fields: tuple[str, ...],
+) -> dict[str, list[float | None]]:
+    keys, per_key = _cumulative_series(samples, list_attr, key_field)
+    return {
+        key: _bucket_average(
+            _combined_rate_series(per_key[key], timestamps, value_fields), _TARGET_POINTS
+        )
+        for key in keys
+    }
+
+
 def _combined_rate_series(
     entries: list[dict[str, Any] | None],
     timestamps: list[datetime],
-    value_fields: tuple[str, str],
+    value_fields: tuple[str, ...],
 ) -> list[float | None]:
     """The combined (summed) bytes/sec rate across `value_fields` (e.g.
     `("rx_bytes", "tx_bytes")` or `("read_bytes", "write_bytes")`) between
@@ -242,6 +283,53 @@ class MonitoringHistory:
     latest_sensor_fans: list[dict[str, Any]]
     latest_smart_disks: list[dict[str, Any]]
     latest_gpu_power_watts: float | None
+    # --- Added with the Beszel-style layout: direction-split I/O, and
+    # per-sensor / per-GPU / per-container history. Every dict is keyed by
+    # the sensor/GPU/container name, first-seen order. ---
+    network_rx_by_iface: dict[str, list[float | None]]
+    network_tx_by_iface: dict[str, list[float | None]]
+    disk_read_by_device: dict[str, list[float | None]]
+    disk_write_by_device: dict[str, list[float | None]]
+    temps_by_sensor: dict[str, list[float | None]]
+    fans_by_sensor: dict[str, list[float | None]]
+    gpu_power_watts: list[float | None]
+    # {gpu id: {"name", "vendor", "util": [...], "vram_used": [...],
+    # "vram_total": latest total bytes or None, "power": [...]}}
+    gpus: dict[str, dict[str, Any]]
+    docker_cpu_by_container: dict[str, list[float | None]]
+    docker_mem_by_container: dict[str, list[float | None]]
+    docker_net_by_container: dict[str, list[float | None]]
+
+
+def _gpu_history(
+    samples: list[MachineMonitoringSample],
+) -> dict[str, dict[str, Any]]:
+    util = _gauge_series(samples, "gpus", "id", "util_percent")
+    vram = _gauge_series(samples, "gpus", "id", "vram_used_bytes")
+    power = _gauge_series(samples, "gpus", "id", "power_watts")
+    gpus: dict[str, dict[str, Any]] = {}
+    for sample in samples:
+        for entry in sample.gpus or []:
+            gpu_id = entry.get("id")
+            if not gpu_id:
+                continue
+            info = gpus.setdefault(gpu_id, {"name": gpu_id, "vendor": None, "vram_total": None})
+            info["name"] = entry.get("name") or info["name"]
+            info["vendor"] = entry.get("vendor") or info["vendor"]
+            if entry.get("vram_total_bytes"):
+                info["vram_total"] = entry["vram_total_bytes"]
+    for gpu_id, info in gpus.items():
+        info["util"] = _bucket_average(util.get(gpu_id, []), _TARGET_POINTS)
+        info["vram_used"] = _bucket_average(vram.get(gpu_id, []), _TARGET_POINTS)
+        info["power"] = _bucket_average(power.get(gpu_id, []), _TARGET_POINTS)
+        for key in ("util", "vram_used", "power"):
+            if not any(v is not None for v in info[key]):
+                info[key] = []
+    return gpus
+
+
+def _bucketed(series: dict[str, list[float | None]]) -> dict[str, list[float | None]]:
+    return {key: _bucket_average(values, _TARGET_POINTS) for key, values in series.items()}
 
 
 def build_monitoring_history(
@@ -339,6 +427,31 @@ def build_monitoring_history(
         latest_sensor_fans=(latest.sensor_fans or []) if latest else [],
         latest_smart_disks=(latest.smart_disks or []) if latest else [],
         latest_gpu_power_watts=latest.gpu_power_watts if latest else None,
+        network_rx_by_iface=_rate_series_by_key(
+            samples, timestamps, "network_io", "iface", ("rx_bytes",)
+        ),
+        network_tx_by_iface=_rate_series_by_key(
+            samples, timestamps, "network_io", "iface", ("tx_bytes",)
+        ),
+        disk_read_by_device=_rate_series_by_key(
+            samples, timestamps, "disk_io", "device", ("read_bytes",)
+        ),
+        disk_write_by_device=_rate_series_by_key(
+            samples, timestamps, "disk_io", "device", ("write_bytes",)
+        ),
+        temps_by_sensor=_bucketed(_gauge_series(samples, "sensor_temps", "name", "celsius")),
+        fans_by_sensor=_bucketed(_gauge_series(samples, "sensor_fans", "name", "rpm")),
+        gpu_power_watts=_bucket_average([s.gpu_power_watts for s in samples], _TARGET_POINTS),
+        gpus=_gpu_history(samples),
+        docker_cpu_by_container=_bucketed(
+            _gauge_series(samples, "docker_stats", "name", "cpu_percent")
+        ),
+        docker_mem_by_container=_bucketed(
+            _gauge_series(samples, "docker_stats", "name", "mem_bytes")
+        ),
+        docker_net_by_container=_rate_series_by_key(
+            samples, timestamps, "docker_stats", "name", ("net_rx_bytes", "net_tx_bytes")
+        ),
     )
 
 

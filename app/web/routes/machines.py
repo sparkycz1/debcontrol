@@ -1184,6 +1184,7 @@ async def machine_monitoring(
             "time_ranges": monitoring_history.TIME_RANGES,
             "range_key": range_key,
             "service_counts": await _get_service_counts(machine_id, db),
+            "services": await _get_services(machine_id, db, svc_q="", svc_state=""),
             # A configured condition-based notification's own trigger
             # level, drawn as a reference line on the matching chart below
             # — see app.services.notifications.condition_thresholds_for_machine.
@@ -1203,9 +1204,10 @@ async def refresh_machine_monitoring_endpoint(
     range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    """"Refresh now" for the Monitoring tab — forces both a fresh CPU/RAM/
-    disk/services sample and a fresh reachability check right now, waits
-    for both, then redirects back to the (now up to date) tab, rather than
+    """"Refresh now" for the Monitoring tab — forces a fresh monitoring
+    sample, a fresh reachability check and a fresh systemd services
+    snapshot right now, waits for all three, then
+    redirects back to the (now up to date) tab, rather than
     waiting out either sweep's own interval. Same `action.manage`
     permission the sibling facts/packages/services refresh buttons use."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
@@ -1213,6 +1215,8 @@ async def refresh_machine_monitoring_endpoint(
 
     monitoring_result = tasks.sample_machine_monitoring.delay(str(machine.id))
     reachability_result = tasks.check_machine_reachability_now.delay(str(machine.id))
+    # The services table (with per-service CPU/memory) lives on this tab too.
+    services_result = tasks.refresh_machine_services.delay(str(machine.id))
     error: str | None = None
     try:
         results = await asyncio.gather(
@@ -1221,6 +1225,9 @@ async def refresh_machine_monitoring_endpoint(
             ),
             asyncio.to_thread(
                 reachability_result.get, timeout=app_settings.ssh_connect_timeout + 15
+            ),
+            asyncio.to_thread(
+                services_result.get, timeout=app_settings.ssh_connect_timeout + 15
             ),
         )
         for result in results:

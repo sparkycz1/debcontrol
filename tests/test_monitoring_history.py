@@ -273,6 +273,81 @@ def test_cpu_power_watts_computed_from_consecutive_energy_counters():
     assert history.cpu_power_watts[-1] == pytest.approx(1.0, rel=0.01)
 
 
+def test_network_rates_are_split_by_direction():
+    now = datetime.now(UTC)
+    samples = [
+        MachineMonitoringSample(
+            id=uuid.uuid4(), machine_id=_MACHINE_ID, sampled_at=now - timedelta(seconds=100),
+            network_io=[{"iface": "eth0", "rx_bytes": 0, "tx_bytes": 0}], disk_io=[],
+        ),
+        MachineMonitoringSample(
+            id=uuid.uuid4(), machine_id=_MACHINE_ID, sampled_at=now,
+            network_io=[{"iface": "eth0", "rx_bytes": 1000, "tx_bytes": 300}], disk_io=[],
+        ),
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.network_rx_by_iface["eth0"] == [None, 10.0]
+    assert history.network_tx_by_iface["eth0"] == [None, 3.0]
+
+
+def test_sensor_series_are_keyed_by_name_with_gaps():
+    samples = [
+        _sample(2, sensor_temps=[{"name": "k10temp Tctl", "celsius": 48.0}]),
+        _sample(1, sensor_temps=[
+            {"name": "k10temp Tctl", "celsius": 50.0},
+            {"name": "nvme Composite", "celsius": 40.0},
+        ]),
+        _sample(0, sensor_fans=[{"name": "amdgpu fan1", "rpm": 1409.0}]),
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.temps_by_sensor == {
+        "k10temp Tctl": [48.0, 50.0, None],
+        "nvme Composite": [None, 40.0, None],
+    }
+    assert history.fans_by_sensor == {"amdgpu fan1": [None, None, 1409.0]}
+
+
+def test_gpu_history_per_card():
+    gpu = {
+        "id": "card0", "name": "AMD Radeon RX 550", "vendor": "amd", "util_percent": 4.0,
+        "vram_used_bytes": 100, "vram_total_bytes": 4096, "power_watts": 3.2,
+    }
+    samples = [_sample(1), _sample(0)]
+    samples[1].gpus = [gpu]
+
+    history = build_monitoring_history(samples, "1h")
+
+    card = history.gpus["card0"]
+    assert card["name"] == "AMD Radeon RX 550"
+    assert card["util"] == [None, 4.0]
+    assert card["vram_used"] == [None, 100.0]
+    assert card["vram_total"] == 4096
+    assert card["power"] == [None, 3.2]
+
+
+def test_docker_series_per_container():
+    now = datetime.now(UTC)
+    samples = [_sample(2), _sample(0)]
+    samples[0].sampled_at = now - timedelta(seconds=10)
+    samples[1].sampled_at = now
+    samples[0].docker_stats = [
+        {"name": "web", "cpu_percent": 1.0, "mem_bytes": 10, "net_rx_bytes": 0, "net_tx_bytes": 0}
+    ]
+    samples[1].docker_stats = [
+        {"name": "web", "cpu_percent": 3.0, "mem_bytes": 20, "net_rx_bytes": 50, "net_tx_bytes": 50}
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.docker_cpu_by_container == {"web": [1.0, 3.0]}
+    assert history.docker_mem_by_container == {"web": [10.0, 20.0]}
+    assert history.docker_net_by_container["web"][1] == pytest.approx(10.0)
+
+
 def test_cpu_power_watts_gap_on_counter_reset():
     samples = [_sample(1, cpu_energy_uj=5_000_000), _sample(0, cpu_energy_uj=1_000_000)]
 

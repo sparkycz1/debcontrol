@@ -74,7 +74,9 @@ from app.core.security import encrypt_secret
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
+from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
@@ -455,6 +457,69 @@ async def list_machine_held_packages_api(
         .order_by(MachinePackage.name)
     )
     return [_package_to_dict(p) for p in result.scalars().all()]
+
+
+@router.get("/machines/{machine_id}/services", dependencies=[_view_machines])
+async def list_machine_services_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    q: str = "",
+    state: str = "",
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """The Monitoring tab's systemd services table, with the same
+    per-service CPU/memory columns (see MachineService)."""
+    await _get_machine_or_404(machine_id, db, user)
+    query = select(MachineService).where(MachineService.machine_id == machine_id)
+    if q.strip():
+        query = query.where(MachineService.unit.ilike(f"%{q.strip()}%"))
+    if state:
+        query = query.where(MachineService.active_state == state)
+    result = await db.execute(query.order_by(MachineService.unit))
+    return [
+        {
+            "unit": s.unit,
+            "load_state": s.load_state,
+            "active_state": s.active_state,
+            "sub_state": s.sub_state,
+            "description": s.description,
+            "cpu_percent": s.cpu_percent,
+            "cpu_percent_peak": s.cpu_percent_peak,
+            "memory_bytes": s.memory_bytes,
+            "memory_peak_bytes": s.memory_peak_bytes,
+        }
+        for s in result.scalars().all()
+    ]
+
+
+@router.get("/machines/{machine_id}/hardware", dependencies=[_view_machines])
+async def get_machine_hardware_api(
+    machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Everything the Monitoring tab shows beyond the trend graphs, as of
+    the latest readings: S.M.A.R.T. detail (facts cadence), Docker
+    containers, and the most recent sample's sensors/fans/GPUs."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    latest = (
+        await db.execute(
+            select(MachineMonitoringSample)
+            .where(MachineMonitoringSample.machine_id == machine_id)
+            .order_by(MachineMonitoringSample.sampled_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return {
+        "is_physical": machine.is_physical,
+        "smart_devices": machine.smart_devices,
+        "docker_status": machine.docker_status,
+        "docker_containers": machine.docker_containers,
+        "sampled_at": latest.sampled_at.isoformat() if latest else None,
+        "sensor_temps": latest.sensor_temps if latest else None,
+        "sensor_fans": latest.sensor_fans if latest else None,
+        "gpus": latest.gpus if latest else None,
+        "gpu_power_watts": latest.gpu_power_watts if latest else None,
+    }
 
 
 @router.get("/machines/{machine_id}/update-runs", dependencies=[_view_machines])

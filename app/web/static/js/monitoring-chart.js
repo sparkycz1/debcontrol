@@ -1,107 +1,161 @@
-// Hover/scrub interactivity for the Monitoring tab's charts (see
-// macros/charts.html's `trend_chart` macro, which renders the actual SVG
-// and just embeds the data this reads via `data-*` attributes — no
-// framework, no chart library, consistent with the rest of this app's
-// dependency-free front end).
+// Interactivity for the Monitoring tab's charts (markup from
+// macros/charts.html's `render_chart`, geometry from app/web/charts.py).
+// Each `.chart[data-chart]` carries JSON: {fmt, stacked, t: [time labels],
+// s: [{label, color, v: [values or null]}]}.
 //
-// Each `[data-chart]` wrapper carries:
-//   data-timestamps  JSON array of ISO datetime strings, oldest first
-//   data-series      JSON array of arrays (one per line), each the same
-//                     length as data-timestamps; entries may be `null`
-//   data-labels      JSON array of series labels, same order as data-series
-//   data-unit        display suffix appended after each formatted number
-//   data-bytes-rate  "true" if values are bytes/sec and should be
-//                     formatted as KB/s-MB/s-GB/s rather than a raw number
+//  - hover: a cursor line plus a tooltip listing every visible series'
+//    value at that point (highest first), built with textContent — labels
+//    are sensor/container names reported by the managed machine;
+//  - legend buttons toggle a series on/off;
+//  - a card's `[data-chart-filter]` box shows only series whose label
+//    contains the typed text.
 //
-// On pointer move over the chart, this finds the nearest sample by X
-// position, draws a vertical guide line (the pre-existing but `hidden`
-// `.trend-chart-cursor` line in the SVG) at that sample's X, and fills in
-// the `.trend-chart-tooltip` div with its timestamp and each series'
-// value. Touch works the same way via `pointermove`, which fires for both.
+// Also: `[data-table-filter]` / `th[data-sort]` for the Monitoring tab's
+// tables (services, containers, S.M.A.R.T.) — client-side, since the whole
+// table is already on the page.
 
 (function () {
-  function formatBytesRate(value) {
-    if (value === null || value === undefined) return "—";
-    const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  const UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+  function trim(value, decimals) {
+    let text = value.toFixed(decimals);
+    if (text.includes(".")) text = text.replace(/0+$/, "").replace(/\.$/, "");
+    return text || "0";
+  }
+
+  function number(value) {
+    const m = Math.abs(value);
+    if (m >= 100) return trim(value, 0);
+    if (m >= 10) return trim(value, 1);
+    if (m >= 1) return trim(value, 2);
+    return trim(value, 3);
+  }
+
+  function bytes(value, suffix) {
     let v = value;
     let i = 0;
-    while (Math.abs(v) >= 1024 && i < units.length - 1) {
+    while (Math.abs(v) >= 1024 && i < UNITS.length - 1) {
       v /= 1024;
       i += 1;
     }
-    return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+    return `${number(v)} ${UNITS[i]}${suffix}`;
   }
 
-  function formatValue(value, unit, bytesRate) {
+  function formatValue(value, fmt) {
     if (value === null || value === undefined) return "—";
-    if (bytesRate) return formatBytesRate(value);
-    const rounded = Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(1);
-    return `${rounded}${unit}`;
+    switch (fmt) {
+      case "percent": return `${number(value)}%`;
+      case "bytes": return bytes(value, "");
+      case "bytes_rate": return bytes(value, "/s");
+      case "celsius": return `${number(value)} °C`;
+      case "watts": return `${number(value)} W`;
+      case "rpm": return trim(value, 0);
+      case "ms": return `${number(value)} ms`;
+      default: return number(value);
+    }
   }
 
-  function formatTimestamp(iso) {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  function setUp(wrap) {
-    const svg = wrap.querySelector(".trend-chart-svg");
-    const cursor = wrap.querySelector(".trend-chart-cursor");
-    const tooltip = wrap.querySelector(".trend-chart-tooltip");
-    if (!svg || !cursor || !tooltip) return;
-
-    let timestamps, series, labels;
+  function setUpChart(el) {
+    let data;
     try {
-      timestamps = JSON.parse(wrap.dataset.timestamps || "[]");
-      series = JSON.parse(wrap.dataset.series || "[]");
-      labels = JSON.parse(wrap.dataset.labels || "[]");
+      data = JSON.parse(el.dataset.chart || "{}");
     } catch {
-      return; // malformed data — leave the static chart as-is, no crash
+      return;
     }
-    if (timestamps.length === 0) return;
-    const unit = wrap.dataset.unit || "";
-    const bytesRate = wrap.dataset.bytesRate === "true";
+    const times = data.t || [];
+    const series = data.s || [];
+    if (times.length === 0) return;
 
-    const viewBox = svg.viewBox.baseVal;
-    const [vbX, , vbWidth] = [viewBox.x, viewBox.y, viewBox.width];
-    const pad = 14; // must match the macro's own default `pad`
-    const step = timestamps.length > 1 ? (vbWidth - 2 * pad) / (timestamps.length - 1) : 0;
+    const svg = el.querySelector(".chart-svg");
+    const cursor = el.querySelector(".chart-cursor");
+    const tooltip = el.querySelector(".chart-tooltip");
+    if (!svg || !cursor || !tooltip) return;
+    const hidden = new Set();
 
-    function indexForClientX(clientX) {
+    function applyVisibility() {
+      el.querySelectorAll(".chart-series").forEach((g) => {
+        g.classList.toggle("is-hidden", hidden.has(Number(g.dataset.series)));
+      });
+      el.querySelectorAll("[data-series-toggle]").forEach((btn) => {
+        const off = hidden.has(Number(btn.dataset.seriesToggle));
+        btn.classList.toggle("is-off", off);
+        btn.setAttribute("aria-pressed", off ? "false" : "true");
+      });
+    }
+
+    el.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-series-toggle]");
+      if (!btn || !el.contains(btn)) return;
+      const idx = Number(btn.dataset.seriesToggle);
+      if (hidden.has(idx)) hidden.delete(idx);
+      else hidden.add(idx);
+      applyVisibility();
+    });
+
+    el.chartFilter = (query) => {
+      const q = query.trim().toLowerCase();
+      hidden.clear();
+      if (q) {
+        series.forEach((s, i) => {
+          if (!String(s.label).toLowerCase().includes(q)) hidden.add(i);
+        });
+      }
+      applyVisibility();
+    };
+
+    function indexAt(clientX) {
       const rect = svg.getBoundingClientRect();
-      const fraction = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
-      const svgX = vbX + fraction * vbWidth;
-      if (step === 0) return 0;
-      const idx = Math.round((svgX - pad) / step);
-      return Math.min(Math.max(idx, 0), timestamps.length - 1);
+      if (rect.width <= 0 || times.length === 1) return 0;
+      const fraction = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+      return Math.round(fraction * (times.length - 1));
     }
 
-    function showAt(idx) {
-      const x = pad + idx * step;
+    function show(idx) {
+      const x = times.length === 1 ? 500 : (idx * 1000) / (times.length - 1);
       cursor.setAttribute("x1", String(x));
       cursor.setAttribute("x2", String(x));
       cursor.hidden = false;
 
-      const lines = [`<strong>${formatTimestamp(timestamps[idx])}</strong>`];
-      series.forEach((values, i) => {
-        const label = labels[i] ? `${labels[i]}: ` : "";
-        lines.push(`${label}${formatValue(values[idx], unit, bytesRate)}`);
+      const rows = series
+        .map((s, i) => ({ s, i, v: s.v[idx] }))
+        .filter((row) => !hidden.has(row.i) && row.v !== null && row.v !== undefined);
+      if (!data.stacked) rows.sort((a, b) => b.v - a.v);
+
+      tooltip.replaceChildren();
+      const head = document.createElement("div");
+      head.className = "chart-tooltip-time";
+      head.textContent = times[idx];
+      tooltip.appendChild(head);
+      rows.forEach(({ s, v }) => {
+        const row = document.createElement("div");
+        row.className = "chart-tooltip-row";
+        const swatch = document.createElement("span");
+        swatch.className = "chart-tooltip-swatch";
+        swatch.style.background = s.color;
+        const label = document.createElement("span");
+        label.className = "chart-tooltip-label";
+        label.textContent = s.label;
+        const value = document.createElement("span");
+        value.className = "chart-tooltip-value";
+        value.textContent = formatValue(v, data.fmt);
+        row.append(swatch, label, value);
+        tooltip.appendChild(row);
       });
-      tooltip.innerHTML = lines.join("<br>");
+      if (rows.length === 0) {
+        const none = document.createElement("div");
+        none.textContent = "—";
+        tooltip.appendChild(none);
+      }
       tooltip.hidden = false;
 
-      // Keep the tooltip inside the chart's own box — flip to the left of
-      // the cursor once past the halfway point, rather than letting it
-      // overflow the wrapper.
-      const fraction = timestamps.length > 1 ? idx / (timestamps.length - 1) : 0;
-      tooltip.style.left = fraction > 0.6 ? "auto" : `${fraction * 100}%`;
-      tooltip.style.right = fraction > 0.6 ? `${(1 - fraction) * 100}%` : "auto";
+      const fraction = times.length > 1 ? idx / (times.length - 1) : 0.5;
+      if (fraction > 0.55) {
+        tooltip.style.left = "auto";
+        tooltip.style.right = `${(1 - fraction) * 100 + 1}%`;
+      } else {
+        tooltip.style.right = "auto";
+        tooltip.style.left = `${fraction * 100 + 1}%`;
+      }
     }
 
     function hide() {
@@ -109,11 +163,60 @@
       tooltip.hidden = true;
     }
 
-    svg.addEventListener("pointermove", (event) => {
-      showAt(indexForClientX(event.clientX));
-    });
+    svg.addEventListener("pointermove", (event) => show(indexAt(event.clientX)));
     svg.addEventListener("pointerleave", hide);
   }
 
-  document.querySelectorAll("[data-chart]").forEach(setUp);
+  document.querySelectorAll(".chart[data-chart]").forEach(setUpChart);
+
+  document.addEventListener("input", (event) => {
+    const box = event.target.closest("[data-chart-filter]");
+    if (!box) return;
+    const card = box.closest(".chart-card");
+    if (!card) return;
+    card.querySelectorAll(".chart[data-chart]").forEach((el) => {
+      if (typeof el.chartFilter === "function") el.chartFilter(box.value);
+    });
+  });
+
+  // --- Tables: filter box + sortable headers ---
+  document.addEventListener("input", (event) => {
+    const box = event.target.closest("[data-table-filter]");
+    if (!box) return;
+    const table = document.getElementById(box.dataset.tableFilter);
+    if (!table) return;
+    const q = box.value.trim().toLowerCase();
+    table.querySelectorAll("tbody tr").forEach((tr) => {
+      tr.hidden = q !== "" && !tr.textContent.toLowerCase().includes(q);
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    const th = event.target.closest("th[data-sort]");
+    if (!th) return;
+    const table = th.closest("table");
+    const tbody = table && table.tBodies[0];
+    if (!tbody) return;
+    const index = Array.from(th.parentElement.children).indexOf(th);
+    const numeric = th.dataset.sort === "number";
+    const ascending = th.getAttribute("aria-sort") !== "ascending";
+    table.querySelectorAll("th[data-sort]").forEach((h) => h.removeAttribute("aria-sort"));
+    th.setAttribute("aria-sort", ascending ? "ascending" : "descending");
+    const key = (tr) => {
+      const cell = tr.children[index];
+      const raw = cell ? cell.dataset.sortValue ?? cell.textContent.trim() : "";
+      if (!numeric) return raw.toLowerCase();
+      const n = Number.parseFloat(raw);
+      return Number.isNaN(n) ? -Infinity : n;
+    };
+    const rows = Array.from(tbody.rows);
+    rows.sort((a, b) => {
+      const ka = key(a);
+      const kb = key(b);
+      if (ka < kb) return ascending ? -1 : 1;
+      if (ka > kb) return ascending ? 1 : -1;
+      return 0;
+    });
+    tbody.append(...rows);
+  });
 })();

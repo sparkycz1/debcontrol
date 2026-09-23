@@ -1474,72 +1474,248 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   border-radius: var(--radius-sm);
 }
 
-/* --- Monitoring tab: interactive trend charts ---
-   See macros/charts.html's `trend_chart` macro (markup + data attributes)
-   and static/js/monitoring-chart.js (the hover/scrub behavior). */
+/* --- Monitoring tab: card grid, charts, tables ---
+   Layout modeled on Beszel's system page: a two-column grid of titled
+   chart cards (one column on narrow screens), full-width cards for the
+   tables. Chart geometry comes from app/web/charts.py, the markup from
+   macros/charts.html's `render_chart`/`chart_card`, hover/filtering from
+   static/js/monitoring-chart.js. */
 
-.trend-chart-wrap {
-  position: relative;
+.monitoring-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.monitoring-toolbar .hint { margin: 0; }
+.monitoring-toolbar-spacer { flex: 1; }
+
+.monitoring-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+@media (max-width: 1000px) {
+  .monitoring-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
-.trend-chart-svg {
+.chart-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  min-width: 0;
+}
+.chart-card-wide { grid-column: 1 / -1; }
+.monitoring-section { margin-bottom: var(--space-3); }
+
+.chart-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.chart-card-title { margin: 0; font-size: 1.05rem; }
+.chart-card-subtitle { margin: 0.15rem 0 0; color: var(--color-muted); font-size: 0.85rem; }
+.chart-card-footer { margin: var(--space-2) 0 0; color: var(--color-muted); font-size: 0.85rem; }
+.chart-empty { margin: var(--space-4) 0; }
+
+.chart-filter {
+  flex: 0 1 12rem;
+  min-width: 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.chart {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "y plot" ". x" "legend legend";
+  column-gap: var(--space-2);
+}
+
+.chart-y {
+  grid-area: y;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  min-width: 2.5rem;
+}
+.chart-y span,
+.chart-x span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  white-space: nowrap;
+  color: var(--color-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.chart-y span { width: auto; justify-content: flex-end; }
+
+.chart-plot {
+  grid-area: plot;
+  position: relative;
+  height: 170px;
+}
+.chart-svg {
   display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   cursor: crosshair;
   touch-action: pan-y;
 }
 
-.trend-chart-cursor {
-  stroke: var(--color-muted);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
+.chart-x {
+  grid-area: x;
+  display: flex;
+  justify-content: space-between;
+  height: 1.4rem;
+  padding-top: 0.7rem;
 }
 
-/* A configured condition-based notification's own trigger level, drawn
-   directly on the chart it's about (macros/charts.html's `trend_chart`,
-   `threshold`/`threshold_label` params) — warn-colored since crossing it
-   is exactly what would fire an alert. */
-.trend-chart-threshold {
-  stroke: var(--color-warn);
-  stroke-width: 1.5;
-  stroke-dasharray: 5 3;
-}
-.trend-chart-threshold-label {
-  fill: var(--color-warn);
-  font-size: 10px;
-}
+.chart-grid { stroke: var(--color-border); stroke-width: 1; }
+.chart-cursor { stroke: var(--color-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-threshold { stroke: var(--color-warn); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.chart-series.is-hidden { display: none; }
+/* SVG elements don't honor the HTML `hidden` attribute on their own. */
+.chart-svg [hidden] { display: none; }
 
-.trend-chart-tooltip {
+.chart-tooltip {
   position: absolute;
   top: 0.25rem;
-  padding: 0.35rem 0.6rem;
+  z-index: 2;
+  min-width: 10rem;
+  max-width: 22rem;
+  padding: 0.45rem 0.6rem;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  line-height: 1.4;
-  white-space: nowrap;
+  font-size: 0.78rem;
+  line-height: 1.5;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
 }
+.chart-tooltip-time { font-weight: 600; margin-bottom: 0.2rem; }
+.chart-tooltip-row { display: flex; align-items: center; gap: 0.4rem; }
+.chart-tooltip-swatch { flex: none; width: 0.55rem; height: 0.55rem; border-radius: 2px; }
+.chart-tooltip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-tooltip-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 
-.trend-chart-legend {
+.chart-legend {
+  grid-area: legend;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 0.4rem;
-  font-size: 0.8rem;
-  color: var(--color-muted);
+  justify-content: center;
+  gap: 0.2rem 0.4rem;
+  margin-top: var(--space-2);
 }
-
-.trend-chart-legend-item {
+.chart-legend-item {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  padding: 0.1rem 0.35rem;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  font-family: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
 }
+.chart-legend-item:hover { color: var(--color-text); background: var(--color-surface-raised); }
+.chart-legend-item.is-off { opacity: 0.4; text-decoration: line-through; }
+.chart-legend-threshold { cursor: default; color: var(--color-warn); }
 
-.trend-chart-swatch {
-  flex: none;
-  border-radius: 2px;
+/* Full-width table cards (systemd services, containers, S.M.A.R.T.). */
+.monitoring-table-wrap {
+  overflow-x: auto;
+  max-height: 32rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.monitoring-table-wrap .data-table { margin: 0; }
+.monitoring-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-surface-raised);
+}
+.monitoring-table-wrap td { font-variant-numeric: tabular-nums; }
+th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+th[data-sort]::after { content: " \2195"; color: var(--color-muted); font-weight: 400; }
+th[data-sort][aria-sort="ascending"]::after { content: " \2191"; color: var(--color-text); }
+th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--color-text); }
+.table-muted { color: var(--color-muted); }
+.table-summary { margin: 0.15rem 0 0; color: var(--color-muted); font-size: 0.85rem; }
+.cell-truncate { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A row whose first cell opens a side drawer (S.M.A.R.T. detail). */
+.row-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.row-link:hover { text-decoration: underline; }
+
+/* Right-hand side drawer — a `popover`, so opening/closing needs no JS
+   (`popovertarget`), same as the app's existing modals. */
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(34rem, 100vw);
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  overflow-y: auto;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+}
+.drawer::backdrop { background: rgba(0, 0, 0, 0.45); }
+.drawer-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.drawer-header h2 { margin: 0; font-size: 1.05rem; }
+.drawer-body { padding: var(--space-4); }
+.drawer-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
 }
 
 /* --- Live-feel: htmx busy/update feedback ---

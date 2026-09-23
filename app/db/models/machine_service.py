@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index, String, func
+from sqlalchemy import BigInteger, Float, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -49,6 +49,25 @@ class MachineService(Base):
     active_state: Mapped[str] = mapped_column(String(32), nullable=False)
     sub_state: Mapped[str] = mapped_column(String(32), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # --- cgroup accounting (`systemctl show`), running units only; None
+    # when the unit isn't running or accounting doesn't report it. ---
+    # Raw cumulative CPU time — kept so the *next* refresh can turn the
+    # delta into `cpu_percent`.
+    cpu_usage_nsec: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Changes whenever the unit (re)starts — a new value means the CPU
+    # counter reset and the tracked peak no longer applies.
+    active_enter_monotonic: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Average share of the whole machine's CPU (all cores = 100%) between
+    # the previous refresh and this one — the facts cadence, 10 minutes by
+    # default.
+    cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Highest `cpu_percent` seen since the unit last started.
+    cpu_percent_peak: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # systemd's own MemoryPeak (255+), else the highest `memory_bytes`
+    # seen since the unit last started.
+    memory_peak_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 

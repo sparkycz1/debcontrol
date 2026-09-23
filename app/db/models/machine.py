@@ -146,7 +146,19 @@ class Machine(Base):
     # meaningful, and S.M.A.R.T. in particular is actively misleading,
     # against a virtual disk.
     is_physical: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Full per-disk S.M.A.R.T. detail (app.ssh.smart), refreshed with facts
+    # — a snapshot, not a history. None = not applicable (VM / no smartctl).
+    smart_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # --- Docker, refreshed with every monitoring sample (app.ssh.monitoring).
+    # `docker_status`: None = no docker CLI, "no_access" = present but this
+    # account can't reach the daemon, "ok". `docker_containers` is the
+    # latest full container list (image/state/ports/stats) for the
+    # Monitoring tab's table; the per-sample history keeps only the numbers
+    # (MachineMonitoringSample.docker_stats).
+    docker_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    docker_containers: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

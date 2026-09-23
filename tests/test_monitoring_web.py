@@ -114,14 +114,9 @@ async def test_monitoring_tab_renders_graphs_once_samples_exist(client, db_sessi
     # separately still "not gathered yet" — this test didn't add any
     # MachineService rows, only a monitoring sample).
     assert "No data in this range." not in response.text
-    assert "<h2>CPU</h2>" in response.text
-    assert "<h3>Load average</h3>" in response.text
-    assert "<h2>Memory</h2>" in response.text
-    assert "<h2>Network</h2>" in response.text
-    assert "<h2>Disk</h2>" in response.text
-    assert "12.5" in response.text
-    assert "eth0" in response.text
-    assert "sda" in response.text
+    for title in ("CPU usage", "Load average", "Memory usage", "Network", "Disk I/O"):
+        assert f'<h3 class="chart-card-title">{title}</h3>' in response.text
+    assert "Current: 12.5%" in response.text
 
 
 async def test_monitoring_tab_shows_condition_threshold_line(client, db_session_factory):
@@ -149,7 +144,7 @@ async def test_monitoring_tab_shows_condition_threshold_line(client, db_session_
     response = await client.get(f"/machines/{machine_id}/monitoring")
 
     assert response.status_code == 200
-    assert "trend-chart-threshold" in response.text
+    assert 'class="chart-threshold"' in response.text
     assert "90" in response.text
 
 
@@ -208,9 +203,8 @@ async def test_monitoring_tab_shows_filesystem_usage_graph(client, db_session_fa
     response = await client.get(f"/machines/{machine_id}/monitoring")
 
     assert response.status_code == 200
-    assert "<h3>Usage</h3>" in response.text
-    assert "<code>/</code>" in response.text
-    assert "30%" in response.text
+    assert '<h3 class="chart-card-title">Disk usage</h3>' in response.text
+    assert "/: 300 B used of 1000 B (30%)" in response.text
 
 
 async def test_overview_no_longer_shows_filesystems_table(client, db_session_factory):
@@ -244,7 +238,7 @@ async def test_monitoring_tab_shows_availability_section(client, db_session_fact
     response = await client.get(f"/machines/{machine_id}/monitoring")
 
     assert response.status_code == 200
-    assert "<h2>Availability</h2>" in response.text
+    assert '<h3 class="chart-card-title">Availability</h3>' in response.text
     assert "reachable" in response.text
 
 
@@ -286,11 +280,11 @@ async def test_monitoring_tab_shows_hardware_panel_for_physical_machine(
     response = await client.get(f"/machines/{machine_id}/monitoring")
 
     assert response.status_code == 200
-    assert "<h2>Hardware</h2>" in response.text
-    assert "Package id 0: 45°C" in response.text
-    assert "fan1: 1200 RPM" in response.text
-    assert "sda" in response.text and "nvme0n1" in response.text
-    assert "45.2 W" in response.text
+    assert '<h3 class="chart-card-title">Temperature</h3>' in response.text
+    assert '<h3 class="chart-card-title">Fans</h3>' in response.text
+    assert '<h3 class="chart-card-title">GPU power</h3>' in response.text
+    assert "Package id 0" in response.text
+    assert "fan1" in response.text
 
 
 async def test_monitoring_tab_hides_hardware_panel_for_vm(client, db_session_factory):
@@ -308,4 +302,134 @@ async def test_monitoring_tab_hides_hardware_panel_for_vm(client, db_session_fac
     response = await client.get(f"/machines/{machine_id}/monitoring")
 
     assert response.status_code == 200
-    assert "<h2>Hardware</h2>" not in response.text
+    assert '<h3 class="chart-card-title">Temperature</h3>' not in response.text
+
+
+async def _set_machine(
+    db_session_factory: async_sessionmaker[AsyncSession], machine_id: uuid.UUID, **fields: object
+) -> None:
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        for key, value in fields.items():
+            setattr(machine, key, value)
+        await session.commit()
+
+
+async def test_monitoring_tab_shows_docker_containers_table(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="docker-host")
+    await _pin_host_key(db_session_factory, machine_id)
+    await _add_monitoring_sample(db_session_factory, machine_id)
+    await _set_machine(
+        db_session_factory,
+        machine_id,
+        docker_status="ok",
+        docker_containers=[
+            {
+                "name": "immich_server",
+                "image": "ghcr.io/immich-app/immich-server:release",
+                "state": "running",
+                "status": "Up 10 days (healthy)",
+                "health": "healthy",
+                "ports": "0.0.0.0:2283->2283/tcp",
+                "cpu_percent": 0.03,
+                "mem_bytes": 789_000_000,
+                "mem_limit_bytes": None,
+                "net_rx_bytes": 1,
+                "net_tx_bytes": 1,
+            }
+        ],
+    )
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert '<h3 class="chart-card-title">All containers</h3>' in response.text
+    assert "immich_server" in response.text
+    assert "Healthy" in response.text
+    assert "2283" in response.text
+
+
+async def test_monitoring_tab_explains_docker_without_access(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="docker-denied")
+    await _pin_host_key(db_session_factory, machine_id)
+    await _add_monitoring_sample(db_session_factory, machine_id)
+    await _set_machine(db_session_factory, machine_id, docker_status="no_access")
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert "can&#39;t reach the Docker daemon" in response.text
+
+
+async def test_monitoring_tab_shows_smart_table_and_detail_drawer(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="smart-host")
+    await _pin_host_key(db_session_factory, machine_id)
+    await _add_monitoring_sample(db_session_factory, machine_id)
+    await _set_machine(
+        db_session_factory,
+        machine_id,
+        is_physical=True,
+        smart_devices=[
+            {
+                "device": "/dev/nvme0n1",
+                "model": "SAMSUNG MZVLB512HBJQ-000L7",
+                "serial": "S4ENNX0T141660",
+                "firmware": "5M2QEXF7",
+                "capacity_bytes": 512_110_190_592,
+                "type": "nvme",
+                "rotation_rpm": None,
+                "passed": True,
+                "power_on_hours": 4203,
+                "power_cycles": 1178,
+                "temperature_c": 42,
+                "attributes": [
+                    {
+                        "id": None, "name": "PercentageUsed", "value": None, "worst": None,
+                        "threshold": None, "raw": "4", "failing": False,
+                    }
+                ],
+            }
+        ],
+    )
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert "SAMSUNG MZVLB512HBJQ-000L7" in response.text
+    assert "PASSED" in response.text
+    assert "4 203 h" in response.text
+    assert 'popovertarget="smart-drawer-1"' in response.text
+    assert 'id="smart-drawer-1"' in response.text
+    assert "PercentageUsed" in response.text
+
+
+async def test_monitoring_tab_lists_services_with_usage(client, db_session_factory):
+    await client.get("/machines/new")
+    csrf_token = client.cookies.get("csrftoken")
+    machine_id = await _create_machine(client, csrf_token, name="svc-usage")
+    await _pin_host_key(db_session_factory, machine_id)
+    await _add_monitoring_sample(db_session_factory, machine_id)
+    await _add_service(db_session_factory, machine_id, unit="docker.service", active_state="active")
+    async with db_session_factory() as session:
+        from sqlalchemy import select
+
+        query = select(MachineService).where(MachineService.machine_id == machine_id)
+        row = (await session.execute(query)).scalar_one()
+        row.cpu_percent = 0.01
+        row.memory_bytes = 66_500_000
+        row.memory_peak_bytes = 197_100_000
+        await session.commit()
+
+    response = await client.get(f"/machines/{machine_id}/monitoring")
+
+    assert response.status_code == 200
+    assert '<h3 class="chart-card-title">systemd services</h3>' in response.text
+    assert "<code>docker</code>" in response.text
+    assert "63.4 MB" in response.text
+    assert "Total: 1 | Failed: 0" in response.text

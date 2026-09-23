@@ -70,7 +70,7 @@ terminator in front of it, always. Pick your fighter:
 | Tab | The highlights (not the whole story — see [Architecture](Architecture.md)) |
 |---|---|
 | 📊 **Dashboard** | Fleet counts, upcoming schedules, recent audit activity, trend sparklines, an optional **AI fleet summary** ("what changed, what needs your attention") |
-| 🖥️ **Machines** | Facts, packages (apt/flatpak/snap), live monitoring, a browser SSH terminal, log browsing, tags & saved views, bulk actions, JSON/CSV export — and **update rollback** if a `dist-upgrade` goes sideways |
+| 🖥️ **Machines** | Facts, packages (apt/flatpak/snap), live monitoring (CPU/RAM/disk/network, Docker containers, systemd services with per-service CPU/RAM, and on bare metal temperatures/fans/power/GPUs/S.M.A.R.T.), a browser SSH terminal, log browsing, tags & saved views, bulk actions, JSON/CSV export — and **update rollback** if a `dist-upgrade` goes sideways |
 | 🗂️ **Groups** | Named groups for bulk updates/power actions; the built-in "All machines" catch-all |
 | ⏱️ **Scheduling** | Cron any action against a machine/group/fleet — updates, power, custom commands, even debug "force a sweep now" buttons. Exportable/importable as JSON |
 | 🧠 **AI assistant** | Chat with your fleet (5 provider choices) — it can *propose* actions, never run one without you literally confirming the command first |

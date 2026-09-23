@@ -70,8 +70,8 @@ def test_parse_monitoring_output_hardware_full():
         "nvme0n1 FAILED\n"
         "===CPU_ENERGY_UJ===\n"
         "package-0 123456789\n"
-        "===GPU_POWER===\n"
-        "NVIDIA GeForce RTX 3060, 45.20\n"
+        "===GPUS===\n"
+        "nvidia\t0\t\t37\t512\t12288\t45.20\tNVIDIA GeForce RTX 3060\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -79,23 +79,34 @@ def test_parse_monitoring_output_hardware_full():
     # A trailing hardware round trip glued onto FAILED_SERVICES's own
     # section must not break its own (unrelated) parsing.
     assert sample["failed_services_count"] == 3
-    assert {"name": "Package id 0", "celsius": 45.0} in sample["sensor_temps"]
-    assert {"name": "Core 0", "celsius": 43.0} in sample["sensor_temps"]
-    assert {"name": "fan1", "rpm": 1200.0} in sample["sensor_fans"]
-    assert {"name": "fan2", "rpm": 0.0} in sample["sensor_fans"]
+    assert {"name": "coretemp Package id 0", "celsius": 45.0} in sample["sensor_temps"]
+    assert {"name": "coretemp Core 0", "celsius": 43.0} in sample["sensor_temps"]
+    assert {"name": "nct6779 fan1", "rpm": 1200.0} in sample["sensor_fans"]
+    assert {"name": "nct6779 fan2", "rpm": 0.0} in sample["sensor_fans"]
     assert sample["smart_disks"] == [
         {"device": "sda", "healthy": True},
         {"device": "nvme0n1", "healthy": False},
     ]
     assert sample["cpu_energy_uj"] == 123456789
     assert sample["gpu_power_watts"] == 45.20
+    assert sample["gpus"] == [
+        {
+            "id": "nvidia0",
+            "vendor": "nvidia",
+            "name": "NVIDIA GeForce RTX 3060",
+            "util_percent": 37.0,
+            "vram_used_bytes": 512 * 1048576,
+            "vram_total_bytes": 12288 * 1048576,
+            "power_watts": 45.2,
+        }
+    ]
 
 
 def test_parse_monitoring_output_hardware_gracefully_empty_on_a_vm():
     raw = (
         "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
         "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
-        "===SENSORS===\n===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+        "===SENSORS===\n===SMART===\n===CPU_ENERGY_UJ===\n===GPUS===\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -111,7 +122,7 @@ def test_parse_monitoring_output_sensors_malformed_json_is_ignored():
     raw = (
         "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
         "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
-        "===SENSORS===\nnot json at all\n===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+        "===SENSORS===\nnot json at all\n===SMART===\n===CPU_ENERGY_UJ===\n===GPUS===\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -131,7 +142,7 @@ def test_parse_monitoring_output_amd_gpu_power_from_sensors_when_no_nvidia():
         "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
         "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
         f"===SENSORS===\n{sensors_json}\n"
-        "===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+        "===SMART===\n===CPU_ENERGY_UJ===\n===GPUS===\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -146,7 +157,7 @@ def test_parse_monitoring_output_nvidia_gpu_power_preferred_over_sensors():
         "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
         f"===SENSORS===\n{sensors_json}\n"
         "===SMART===\n===CPU_ENERGY_UJ===\n"
-        "===GPU_POWER===\nNVIDIA GeForce RTX 3060, 45.20\n"
+        "===GPUS===\nnvidia\t0\t\t37\t512\t12288\t45.20\tNVIDIA GeForce RTX 3060\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -163,7 +174,7 @@ def test_parse_monitoring_output_cpu_chip_power_reading_not_mistaken_for_gpu():
         "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
         "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
         f"===SENSORS===\n{sensors_json}\n"
-        "===SMART===\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+        "===SMART===\n===CPU_ENERGY_UJ===\n===GPUS===\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -175,7 +186,7 @@ def test_parse_monitoring_output_smart_unrecognized_status_is_none():
     raw = (
         "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
         "===FILESYSTEMS===\n===FAILED_SERVICES===\n"
-        "===SENSORS===\n===SMART===\nsda UNKNOWN\n===CPU_ENERGY_UJ===\n===GPU_POWER===\n"
+        "===SENSORS===\n===SMART===\nsda UNKNOWN\n===CPU_ENERGY_UJ===\n===GPUS===\n"
     )
 
     sample = parse_monitoring_output(raw, is_physical=True)
@@ -252,3 +263,146 @@ def test_parse_monitoring_output_zero_failed_services_is_not_none():
     sample = parse_monitoring_output(raw)
 
     assert sample["failed_services_count"] == 0
+
+
+def _base(extra: str = "") -> str:
+    return (
+        "===CPU===\n===LOAD===\n===RAM_KB===\n===NET===\n===DISKIO===\n"
+        "===FILESYSTEMS===\n===FAILED_SERVICES===\n0\n" + extra
+    )
+
+
+def test_parse_monitoring_output_sections_are_matched_by_name_not_position():
+    # FILESYSTEMS missing entirely and DOCKER before hardware output —
+    # nothing shifts into the wrong section.
+    raw = (
+        "===CPU===\n12.5\n===LOAD===\n0.1 0.2 0.3\n===RAM_KB===\n100 50\n"
+        "===NET===\n===DISKIO===\n===FAILED_SERVICES===\n4\n===DOCKER===\n"
+        "===CPU_ENERGY_UJ===\npackage-0 10\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["cpu_percent"] == 12.5
+    assert sample["failed_services_count"] == 4
+    assert sample["filesystems"] == []
+    assert sample["cpu_energy_uj"] == 10
+
+
+def test_parse_monitoring_output_amd_gpu_from_drm_sysfs():
+    lspci = (
+        '03:00.0 "VGA compatible controller" "Advanced Micro Devices, Inc. [AMD/ATI]" '
+        '"Lexa PRO [Radeon 540/540X/550/550X / RX 540X/550/550X]" -rc7 "Micro-Star" '
+        '"Radeon RX 550"'
+    )
+    raw = _base(
+        "===SENSORS===\n===SMART===\n===CPU_ENERGY_UJ===\n===GPUS===\n"
+        f"drm\tcard0\t0x1002\t4\t268435456\t4294967296\t3200000\t{lspci}\n"
+        "drm\tcard1\t0x1234\t\t\t\t\tQEMU\n"
+    )
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    (gpu,) = sample["gpus"]
+    assert gpu["vendor"] == "amd"
+    assert gpu["name"] == "AMD Radeon 540/540X/550/550X / RX 540X/550/550X"
+    assert gpu["util_percent"] == 4.0
+    assert gpu["vram_used_bytes"] == 268435456
+    assert gpu["vram_total_bytes"] == 4294967296
+    assert gpu["power_watts"] == 3.2
+    assert sample["gpu_power_watts"] == 3.2
+
+
+def test_parse_monitoring_output_gpu_with_no_metrics_is_skipped():
+    raw = _base("===GPUS===\ndrm\tcard0\t0x8086\t\t\t\t\tIntel UHD\n")
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["gpus"] == []
+
+
+def test_parse_monitoring_output_cpu_energy_sums_packages_only():
+    raw = _base("===CPU_ENERGY_UJ===\npackage-0 100\ncore 40\npackage-1 200\n")
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert sample["cpu_energy_uj"] == 300
+
+
+def test_parse_monitoring_output_sensor_names_are_unique_across_chips():
+    sensors_json = (
+        '{"nvme-pci-0100": {"Composite": {"temp1_input": 40.0}}, '
+        '"nvme-pci-0200": {"Composite": {"temp1_input": 36.0}}}'
+    )
+    raw = _base(f"===SENSORS===\n{sensors_json}\n")
+
+    sample = parse_monitoring_output(raw, is_physical=True)
+
+    assert [t["name"] for t in sample["sensor_temps"]] == [
+        "nvme Composite",
+        "nvme Composite (2)",
+    ]
+
+
+def test_parse_monitoring_output_no_docker_cli():
+    sample = parse_monitoring_output(_base())
+
+    assert sample["docker_status"] is None
+    assert sample["docker_containers"] == []
+
+
+def test_parse_monitoring_output_docker_no_access():
+    sample = parse_monitoring_output(_base("===DOCKER===\n@@NOACCESS\n"))
+
+    assert sample["docker_status"] == "no_access"
+    assert sample["docker_containers"] == []
+
+
+def test_parse_monitoring_output_docker_containers():
+    ps_server = (
+        '{"Names":"immich_server","Image":"ghcr.io/immich-app/immich-server:release",'
+        '"State":"running","Status":"Up 10 days (healthy)","Ports":"0.0.0.0:2283->2283/tcp"}'
+    )
+    ps_old = (
+        '{"Names":"old","Image":"busybox","State":"exited","Status":"Exited (0) 3 days ago",'
+        '"Ports":""}'
+    )
+    stats_server = (
+        '{"Name":"immich_server","CPUPerc":"0.03%","MemUsage":"753.1MiB / 15.5GiB",'
+        '"NetIO":"5.4kB / 1kB"}'
+    )
+    raw = _base(
+        "===DOCKER===\n@@PS\n"
+        f"{ps_server}\n{ps_old}\n"
+        f"@@STATS\n{stats_server}\n"
+        "@@NET\nimmich_server 123456 7890\n"
+    )
+
+    sample = parse_monitoring_output(raw)
+
+    assert sample["docker_status"] == "ok"
+    server, old = sample["docker_containers"]
+    assert server["name"] == "immich_server"
+    assert old["name"] == "old"
+    assert server["health"] == "healthy"
+    assert server["cpu_percent"] == 0.03
+    assert server["mem_bytes"] == int(753.1 * 1024**2)
+    # Exact namespace counters win over docker stats' rounded NetIO.
+    assert (server["net_rx_bytes"], server["net_tx_bytes"]) == (123456, 7890)
+    assert old["cpu_percent"] is None
+    assert old["health"] is None
+
+
+def test_parse_monitoring_output_docker_netio_fallback():
+    raw = _base(
+        "===DOCKER===\n@@PS\n"
+        '{"Names":"web","Image":"nginx","State":"running","Status":"Up 1 hour","Ports":""}\n'
+        "@@STATS\n"
+        '{"Name":"web","CPUPerc":"1.50%","MemUsage":"10MiB / 1GiB","NetIO":"66kB / 4.1kB"}\n'
+        "@@NET\n"
+    )
+
+    (web,) = parse_monitoring_output(raw)["docker_containers"]
+
+    assert web["net_rx_bytes"] == 66_000
+    assert web["net_tx_bytes"] == 4_100

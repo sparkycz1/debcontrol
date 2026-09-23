@@ -13,6 +13,7 @@ from typing import Any, TypedDict
 
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
+from app.ssh.smart import SMART_FACTS_SECTION, parse_smart_section
 
 _SECTION_MARKERS = (
     "HOSTNAME",
@@ -31,6 +32,7 @@ _SECTION_MARKERS = (
     "FILESYSTEMS",
     "NETWORK",
     "VIRT",
+    "SMART",
 )
 
 # One round trip: each section is delimited by a "===NAME===" marker so the
@@ -102,7 +104,9 @@ FACTS_COMMAND = (
     "echo ===VIRT===; "
     "if command -v systemd-detect-virt >/dev/null 2>&1; then "
     "systemd-detect-virt 2>/dev/null || true; "
-    "fi"
+    "fi; "
+    # Full per-disk S.M.A.R.T. detail — bare metal only, see app.ssh.smart.
+    f"{SMART_FACTS_SECTION}"
 )
 
 
@@ -129,6 +133,9 @@ class MachineFacts(TypedDict):
     # be determined at all (no systemd-detect-virt) — see FACTS_COMMAND's
     # own VIRT comment.
     is_physical: bool | None
+    # One summary per readable disk (see app.ssh.smart.parse_smart_device);
+    # None = not applicable (a VM, or no smartctl), [] = ran, nothing readable.
+    smart_devices: list[dict[str, Any]] | None
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -236,13 +243,15 @@ def parse_facts_output(raw: str) -> MachineFacts:
         filesystems=filesystems,
         network_interfaces=network_interfaces,
         is_physical=is_physical,
+        smart_devices=parse_smart_section(sections.get("SMART", "")),
     )
 
 
 async def gather_facts(machine: Machine, secret: str | None, timeout_seconds: int) -> MachineFacts:
     """Connect to a machine and gather its facts. Requires a pinned host key."""
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(FACTS_COMMAND, check=False, timeout=timeout_seconds)
+        # smartctl -a reads each disk's logs — allow for a few slow disks.
+        result = await conn.run(FACTS_COMMAND, check=False, timeout=timeout_seconds + 30)
 
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()

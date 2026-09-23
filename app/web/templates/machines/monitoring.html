@@ -1,38 +1,46 @@
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
-{% from "partials/_services_summary.html" import render as render_services_summary with context %}
-{% from "macros/charts.html" import trend_chart %}
+{% from "macros/charts.html" import chart_card with context %}
 
 {% block title %}{{ t(request, "monitoring.title") }} — {{ machine.name }} — debcontrol{% endblock %}
-
-{# Rotating palette for series that don't have one fixed color (Load
-   average's 1/5/15m lines, one line per network interface/disk/filesystem
-   mount) — kept here rather than per-metric so every chart on the page
-   draws from the same set and stays visually consistent. #}
-{% set palette = ['#5b8fff', '#46bf8a', '#e0ab4a', '#f0685f', '#a970ff', '#38bdf8', '#f472b6', '#facc15'] %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
+  {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ machine.name }}</h1>
   </div>
 
   {{ render_tabnav(tabs, active_tab) }}
 
-  {% if request.state.user.has_permission('machine.manage') %}
-    <form method="post" action="/machines/{{ machine.id }}/monitoring/refresh?range_key={{ range_key | urlencode }}" class="inline-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-secondary" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
-        {{ t(request, "monitoring.refresh_now") }}
-      </button>
-    </form>
-  {% endif %}
-  <p class="hint">
-    {% if last_checked_at %}
-      {{ t(request, "monitoring.last_checked", when=(last_checked_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) }}
-    {% else %}
-      {{ t(request, "monitoring.last_checked_never") }}
+  <div class="monitoring-toolbar">
+    {% if machine.monitoring_updated_at or availability.sample_count %}
+      <form method="get" action="/machines/{{ machine.id }}/monitoring" class="inline-form">
+        <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
+          {% for key, label, _delta in time_ranges %}
+            <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
+      </form>
     {% endif %}
-  </p>
+    <p class="hint">
+      {% if last_checked_at %}
+        {{ t(request, "monitoring.last_checked", when=(last_checked_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) }}
+      {% else %}
+        {{ t(request, "monitoring.last_checked_never") }}
+      {% endif %}
+    </p>
+    <span class="monitoring-toolbar-spacer"></span>
+    {% if request.state.user.has_permission('machine.manage') %}
+      <form method="post" action="/machines/{{ machine.id }}/monitoring/refresh?range_key={{ range_key | urlencode }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-secondary" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
+          {{ t(request, "monitoring.refresh_now") }}
+        </button>
+      </form>
+    {% endif %}
+  </div>
 
   {% if not machine.monitoring_updated_at and not availability.sample_count %}
     <section class="panel">
@@ -41,257 +49,397 @@
       </p>
     </section>
   {% else %}
-    <form method="get" action="/machines/{{ machine.id }}/monitoring" class="search-form">
-      <select name="range_key" data-autosubmit>
-        {% for key, label, _delta in time_ranges %}
-          <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-      <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
-    </form>
-
     {% if history.truncated or availability.truncated %}
-      <div class="alert alert-warn">
-        <p>
-          {{ t(request, "monitoring.truncated_hint") }}
-        </p>
-      </div>
+      <div class="alert alert-warn"><p>{{ t(request, "monitoring.truncated_hint") }}</p></div>
     {% endif %}
 
-    <p class="hint">{{ t(request, "monitoring.hover_hint") }}</p>
+    {% set ts = history.bucket_timestamps %}
+    {% set has_docker = machine.docker_status == 'ok' and history.docker_cpu_by_container %}
 
-    {% if machine.monitoring_updated_at %}
-      <section class="panel">
-        <h2>{{ t(request, "monitoring.cpu.heading") }}</h2>
-        {% if history.cpu_percent %}
-          <h3>{{ t(request, "monitoring.cpu.utilization") }}</h3>
-          {% set cpu_threshold = condition_thresholds.get('monitoring.cpu_percent') %}
-          {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_percent}], history.bucket_timestamps, fixed_max=100, unit='%',
-             threshold=cpu_threshold,
-             threshold_label=(t(request, "monitoring.threshold_percent", value=(cpu_threshold | round(0) | int)) if cpu_threshold is not none else none)) }}
-          <p class="hint">
-            {{ t(request, "monitoring.current_percent", value=('%.1f' % history.latest_cpu_percent if history.latest_cpu_percent is not none else '—')) }}
-          </p>
-          <h3>{{ t(request, "monitoring.cpu.load_average") }}</h3>
-          {% if history.load1 %}
-            {{ trend_chart([
-              {'label': '1 min', 'color': palette[0], 'points': history.load1},
-              {'label': '5 min', 'color': palette[1], 'points': history.load5},
-              {'label': '15 min', 'color': palette[2], 'points': history.load15},
-            ], history.bucket_timestamps) }}
-            <p class="hint">
-              {% if history.latest_load1 is not none %}
-                {{ t(request, "monitoring.cpu.load_current", load1=('%.2f' % history.latest_load1), load5=('%.2f' % history.latest_load5), load15=('%.2f' % history.latest_load15)) }}
-              {% else %}
-                {{ t(request, "monitoring.current") }} —
-              {% endif %}
-            </p>
+    <div class="monitoring-grid">
+      {% if machine.monitoring_updated_at %}
+        {# --- CPU --- #}
+        {% set cpu_threshold = condition_thresholds.get('monitoring.cpu_percent') %}
+        {{ chart_card(
+             t(request, "monitoring.card.cpu"), t(request, "monitoring.card.cpu_hint"),
+             chart([('CPU', history.cpu_percent)], ts, fmt='percent', time_format=tf,
+                   threshold=cpu_threshold,
+                   threshold_label=(t(request, "monitoring.threshold_percent", value=(cpu_threshold | round(0) | int)) if cpu_threshold is not none else none)),
+             footer=t(request, "monitoring.current_value", value=(history.latest_cpu_percent | chart_value('percent'))),
+             empty_text=t(request, "monitoring.no_data")) }}
+
+        {% if has_docker %}
+          {% set docker_cpu = [] %}
+          {% for name, values in history.docker_cpu_by_container.items() %}{% set _ = docker_cpu.append((name, values)) %}{% endfor %}
+          {{ chart_card(t(request, "monitoring.card.docker_cpu"), t(request, "monitoring.card.docker_cpu_hint"),
+                        chart(docker_cpu, ts, fmt='percent', stacked=true, time_format=tf),
+                        filter=true, empty_text=t(request, "monitoring.no_data")) }}
+        {% endif %}
+
+        {# --- Memory --- #}
+        {% set ram_threshold = condition_thresholds.get('monitoring.ram_percent') %}
+        {% set ram_footer = none %}
+        {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
+          {% set ram_footer = t(request, "monitoring.memory.current_short", used=(history.latest_ram_used_bytes | bytes), total=(history.latest_ram_total_bytes | bytes), percent=('%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100))) %}
+        {% endif %}
+        {{ chart_card(
+             t(request, "monitoring.card.memory"), t(request, "monitoring.card.memory_hint"),
+             chart([(t(request, "monitoring.card.memory"), history.ram_percent)], ts, fmt='percent', time_format=tf, colors=(chart_palette[1],),
+                   threshold=ram_threshold,
+                   threshold_label=(t(request, "monitoring.threshold_percent", value=(ram_threshold | round(0) | int)) if ram_threshold is not none else none)),
+             footer=ram_footer, empty_text=t(request, "monitoring.no_data")) }}
+
+        {% if has_docker %}
+          {% set docker_mem = [] %}
+          {% for name, values in history.docker_mem_by_container.items() %}{% set _ = docker_mem.append((name, values)) %}{% endfor %}
+          {{ chart_card(t(request, "monitoring.card.docker_memory"), t(request, "monitoring.card.docker_memory_hint"),
+                        chart(docker_mem, ts, fmt='bytes', stacked=true, time_format=tf),
+                        filter=true, empty_text=t(request, "monitoring.no_data")) }}
+        {% endif %}
+
+        {# --- Disk usage + I/O --- #}
+        {% set fs_series = [] %}
+        {% set fs_threshold = namespace(value=none, mount=none) %}
+        {% for mount, values in history.filesystem_usage_by_mount.items() %}
+          {% set _ = fs_series.append((mount, values)) %}
+          {% set mount_threshold = condition_thresholds.get('monitoring.filesystem_use_percent:' ~ mount) %}
+          {% if mount_threshold is not none and fs_threshold.value is none %}
+            {% set fs_threshold.value = mount_threshold %}{% set fs_threshold.mount = mount %}
           {% endif %}
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.no_data") }}</p>
-        {% endif %}
-      </section>
+        {% endfor %}
+        {% set fs_footer = [] %}
+        {% for mount, current in history.latest_filesystems.items() %}
+          {% set _ = fs_footer.append(mount ~ ': ' ~ t(request, "monitoring.disk.usage_current", used=(current.used_bytes | bytes), size=(current.size_bytes | bytes)) ~ (' (' ~ current.use_percent ~ '%)' if current.use_percent is not none else '')) %}
+        {% endfor %}
+        {{ chart_card(
+             t(request, "monitoring.card.disk"), t(request, "monitoring.card.disk_hint"),
+             chart(fs_series, ts, fmt='percent', time_format=tf, threshold=fs_threshold.value,
+                   threshold_label=(fs_threshold.mount ~ ' — ' ~ t(request, "monitoring.threshold_percent", value=(fs_threshold.value | round(0) | int)) if fs_threshold.value is not none else none)),
+             footer=(fs_footer | join(' · ')) or none,
+             empty_text=t(request, "monitoring.disk.no_usage_data")) }}
 
-      <section class="panel">
-        <h2>{{ t(request, "monitoring.memory.heading") }}</h2>
-        {% if history.ram_percent %}
-          {% set ram_threshold = condition_thresholds.get('monitoring.ram_percent') %}
-          {% set ram_threshold_label = none %}
-          {% if ram_threshold is not none %}
-            {% if history.latest_ram_total_bytes %}
-              {% set ram_threshold_label = t(request, "monitoring.threshold_percent_gb", value=(ram_threshold | round(0) | int), gb=('%.1f' % (ram_threshold / 100 * history.latest_ram_total_bytes / 1073741824))) %}
-            {% else %}
-              {% set ram_threshold_label = t(request, "monitoring.threshold_percent", value=(ram_threshold | round(0) | int)) %}
-            {% endif %}
+        {% set disk_io = [] %}
+        {% for device, values in history.disk_read_by_device.items() %}
+          {% set _ = disk_io.append((t(request, "monitoring.series.read", name=device), values)) %}
+          {% set _ = disk_io.append((t(request, "monitoring.series.write", name=device), history.disk_write_by_device.get(device, []))) %}
+        {% endfor %}
+        {{ chart_card(t(request, "monitoring.card.disk_io"), t(request, "monitoring.card.disk_io_hint"),
+                      chart(disk_io, ts, fmt='bytes_rate', time_format=tf),
+                      filter=(disk_io | length > 4), empty_text=t(request, "monitoring.disk.none_found")) }}
+
+        {# --- Network --- #}
+        {% set net = [] %}
+        {% for iface, values in history.network_rx_by_iface.items() %}
+          {% set _ = net.append((t(request, "monitoring.series.received", name=iface), values)) %}
+          {% set _ = net.append((t(request, "monitoring.series.sent", name=iface), history.network_tx_by_iface.get(iface, []))) %}
+        {% endfor %}
+        {{ chart_card(t(request, "monitoring.card.network"), t(request, "monitoring.card.network_hint"),
+                      chart(net, ts, fmt='bytes_rate', time_format=tf),
+                      filter=(net | length > 4), empty_text=t(request, "monitoring.network.none_found")) }}
+
+        {% if has_docker %}
+          {% set docker_net = [] %}
+          {% for name, values in history.docker_net_by_container.items() %}{% set _ = docker_net.append((name, values)) %}{% endfor %}
+          {{ chart_card(t(request, "monitoring.card.docker_network"), t(request, "monitoring.card.docker_network_hint"),
+                        chart(docker_net, ts, fmt='bytes_rate', stacked=true, time_format=tf),
+                        filter=true, empty_text=t(request, "monitoring.no_data")) }}
+        {% endif %}
+
+        {# --- Load --- #}
+        {{ chart_card(
+             t(request, "monitoring.card.load"), t(request, "monitoring.card.load_hint"),
+             chart([('1 min', history.load1), ('5 min', history.load5), ('15 min', history.load15)], ts, fmt='number', time_format=tf,
+                   colors=(chart_palette[4], chart_palette[0], chart_palette[2])),
+             footer=(t(request, "monitoring.cpu.load_current_short", load1=('%.2f' % history.latest_load1), load5=('%.2f' % history.latest_load5), load15=('%.2f' % history.latest_load15)) if history.latest_load1 is not none else none),
+             empty_text=t(request, "monitoring.no_data")) }}
+      {% endif %}
+
+      {# --- Availability (its own table/cadence) --- #}
+      {% if availability.sample_count %}
+        {% set ats = availability.bucket_timestamps %}
+        {{ chart_card(
+             t(request, "monitoring.availability.heading"),
+             t(request, "monitoring.card.availability_hint", interval=(machine.reachability_check_interval_seconds or t(request, "monitoring.instance_default")), seconds=(t(request, "monitoring.seconds_suffix") if machine.reachability_check_interval_seconds else "")),
+             chart([(t(request, "monitoring.availability.uptime"), availability.uptime_percent)], ats, fmt='percent', fixed_max=100, time_format=tf, colors=(chart_palette[1],)),
+             footer=(t(request, "monitoring.availability.latest_check") ~ ' ' ~ (t(request, "monitoring.availability.reachable") if availability.latest_reachable else t(request, "monitoring.availability.unreachable")) if availability.latest_reachable is not none else none),
+             empty_text=t(request, "monitoring.no_data")) }}
+        {{ chart_card(
+             t(request, "monitoring.availability.latency"), t(request, "monitoring.card.latency_hint"),
+             chart([(t(request, "monitoring.availability.latency"), availability.latency_ms)], ats, fmt='ms', time_format=tf, colors=(chart_palette[5],)),
+             footer=t(request, "monitoring.current_value", value=(availability.latest_latency_ms | chart_value('ms') if availability.latest_latency_ms is not none else t(request, "monitoring.availability.unreachable_dash"))),
+             empty_text=t(request, "monitoring.no_data")) }}
+      {% endif %}
+
+      {# --- Hardware (bare metal only) --- #}
+      {% if machine.is_physical and machine.monitoring_updated_at %}
+        {% set temps = [] %}
+        {% for name, values in history.temps_by_sensor.items() %}{% set _ = temps.append((name, values)) %}{% endfor %}
+        {{ chart_card(t(request, "monitoring.card.temperature"), t(request, "monitoring.card.temperature_hint"),
+                      chart(temps, ts, fmt='celsius', zero_based=false, time_format=tf),
+                      filter=(temps | length > 3), empty_text=t(request, "monitoring.hardware.none_found")) }}
+
+        {% set fans = [] %}
+        {% for name, values in history.fans_by_sensor.items() %}{% set _ = fans.append((name, values)) %}{% endfor %}
+        {{ chart_card(t(request, "monitoring.card.fans"), t(request, "monitoring.card.fans_hint"),
+                      chart(fans, ts, fmt='rpm', zero_based=false, time_format=tf),
+                      filter=(fans | length > 3), empty_text=t(request, "monitoring.hardware.none_found")) }}
+
+        {{ chart_card(t(request, "monitoring.card.cpu_power"), t(request, "monitoring.card.cpu_power_hint"),
+                      chart([('CPU', history.cpu_power_watts)], ts, fmt='watts', time_format=tf, colors=(chart_palette[2],)),
+                      empty_text=t(request, "monitoring.card.cpu_power_none")) }}
+
+        {% set gpu_power = [] %}
+        {% for gpu_id, gpu in history.gpus.items() %}
+          {% if gpu.power %}{% set _ = gpu_power.append((gpu.name, gpu.power)) %}{% endif %}
+        {% endfor %}
+        {% if not gpu_power and history.gpu_power_watts | select('number') | list %}
+          {% set _ = gpu_power.append(('GPU', history.gpu_power_watts)) %}
+        {% endif %}
+        {{ chart_card(t(request, "monitoring.card.gpu_power"), t(request, "monitoring.card.gpu_power_hint"),
+                      chart(gpu_power, ts, fmt='watts', time_format=tf),
+                      empty_text=t(request, "monitoring.card.gpu_none")) }}
+
+        {% for gpu_id, gpu in history.gpus.items() %}
+          {% if gpu.util %}
+            {{ chart_card(t(request, "monitoring.card.gpu_util", name=gpu.name), t(request, "monitoring.card.gpu_util_hint", name=gpu.name),
+                          chart([(gpu.name, gpu.util)], ts, fmt='percent', time_format=tf),
+                          empty_text=t(request, "monitoring.no_data")) }}
           {% endif %}
-          {{ trend_chart([{'label': 'RAM', 'color': palette[0], 'points': history.ram_percent}], history.bucket_timestamps, fixed_max=100, unit='%',
-             threshold=ram_threshold, threshold_label=ram_threshold_label) }}
-          <p class="hint">
-            {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
-              {{ t(request, "monitoring.memory.current", used=('%.1f GB' % (history.latest_ram_used_bytes / 1073741824)), available=('%.1f GB' % ((history.latest_ram_total_bytes - history.latest_ram_used_bytes) / 1073741824)), total=('%.1f GB' % (history.latest_ram_total_bytes / 1073741824)), percent=('%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100))) }}
-            {% else %}
-              {{ t(request, "monitoring.current") }} —
-            {% endif %}
-          </p>
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.no_data") }}</p>
-        {% endif %}
-      </section>
-
-      <section class="panel">
-        <h2>{{ t(request, "monitoring.network.heading") }}</h2>
-        {% if history.network_rate_by_iface %}
-          {% for iface, series in history.network_rate_by_iface.items() %}
-            {% set current = history.latest_network_io.get(iface) %}
-            <h3><code>{{ iface }}</code></h3>
-            {{ trend_chart([{'label': iface, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, bytes_rate=True) }}
-            <p class="hint">
-              {% if current %}
-                {{ t(request, "monitoring.network.current", rx=('%.1f GB' % (current.rx_bytes / 1073741824)), tx=('%.1f GB' % (current.tx_bytes / 1073741824))) }}
-              {% else %}
-                —
-              {% endif %}
-            </p>
-          {% endfor %}
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.network.none_found") }}</p>
-        {% endif %}
-      </section>
-
-      <section class="panel">
-        <h2>{{ t(request, "monitoring.disk.heading") }}</h2>
-        {% if history.disk_rate_by_device %}
-          <h3>{{ t(request, "monitoring.disk.io_throughput") }}</h3>
-          {% for device, series in history.disk_rate_by_device.items() %}
-            {% set current = history.latest_disk_io.get(device) %}
-            <h4><code>{{ device }}</code></h4>
-            {{ trend_chart([{'label': device, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, bytes_rate=True) }}
-            <p class="hint">
-              {% if current %}
-                {{ t(request, "monitoring.disk.io_current", read=('%.1f GB' % (current.read_bytes / 1073741824)), write=('%.1f GB' % (current.write_bytes / 1073741824))) }}
-              {% else %}
-                —
-              {% endif %}
-            </p>
-          {% endfor %}
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.disk.none_found") }}</p>
-        {% endif %}
-
-        {% if history.filesystem_usage_by_mount %}
-          <h3>{{ t(request, "monitoring.disk.usage") }}</h3>
-          {% for mount, series in history.filesystem_usage_by_mount.items() %}
-            {% set current = history.latest_filesystems.get(mount) %}
-            <h4><code>{{ mount }}</code></h4>
-            {% set mount_threshold = condition_thresholds.get('monitoring.filesystem_use_percent:' ~ mount) %}
-            {{ trend_chart([{'label': mount, 'color': palette[loop.index0 % palette|length], 'points': series}], history.bucket_timestamps, fixed_max=100, unit='%',
-               threshold=mount_threshold,
-               threshold_label=(t(request, "monitoring.threshold_percent", value=(mount_threshold | round(0) | int)) if mount_threshold is not none else none)) }}
-            <p class="hint">
-              {% if current %}
-                {{ t(request, "monitoring.disk.usage_current", used=('%.1f GB' % (current.used_bytes / 1073741824)), size=('%.1f GB' % (current.size_bytes / 1073741824))) }}
-                {% if current.use_percent is not none %}({{ current.use_percent }}%){% endif %}
-              {% else %}
-                —
-              {% endif %}
-            </p>
-          {% endfor %}
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.disk.no_usage_data") }}</p>
-        {% endif %}
-      </section>
-    {% endif %}
-
-    {% if machine.is_physical and machine.monitoring_updated_at %}
-      <section class="panel">
-        <h2>{{ t(request, "monitoring.hardware.heading") }}</h2>
-
-        <h3>{{ t(request, "monitoring.hardware.temperatures") }}</h3>
-        {% if history.latest_sensor_temps %}
-          <div class="badge-list">
-            {% for sensor in history.latest_sensor_temps %}
-              <span class="badge">{{ sensor.name }}: {{ '%.0f°C' % sensor.celsius if sensor.celsius is not none else '—' }}</span>
-            {% endfor %}
-          </div>
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.hardware.none_found") }}</p>
-        {% endif %}
-
-        <h3>{{ t(request, "monitoring.hardware.fans") }}</h3>
-        {% if history.latest_sensor_fans %}
-          <div class="badge-list">
-            {% for fan in history.latest_sensor_fans %}
-              <span class="badge">{{ fan.name }}: {{ '%.0f RPM' % fan.rpm if fan.rpm is not none else '—' }}</span>
-            {% endfor %}
-          </div>
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.hardware.none_found") }}</p>
-        {% endif %}
-
-        <h3>{{ t(request, "monitoring.hardware.smart") }}</h3>
-        {% if history.latest_smart_disks %}
-          <div class="badge-list">
-            {% for disk in history.latest_smart_disks %}
-              <span class="badge {{ 'badge-ok' if disk.healthy else ('badge-error' if disk.healthy is sameas false else '') }}">
-                <code>{{ disk.device }}</code>:
-                {% if disk.healthy is sameas true %}{{ t(request, "monitoring.hardware.smart_passed") }}
-                {% elif disk.healthy is sameas false %}{{ t(request, "monitoring.hardware.smart_failed") }}
-                {% else %}{{ t(request, "monitoring.hardware.smart_unknown") }}{% endif %}
-              </span>
-            {% endfor %}
-          </div>
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.hardware.none_found") }}</p>
-        {% endif %}
-
-        <h3>{{ t(request, "monitoring.hardware.power") }}</h3>
-        {% if history.cpu_power_watts | select('number') | list %}
-          {{ trend_chart([{'label': 'CPU', 'color': palette[0], 'points': history.cpu_power_watts}], history.bucket_timestamps, unit='W') }}
-        {% endif %}
-        <p class="hint">
-          {{ t(request, "monitoring.hardware.power_current",
-               gpu=('%.1f W' % history.latest_gpu_power_watts if history.latest_gpu_power_watts is not none else '—')) }}
-        </p>
-      </section>
-    {% endif %}
-
-    {% if availability.sample_count %}
-      <section class="panel">
-        <h2>{{ t(request, "monitoring.availability.heading") }}</h2>
-        <p class="hint">
-          {{ t(request, "monitoring.availability.hint", interval=(machine.reachability_check_interval_seconds or t(request, "monitoring.instance_default")), seconds=(t(request, "monitoring.seconds_suffix") if machine.reachability_check_interval_seconds else "")) }}
-        </p>
-        {% if availability.uptime_percent %}
-          <h3>{{ t(request, "monitoring.availability.uptime") }}</h3>
-          {{ trend_chart([{'label': 'Uptime', 'color': palette[1], 'points': availability.uptime_percent}], availability.bucket_timestamps, fixed_max=100, unit='%') }}
-          <p class="hint">
-            {% if availability.latest_reachable is not none %}
-              {{ t(request, "monitoring.availability.latest_check") }}
-              <span class="badge {{ 'badge-ok' if availability.latest_reachable else 'badge-error' }}">
-                {{ t(request, "monitoring.availability.reachable") if availability.latest_reachable else t(request, "monitoring.availability.unreachable") }}
-              </span>
-            {% else %}
-              {{ t(request, "monitoring.availability.latest_check") }} —
-            {% endif %}
-          </p>
-        {% endif %}
-        {% if availability.latency_ms %}
-          <h3>{{ t(request, "monitoring.availability.latency") }}</h3>
-          {{ trend_chart([{'label': 'Latency', 'color': palette[0], 'points': availability.latency_ms}], availability.bucket_timestamps, unit='ms') }}
-          <p class="hint">
-            {{ t(request, "monitoring.current") }}
-            {{ '%.0f ms' % availability.latest_latency_ms if availability.latest_latency_ms is not none else t(request, "monitoring.availability.unreachable_dash") }}
-          </p>
-        {% endif %}
-      </section>
-    {% endif %}
-
-    {% if machine.monitoring_updated_at %}
-      <section class="panel">
-        {{ render_services_summary(machine, service_counts, poll=True) }}
-      </section>
-    {% endif %}
-  {% endif %}
-
-  <div id="services-modal" popover class="modal">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <h2 class="modal-title">{{ t(request, "monitoring.services_modal_title", name=(machine.name | e)) | safe }}</h2>
-        <button
-          type="button"
-          class="modal-close"
-          popovertarget="services-modal"
-          popovertargetaction="hide"
-          aria-label="{{ t(request, 'settings.ai.close') }}"
-        >
-          &times;
-        </button>
-      </div>
-      <div id="services-panel" class="modal-body">
-        <p class="hint">{{ t(request, "machine.loading") }}</p>
-      </div>
+          {% if gpu.vram_used %}
+            {{ chart_card(t(request, "monitoring.card.gpu_vram", name=gpu.name),
+                          (t(request, "monitoring.card.gpu_vram_hint", total=(gpu.vram_total | bytes)) if gpu.vram_total else none),
+                          chart([('VRAM', gpu.vram_used)], ts, fmt='bytes', time_format=tf, colors=(chart_palette[1],)),
+                          empty_text=t(request, "monitoring.no_data")) }}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
     </div>
-  </div>
+
+    {# --- Docker containers --- #}
+    {% if machine.docker_status == 'no_access' %}
+      <section class="chart-card chart-card-wide monitoring-section">
+        <header class="chart-card-header"><div><h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3></div></header>
+        <p class="hint">{{ t(request, "monitoring.containers.no_access") }}</p>
+      </section>
+    {% elif machine.docker_status == 'ok' %}
+      <section class="chart-card chart-card-wide monitoring-section">
+        <header class="chart-card-header">
+          <div>
+            <h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3>
+            <p class="chart-card-subtitle">{{ t(request, "monitoring.containers.hint") }}</p>
+          </div>
+          {% if machine.docker_containers %}
+            <input type="search" class="chart-filter" data-table-filter="containers-table"
+                   placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+          {% endif %}
+        </header>
+        {% if machine.docker_containers %}
+          <div class="monitoring-table-wrap">
+            <table class="data-table" id="containers-table">
+              <thead>
+                <tr>
+                  <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.containers.cpu") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.containers.memory") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.containers.network") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.containers.health") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.containers.ports") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.containers.image") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.containers.status") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in machine.docker_containers %}
+                  {% set net_series = history.docker_net_by_container.get(c.name) or [] %}
+                  {% set net_rate = (net_series | select('number') | list | last) if net_series | select('number') | list else none %}
+                  <tr>
+                    <td><strong>{{ c.name }}</strong></td>
+                    <td data-sort-value="{{ c.cpu_percent if c.cpu_percent is not none else -1 }}">{{ c.cpu_percent | chart_value('percent') if c.cpu_percent is not none else '—' }}</td>
+                    <td data-sort-value="{{ c.mem_bytes if c.mem_bytes is not none else -1 }}">{{ c.mem_bytes | bytes if c.mem_bytes is not none else '—' }}</td>
+                    <td data-sort-value="{{ net_rate if net_rate is not none else -1 }}">{{ net_rate | chart_value('bytes_rate') if net_rate is not none else '—' }}</td>
+                    <td>
+                      {% if c.health %}
+                        <span class="badge {{ 'badge-ok' if c.health == 'healthy' else ('badge-error' if c.health == 'unhealthy' else 'badge-warn') }}">{{ t(request, "monitoring.containers.health_" ~ c.health) }}</span>
+                      {% else %}<span class="table-muted">—</span>{% endif %}
+                    </td>
+                    <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
+                    <td class="cell-truncate" title="{{ c.image }}">{{ c.image }}</td>
+                    <td>
+                      <span class="badge {{ 'badge-ok' if c.state == 'running' else ('badge-error' if c.state in ('dead', 'exited') and 'Exited (0)' not in c.status else '') }}">{{ c.status or c.state }}</span>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="hint">{{ t(request, "monitoring.containers.none") }}</p>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {# --- S.M.A.R.T. --- #}
+    {% if machine.is_physical and machine.smart_devices is not none %}
+      <section class="chart-card chart-card-wide monitoring-section">
+        <header class="chart-card-header">
+          <div>
+            <h3 class="chart-card-title">S.M.A.R.T.</h3>
+            <p class="chart-card-subtitle">
+              {{ t(request, "monitoring.smart.hint") }}
+              {% if machine.facts_updated_at %}— {{ t(request, "monitoring.updated_at", when=(machine.facts_updated_at | local_time('%Y-%m-%d %H:%M'))) }}{% endif %}
+            </p>
+          </div>
+        </header>
+        {% if machine.smart_devices %}
+          <div class="monitoring-table-wrap">
+            <table class="data-table" id="smart-table">
+              <thead>
+                <tr>
+                  <th data-sort="text">{{ t(request, "monitoring.smart.device") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.smart.model") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.smart.capacity") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.smart.status") }}</th>
+                  <th data-sort="text">{{ t(request, "monitoring.smart.type") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.smart.power_on") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.smart.cycles") }}</th>
+                  <th data-sort="number">{{ t(request, "monitoring.smart.temperature") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for d in machine.smart_devices %}
+                  <tr>
+                    <td><button type="button" class="row-link" popovertarget="smart-drawer-{{ loop.index }}"><code>{{ d.device }}</code></button></td>
+                    <td class="cell-truncate" title="{{ d.model }}">{{ d.model or '—' }}</td>
+                    <td data-sort-value="{{ d.capacity_bytes or 0 }}">{{ d.capacity_bytes | bytes if d.capacity_bytes else '—' }}</td>
+                    <td>
+                      {% if d.passed is sameas true %}<span class="badge badge-ok">PASSED</span>
+                      {% elif d.passed is sameas false %}<span class="badge badge-error">FAILED</span>
+                      {% else %}<span class="badge">{{ t(request, "monitoring.hardware.smart_unknown") }}</span>{% endif %}
+                    </td>
+                    <td>{% if d.type %}<span class="badge">{{ d.type | upper }}</span>{% else %}—{% endif %}</td>
+                    <td data-sort-value="{{ d.power_on_hours or 0 }}">
+                      {% if d.power_on_hours is not none %}
+                        {{ t(request, "monitoring.smart.hours", hours=('{:,}'.format(d.power_on_hours | int) | replace(',', ' '))) }}
+                        <span class="table-muted">({{ t(request, "monitoring.smart.days", days=((d.power_on_hours // 24) | int)) }})</span>
+                      {% else %}—{% endif %}
+                    </td>
+                    <td data-sort-value="{{ d.power_cycles or 0 }}">{{ d.power_cycles if d.power_cycles is not none else '—' }}</td>
+                    <td data-sort-value="{{ d.temperature_c or 0 }}">{{ d.temperature_c | chart_value('celsius') if d.temperature_c is not none else '—' }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% for d in machine.smart_devices %}
+            <div id="smart-drawer-{{ loop.index }}" popover class="drawer">
+              <div class="drawer-header">
+                <div>
+                  <h2>{{ t(request, "monitoring.smart.detail_title", device=d.device) }}</h2>
+                  <p class="table-summary">{{ [d.model, (d.capacity_bytes | bytes if d.capacity_bytes else none), d.serial, d.firmware] | select | join(' | ') }}</p>
+                </div>
+                <button type="button" class="modal-close" popovertarget="smart-drawer-{{ loop.index }}" popovertargetaction="hide"
+                        aria-label="{{ t(request, 'settings.ai.close') }}">&times;</button>
+              </div>
+              <div class="drawer-body">
+                <div class="drawer-status">
+                  {% if d.passed is sameas true %}<span class="badge badge-ok">PASSED</span>
+                  {% elif d.passed is sameas false %}<span class="badge badge-error">FAILED</span>
+                  {% else %}<span class="badge">{{ t(request, "monitoring.hardware.smart_unknown") }}</span>{% endif %}
+                  {{ t(request, "monitoring.smart.overall") }}
+                </div>
+                {% if d.attributes %}
+                  {% set has_normalized = d.attributes | selectattr('value', 'number') | list %}
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        {% if has_normalized %}<th>ID</th>{% endif %}
+                        <th>{{ t(request, "monitoring.smart.attr_name") }}</th>
+                        {% if has_normalized %}
+                          <th>{{ t(request, "monitoring.smart.attr_value") }}</th>
+                          <th>{{ t(request, "monitoring.smart.attr_worst") }}</th>
+                          <th>{{ t(request, "monitoring.smart.attr_threshold") }}</th>
+                        {% endif %}
+                        <th>{{ t(request, "monitoring.smart.attr_raw") }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for a in d.attributes %}
+                        <tr>
+                          {% if has_normalized %}<td class="table-muted">{{ a.id if a.id is not none else '' }}</td>{% endif %}
+                          <td>{{ a.name }}{% if a.failing %} <span class="badge badge-error">!</span>{% endif %}</td>
+                          {% if has_normalized %}
+                            <td>{{ a.value if a.value is not none else '' }}</td>
+                            <td>{{ a.worst if a.worst is not none else '' }}</td>
+                            <td>{{ a.threshold if a.threshold is not none else '' }}</td>
+                          {% endif %}
+                          <td>{{ a.raw }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                {% else %}
+                  <p class="hint">{{ t(request, "monitoring.smart.no_attributes") }}</p>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="hint">{{ t(request, "monitoring.smart.none_readable") }}</p>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {# --- systemd services --- #}
+    <section class="chart-card chart-card-wide monitoring-section" id="services-section">
+      <header class="chart-card-header">
+        <div>
+          <h3 class="chart-card-title">{{ t(request, "monitoring.services.heading") }}</h3>
+          <p class="chart-card-subtitle">
+            {% if machine.services_updated_at %}
+              {{ t(request, "monitoring.services.summary", total=service_counts.total, failed=service_counts.failed, when=(machine.services_updated_at | local_time('%Y-%m-%d %H:%M'))) }}
+            {% else %}
+              {{ t(request, "machine.facts.not_gathered_yet") }}
+            {% endif %}
+          </p>
+        </div>
+        {% if services %}
+          <input type="search" class="chart-filter" data-table-filter="services-table"
+                 placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+        {% endif %}
+      </header>
+      {% if services %}
+        <div class="monitoring-table-wrap">
+          <table class="data-table" id="services-table">
+            <thead>
+              <tr>
+                <th data-sort="text">{{ t(request, "monitoring.services.name") }}</th>
+                <th data-sort="text">{{ t(request, "monitoring.services.state") }}</th>
+                <th data-sort="text">{{ t(request, "monitoring.services.sub_state") }}</th>
+                <th data-sort="number">{{ t(request, "monitoring.services.cpu") }}</th>
+                <th data-sort="number">{{ t(request, "monitoring.services.cpu_peak") }}</th>
+                <th data-sort="number">{{ t(request, "monitoring.services.memory") }}</th>
+                <th data-sort="number">{{ t(request, "monitoring.services.memory_peak") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for svc in services %}
+                <tr>
+                  <td title="{{ svc.description }}"><code>{{ svc.unit | replace('.service', '') }}</code></td>
+                  <td><span class="badge {{ 'badge-error' if svc.active_state == 'failed' else ('badge-ok' if svc.active_state == 'active' else 'badge-warn') }}">{{ svc.active_state }}</span></td>
+                  <td><span class="badge {{ 'badge-ok' if svc.sub_state == 'running' else ('badge-error' if svc.sub_state == 'failed' else '') }}">{{ svc.sub_state }}</span></td>
+                  <td data-sort-value="{{ svc.cpu_percent if svc.cpu_percent is not none else -1 }}">{{ svc.cpu_percent | chart_value('percent') if svc.cpu_percent is not none else 'N/A' }}</td>
+                  <td data-sort-value="{{ svc.cpu_percent_peak if svc.cpu_percent_peak is not none else -1 }}">{{ svc.cpu_percent_peak | chart_value('percent') if svc.cpu_percent_peak is not none else 'N/A' }}</td>
+                  <td data-sort-value="{{ svc.memory_bytes if svc.memory_bytes is not none else -1 }}">{{ svc.memory_bytes | bytes if svc.memory_bytes is not none else 'N/A' }}</td>
+                  <td data-sort-value="{{ svc.memory_peak_bytes if svc.memory_peak_bytes is not none else -1 }}">{{ svc.memory_peak_bytes | bytes if svc.memory_peak_bytes is not none else 'N/A' }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="chart-card-footer">{{ t(request, "monitoring.services.cpu_note") }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
