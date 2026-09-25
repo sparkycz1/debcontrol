@@ -1435,14 +1435,25 @@ async def _evaluate_notification_conditions() -> None:
         if not machines:
             return
 
+        # Newest sample per machine via a GROUP BY/MAX join rather than
+        # Postgres' DISTINCT ON — portable (the test suite runs on SQLite,
+        # where DISTINCT ON was silently ignored and is deprecated as of
+        # SQLAlchemy 2.1) and served by the (machine_id, sampled_at) index.
+        newest = (
+            select(
+                MachineMonitoringSample.machine_id,
+                func.max(MachineMonitoringSample.sampled_at).label("newest_at"),
+            )
+            .group_by(MachineMonitoringSample.machine_id)
+            .subquery()
+        )
         latest_samples = (
             (
                 await session.execute(
-                    select(MachineMonitoringSample)
-                    .distinct(MachineMonitoringSample.machine_id)
-                    .order_by(
-                        MachineMonitoringSample.machine_id,
-                        MachineMonitoringSample.sampled_at.desc(),
+                    select(MachineMonitoringSample).join(
+                        newest,
+                        (MachineMonitoringSample.machine_id == newest.c.machine_id)
+                        & (MachineMonitoringSample.sampled_at == newest.c.newest_at),
                     )
                 )
             )

@@ -24,7 +24,7 @@ def audit_search_clause(query: str) -> ColumnElement[bool]:
     return or_(*(column.ilike(pattern) for column in _SEARCH_COLUMNS))
 
 
-def apply_audit_filters[S: Select[tuple[AuditLogEntry]]](
+def apply_audit_filters[S: Select[AuditLogEntry]](
     query: S, *, q: str, outcome: str, target_type: str, target_id: str
 ) -> S:
     """The four filters `app/web/routes/audit.py` and

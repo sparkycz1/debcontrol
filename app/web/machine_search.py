@@ -42,7 +42,7 @@ def machine_search_clause(query: str) -> ColumnElement[bool]:
     )
 
 
-def apply_tag_filter[S: Select[tuple[Machine]]](query: S, tags: list[str], tag_mode: str) -> S:
+def apply_tag_filter[S: Select[Machine]](query: S, tags: list[str], tag_mode: str) -> S:
     """Filter `query` by one or more tag names — `tag_mode="or"` (default,
     and used whenever `tag_mode` isn't exactly `"and"`) matches a machine
     carrying *any* of `tags`; `"and"` matches only a machine carrying
