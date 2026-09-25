@@ -187,13 +187,16 @@ Before considering a change finished, not just "the code works":
    already-established "enqueue one Celery task per machine, never await
    them inline" pattern (`app/tasks/jobs.py`), and a new query should
    scale with an index, not a full-table scan, as the fleet grows.
-8. **Tag and release.** Once `APP_VERSION`/`pyproject.toml` are bumped and
-   the change is committed and pushed, tag it (`git tag vX.Y.Z` + `git push
-   --tags`) and cut a GitHub release (`gh release create vX.Y.Z`) — a
-   version bump that never becomes a tag/release is invisible to
-   `scripts/upgrade.sh` and to anyone reading the Releases page to see
-   what changed. Don't batch several version bumps into one eventual tag;
-   each `APP_VERSION` that lands on `main` gets its own.
+8. **Tag and release.** `.github/workflows/release.yml` does this
+   automatically: a push to `main` that changes `app/core/version.py` gets
+   tagged `vX.Y.Z` and a GitHub release (notes = commit subjects since the
+   previous tag). A version bump that never becomes a tag/release is
+   invisible to `scripts/upgrade.sh` and to anyone reading the Releases
+   page, so check the workflow run went green. If a version was missed,
+   run the workflow by hand (Actions → Release → Run workflow, `version` +
+   the commit on `main` that carries it). Don't batch several version
+   bumps into one eventual tag; each `APP_VERSION` that lands on `main`
+   gets its own.
 
 None of this means doing every possible thing for every tiny change —
 it means actually checking each of these against what you just did,

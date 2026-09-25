@@ -307,7 +307,11 @@ keys, from Python:
   [Architecture](Architecture.md#dependency-version-notes).
 - Bump `APP_VERSION` in `app/core/version.py` **and** `version` in
   `pyproject.toml` together on every round of changes: patch for small
-  fixes, minor for a feature or infrastructure change.
+  fixes, minor for a feature or infrastructure change. Once that lands on
+  `main`, `.github/workflows/release.yml` tags it `vX.Y.Z` and publishes
+  the GitHub release by itself (notes: commit subjects since the previous
+  tag); a missed version can be released by hand from Actions → Release →
+  Run workflow (`version` + the commit on `main` carrying it).
 - New CSS must use the existing `--color-*` variables (`app/web/static/css/style.css`),
   never a hardcoded color — the light theme (`:root[data-theme="light"]`)
   overrides only those variables, so a hardcoded color renders identically,
