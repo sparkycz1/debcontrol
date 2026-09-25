@@ -30,5 +30,7 @@
   <script src="/static/js/xterm.min.js"></script>
   <script src="/static/js/xterm-addon-fit.min.js"></script>
   <script src="/static/js/xterm-addon-webgl.min.js"></script>
+  {% from "partials/_js_i18n.html" import js_i18n with context %}
+  {{ js_i18n(["terminal.status.connecting", "terminal.status.connected", "terminal.status.error", "terminal.status.disconnected_reason", "terminal.status.disconnected", "terminal.status.connection_error", "terminal.clipboard.need_https", "terminal.clipboard.unsupported", "terminal.clipboard.copy_failed", "terminal.clipboard.use_ctrl_v", "terminal.clipboard.read_failed"]) }}
   <script src="/static/js/terminal.js" defer></script>
 {% endblock %}

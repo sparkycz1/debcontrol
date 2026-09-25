@@ -71,6 +71,6 @@
       </tbody>
     </table>
   {% else %}
-    <p class="hint">{{ t(request, "notifications.no_rules") }}</p>
+    <div class="empty-state"><p>{{ t(request, "notifications.no_rules") }}</p></div>
   {% endif %}
 {% endblock %}

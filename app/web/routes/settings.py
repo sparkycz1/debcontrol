@@ -216,8 +216,15 @@ async def update_background_checks(
     app_settings = await get_or_create_app_settings(db)
     errors: list[str] = []
 
-    def _field(raw: str, *, label: str, bounds: tuple[int, int]) -> int | None:
-        minimum, maximum = bounds
+    def _field(raw: str, *, label: str, name: str) -> int | None:
+        # The Checks tab splits these fields across several section forms
+        # that all post here; a field a section doesn't carry (sent blank or
+        # not at all) keeps its current value rather than failing
+        # validation.
+        if not raw.strip():
+            current: int = getattr(app_settings, name)
+            return current
+        minimum, maximum = BOUNDED_FIELDS[name]
         value, error = _parse_bounded_int(
             request, raw, label=label, minimum=minimum, maximum=maximum
         )
@@ -228,37 +235,37 @@ async def update_background_checks(
     ssh_timeout = _field(
         ssh_connect_timeout,
         label=t(request, "settings.checks.ssh_connect_timeout"),
-        bounds=BOUNDED_FIELDS["ssh_connect_timeout"],
+        name="ssh_connect_timeout",
     )
     update_timeout = _field(
         update_timeout_seconds,
         label=t(request, "settings.checks.update_timeout"),
-        bounds=BOUNDED_FIELDS["update_timeout_seconds"],
+        name="update_timeout_seconds",
     )
     reachability_interval = _field(
         reachability_check_interval_seconds,
         label=t(request, "settings.checks.reachability_check"),
-        bounds=BOUNDED_FIELDS["reachability_check_interval_seconds"],
+        name="reachability_check_interval_seconds",
     )
     facts_interval = _field(
         facts_refresh_interval_seconds,
         label=t(request, "settings.checks.facts_refresh"),
-        bounds=BOUNDED_FIELDS["facts_refresh_interval_seconds"],
+        name="facts_refresh_interval_seconds",
     )
     monitoring_interval = _field(
         monitoring_interval_seconds,
         label=t(request, "settings.checks.monitoring_sample"),
-        bounds=BOUNDED_FIELDS["monitoring_interval_seconds"],
+        name="monitoring_interval_seconds",
     )
     concurrency = _field(
         reachability_check_concurrency,
         label=t(request, "settings.checks.reachability_concurrency"),
-        bounds=BOUNDED_FIELDS["reachability_check_concurrency"],
+        name="reachability_check_concurrency",
     )
     condition_check_interval = _field(
         notification_condition_check_interval_seconds,
         label=t(request, "settings.checks.condition_check_interval"),
-        bounds=BOUNDED_FIELDS["notification_condition_check_interval_seconds"],
+        name="notification_condition_check_interval_seconds",
     )
 
     if errors:

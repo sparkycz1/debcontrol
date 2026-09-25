@@ -33,6 +33,15 @@
     if (statusEl) statusEl.textContent = text;
   }
 
+  // Translated strings from partials/_js_i18n.html (English fallback).
+  let i18n = {};
+  try {
+    i18n = JSON.parse(document.getElementById("js-i18n").textContent);
+  } catch {
+    i18n = {};
+  }
+  const tr = (key, fallback) => i18n[key] || fallback;
+
   // Full 16-color ANSI palette (not just a background override) so
   // `ls --color`, `htop`, `vim`, etc. render every color they ask for
   // instead of falling back to xterm.js's own built-in palette, which
@@ -107,10 +116,10 @@
     socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
   }
 
-  setStatus("Connecting…");
+  setStatus(tr("terminal.status.connecting", "Connecting…"));
 
   socket.addEventListener("open", () => {
-    setStatus("Connected.");
+    setStatus(tr("terminal.status.connected", "Connected."));
     sendResize();
   });
 
@@ -123,7 +132,7 @@
         return;
       }
       if (msg && msg.type === "error") {
-        setStatus("Error: " + msg.message);
+        setStatus(tr("terminal.status.error", "Error: ") + msg.message);
         term.write("\r\n\x1b[31m[" + msg.message + "]\x1b[0m\r\n");
       }
       return;
@@ -132,11 +141,11 @@
   });
 
   socket.addEventListener("close", (event) => {
-    setStatus(event.reason ? "Disconnected: " + event.reason : "Disconnected.");
+    setStatus(event.reason ? tr("terminal.status.disconnected_reason", "Disconnected: ") + event.reason : tr("terminal.status.disconnected", "Disconnected."));
   });
 
   socket.addEventListener("error", () => {
-    setStatus("Connection error.");
+    setStatus(tr("terminal.status.connection_error", "Connection error."));
   });
 
   term.onData((data) => {
@@ -158,9 +167,9 @@
   function clipboardUnavailableReason() {
     if (navigator.clipboard) return null;
     if (!window.isSecureContext) {
-      return "Clipboard access needs HTTPS (or http://localhost) — this page is loaded over plain HTTP. Put debcontrol behind a reverse proxy with TLS (see the wiki's Installation page), or use Ctrl+Shift+C/V manually via the terminal's own keyboard shortcuts once it is.";
+      return tr("terminal.clipboard.need_https", "Clipboard access needs HTTPS (or http://localhost) — this page is loaded over plain HTTP. Put debcontrol behind a reverse proxy with TLS (see the wiki's Installation page), or use Ctrl+Shift+C/V manually via the terminal's own keyboard shortcuts once it is.");
     }
-    return "This browser doesn't support clipboard access.";
+    return tr("terminal.clipboard.unsupported", "This browser doesn't support clipboard access.");
   }
 
   function copySelection() {
@@ -172,7 +181,7 @@
       return false;
     }
     navigator.clipboard.writeText(text).catch(() => {
-      setStatus("Couldn't copy — clipboard access needs HTTPS (or localhost).");
+      setStatus(tr("terminal.clipboard.copy_failed", "Couldn't copy — clipboard access needs HTTPS (or localhost)."));
     });
     return true;
   }
@@ -184,7 +193,7 @@
       return;
     }
     if (!navigator.clipboard.readText) {
-      setStatus("Use Ctrl+V (or right-click → Paste) — this browser doesn't allow reading the clipboard programmatically.");
+      setStatus(tr("terminal.clipboard.use_ctrl_v", "Use Ctrl+V (or right-click → Paste) — this browser doesn't allow reading the clipboard programmatically."));
       return;
     }
     navigator.clipboard
@@ -193,7 +202,7 @@
         if (text) term.paste(text);
       })
       .catch(() => {
-        setStatus("Couldn't read the clipboard — use Ctrl+V instead.");
+        setStatus(tr("terminal.clipboard.read_failed", "Couldn't read the clipboard — use Ctrl+V instead."));
       });
   }
 

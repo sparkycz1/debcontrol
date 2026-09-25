@@ -48,6 +48,8 @@
       {% endif %}
     </div>
   </main>
+  {% from "partials/_js_i18n.html" import js_i18n with context %}
+  {{ js_i18n(["webauthn.need_https", "webauthn.unsupported", "webauthn.follow_prompt", "webauthn.register_start_failed", "webauthn.register_failed", "webauthn.signin_start_failed", "webauthn.signin_failed"]) }}
   <script src="/static/js/webauthn.js" defer></script>
 </body>
 </html>

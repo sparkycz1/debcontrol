@@ -103,7 +103,16 @@ directly (only `worker` does).
 - Collapsible mobile nav is a checkbox-driven CSS toggle, not JS — works
   under the strict CSP (no inline scripts), stays keyboard-operable
   (visually hidden via clip/absolute positioning, not `display: none`).
-- Active nav link computed from `request.url.path` in `base.html`.
+- Active nav link computed from `request.url.path` in `base.html`. The
+  header shows the day-to-day pages (Dashboard, Fleet, Machines, Machine
+  groups, Checks, Scheduling, Notifications, AI) directly; account and
+  instance administration (Users, Roles, Audit, Settings, API docs) sits
+  in one "Administration" menu — a plain `<details>`, so no JS. Each link
+  is still shown only with its permission.
+- htmx's own injected indicator `<style>` is turned off
+  (`<meta name="htmx-config">` in `base.html`) — `style-src 'self'` would
+  block it with a console error on every page; request feedback is styled
+  in `style.css` (`.htmx-request`).
 - `.alert`'s icon is an absolutely-positioned CSS `::before`, not a flex
   sibling, so several stacked `<p>` validation errors still work.
 - A machine/group page's tabs (Overview/Monitoring/Updates/Terminal/

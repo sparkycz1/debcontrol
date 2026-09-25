@@ -269,6 +269,13 @@ design. Two separate things:
    `account.*`, `common.*` for a string reused across areas) so a
    translator working from `en.json` alone can tell what a key is for.
 
+**Strings shown by JavaScript** (`static/js/*.js` can't call `t()`):
+emit them on the page with
+`{% from "partials/_js_i18n.html" import js_i18n with context %}{{ js_i18n(["area.key", ...]) }}`
+— a JSON data block (`#js-i18n`, never executed, so CSP-safe) — and look
+each key up in the script with its English text as the fallback (see
+`live-updates.js`, `terminal.js`, `webauthn.js`).
+
 **Messages produced in a route, not a template** (form validation errors,
 "the background job did not respond in time", ...) go through the same
 keys, from Python:

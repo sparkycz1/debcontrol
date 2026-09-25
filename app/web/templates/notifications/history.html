@@ -51,6 +51,6 @@
       </tbody>
     </table>
   {% else %}
-    <p class="hint">{{ t(request, "notifications.history.empty") }}</p>
+    <div class="empty-state"><p>{{ t(request, "notifications.history.empty") }}</p></div>
   {% endif %}
 {% endblock %}

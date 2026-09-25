@@ -128,6 +128,24 @@ async def test_saving_background_checks_redirects_back_to_checks_tab(client):
     assert 'value="15"' in ssh_timeout_field.group(0)
 
 
+async def test_saving_one_checks_section_keeps_fields_it_does_not_carry(client):
+    """Regression: the Checks tab splits the background-check fields across
+    several section forms posting to the same route; one that doesn't carry
+    a field (here the condition-check interval) must keep it, not fail."""
+    await client.get("/settings")
+    csrf_token = client.cookies.get("csrftoken")
+    response = await client.post(
+        "/settings/background-checks",
+        data={"csrf_token": csrf_token, "ssh_connect_timeout": "15"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    page = await client.get("/settings?tab=checks")
+    field = re.search(r'id="ssh_connect_timeout"[^>]*>', page.text)
+    assert field is not None
+    assert 'value="15"' in field.group(0)
+
+
 async def test_background_checks_rejects_out_of_range_values(client):
     await client.get("/settings")
     csrf_token = client.cookies.get("csrftoken")
