@@ -152,6 +152,8 @@ async def test_bulk_action_drops_the_acting_admins_own_id_from_the_selection(
     # Nothing left to act on once the actor's own id is dropped.
     assert response.status_code == 303
     assert "bulk_error" in response.headers["location"]
+    followed = await client.get(response.headers["location"])
+    assert "Select at least one other user." in followed.text
 
     async with db_session_factory() as session:
         assert (await session.get(User, admin_id)).is_active == was_active

@@ -24,7 +24,7 @@ from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.tasks import jobs as tasks
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/checks", dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))]
@@ -62,7 +62,7 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
     except ValidationError as exc:
         return None, values, _form_error(exc)
     except ValueError:
-        return None, values, "Numbers only in the numeric fields."
+        return None, values, t(request, "checks.error.numbers_only")
     return payload, values, ""
 
 

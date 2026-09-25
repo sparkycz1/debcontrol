@@ -74,7 +74,7 @@ from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
 from app.i18n import available_locales, get_locale
 from app.schemas.user import MIN_PASSWORD_LENGTH, normalize_email
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter()
 
@@ -85,21 +85,14 @@ _LOGIN_RATE_LIMIT = 30
 _TOTP_RATE_LIMIT = 30
 _RATE_WINDOW_SECONDS = 300  # 5 minutes
 
-_RATE_LIMIT_MESSAGE = "Too many attempts from your network — try again in a few minutes."
+# Locale keys (see app/i18n/locales/), resolved per request with `t()`.
+_RATE_LIMIT_MESSAGE = "login.error.rate_limited"
 
 _OIDC_ERROR_MESSAGES = {
-    "not_configured": "OIDC isn't fully configured — ask an administrator to finish setting it up.",
-    "failed": (
-        "The OIDC provider didn't complete the login (it may have been cancelled or timed out)."
-    ),
-    "no_account": (
-        "No enabled debcontrol account matches your OIDC identity. "
-        "Ask an administrator to check the account is set up for OIDC login."
-    ),
-    "discovery_failed": (
-        "Couldn't reach the OIDC provider's discovery document. "
-        "Ask an administrator to check the Issuer URL in Settings."
-    ),
+    "not_configured": "login.error.oidc_not_configured",
+    "failed": "login.error.oidc_failed",
+    "no_account": "login.error.oidc_no_account",
+    "discovery_failed": "login.error.oidc_discovery_failed",
 }
 
 
@@ -212,7 +205,11 @@ async def login_form(
         app_settings,
         next_url=_safe_next(next),
         error=None,
-        oidc_error=_OIDC_ERROR_MESSAGES.get(oidc_error),
+        oidc_error=(
+            t(request, _OIDC_ERROR_MESSAGES[oidc_error])
+            if oidc_error in _OIDC_ERROR_MESSAGES
+            else None
+        ),
     )
 
 
@@ -276,7 +273,7 @@ async def login_submit(
             request,
             username=username,
             next_url=next_url,
-            error=_RATE_LIMIT_MESSAGE,
+            error=t(request, _RATE_LIMIT_MESSAGE),
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
@@ -294,7 +291,7 @@ async def login_submit(
             request,
             username=username,
             next_url=next_url,
-            error="The directory server is currently unavailable — try again shortly.",
+            error=t(request, "login.error.directory_unavailable"),
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
@@ -311,9 +308,9 @@ async def login_submit(
             target_label=result.user.username,
         )
         message = (
-            f"Too many failed attempts — try again after {result.locked_until:%H:%M UTC}."
+            t(request, "login.error.locked_until", time=f"{result.locked_until:%H:%M UTC}")
             if result.locked_until is not None
-            else "Too many failed attempts — try again shortly."
+            else t(request, "login.error.locked")
         )
         return await _render_login_password(
             request,
@@ -339,7 +336,7 @@ async def login_submit(
             request,
             username=username,
             next_url=next_url,
-            error="Invalid username or password.",
+            error=t(request, "login.error.invalid_credentials"),
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -429,7 +426,7 @@ async def totp_challenge_submit(
             target_label=user.username,
         )
         context = await _totp_challenge_context(
-            request, db, user_id, next_url=next_url, error=_RATE_LIMIT_MESSAGE
+            request, db, user_id, next_url=next_url, error=t(request, _RATE_LIMIT_MESSAGE)
         )
         assert context is not None
         return templates.TemplateResponse(
@@ -445,7 +442,7 @@ async def totp_challenge_submit(
             db,
             user_id,
             next_url=next_url,
-            error="Too many failed attempts — try again shortly.",
+            error=t(request, "login.error.locked"),
         )
         assert context is not None
         return templates.TemplateResponse(
@@ -467,7 +464,7 @@ async def totp_challenge_submit(
             target_label=user.username,
         )
         context = await _totp_challenge_context(
-            request, db, user_id, next_url=next_url, error="Invalid code."
+            request, db, user_id, next_url=next_url, error=t(request, "login.error.invalid_code")
         )
         assert context is not None
         return templates.TemplateResponse(
@@ -597,7 +594,7 @@ async def login_webauthn_verify(
 
     if not await _within_rate_limit(request, bucket="totp", limit=_TOTP_RATE_LIMIT):
         return await _failure(
-            error=_RATE_LIMIT_MESSAGE,
+            error=t(request, _RATE_LIMIT_MESSAGE),
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             action="auth.rate_limited",
             summary=(
@@ -608,7 +605,7 @@ async def login_webauthn_verify(
 
     if user.is_locked_out:
         return await _failure(
-            error="Too many failed attempts — try again shortly.",
+            error=t(request, "login.error.locked"),
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             action="auth.rate_limited",
             summary=f'Blocked passkey sign-in for "{user.username}": account temporarily locked',
@@ -631,7 +628,7 @@ async def login_webauthn_verify(
 
     if stored is None or verified is None:
         return await _failure(
-            error="Passkey sign-in failed.",
+            error=t(request, "login.error.passkey_failed"),
             status_code=status.HTTP_401_UNAUTHORIZED,
             action="user.login.totp" if is_second_factor else "user.login",
             summary=f'Failed passkey sign-in attempt for "{user.username}"',
@@ -868,7 +865,7 @@ async def update_display_name(
         )
         if conflict.scalar_one_or_none() is not None:
             return await _render_account(
-                request, db, user, errors=["That email is already in use by another account."]
+                request, db, user, errors=[t(request, "account.error.email_in_use")]
             )
 
     user.display_name = display_name.strip() or None
@@ -878,7 +875,7 @@ async def update_display_name(
     except IntegrityError:
         await db.rollback()
         return await _render_account(
-            request, db, user, errors=["That email is already in use by another account."]
+            request, db, user, errors=[t(request, "account.error.email_in_use")]
         )
     await log_event(
         db,
@@ -935,13 +932,13 @@ async def change_own_password(
     assert user is not None
     errors: list[str] = []
     if user.auth_provider != AuthProvider.LOCAL:
-        errors.append("Only local accounts have a debcontrol password to change.")
+        errors.append(t(request, "account.error.password_not_local"))
     elif user.password_hash is None or not verify_password(user.password_hash, current_password):
-        errors.append("Current password is incorrect.")
+        errors.append(t(request, "account.error.current_password_wrong"))
     elif new_password != confirm_password:
-        errors.append("New password and confirmation don't match.")
+        errors.append(t(request, "account.error.password_mismatch"))
     elif len(new_password) < MIN_PASSWORD_LENGTH:
-        errors.append(f"New password must be at least {MIN_PASSWORD_LENGTH} characters.")
+        errors.append(t(request, "account.error.password_too_short", min=MIN_PASSWORD_LENGTH))
 
     if errors:
         return await _render_account(request, db, user, errors=errors)
@@ -1013,9 +1010,7 @@ async def totp_enroll_confirm(
                 "csrf_token": request.state.csrf_token,
                 "secret": secret,
                 "qr_svg": totp_module.qr_code_svg(uri),
-                "error": (
-                    "That code didn't match — check your authenticator app's clock and try again."
-                ),
+                "error": t(request, "account.error.totp_code_mismatch"),
                 "required_by_role": user.role.require_totp,
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1063,7 +1058,7 @@ async def totp_disable(
         ok = await consume_recovery_code(db, user, code)
     if not ok:
         return await _render_account(
-            request, db, user, errors=["Invalid code — two-factor authentication was not disabled."]
+            request, db, user, errors=[t(request, "account.error.totp_disable_invalid")]
         )
 
     user.totp_enabled = False
@@ -1101,7 +1096,7 @@ async def regenerate_recovery_codes(
     secret = decrypt_secret(user.totp_secret_encrypted) if user.totp_secret_encrypted else None
     if not (secret and totp_module.verify_code(secret, code)):
         return await _render_account(
-            request, db, user, errors=["Invalid code — recovery codes were not regenerated."]
+            request, db, user, errors=[t(request, "account.error.recovery_invalid")]
         )
 
     await db.execute(delete(TotpRecoveryCode).where(TotpRecoveryCode.user_id == user.id))
@@ -1161,7 +1156,7 @@ async def webauthn_register_verify(
     )
     if challenge_info is None or challenge_info[0] != user.id:
         return await _render_account(
-            request, db, user, errors=["Passkey registration expired — try again."]
+            request, db, user, errors=[t(request, "account.error.passkey_expired")]
         )
     _, challenge = challenge_info
 
@@ -1263,7 +1258,9 @@ async def create_own_api_token(
         )
     name = name.strip()
     if not name:
-        return await _render_account(request, db, user, errors=["Token name can't be empty."])
+        return await _render_account(
+            request, db, user, errors=[t(request, "account.error.token_name_empty")]
+        )
 
     expires_at: datetime | None = None
     raw_days = expires_in_days.strip()
@@ -1277,7 +1274,7 @@ async def create_own_api_token(
                 request,
                 db,
                 user,
-                errors=["Expiry must be a positive whole number of days, or blank for no expiry."],
+                errors=[t(request, "account.error.token_expiry")],
             )
         expires_at = datetime.now(UTC) + timedelta(days=days)
 

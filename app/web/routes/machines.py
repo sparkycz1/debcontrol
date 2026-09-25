@@ -84,8 +84,10 @@ from app.ssh.updates import PendingPackage
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
 from app.tasks import jobs as tasks
+from app.web.flash import read_flash, sign_flash
 from app.web.log_lines import parse_log_lines
 from app.web.machine_search import apply_tag_filter, machine_search_clause
+from app.web.messages import LocalizedText
 from app.web.routes.audit import _csv_safe
 from app.web.templating import t, templates
 
@@ -113,6 +115,12 @@ _terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 
 # Fingerprint shaped like "SHA256:<base64...>", as returned by AsyncSSH/OpenSSH.
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
+
+
+def _bulk_error_url(request: Request, key: str) -> str:
+    """Back to the machine list with a signed, translated `bulk_error` —
+    see `app.web.flash` for why it's signed."""
+    return f"/machines?bulk_error={sign_flash(t(request, key))}"
 
 
 def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[str, str, str]]:
@@ -337,7 +345,7 @@ async def list_machines(
             "view_mode": view_mode,
             "latest_monitoring": latest_monitoring,
             "csrf_token": csrf_token,
-            "bulk_error": request.query_params.get("bulk_error"),
+            "bulk_error": read_flash(request, "bulk_error"),
             "power_skipped": request.query_params.get("power_skipped"),
         },
     )
@@ -583,7 +591,7 @@ async def import_machines_submit(
     errors: list[str] = []
     text = csv_text.strip()
     if not text:
-        errors.append("Paste some CSV text first.")
+        errors.append(t(request, "common.error.paste_csv"))
         return templates.TemplateResponse(
             request,
             "machines/import.html",
@@ -740,7 +748,7 @@ async def import_machine_config_submit(
             "machines/config_import.html",
             {
                 "csrf_token": request.state.csrf_token,
-                "errors": ["Paste some exported JSON text first."],
+                "errors": [t(request, "common.error.paste_json")],
                 "result": None,
             },
         )
@@ -849,7 +857,7 @@ async def bulk_check_updates(
     machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine.",
+            url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -875,7 +883,7 @@ async def bulk_trigger_updates(
     machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine.",
+            url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -907,7 +915,7 @@ async def bulk_power_confirm(
     the selection back up by, unlike the group-scoped version of this)."""
     if not machine_ids:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine.",
+            url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -1004,7 +1012,7 @@ async def bulk_add_tags(
     names = parse_tag_names_from_text(tags)
     if not machines or not names:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine+and+tag.",
+            url=_bulk_error_url(request, "machines.error.select_machine_and_tag"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -1037,7 +1045,7 @@ async def bulk_remove_tags(
     names = parse_tag_names_from_text(tags)
     if not machines or not names:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine+and+tag.",
+            url=_bulk_error_url(request, "machines.error.select_machine_and_tag"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -1213,7 +1221,7 @@ async def refresh_machine_monitoring_endpoint(
             if isinstance(result, dict) and not result.get("ok"):
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1426,7 +1434,7 @@ async def run_onboarding_endpoint(
             else:
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The setup script did not finish in time. Reload this page shortly."
+        error = LocalizedText(request, "machine.error.setup_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1544,7 +1552,7 @@ async def run_onboarding_with_credential_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The setup script did not finish in time. Reload this page shortly."
+        error = LocalizedText(request, "machine.error.setup_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1606,7 +1614,7 @@ async def fix_readiness_directly_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "Timed out. Reload this page shortly."
+        error = LocalizedText(request, "machine.error.timeout_reload")
     except Exception as exc:
         error = str(exc)
 
@@ -1884,7 +1892,7 @@ async def test_connection_endpoint(
             async_result.get, timeout=app_settings.ssh_connect_timeout + 5
         )
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         # Celery's `AsyncResult.get()` re-raises whatever exception happened
         # inside the task (propagate=True is the default) — we want to show
@@ -1927,7 +1935,7 @@ async def refresh_facts_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1980,7 +1988,7 @@ async def refresh_packages_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2041,7 +2049,7 @@ async def refresh_services_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2093,7 +2101,7 @@ async def check_updates_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2167,7 +2175,7 @@ async def preview_machine_update(
                 to_install_or_upgrade = list(result.get("to_install_or_upgrade") or [])
                 to_remove = list(result.get("to_remove") or [])
     except TimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2471,7 +2479,7 @@ async def machine_logs(
         source == "docker" and not container
     )
     if not machine.host_key_fingerprint:
-        error = "Confirm the server's key fingerprint on the Overview tab first."
+        error = LocalizedText(request, "machine.confirm_key_first_overview")
     elif fetch:
         clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
         try:
@@ -2505,7 +2513,7 @@ async def machine_logs(
                 else:
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
-            error = "The command did not finish in time."
+            error = LocalizedText(request, "common.error.command_timeout")
         except Exception as exc:
             error = str(exc)
 
@@ -2582,9 +2590,9 @@ async def machine_logs_browse(
     entries: list[dict[str, object]] = []
     error: str | None = None
     if not machine.host_key_fingerprint:
-        error = "Confirm the server's key fingerprint on the Overview tab first."
+        error = LocalizedText(request, "machine.confirm_key_first_overview")
     elif not current_path:
-        error = "No allowed log paths are configured — set LOG_FILE_ALLOWED_PATHS first."
+        error = LocalizedText(request, "machine.error.no_log_paths")
     else:
         try:
             async_result = tasks.browse_machine_log_directory.delay(
@@ -2610,7 +2618,7 @@ async def machine_logs_browse(
                 else:
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
-            error = "The command did not finish in time."
+            error = LocalizedText(request, "common.error.command_timeout")
         except Exception as exc:
             error = str(exc)
 
@@ -2680,7 +2688,7 @@ async def check_image_updates_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The check did not finish in time."
+        error = LocalizedText(request, "common.error.check_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2697,7 +2705,7 @@ async def check_image_updates_endpoint(
     )
     query = {"images_checked": "1"}
     if error is not None:
-        query["images_error"] = error[:300]
+        query["images_error"] = sign_flash(error)
     return RedirectResponse(
         url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
         status_code=status.HTTP_303_SEE_OTHER,
@@ -2736,7 +2744,7 @@ async def container_action_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The command did not finish in time."
+        error = LocalizedText(request, "common.error.command_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2752,9 +2760,9 @@ async def container_action_endpoint(
         details={"container": container, **({"error": error} if error else {})},
     )
 
-    query = {"container": container, "container_action": action}
+    query = {"container": sign_flash(container), "container_action": action}
     if error is not None:
-        query["container_error"] = error[:300]
+        query["container_error"] = sign_flash(error)
     return RedirectResponse(
         url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
         status_code=status.HTTP_303_SEE_OTHER,

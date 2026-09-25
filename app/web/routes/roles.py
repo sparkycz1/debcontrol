@@ -32,7 +32,7 @@ from app.db.session import get_db
 from app.schemas.role import RoleSave
 from app.schemas.role_config import RoleConfigExport
 from app.services.role_config import export_role_config, import_role_config
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/roles", dependencies=[Depends(require_permission(Permission.USER_MANAGE))]
@@ -214,7 +214,7 @@ async def import_role_config_submit(
             "roles/config_import.html",
             {
                 "csrf_token": request.state.csrf_token,
-                "errors": ["Paste some exported JSON text first."],
+                "errors": [t(request, "common.error.paste_json")],
                 "result": None,
             },
         )

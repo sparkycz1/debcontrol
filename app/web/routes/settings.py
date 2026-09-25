@@ -143,7 +143,7 @@ async def show_settings(
     return await _render_settings(request, db, [], tab=_normalize_tab(tab))
 
 
-def _parse_retention_days(raw: str) -> tuple[int | None, str | None]:
+def _parse_retention_days(request: Request, raw: str) -> tuple[int | None, str | None]:
     """Shared by `update_audit_retention` and
     `update_dashboard_trends_retention` below — both fields mean the same
     thing (empty = keep forever, otherwise a non-negative whole number of
@@ -156,12 +156,12 @@ def _parse_retention_days(raw: str) -> tuple[int | None, str | None]:
         if value < 0:
             raise ValueError("must not be negative")
     except ValueError:
-        return None, f'"{stripped}" isn\'t a whole number of days (0 or more).'
+        return None, t(request, "settings.error.retention_days", value=stripped)
     return value, None
 
 
 def _parse_bounded_int(
-    raw: str, *, label: str, minimum: int, maximum: int
+    request: Request, raw: str, *, label: str, minimum: int, maximum: int
 ) -> tuple[int | None, str | None]:
     """Shared by `update_background_checks` below — every field there is a
     whole number of seconds (or machines) with a sane range, unlike the
@@ -171,9 +171,11 @@ def _parse_bounded_int(
     try:
         value = int(stripped)
     except ValueError:
-        return None, f'"{stripped}" isn\'t a whole number for {label}.'
+        return None, t(request, "settings.error.not_whole_number", value=stripped, label=label)
     if not (minimum <= value <= maximum):
-        return None, f"{label} must be between {minimum} and {maximum}."
+        return None, t(
+            request, "settings.error.out_of_range", label=label, minimum=minimum, maximum=maximum
+        )
     return value, None
 
 
@@ -214,36 +216,52 @@ async def update_background_checks(
     errors: list[str] = []
 
     def _field(raw: str, *, label: str, minimum: int, maximum: int) -> int | None:
-        value, error = _parse_bounded_int(raw, label=label, minimum=minimum, maximum=maximum)
+        value, error = _parse_bounded_int(
+            request, raw, label=label, minimum=minimum, maximum=maximum
+        )
         if error:
             errors.append(error)
         return value
 
-    ssh_timeout = _field(ssh_connect_timeout, label="SSH connect timeout", minimum=1, maximum=300)
+    ssh_timeout = _field(
+        ssh_connect_timeout,
+        label=t(request, "settings.checks.ssh_connect_timeout"),
+        minimum=1,
+        maximum=300,
+    )
     update_timeout = _field(
-        update_timeout_seconds, label="Update run timeout", minimum=60, maximum=14400
+        update_timeout_seconds,
+        label=t(request, "settings.checks.update_timeout"),
+        minimum=60,
+        maximum=14400,
     )
     reachability_interval = _field(
         reachability_check_interval_seconds,
-        label="Reachability check interval",
+        label=t(request, "settings.checks.reachability_check"),
         minimum=5,
         maximum=86400,
     )
     facts_interval = _field(
-        facts_refresh_interval_seconds, label="Facts refresh interval", minimum=60, maximum=604800
+        facts_refresh_interval_seconds,
+        label=t(request, "settings.checks.facts_refresh"),
+        minimum=60,
+        maximum=604800,
     )
     monitoring_interval = _field(
-        monitoring_interval_seconds, label="Monitoring sample interval", minimum=10, maximum=86400
+        monitoring_interval_seconds,
+        label=t(request, "settings.checks.monitoring_sample"),
+        minimum=10,
+        maximum=86400,
     )
     concurrency = _field(
         reachability_check_concurrency,
-        label="Reachability sweep concurrency",
+        label=t(request, "settings.checks.reachability_concurrency"),
         minimum=1,
         maximum=1000,
     )
     condition_check_interval = _field(
         notification_condition_check_interval_seconds,
-        label="Condition-based notification check interval",
+        label=t(request, "settings.checks.condition_check_interval"),
         minimum=10,
         maximum=86400,
     )
@@ -293,7 +311,7 @@ async def update_audit_retention(
     retention_days: str = Form(""),
 ) -> Response:
     app_settings = await get_or_create_app_settings(db)
-    new_value, error = _parse_retention_days(retention_days)
+    new_value, error = _parse_retention_days(request, retention_days)
     if error:
         return await _render_settings(request, db, [error], tab="security")
 
@@ -334,12 +352,12 @@ async def update_geoip_settings(
         if not (1 <= refresh_interval <= 24 * 30):
             raise ValueError
     except ValueError:
-        errors.append("Refresh interval must be a whole number of hours between 1 and 720.")
+        errors.append(t(request, "settings.error.geoip_refresh_interval"))
         refresh_interval = app_settings.geoip_refresh_interval_hours
 
     primary_url = geoip_primary_url.strip()
     if bool(geoip_enabled) and not primary_url and not app_settings.geoip_primary_url_encrypted:
-        errors.append("Enabling GeoIP needs at least a primary database URL.")
+        errors.append(t(request, "settings.error.geoip_needs_url"))
 
     if errors:
         return await _render_settings(request, db, errors, tab="integrations")
@@ -371,7 +389,7 @@ async def download_geoip_database_now(
     app_settings = await get_or_create_app_settings(db)
     if not app_settings.geoip_primary_url_encrypted:
         return await _render_settings(
-            request, db, ["No GeoIP database URL is configured yet."], tab="integrations"
+            request, db, [t(request, "settings.error.geoip_no_url")], tab="integrations"
         )
 
     async_result = refresh_geoip_database_task.delay(force=True)
@@ -381,12 +399,15 @@ async def download_geoip_database_now(
         return await _render_settings(
             request,
             db,
-            ["The download is still running in the background — check back in a moment."],
+            [t(request, "settings.error.geoip_still_running")],
             tab="integrations",
         )
     except Exception as exc:
         return await _render_settings(
-            request, db, [f"GeoIP download failed: {exc}"], tab="integrations"
+            request,
+            db,
+            [t(request, "settings.error.geoip_download_failed", error=exc)],
+            tab="integrations",
         )
 
     await log_event(
@@ -409,7 +430,7 @@ async def update_dashboard_trends_retention(
     `app.db.models.fleet_snapshot.FleetSnapshot` and
     `app.tasks.jobs.purge_old_fleet_snapshots`."""
     app_settings = await get_or_create_app_settings(db)
-    new_value, error = _parse_retention_days(retention_days)
+    new_value, error = _parse_retention_days(request, retention_days)
     if error:
         return await _render_settings(request, db, [error], tab="checks")
 
@@ -440,7 +461,7 @@ async def update_machine_update_run_retention(
     above, for the stored `MachineUpdateRun` rows (apt/flatpak/snap output
     per run) — see `app.tasks.jobs.purge_old_machine_update_runs`."""
     app_settings = await get_or_create_app_settings(db)
-    new_value, error = _parse_retention_days(retention_days)
+    new_value, error = _parse_retention_days(request, retention_days)
     if error:
         return await _render_settings(request, db, [error], tab="checks")
 
@@ -471,7 +492,7 @@ async def update_notification_log_retention(
     above, for `NotificationLog` rows (delivery history — one row per
     actual send attempt) — see `app.tasks.jobs.purge_old_notification_logs`."""
     app_settings = await get_or_create_app_settings(db)
-    new_value, error = _parse_retention_days(retention_days)
+    new_value, error = _parse_retention_days(request, retention_days)
     if error:
         return await _render_settings(request, db, [error], tab="checks")
 
@@ -504,7 +525,7 @@ async def update_monitoring_retention(
     machine can override it (see `Machine.monitoring_history_retention_days`
     on that machine's own Settings tab)."""
     app_settings = await get_or_create_app_settings(db)
-    new_value, error = _parse_retention_days(retention_days)
+    new_value, error = _parse_retention_days(request, retention_days)
     if error:
         return await _render_settings(request, db, [error], tab="checks")
 
@@ -539,12 +560,16 @@ async def update_monitoring_downsampling(
     `interval_minutes` is a bounded interval like the background-check
     fields, not a retention window."""
     app_settings = await get_or_create_app_settings(db)
-    new_after_days, error = _parse_retention_days(after_days)
+    new_after_days, error = _parse_retention_days(request, after_days)
     if error:
         return await _render_settings(request, db, [error], tab="checks")
 
     new_interval, interval_error = _parse_bounded_int(
-        interval_minutes, label="Downsample bucket interval", minimum=1, maximum=1440
+        request,
+        interval_minutes,
+        label=t(request, "settings.checks.downsample_interval_minutes"),
+        minimum=1,
+        maximum=1440,
     )
     if interval_error:
         return await _render_settings(request, db, [interval_error], tab="checks")
@@ -604,7 +629,7 @@ async def activate_ssh_key(request: Request, db: AsyncSession = Depends(get_db))
         identity = await activate_pending_identity(db)
     except ValueError:
         return await _render_settings(
-            request, db, ["No pending SSH key to activate."], tab="general"
+            request, db, [t(request, "settings.error.no_pending_key_activate")], tab="general"
         )
     await log_event(
         db,
@@ -651,7 +676,9 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
     """
     identity = await get_or_create_identity(db)
     if identity.pending_public_key is None:
-        return await _render_settings(request, db, ["No pending SSH key to push."], tab="general")
+        return await _render_settings(
+            request, db, [t(request, "settings.error.no_pending_key_push")], tab="general"
+        )
 
     result = await db.execute(
         select(Machine).where(
@@ -664,7 +691,7 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
         return await _render_settings(
             request,
             db,
-            ["No machines use the app's shared SSH key with a pinned host key yet."],
+            [t(request, "settings.error.no_machines_for_push")],
             tab="general",
         )
 
@@ -674,12 +701,16 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
         try:
             outcome = await asyncio.to_thread(async_result.get, timeout=_PUSH_WAIT_SECONDS)  # type: ignore[attr-defined]
         except CeleryTimeoutError:
-            return machine.name, "Timed out."
+            return machine.name, t(request, "common.error.timed_out")
         except Exception as exc:
             return machine.name, str(exc)
         if isinstance(outcome, dict) and outcome.get("ok"):
             return machine.name, None
-        reason = str(outcome.get("error")) if isinstance(outcome, dict) else "Unknown error."
+        reason = (
+            str(outcome.get("error"))
+            if isinstance(outcome, dict)
+            else t(request, "common.error.unknown")
+        )
         return machine.name, reason
 
     outcomes = await asyncio.gather(
@@ -732,24 +763,24 @@ async def update_ldap_settings(
 
     server_uri = ldap_server_uri.strip()
     if server_uri and not (server_uri.startswith(("ldap://", "ldaps://"))):
-        errors.append('Server URI must start with "ldap://" or "ldaps://".')
+        errors.append(t(request, "settings.error.ldap_uri_scheme"))
 
     try:
         timeout = int(ldap_connect_timeout_seconds.strip() or "5")
         if timeout <= 0:
             raise ValueError
     except ValueError:
-        errors.append("Connect timeout must be a positive whole number of seconds.")
+        errors.append(t(request, "settings.error.ldap_timeout"))
         timeout = app_settings.ldap_connect_timeout_seconds
 
     search_filter = ldap_user_search_filter.strip() or DEFAULT_LDAP_USER_SEARCH_FILTER
     if "{username}" not in search_filter:
-        errors.append('Search filter must contain "{username}".')
+        errors.append(t(request, "settings.error.ldap_filter_placeholder"))
 
     if bool(ldap_enabled) and not (
         server_uri and ldap_bind_dn.strip() and ldap_user_search_base.strip()
     ):
-        errors.append("Enabling LDAP needs at least a server URI, bind DN, and search base.")
+        errors.append(t(request, "settings.error.ldap_incomplete"))
 
     if errors:
         return await _render_settings(request, db, errors, tab="integrations")
@@ -791,15 +822,15 @@ async def update_oidc_settings(
 
     issuer_url = oidc_issuer_url.strip()
     if issuer_url and not (issuer_url.startswith(("http://", "https://"))):
-        errors.append('Issuer URL must start with "http://" or "https://".')
+        errors.append(t(request, "settings.error.oidc_issuer_scheme"))
 
     claim = oidc_username_claim.strip() or DEFAULT_OIDC_USERNAME_CLAIM
     scopes = oidc_scopes.strip() or DEFAULT_OIDC_SCOPES
     if "openid" not in scopes.split():
-        errors.append('Scopes must include "openid".')
+        errors.append(t(request, "settings.error.oidc_scopes_openid"))
 
     if bool(oidc_enabled) and not (issuer_url and oidc_client_id.strip()):
-        errors.append("Enabling OIDC needs at least an issuer URL and client ID.")
+        errors.append(t(request, "settings.error.oidc_incomplete"))
 
     if errors:
         return await _render_settings(request, db, errors, tab="integrations")
@@ -839,7 +870,7 @@ async def update_syslog_settings(
     try:
         protocol = SyslogProtocol(syslog_protocol)
     except ValueError:
-        errors.append("Unknown syslog protocol.")
+        errors.append(t(request, "settings.error.syslog_protocol"))
         protocol = app_settings.syslog_protocol
 
     try:
@@ -847,11 +878,11 @@ async def update_syslog_settings(
         if not (0 < port <= 65535):
             raise ValueError
     except ValueError:
-        errors.append("Port must be a whole number between 1 and 65535.")
+        errors.append(t(request, "settings.error.port_range"))
         port = app_settings.syslog_port
 
     if bool(syslog_enabled) and not host:
-        errors.append("Enabling syslog forwarding needs a server host/IP.")
+        errors.append(t(request, "settings.error.syslog_needs_host"))
 
     if errors:
         return await _render_settings(request, db, errors, tab="integrations")
@@ -898,7 +929,7 @@ async def update_smtp_settings(
     try:
         encryption = SmtpEncryption(smtp_encryption)
     except ValueError:
-        errors.append("Unknown SMTP encryption mode.")
+        errors.append(t(request, "settings.error.smtp_encryption"))
         encryption = app_settings.smtp_encryption
 
     try:
@@ -906,15 +937,15 @@ async def update_smtp_settings(
         if not (0 < port <= 65535):
             raise ValueError
     except ValueError:
-        errors.append("Port must be a whole number between 1 and 65535.")
+        errors.append(t(request, "settings.error.port_range"))
         port = app_settings.smtp_port
 
     from_address = smtp_from_address.strip()
     if from_address and "@" not in from_address:
-        errors.append('"From" address must be a valid email address.')
+        errors.append(t(request, "settings.error.smtp_from_address"))
 
     if bool(smtp_enabled) and not host:
-        errors.append("Enabling the SMTP relay needs a server host/IP.")
+        errors.append(t(request, "settings.error.smtp_needs_host"))
 
     if errors:
         return await _render_settings(request, db, errors, tab="integrations")
@@ -973,20 +1004,20 @@ async def update_ai_provider(
     config = await _get_provider_config(db, kind)
     if config is None:
         return await _render_settings(
-            request, db, [f'Unknown AI provider "{kind}".'], tab="ai"
+            request, db, [t(request, "settings.error.ai_unknown_provider", kind=kind)], tab="ai"
         )
 
     errors: list[str] = []
     url = base_url.strip()
     if config.kind == AiProviderKind.OPENAI_COMPATIBLE:
         if url and not (url.startswith(("http://", "https://"))):
-            errors.append('The base URL must start with "http://" or "https://".')
+            errors.append(t(request, "settings.error.ai_base_url_scheme"))
         if bool(enabled) and not url:
-            errors.append("Enabling an OpenAI-compatible provider needs a base URL.")
+            errors.append(t(request, "settings.error.ai_needs_base_url"))
     if bool(enabled) and not api_key and config.api_key_encrypted is None:
         # OpenRouter can list models without a key, but a chat turn always
         # needs one — so enabling any provider requires one to be stored.
-        errors.append("Enabling a provider needs an API key.")
+        errors.append(t(request, "settings.error.ai_needs_api_key"))
 
     if errors:
         return await _render_settings(request, db, errors, tab="ai")
@@ -1029,7 +1060,7 @@ async def fetch_ai_models(
     config = await _get_provider_config(db, kind)
     if config is None:
         return await _render_settings(
-            request, db, [f'Unknown AI provider "{kind}".'], tab="ai"
+            request, db, [t(request, "settings.error.ai_unknown_provider", kind=kind)], tab="ai"
         )
 
     try:
@@ -1070,7 +1101,7 @@ async def update_ai_models(
     config = await _get_provider_config(db, kind)
     if config is None:
         return await _render_settings(
-            request, db, [f'Unknown AI provider "{kind}".'], tab="ai"
+            request, db, [t(request, "settings.error.ai_unknown_provider", kind=kind)], tab="ai"
         )
 
     form = await request.form()
@@ -1091,17 +1122,19 @@ async def update_ai_models(
     return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def _parse_optional_limit(raw: str, label: str, errors: list[str]) -> int | None:
+def _parse_optional_limit(
+    request: Request, raw: str, label: str, errors: list[str]
+) -> int | None:
     value = raw.strip()
     if value == "":
         return None
     try:
         parsed = int(value)
     except ValueError:
-        errors.append(f'The {label} limit "{value}" isn\'t a whole number of tokens.')
+        errors.append(t(request, "settings.error.token_limit_not_number", label=label, value=value))
         return None
     if parsed < 0:
-        errors.append(f"The {label} limit must not be negative.")
+        errors.append(t(request, "settings.error.token_limit_negative", label=label))
         return None
     return parsed
 
@@ -1116,9 +1149,15 @@ async def update_ai_limits(
 ) -> Response:
     app_settings = await get_or_create_app_settings(db)
     errors: list[str] = []
-    daily = _parse_optional_limit(ai_daily_token_limit, "daily", errors)
-    weekly = _parse_optional_limit(ai_weekly_token_limit, "weekly", errors)
-    monthly = _parse_optional_limit(ai_monthly_token_limit, "monthly", errors)
+    daily = _parse_optional_limit(
+        request, ai_daily_token_limit, t(request, "settings.ai.tokens_daily"), errors
+    )
+    weekly = _parse_optional_limit(
+        request, ai_weekly_token_limit, t(request, "settings.ai.tokens_weekly"), errors
+    )
+    monthly = _parse_optional_limit(
+        request, ai_monthly_token_limit, t(request, "settings.ai.tokens_monthly"), errors
+    )
     if errors:
         return await _render_settings(request, db, errors, tab="ai")
 
@@ -1152,7 +1191,7 @@ async def update_fleet_summary_settings(
         parsed_frequency = FleetSummaryFrequency(frequency)
     except ValueError:
         return await _render_settings(
-            request, db, [f'"{frequency}" is not a valid frequency.'], tab="ai"
+            request, db, [t(request, "settings.error.invalid_frequency", value=frequency)], tab="ai"
         )
 
     app_settings = await get_or_create_app_settings(db)
@@ -1164,7 +1203,7 @@ async def update_fleet_summary_settings(
             provider_id = uuid.UUID(provider_id_str)
         except ValueError:
             return await _render_settings(
-                request, db, ["Choose a model for the fleet summary first."], tab="ai"
+                request, db, [t(request, "settings.error.fleet_summary_needs_model")], tab="ai"
             )
         # Re-check that this provider+model really is enabled — never trust
         # the submitted pair just because the dropdown offered something.
@@ -1180,7 +1219,7 @@ async def update_fleet_summary_settings(
         )
         if result.first() is None:
             return await _render_settings(
-                request, db, ["That AI model isn't enabled for use."], tab="ai"
+                request, db, [t(request, "settings.error.ai_model_not_enabled")], tab="ai"
             )
         app_settings.fleet_summary_provider_id = provider_id
         app_settings.fleet_summary_model_id = model_id

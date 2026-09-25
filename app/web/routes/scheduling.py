@@ -40,7 +40,7 @@ from app.schemas.scheduled_task import ScheduledTaskCreate
 from app.schemas.scheduling_config import SchedulingConfigExport
 from app.services.access_scope import groups_visible_to, is_restricted, machines_visible_to
 from app.services.scheduling_config import export_scheduling_config, import_scheduling_config
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/scheduling", dependencies=[Depends(require_permission(Permission.SCHEDULING_VIEW))]
@@ -259,7 +259,7 @@ async def import_scheduling_config_submit(
             "scheduling/config_import.html",
             {
                 "csrf_token": request.state.csrf_token,
-                "errors": ["Paste some exported JSON text first."],
+                "errors": [t(request, "common.error.paste_json")],
                 "result": None,
             },
         )

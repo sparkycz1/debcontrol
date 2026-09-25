@@ -18,8 +18,9 @@
     </div>
   {% endif %}
 
-  {% if request.query_params.get('perm_error') %}
-    <div class="alert alert-error"><p>{{ request.query_params.get('perm_error') }}</p></div>
+  {% set perm_error = flash(request, 'perm_error') %}
+  {% if perm_error %}
+    <div class="alert alert-error"><p>{{ perm_error }}</p></div>
   {% endif %}
 
   <section class="panel">

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
-from urllib.parse import quote
 
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
@@ -50,7 +49,8 @@ from app.schemas.notification import (
 )
 from app.services.condition_fields import ALL_OPERATORS, CONDITION_FIELDS
 from app.services.notifications import default_template, send_test_notification
-from app.web.templating import templates
+from app.web.flash import read_flash, sign_flash
+from app.web.templating import t, templates
 
 # A rule starts with no condition rows at all — the "+ Add condition" button
 # on rule_form.html (app/web/static/js/notification-conditions.js) appends
@@ -575,7 +575,7 @@ async def edit_rule_form(
             },
             "csrf_token": csrf_token,
             "test_sent": request.query_params.get("test_sent") is not None,
-            "test_error": request.query_params.get("test_error"),
+            "test_error": read_flash(request, "test_error"),
             **_rule_form_context(rule),
         },
     )
@@ -615,7 +615,11 @@ async def test_rule(
         target_label=rule.name,
         details={"ok": ok, "channel": rule.delivery_channel},
     )
-    query = "test_sent=1" if ok else "test_error=" + quote(error or "Unknown error")
+    query = (
+        "test_sent=1"
+        if ok
+        else "test_error=" + sign_flash(error or t(request, "common.error.unknown"))
+    )
     return RedirectResponse(
         url=f"/notifications/rules/{rule_id}/edit?{query}",
         status_code=status.HTTP_303_SEE_OTHER,

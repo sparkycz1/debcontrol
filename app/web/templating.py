@@ -22,6 +22,7 @@ from app.i18n import translate as _translate
 from app.services import fleet_overview
 from app.web import charts
 from app.web.branding import favicon_href, logo_src
+from app.web.flash import read_flash
 from app.web.os_logos import badge_for
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -178,6 +179,7 @@ def t(request: Request, key: str, **kwargs: object) -> str:
 
 
 templates.env.globals["t"] = t
+templates.env.globals["flash"] = read_flash
 templates.env.globals["logo_src"] = logo_src
 templates.env.globals["favicon_href"] = favicon_href
 

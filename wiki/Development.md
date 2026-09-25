@@ -269,6 +269,25 @@ design. Two separate things:
    `account.*`, `common.*` for a string reused across areas) so a
    translator working from `en.json` alone can tell what a key is for.
 
+**Messages produced in a route, not a template** (form validation errors,
+"the background job did not respond in time", ...) go through the same
+keys, from Python:
+
+- A message only ever rendered on the page: `t(request, "area.error.x")`
+  (`from app.web.templating import t`). Convention: `<area>.error.<name>`,
+  or `common.error.<name>` when several areas share it.
+- A message that is *also* written to the audit log (`details={"error":
+  error}`): `LocalizedText(request, "area.error.x")` from
+  `app.web.messages` — a `str` whose value stays English (the audit log
+  is a stable, English trail) but which renders in the viewer's language
+  in a template.
+- A message carried across a POST → redirect in the query string
+  (`?bulk_error=...`): `sign_flash(t(request, ...))` from `app.web.flash`
+  when redirecting, and `read_flash(request, "bulk_error")` (or the
+  `flash(request, ...)` template global) when rendering. Never render a
+  raw query parameter as a message — a crafted link could otherwise put
+  any text into a trusted page.
+
 ## 📐 Project conventions
 
 - All code, comments, docstrings, commit messages, and documentation are
