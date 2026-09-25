@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 
@@ -26,7 +27,7 @@ def _check() -> EndpointCheck:
     )
 
 
-async def _seed(db_session_factory, oks: list[bool]) -> uuid.UUID:
+async def _seed(db_session_factory: Any, oks: list[bool]) -> uuid.UUID:
     now = datetime.now(UTC)
     async with db_session_factory() as session:
         check = _check()

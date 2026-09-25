@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 
@@ -13,7 +14,7 @@ from app.db.models.role import Permission
 from tests.test_api_v1_extended import _api_token
 
 
-async def _seed(db_session_factory) -> tuple[list[uuid.UUID], uuid.UUID, uuid.UUID]:
+async def _seed(db_session_factory: Any) -> tuple[list[uuid.UUID], uuid.UUID, uuid.UUID]:
     async with db_session_factory() as session:
         prod, dev = MachineGroup(name="prod"), MachineGroup(name="dev")
         session.add_all([prod, dev])
@@ -28,7 +29,7 @@ async def _seed(db_session_factory) -> tuple[list[uuid.UUID], uuid.UUID, uuid.UU
         return [m.id for m in machines], prod.id, dev.id
 
 
-async def _groups(db_session_factory) -> dict[str, uuid.UUID | None]:
+async def _groups(db_session_factory: Any) -> dict[str, uuid.UUID | None]:
     async with db_session_factory() as session:
         rows = (await session.execute(select(Machine.name, Machine.group_id))).all()
     return dict(rows)
