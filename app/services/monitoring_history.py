@@ -20,13 +20,21 @@ computed here from the delta between each consecutive pair of samples,
 before downsampling — a counter that went backwards (device/interface
 reset, e.g. a reboot) or a non-positive time delta yields a gap (`None`)
 for that point rather than a nonsensical negative or infinite rate.
+
+The builders below are pure functions; `load_machine_history` at the end
+is the one I/O helper — the DB query both the Monitoring tab and
+`GET /api/v1/machines/{id}/monitoring` run before handing rows to them.
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
@@ -512,3 +520,45 @@ def build_availability_history(
         latest_latency_ms=latest.latency_ms if latest else None,
         latest_checked_at=latest.checked_at if latest else None,
     )
+
+
+def normalize_range_key(range_key: str) -> str:
+    """`range_key` if it's one of `TIME_RANGES`'s keys, else the default —
+    an unrecognized value quietly falls back rather than erroring."""
+    valid = {key for key, _label, _delta in TIME_RANGES}
+    return range_key if range_key in valid else DEFAULT_TIME_RANGE
+
+
+async def load_machine_history(
+    db: AsyncSession, machine_id: uuid.UUID, range_key: str
+) -> tuple[MonitoringHistory, AvailabilityHistory]:
+    """Fetch one machine's monitoring and reachability samples inside the
+    window `range_key` names (oldest first, each capped at
+    `MAX_RAW_SAMPLES`) and downsample both. `range_key` must already be
+    normalized (`normalize_range_key`). Both queries are served by the
+    `(machine_id, sampled_at)`/`(machine_id, checked_at)` indexes."""
+    since = datetime.now(UTC) - time_range_delta(range_key)
+    result = await db.execute(
+        select(MachineMonitoringSample)
+        .where(
+            MachineMonitoringSample.machine_id == machine_id,
+            MachineMonitoringSample.sampled_at >= since,
+        )
+        .order_by(MachineMonitoringSample.sampled_at)
+        .limit(MAX_RAW_SAMPLES)
+    )
+    history = build_monitoring_history(list(result.scalars().all()), range_key)
+
+    reachability_result = await db.execute(
+        select(MachineReachabilitySample)
+        .where(
+            MachineReachabilitySample.machine_id == machine_id,
+            MachineReachabilitySample.checked_at >= since,
+        )
+        .order_by(MachineReachabilitySample.checked_at)
+        .limit(MAX_RAW_SAMPLES)
+    )
+    availability = build_availability_history(
+        list(reachability_result.scalars().all()), range_key
+    )
+    return history, availability

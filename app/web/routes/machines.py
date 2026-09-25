@@ -33,7 +33,6 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -1116,34 +1115,10 @@ async def machine_monitoring(
     for a bad query param."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
 
-    valid_range_keys = {key for key, _label, _delta in monitoring_history.TIME_RANGES}
-    if range_key not in valid_range_keys:
-        range_key = monitoring_history.DEFAULT_TIME_RANGE
-
-    since = datetime.now(UTC) - monitoring_history.time_range_delta(range_key)
-    result = await db.execute(
-        select(MachineMonitoringSample)
-        .where(
-            MachineMonitoringSample.machine_id == machine_id,
-            MachineMonitoringSample.sampled_at >= since,
-        )
-        .order_by(MachineMonitoringSample.sampled_at)
-        .limit(monitoring_history.MAX_RAW_SAMPLES)
+    range_key = monitoring_history.normalize_range_key(range_key)
+    history, availability = await monitoring_history.load_machine_history(
+        db, machine_id, range_key
     )
-    samples = list(result.scalars().all())
-    history = monitoring_history.build_monitoring_history(samples, range_key)
-
-    reachability_result = await db.execute(
-        select(MachineReachabilitySample)
-        .where(
-            MachineReachabilitySample.machine_id == machine_id,
-            MachineReachabilitySample.checked_at >= since,
-        )
-        .order_by(MachineReachabilitySample.checked_at)
-        .limit(monitoring_history.MAX_RAW_SAMPLES)
-    )
-    reachability_samples = list(reachability_result.scalars().all())
-    availability = monitoring_history.build_availability_history(reachability_samples, range_key)
 
     # One unified "Last checked" timestamp for the whole tab, replacing a
     # separate one under each of the CPU/RAM/disk/services sample and the

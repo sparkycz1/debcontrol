@@ -49,6 +49,7 @@ from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.role import Permission
 from app.db.session import get_db
+from app.services.settings_limits import BOUNDED_FIELDS
 from app.ssh.identity import (
     activate_pending_identity,
     discard_pending_identity,
@@ -215,7 +216,8 @@ async def update_background_checks(
     app_settings = await get_or_create_app_settings(db)
     errors: list[str] = []
 
-    def _field(raw: str, *, label: str, minimum: int, maximum: int) -> int | None:
+    def _field(raw: str, *, label: str, bounds: tuple[int, int]) -> int | None:
+        minimum, maximum = bounds
         value, error = _parse_bounded_int(
             request, raw, label=label, minimum=minimum, maximum=maximum
         )
@@ -226,44 +228,37 @@ async def update_background_checks(
     ssh_timeout = _field(
         ssh_connect_timeout,
         label=t(request, "settings.checks.ssh_connect_timeout"),
-        minimum=1,
-        maximum=300,
+        bounds=BOUNDED_FIELDS["ssh_connect_timeout"],
     )
     update_timeout = _field(
         update_timeout_seconds,
         label=t(request, "settings.checks.update_timeout"),
-        minimum=60,
-        maximum=14400,
+        bounds=BOUNDED_FIELDS["update_timeout_seconds"],
     )
     reachability_interval = _field(
         reachability_check_interval_seconds,
         label=t(request, "settings.checks.reachability_check"),
-        minimum=5,
-        maximum=86400,
+        bounds=BOUNDED_FIELDS["reachability_check_interval_seconds"],
     )
     facts_interval = _field(
         facts_refresh_interval_seconds,
         label=t(request, "settings.checks.facts_refresh"),
-        minimum=60,
-        maximum=604800,
+        bounds=BOUNDED_FIELDS["facts_refresh_interval_seconds"],
     )
     monitoring_interval = _field(
         monitoring_interval_seconds,
         label=t(request, "settings.checks.monitoring_sample"),
-        minimum=10,
-        maximum=86400,
+        bounds=BOUNDED_FIELDS["monitoring_interval_seconds"],
     )
     concurrency = _field(
         reachability_check_concurrency,
         label=t(request, "settings.checks.reachability_concurrency"),
-        minimum=1,
-        maximum=1000,
+        bounds=BOUNDED_FIELDS["reachability_check_concurrency"],
     )
     condition_check_interval = _field(
         notification_condition_check_interval_seconds,
         label=t(request, "settings.checks.condition_check_interval"),
-        minimum=10,
-        maximum=86400,
+        bounds=BOUNDED_FIELDS["notification_condition_check_interval_seconds"],
     )
 
     if errors:
@@ -568,8 +563,8 @@ async def update_monitoring_downsampling(
         request,
         interval_minutes,
         label=t(request, "settings.checks.downsample_interval_minutes"),
-        minimum=1,
-        maximum=1440,
+        minimum=BOUNDED_FIELDS["monitoring_downsample_interval_minutes"][0],
+        maximum=BOUNDED_FIELDS["monitoring_downsample_interval_minutes"][1],
     )
     if interval_error:
         return await _render_settings(request, db, [interval_error], tab="checks")

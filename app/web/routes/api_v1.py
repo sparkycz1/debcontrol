@@ -20,11 +20,10 @@ the AI assistant's provider credentials are excluded for the reasons given
 in wiki/Architecture.md's "The REST API: read and write, mirroring the web
 UI" section — each one is either a secret/credential surface or carries a
 lock-out/blast-radius risk that's meant to be handled deliberately, by a
-human, not scriptable. Notifications (`/notifications` — rules, user
-groups, templates; see wiki/Architecture.md's "Notifications" section) is
-excluded for a simpler reason: it's new this round and web-UI-only for now,
-the same way SMTP settings started out — a REST equivalent is a reasonable
-follow-up, not a deliberate permanent exclusion. The interactive SSH terminal
+human, not scriptable. (Notifications, endpoint checks, and the
+operational part of Settings have their own routers —
+`api_v1_notifications.py`, `api_v1_checks.py`, `api_v1_settings.py`.)
+The interactive SSH terminal
 (`app/web/routes/terminal_ws.py`, and likewise the Logs tab's live-follow
 stream in `logs_ws.py`) and the AI assistant's chat
 (`app/web/routes/ai.py`) are excluded for a different reason: both are
@@ -54,6 +53,7 @@ import asyncio
 import contextlib
 import re
 import uuid
+from dataclasses import asdict
 from datetime import datetime
 
 # NOT the builtin `TimeoutError` — `celery.exceptions.TimeoutError` does not
@@ -61,6 +61,7 @@ from datetime import datetime
 # would silently never match.
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -86,6 +87,7 @@ from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
+from app.services import monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     can_see_machine,
@@ -576,6 +578,98 @@ async def list_machine_update_runs_api(
         "page": page,
         "has_older": has_older,
     }
+
+
+@router.get("/machines/{machine_id}/update-runs/{run_id}", dependencies=[_view_machines])
+async def get_machine_update_run_api(
+    machine_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """One update run — what a script polls after `POST .../updates` until
+    `status` is no longer `pending`/`running`."""
+    await _get_machine_or_404(machine_id, db, user)
+    run = await db.get(MachineUpdateRun, run_id)
+    if run is None or run.machine_id != machine_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return _update_run_to_dict(run)
+
+
+@router.get("/machines/{machine_id}/monitoring", dependencies=[_view_machines])
+async def get_machine_monitoring_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    range_key: str = Query(
+        monitoring_history.DEFAULT_TIME_RANGE,
+        description="One of " + ", ".join(k for k, _l, _d in monitoring_history.TIME_RANGES),
+    ),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The Monitoring tab's trend graphs as data: CPU/RAM/load, network and
+    disk I/O rates, filesystem usage and availability/latency, downsampled
+    to ~150 points over `range_key` (`bucket_timestamps` is the shared X
+    axis), plus the latest raw readings. `/hardware` has the rest of the
+    tab (S.M.A.R.T., Docker, sensors)."""
+    await _get_machine_or_404(machine_id, db, user)
+    range_key = monitoring_history.normalize_range_key(range_key)
+    history, availability = await monitoring_history.load_machine_history(
+        db, machine_id, range_key
+    )
+    encoded: dict[str, object] = jsonable_encoder(
+        {"monitoring": asdict(history), "availability": asdict(availability)}
+    )
+    return {"range_key": range_key, **encoded}
+
+
+@router.post("/machines/{machine_id}/monitoring/refresh", dependencies=[_manage_machines])
+async def refresh_monitoring_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The Monitoring tab's "Refresh now": a fresh monitoring sample,
+    reachability check and services snapshot, waited for together."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    app_settings = await get_or_create_app_settings(db)
+
+    monitoring_result = tasks.sample_machine_monitoring.delay(str(machine.id))
+    reachability_result = tasks.check_machine_reachability_now.delay(str(machine.id))
+    services_result = tasks.refresh_machine_services.delay(str(machine.id))
+    error: str | None = None
+    try:
+        results = await asyncio.gather(
+            asyncio.to_thread(
+                monitoring_result.get, timeout=app_settings.ssh_connect_timeout + 30
+            ),
+            asyncio.to_thread(
+                reachability_result.get, timeout=app_settings.ssh_connect_timeout + 15
+            ),
+            asyncio.to_thread(services_result.get, timeout=app_settings.ssh_connect_timeout + 15),
+        )
+        for result in results:
+            if isinstance(result, dict) and not result.get("ok"):
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The background job did not respond in time."
+    except Exception as exc:
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.monitoring.refresh",
+        summary=f'Refreshed monitoring for "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"ok": True}
 
 
 # --- Machines: writes --------------------------------------------------------

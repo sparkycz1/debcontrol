@@ -182,6 +182,8 @@ group / "All machines") needs root on the target and can run long:
 - **Live output** — `run_system_update` reads stdout incrementally
   instead of buffering it all, writing to the run row every ~2s — what
   makes the page's own 3s poll show progress instead of a static spinner.
+  A script does the same with `GET /api/v1/machines/{id}/update-runs/{run_id}`
+  until `status` leaves `pending`/`running`.
 
 ### Previewing a manual update before it runs
 
@@ -358,7 +360,12 @@ Not running, or accounting off → `N/A`, not zero. The Monitoring tab's
 ### Monitoring tab layout
 
 A two-column grid of chart cards (one column below ~1000px), modeled on
-Beszel's system page, then full-width tables:
+Beszel's system page, then full-width tables. The same downsampled series
+are available as JSON at `GET /api/v1/machines/{id}/monitoring?range_key=24h`
+(one shared `bucket_timestamps` X axis; `range_key` is `1h`/`24h`/`7d`/
+`30d`/`90d`), and "Refresh now" at `POST /api/v1/machines/{id}/monitoring/refresh`
+— both through `app.services.monitoring_history.load_machine_history`,
+the same query the tab runs.
 
 - **CPU usage**, **Memory usage**, **Disk usage** (per mount), **Disk I/O**
   and **Network** (read/write and received/sent as separate series per

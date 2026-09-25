@@ -1322,6 +1322,8 @@
     "checks.error.numbers_only": "Do číselných polí patří jen čísla.",
     "ai.error.empty_message": "Nejdřív napiš zprávu.",
     "ai.error.provider_disabled": "AI poskytovatel této konverzace už není povolen.",
-    "ai.error.action_handled": "Tato akce už byla vyřízena."
+    "ai.error.action_handled": "Tato akce už byla vyřízena.",
+    "notifications.error.rule_name_taken": "Notifikační pravidlo s názvem \"{name}\" už existuje.",
+    "notifications.error.template_name_taken": "Šablona s názvem \"{name}\" už existuje."
   }
 }

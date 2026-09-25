@@ -225,7 +225,7 @@ template_name: High CPU alert
 `NotificationCustomTemplate.name` or the import fails with a clear error
 rather than silently dropping it.
 
-Same web-UI-only scope as the rest of this page — see "REST API" below.
+The REST API reads and writes rules in exactly this shape — see "REST API" below.
 
 ## Placeholders: variables usable in a template
 
@@ -431,8 +431,25 @@ troubleshooting log, not an audit trail.
 
 ## REST API
 
-Deliberately web-UI-only this round (see `api_v1.py`'s module docstring)
-— rules and templates are only reachable through the web UI today. This
-is new-and-not-yet-extended, not a permanent policy decision
-the way SSH key rotation or LDAP/OIDC config are: a REST equivalent is a
-reasonable, expected follow-up once there's a concrete need for it.
+`/api/v1/notifications/...` (`app/web/routes/api_v1_notifications.py`)
+mirrors this page with the same permissions (`notification.view` to read,
+`notification.manage` to change) and audit action codes. Rule validation
+and saving is shared with the web form and YAML import
+(`app.services.notification_rules`), so the two can't drift.
+
+| Method & path | What it does |
+|---|---|
+| `GET /rules`, `GET /rules/{id}` | Rules in the portable YAML-export shape above, plus `id` |
+| `POST /rules` | Create one (409 if the name exists) |
+| `PUT /rules/{id}` | Replace one — every field, like the form; a different `name` renames it |
+| `DELETE /rules/{id}` | Delete |
+| `POST /rules/import` | The YAML import as a JSON list: upsert by name, all or nothing |
+| `POST /rules/{id}/test` | "Send test" — email goes only to the token owner |
+| `GET /history?rule_id=&limit=&offset=` | Delivery history, newest first |
+| `GET /templates` | Every event's effective subject/body, `is_override` |
+| `PUT /templates/{event_type}`, `DELETE /templates/{event_type}` | Override / reset to default |
+| `GET/POST /custom-templates`, `PUT/DELETE /custom-templates/{id}` | Named custom templates |
+
+A fetched rule can be edited and `PUT` straight back, or `POST`ed to
+another instance — recipients, scope and template are referenced by
+email/name, never by database id.

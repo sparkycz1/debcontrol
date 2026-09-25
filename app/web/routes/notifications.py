@@ -6,9 +6,9 @@ of the rule's target roles — no separate notification-only grouping
 concept) and `app.services.notifications` for how a rule actually turns
 into a sent email.
 
-Web-UI-only this round, same as LDAP/OIDC/syslog config (see
-`api_v1.py`'s module docstring) — a REST equivalent is a reasonable
-follow-up, not included here.
+The REST equivalent is `app/web/routes/api_v1_notifications.py`; rule
+validation/persistence shared by both lives in
+`app.services.notification_rules`.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -42,12 +42,19 @@ from app.db.models.role import Permission, Role
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.notification import (
-    NotificationConditionCreate,
     NotificationCustomTemplateCreate,
     NotificationRuleCreate,
     NotificationTemplateUpdate,
 )
 from app.services.condition_fields import ALL_OPERATORS, CONDITION_FIELDS
+from app.services.notification_rules import (
+    apply_portable_rule,
+    build_conditions_and_event_types,
+    rule_to_portable_dict,
+)
+from app.services.notification_rules import (
+    delete_custom_template as delete_custom_template_row,
+)
 from app.services.notifications import default_template, send_test_notification
 from app.web.flash import read_flash, sign_flash
 from app.web.templating import t, templates
@@ -254,29 +261,6 @@ def _parse_conditions_yaml_block(text: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _build_conditions_and_event_types(
-    event_types: list[str],
-    raw_conditions: list[dict[str, Any]],
-) -> tuple[list[str], list[NotificationConditionCreate]]:
-    """Validates `raw_conditions` against the field registry and, if any
-    survive, adds `CONDITION_MATCHED` to `event_types` automatically — a
-    rule with conditions is always dispatched through the same
-    `notify()`/`_matching_rules` path as an event-type rule (see
-    `NotificationEventType.CONDITION_MATCHED`'s docstring), so the admin
-    never has to remember to check that box themselves. Raises `ValueError`
-    (surfaced as a form error) on the first invalid condition."""
-    conditions: list[NotificationConditionCreate] = []
-    for raw in raw_conditions:
-        try:
-            conditions.append(NotificationConditionCreate(**raw))
-        except Exception as exc:
-            raise ValueError(f'Invalid condition "{raw.get("field")}": {exc}') from exc
-    updated_event_types = list(event_types)
-    if conditions and NotificationEventType.CONDITION_MATCHED.value not in updated_event_types:
-        updated_event_types.append(NotificationEventType.CONDITION_MATCHED.value)
-    return updated_event_types, conditions
-
-
 def _parse_ids(raw_ids: list[str]) -> list[uuid.UUID]:
     """Parsed and de-duplicated, dropping anything unparseable — same
     "a tampered/stale id is rejected, not silently trusted" reasoning
@@ -474,7 +458,7 @@ async def create_rule(
         )
 
     try:
-        resolved_event_types, conditions = _build_conditions_and_event_types(
+        resolved_event_types, conditions = build_conditions_and_event_types(
             event_types, raw_conditions
         )
     except ValueError as exc:
@@ -532,7 +516,7 @@ async def create_rule(
         await db.rollback()
         rows = raw_conditions + [_condition_row() for _ in range(_BLANK_CONDITION_ROWS)]
         return await _rerender(
-            [f'A notification rule named "{payload.name}" already exists.'],
+            [t(request, "notifications.error.rule_name_taken", name=payload.name)],
             status.HTTP_409_CONFLICT,
             rows,
         )
@@ -711,7 +695,7 @@ async def update_rule(
         )
 
     try:
-        resolved_event_types, conditions = _build_conditions_and_event_types(
+        resolved_event_types, conditions = build_conditions_and_event_types(
             event_types, raw_conditions
         )
     except ValueError as exc:
@@ -767,7 +751,7 @@ async def update_rule(
         await db.rollback()
         rows = raw_conditions + [_condition_row() for _ in range(_BLANK_CONDITION_ROWS)]
         return await _rerender(
-            [f'A notification rule named "{payload.name}" already exists.'],
+            [t(request, "notifications.error.rule_name_taken", name=payload.name)],
             status.HTTP_409_CONFLICT,
             rows,
         )
@@ -813,144 +797,9 @@ async def delete_rule(
 # and re-imported into another. Import upserts by `name` (the same unique
 # key `NotificationRule.name` already enforces), so re-importing an
 # unmodified export is a no-op and editing the YAML and re-importing is
-# "update in place." See `wiki/Notifications.md`'s "Condition-based rules"
-# section for the full shape and an example.
-
-
-def _rule_to_yaml_dict(rule: NotificationRule) -> dict[str, Any]:
-    return {
-        "name": rule.name,
-        "description": rule.description,
-        "enabled": rule.enabled,
-        "event_types": [
-            e.value for e in rule.event_type_enums if e != NotificationEventType.CONDITION_MATCHED
-        ],
-        "conditions": [
-            {
-                "field": c.field,
-                "operator": c.operator,
-                "value": c.value,
-                **({"mount_point": c.mount_point} if c.mount_point else {}),
-                **(
-                    {"sustained_seconds": c.sustained_seconds}
-                    if c.sustained_seconds
-                    else {}
-                ),
-            }
-            for c in rule.conditions
-        ],
-        "recipients": {
-            "users": [u.email for u in rule.users if u.email],
-            "roles": [r.name for r in rule.roles],
-        },
-        "scope": {
-            "machines": [m.name for m in rule.machines],
-            "machine_groups": [g.name for g in rule.machine_groups],
-        },
-        "delivery_channel": rule.delivery_channel,
-        **({"webhook_url": rule.webhook_url} if rule.webhook_url else {}),
-        **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
-    }
-
-
-async def _apply_yaml_rule(db: AsyncSession, data: dict[str, Any]) -> tuple[NotificationRule, bool]:
-    """Upserts one rule from a parsed YAML dict (`_rule_to_yaml_dict`'s
-    shape) — matched by `name`. Returns `(rule, created)`. Raises
-    `ValueError` on anything invalid; the caller rolls back the whole
-    import on the first bad rule rather than leaving a partial import
-    applied."""
-    if not isinstance(data, dict) or not data.get("name"):
-        raise ValueError("Each rule needs at least a \"name\".")
-
-    result = await db.execute(select(NotificationRule).where(NotificationRule.name == data["name"]))
-    rule = result.scalar_one_or_none()
-    created = rule is None
-    if rule is None:
-        rule = NotificationRule(name=data["name"])
-
-    raw_conditions = [dict(c) for c in (data.get("conditions") or [])]
-    event_types = [str(e) for e in (data.get("event_types") or [])]
-    try:
-        resolved_event_types, conditions = _build_conditions_and_event_types(
-            event_types, raw_conditions
-        )
-        payload = NotificationRuleCreate(
-            name=data["name"],
-            description=data.get("description") or None,
-            enabled=bool(data.get("enabled", True)),
-            event_types=resolved_event_types,
-            delivery_channel=str(data.get("delivery_channel") or "email"),
-            webhook_url=(str(data["webhook_url"]) if data.get("webhook_url") else None),
-        )
-    except ValueError as exc:
-        raise ValueError(f'Rule "{data["name"]}": {exc}') from exc
-
-    rule.description = payload.description
-    rule.enabled = payload.enabled
-    rule.event_types = payload.event_types
-    rule.delivery_channel = payload.delivery_channel
-    rule.webhook_url = payload.webhook_url
-
-    template_name = data.get("template_name")
-    if template_name:
-        template_result = await db.execute(
-            select(NotificationCustomTemplate).where(
-                NotificationCustomTemplate.name == str(template_name)
-            )
-        )
-        custom_template = template_result.scalar_one_or_none()
-        if custom_template is None:
-            raise ValueError(
-                f'Rule "{data["name"]}": no custom template named "{template_name}".'
-            )
-        rule.custom_template_id = custom_template.id
-    else:
-        rule.custom_template_id = None
-
-    rule.conditions = [
-        NotificationCondition(
-            field=c.field,
-            operator=c.operator,
-            value=c.value,
-            mount_point=c.mount_point,
-            sustained_seconds=c.sustained_seconds,
-        )
-        for c in conditions
-    ]
-
-    recipients = data.get("recipients") or {}
-    emails = [str(e) for e in (recipients.get("users") or [])]
-    role_names = [str(r) for r in (recipients.get("roles") or [])]
-    if emails:
-        user_result = await db.execute(select(User).where(User.email.in_(emails)))
-        rule.users = list(user_result.scalars().all())
-    else:
-        rule.users = []
-    if role_names:
-        role_result = await db.execute(select(Role).where(Role.name.in_(role_names)))
-        rule.roles = list(role_result.scalars().all())
-    else:
-        rule.roles = []
-
-    scope = data.get("scope") or {}
-    machine_names = [str(m) for m in (scope.get("machines") or [])]
-    group_names = [str(g) for g in (scope.get("machine_groups") or [])]
-    if machine_names:
-        machine_result = await db.execute(select(Machine).where(Machine.name.in_(machine_names)))
-        rule.machines = list(machine_result.scalars().all())
-    else:
-        rule.machines = []
-    if group_names:
-        group_result = await db.execute(
-            select(MachineGroup).where(MachineGroup.name.in_(group_names))
-        )
-        rule.machine_groups = list(group_result.scalars().all())
-    else:
-        rule.machine_groups = []
-
-    if created:
-        db.add(rule)
-    return rule, created
+# "update in place." The shape and the upsert live in
+# `app.services.notification_rules` (shared with the REST API); see
+# `wiki/Notifications.md`'s "Condition-based rules" section for an example.
 
 
 @router.get("/rules/{rule_id}/export")
@@ -958,7 +807,7 @@ async def export_rule(
     request: Request, rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
-    text = yaml.safe_dump(_rule_to_yaml_dict(rule), sort_keys=False, allow_unicode=True)
+    text = yaml.safe_dump(rule_to_portable_dict(rule), sort_keys=False, allow_unicode=True)
     return Response(content=text, media_type="application/yaml")
 
 
@@ -976,7 +825,7 @@ async def export_all_rules(request: Request, db: AsyncSession = Depends(get_db))
     )
     rules = result.scalars().all()
     text = yaml.safe_dump(
-        [_rule_to_yaml_dict(r) for r in rules], sort_keys=False, allow_unicode=True
+        [rule_to_portable_dict(r) for r in rules], sort_keys=False, allow_unicode=True
     )
     return Response(content=text, media_type="application/yaml")
 
@@ -1025,7 +874,7 @@ async def import_rules(
     updated_count = 0
     try:
         for entry in entries:
-            _rule, created = await _apply_yaml_rule(db, entry)
+            _rule, created = await apply_portable_rule(db, entry)
             created_count += 1 if created else 0
             updated_count += 0 if created else 1
         await db.commit()
@@ -1301,7 +1150,7 @@ async def create_custom_template(
     except IntegrityError:
         await db.rollback()
         return await _rerender(
-            [f'A template named "{payload.name}" already exists.'],
+            [t(request, "notifications.error.template_name_taken", name=payload.name)],
             status.HTTP_409_CONFLICT,
         )
     await db.refresh(template)
@@ -1380,7 +1229,7 @@ async def update_custom_template(
     except IntegrityError:
         await db.rollback()
         return await _rerender(
-            [f'A template named "{payload.name}" already exists.'],
+            [t(request, "notifications.error.template_name_taken", name=payload.name)],
             status.HTTP_409_CONFLICT,
         )
 
@@ -1404,20 +1253,7 @@ async def delete_custom_template(
 ) -> Response:
     template = await _get_custom_template_or_404(template_id, db)
     name = template.name
-    # Any rule using this template falls back to its per-event
-    # default/override rather than being blocked or broken. Done explicitly
-    # here (not left to the FK's `ondelete="SET NULL"` alone) since that's
-    # a database-level action SQLite — the test suite's own database
-    # (`tests/conftest.py`) — never enforces without an explicit `PRAGMA
-    # foreign_keys=ON` this app doesn't set; Postgres would apply it too,
-    # but this keeps behavior identical on both.
-    await db.execute(
-        update(NotificationRule)
-        .where(NotificationRule.custom_template_id == template_id)
-        .values(custom_template_id=None)
-    )
-    await db.delete(template)
-    await db.commit()
+    await delete_custom_template_row(db, template)
     await log_event(
         db,
         request=request,

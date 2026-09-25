@@ -1322,6 +1322,8 @@
     "checks.error.numbers_only": "Numbers only in the numeric fields.",
     "ai.error.empty_message": "Write a message first.",
     "ai.error.provider_disabled": "This conversation's AI provider is no longer enabled.",
-    "ai.error.action_handled": "That action has already been handled."
+    "ai.error.action_handled": "That action has already been handled.",
+    "notifications.error.rule_name_taken": "A notification rule named \"{name}\" already exists.",
+    "notifications.error.template_name_taken": "A template named \"{name}\" already exists."
   }
 }

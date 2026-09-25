@@ -13,9 +13,9 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audit import log_event
+from app.audit import log_event, verify_chain
 from app.auth.dependencies import require_api_permission
-from app.db.models.audit_log import AuditLogEntry
+from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.web.audit_search import apply_audit_filters
@@ -24,6 +24,8 @@ from app.web.routes.audit import _EXPORT_FIELDS, _csv_safe, _entry_to_export_row
 router = APIRouter(prefix="/api/v1/audit")
 
 _view = Depends(require_api_permission(Permission.AUDIT_VIEW))
+# Same permission the Settings page's "Verify now" button needs.
+_verify = Depends(require_api_permission(Permission.SETTINGS_MANAGE))
 
 _PAGE_SIZE = 50
 
@@ -121,3 +123,28 @@ async def export_audit_log_api(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="audit-log-{timestamp}.csv"'},
     )
+
+
+@router.post("/verify", dependencies=[_verify])
+async def verify_audit_chain_api(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """Recompute the audit log's hash chain now — Settings → Security's
+    "Verify now", with the same `settings.manage` permission. `ok` is
+    false (and `broken_at_sequence` set) if an entry was altered or
+    removed. Recorded as `audit_log.verify` like the button."""
+    result = await verify_chain(db)
+    await log_event(
+        db,
+        request=request,
+        action="audit_log.verify",
+        summary=f"Verified audit log hash chain: {result.message}",
+        outcome=AuditOutcome.SUCCESS if result.ok else AuditOutcome.FAILURE,
+        details={"checked": result.checked, "broken_at_sequence": result.broken_at_sequence},
+    )
+    return {
+        "ok": result.ok,
+        "checked": result.checked,
+        "broken_at_sequence": result.broken_at_sequence,
+        "message": result.message,
+    }
