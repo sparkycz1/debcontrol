@@ -37,6 +37,20 @@ MAX_LINE_LIMIT = 5000
 # checked before a name ever reaches the machine, on top of quoting it.
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$")
 DOCKER_NO_ACCESS_MARKER = "@@NOACCESS"
+# Sets `$D` to a working docker invocation — plain `docker` for an account
+# in the `docker` group, else `sudo -n <docker path>` when a sudoers rule
+# allows exactly that binary (onboarding adds one when Docker is present) —
+# or prints DOCKER_NO_ACCESS_MARKER and stops. Shared by every Docker
+# command this app runs outside the monitoring sample (logs, container
+# actions, image update checks).
+DOCKER_ACCESS_PROBE = (
+    "D=docker; "
+    "if ! docker ps -q >/dev/null 2>&1; then "
+    'DP="$(command -v docker)"; '
+    'if [ -n "$DP" ] && sudo -n -l "$DP" >/dev/null 2>&1; then D="sudo -n $DP"; '
+    f"else echo {DOCKER_NO_ACCESS_MARKER}; exit 0; fi; "
+    "fi; "
+)
 
 
 class LogAccessError(Exception):
@@ -211,15 +225,7 @@ def build_docker_logs_command(
     logs = f"$D logs {' '.join(options)} {shlex.quote(container)} 2>&1"
     if search.strip():
         logs += f" | grep -F -- {shlex.quote(search.strip())} | tail -n {clamped}"
-    return (
-        "D=docker; "
-        "if ! docker ps -q >/dev/null 2>&1; then "
-        'DP="$(command -v docker)"; '
-        'if [ -n "$DP" ] && sudo -n -l "$DP" >/dev/null 2>&1; then D="sudo -n $DP"; '
-        f"else echo {DOCKER_NO_ACCESS_MARKER}; exit 0; fi; "
-        "fi; "
-        f"{logs}"
-    )
+    return f"{DOCKER_ACCESS_PROBE}{logs}"
 
 
 async def view_docker_logs(

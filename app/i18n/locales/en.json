@@ -1166,6 +1166,15 @@
     "machine.logs.show": "Show logs",
     "machine.logs.line_count": "{count} lines",
     "machine.logs.wrap": "Wrap lines",
-    "machine.logs.to_bottom": "Jump to end"
+    "machine.logs.to_bottom": "Jump to end",
+    "monitoring.containers.actions": "Actions",
+    "monitoring.containers.action_start": "Start",
+    "monitoring.containers.action_stop": "Stop",
+    "monitoring.containers.action_restart": "Restart",
+    "monitoring.containers.confirm_start": "Start container \"{name}\"?",
+    "monitoring.containers.confirm_stop": "Stop container \"{name}\"? Whatever it serves goes down until it's started again.",
+    "monitoring.containers.confirm_restart": "Restart container \"{name}\"? It will be briefly unavailable.",
+    "monitoring.containers.action_done": "{action}: {name} — done.",
+    "monitoring.containers.action_failed": "{action}: {name} failed."
   }
 }

@@ -107,7 +107,9 @@ from app.services.machine_tags import (
 )
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
+from app.ssh.containers import CONTAINER_ACTIONS
 from app.ssh.exceptions import SSHConnectionError
+from app.ssh.logs import is_container_name_valid
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.tasks import jobs as tasks
@@ -1021,6 +1023,59 @@ async def recheck_readiness_api(
     with contextlib.suppress(Exception):
         await asyncio.to_thread(async_result.get, timeout=app_settings.ssh_connect_timeout + 15)
     return {"ok": True}
+
+
+@router.post(
+    "/machines/{machine_id}/containers/{container}/{action}", dependencies=[_action_power]
+)
+async def container_action_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    container: str,
+    action: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Start/stop/restart one Docker container — the API equivalent of the
+    Monitoring tab's container actions, same `action.power` permission."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if action not in CONTAINER_ACTIONS or not is_container_name_valid(container):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    app_settings = await get_or_create_app_settings(db)
+
+    output = ""
+    error: str | None = None
+    try:
+        async_result = tasks.run_container_action_task.delay(
+            str(machine.id), action=action, container=container
+        )
+        result = await asyncio.to_thread(
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 90
+        )
+        if isinstance(result, dict):
+            if result.get("ok"):
+                output = str(result.get("output") or "")
+            else:
+                error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The command did not finish in time."
+    except Exception as exc:
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action=f"machine.container.{action}",
+        summary=f'Container "{container}" {action} on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"container": container, **({"error": error} if error else {})},
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"ok": True, "output": output}
 
 
 @router.get("/machines/{machine_id}/logs", dependencies=[_action_terminal])

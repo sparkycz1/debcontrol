@@ -61,6 +61,7 @@ from app.services.live_updates import (
 )
 from app.services.notifications import _rule_matches_scope, notify
 from app.ssh.client import test_connection
+from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
@@ -354,6 +355,47 @@ def view_machine_docker_logs(
             machine_id, container=container, lines=lines, search=search, since=since, until=until
         )
     )
+
+
+async def _run_container_action(machine_id: str, *, action: str, container: str) -> dict[str, Any]:
+    """Start/stop/restart one container (app.ssh.containers), then enqueue a
+    fresh monitoring sample so the Monitoring tab's container table shows
+    the new state without waiting for the next sweep."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            output = await run_container_action(
+                machine,
+                secret,
+                app_settings.ssh_connect_timeout,
+                action=action,
+                container=container,
+            )
+        except ContainerActionError as exc:
+            return {"ok": False, "error": str(exc)}
+        except SSHConnectionError as exc:
+            logger.warning("run_container_action failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+    sample_machine_monitoring.delay(machine_id)
+    return {"ok": True, "output": output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.run_container_action",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def run_container_action_task(machine_id: str, *, action: str, container: str) -> dict[str, Any]:
+    return asyncio.run(_run_container_action(machine_id, action=action, container=container))
 
 
 async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:

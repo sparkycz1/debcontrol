@@ -9,6 +9,7 @@ import io
 import re
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
 # NOT the builtin `TimeoutError` — `celery.exceptions.TimeoutError` does not
 # subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
@@ -71,7 +72,9 @@ from app.services.saved_views import (
 )
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
+from app.ssh.containers import CONTAINER_ACTIONS
 from app.ssh.exceptions import SSHConnectionError
+from app.ssh.logs import is_container_name_valid
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.ssh.updates import PendingPackage
@@ -2678,6 +2681,63 @@ async def machine_logs_browse(
             "error": error,
             "allowed_paths": allowed_paths,
         },
+    )
+
+
+@router.post(
+    "/{machine_id}/containers/{container}/{action}",
+    dependencies=[_power, Depends(verify_csrf)],
+)
+async def container_action_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    container: str,
+    action: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Start/stop/restart one Docker container from the Monitoring tab's
+    container table. Same `action.power` permission as reboot/shutdown —
+    stopping a service's container is the same kind of disruptive action.
+    Waits for docker's own answer, then redirects back with the outcome."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if action not in CONTAINER_ACTIONS or not is_container_name_valid(container):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    app_settings = await get_or_create_app_settings(db)
+
+    error: str | None = None
+    try:
+        async_result = tasks.run_container_action_task.delay(
+            str(machine.id), action=action, container=container
+        )
+        result = await asyncio.to_thread(
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 90
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The command did not finish in time."
+    except Exception as exc:
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action=f"machine.container.{action}",
+        summary=f'Container "{container}" {action} on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"container": container, **({"error": error} if error else {})},
+    )
+
+    query = {"container": container, "container_action": action}
+    if error is not None:
+        query["container_error"] = error[:300]
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 

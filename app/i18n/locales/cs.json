@@ -1166,6 +1166,15 @@
     "machine.logs.show": "Zobrazit logy",
     "machine.logs.line_count": "{count} řádků",
     "machine.logs.wrap": "Zalomit řádky",
-    "machine.logs.to_bottom": "Na konec"
+    "machine.logs.to_bottom": "Na konec",
+    "monitoring.containers.actions": "Akce",
+    "monitoring.containers.action_start": "Spustit",
+    "monitoring.containers.action_stop": "Zastavit",
+    "monitoring.containers.action_restart": "Restartovat",
+    "monitoring.containers.confirm_start": "Spustit kontejner „{name}“?",
+    "monitoring.containers.confirm_stop": "Zastavit kontejner „{name}“? Co obsluhuje, bude nedostupné, dokud ho znovu nespustíte.",
+    "monitoring.containers.confirm_restart": "Restartovat kontejner „{name}“? Na chvíli bude nedostupný.",
+    "monitoring.containers.action_done": "{action}: {name} — hotovo.",
+    "monitoring.containers.action_failed": "{action}: {name} se nepovedlo."
   }
 }

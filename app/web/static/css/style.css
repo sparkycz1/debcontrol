@@ -1793,6 +1793,18 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 .table-muted { color: var(--color-muted); }
 .table-summary { margin: 0.15rem 0 0; color: var(--color-muted); font-size: 0.85rem; }
 .cell-truncate { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.container-actions { white-space: nowrap; }
+.container-actions .inline-form + .inline-form { margin-left: var(--space-1); }
+
+/* Text for screen readers only (e.g. a table's actions column header). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 
 /* A row whose first cell opens a side drawer (S.M.A.R.T. detail). */
 .row-link {

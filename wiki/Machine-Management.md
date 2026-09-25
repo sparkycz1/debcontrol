@@ -405,6 +405,19 @@ namespace (`/proc/<pid>/net/dev`, exact counters) and only fall back to
 `docker stats`' rounded NetIO when that file isn't readable.
 Host-network containers are skipped there (their namespace is the host's).
 
+**Container actions.** With `action.power` (the same permission as
+reboot/shutdown — stopping a service's container is the same kind of
+disruptive action), each row of the container table has **Restart** and
+**Stop** (running containers) or **Start** (stopped ones), each behind a
+confirmation dialog. `POST /machines/{id}/containers/{name}/{action}`
+(`app/ssh/containers.py`) validates the name against Docker's naming rule
+and the action against `start`/`stop`/`restart` before anything reaches
+the machine, runs it through the same Docker access probe, waits for
+docker's answer (its own exit status, echoed back — not the SSH channel's),
+audit-logs `machine.container.<action>`, enqueues a fresh monitoring sample
+so the table catches up, and redirects back with the outcome. REST:
+`POST /api/v1/machines/{id}/containers/{name}/{action}`.
+
 The latest full container list is kept once on `Machine.docker_containers`;
 each sample stores only the numbers the charts need
 (`MachineMonitoringSample.docker_stats`), so image names and port lists
