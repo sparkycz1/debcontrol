@@ -103,6 +103,7 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.services.machine_grouping import assign_machines_to_group
 from app.services.machine_tags import (
     add_tags_to_machines,
     normalize_tag_names,
@@ -1479,6 +1480,52 @@ async def bulk_power_action_api(
         details={"skipped": skipped},
     )
     return {"machine_count": len(machines), "skipped": skipped}
+
+
+class _BulkGroup(_BulkMachineIds):
+    # `null` = take the machines out of any group.
+    group_id: uuid.UUID | None = None
+
+
+@router.post("/machines/bulk/group", dependencies=[_manage_machines])
+async def bulk_assign_group_api(
+    request: Request, payload: _BulkGroup, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Move every machine in `payload.machine_ids` into `payload.group_id`
+    (or out of any group with `null`) — the machine list's bulk "Move to
+    group". Same scope rule as a single machine's group: a restricted
+    account gets a 403 for a group it can't see, or for `null`."""
+    await _require_group_in_scope(db, user, payload.group_id)
+    group = await db.get(MachineGroup, payload.group_id) if payload.group_id else None
+    if payload.group_id and group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found.")
+    machines = await _get_machines_by_ids(payload.machine_ids, db, user)
+    moved = assign_machines_to_group(machines, group)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.group.assign",
+        summary=(
+            f'Moved {len(moved)} selected machine(s) to group "{group.name}"'
+            if group
+            else f"Removed {len(moved)} selected machine(s) from their group"
+        ),
+        target_type="machine_group" if group else None,
+        target_id=group.id if group else None,
+        target_label=group.name if group else None,
+        details={
+            "group": group.name if group else None,
+            "machines": [m.name for m in moved],
+            "unchanged_count": len(machines) - len(moved),
+        },
+    )
+    return {
+        "group_id": str(group.id) if group else None,
+        "moved": [str(m.id) for m in moved],
+        "unchanged_count": len(machines) - len(moved),
+    }
 
 
 @router.post("/machines/bulk/tags/add", dependencies=[_manage_machines])

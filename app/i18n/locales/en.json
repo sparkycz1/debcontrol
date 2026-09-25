@@ -1374,6 +1374,12 @@
     "common.weekday.3": "Thu",
     "common.weekday.4": "Fri",
     "common.weekday.5": "Sat",
-    "common.weekday.6": "Sun"
+    "common.weekday.6": "Sun",
+    "machines.bulk.group_aria": "Target group",
+    "machines.bulk.no_group": "— no group —",
+    "machines.bulk.move_to_group": "Move to group",
+    "machines.bulk.group_done": "Moved {count} machine(s) to group \"{group}\".",
+    "machines.bulk.group_cleared": "Removed {count} machine(s) from their group.",
+    "machines.error.group_not_allowed": "Pick a machine group this account has access to."
   }
 }

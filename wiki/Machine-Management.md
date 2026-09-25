@@ -888,6 +888,15 @@ Power still needs a typed confirmation phrase; an ad-hoc selection has
 no name, so it uses the fixed phrase `SELECTED MACHINES` (mirroring "All
 machines"'s `ALL MACHINES`), IDs carried forward as hidden fields.
 
+**Move to group** (needs `machine.manage`, the permission a single
+machine's Group field needs) files every selected machine into one group,
+or out of any group (`app.services.machine_grouping`). Same scope rule as
+editing one machine: a group-restricted account can only pick a group it
+sees and never "no group" (the option isn't offered, and the server
+refuses it). Audited once as `machines.bulk.group.assign`, naming only
+the machines that actually moved. REST: `POST /api/v1/machines/bulk/group`
+with `{"machine_ids": [...], "group_id": "<uuid>" | null}`.
+
 ### Supported distributions
 
 "Debian and its derivatives (e.g. Ubuntu), for as long as each is

@@ -1374,6 +1374,12 @@
     "common.weekday.3": "Čt",
     "common.weekday.4": "Pá",
     "common.weekday.5": "So",
-    "common.weekday.6": "Ne"
+    "common.weekday.6": "Ne",
+    "machines.bulk.group_aria": "Cílová skupina",
+    "machines.bulk.no_group": "— bez skupiny —",
+    "machines.bulk.move_to_group": "Přesunout do skupiny",
+    "machines.bulk.group_done": "Přesunuto {count} zařízení do skupiny \"{group}\".",
+    "machines.bulk.group_cleared": "{count} zařízení vyřazeno ze skupiny.",
+    "machines.error.group_not_allowed": "Vyber skupinu zařízení, ke které má tento účet přístup."
   }
 }

@@ -156,6 +156,9 @@
   {% if bulk_error %}
     <div class="alert alert-error"><p>{{ bulk_error }}</p></div>
   {% endif %}
+  {% if bulk_notice %}
+    <div class="alert alert-ok"><p>{{ bulk_notice }}</p></div>
+  {% endif %}
   {% if power_skipped %}
     <div class="alert alert-warn">
       <p>{{ t(request, 'machines.power_skipped', count=power_skipped) }}</p>
@@ -308,6 +311,17 @@
         <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
           {{ t(request, 'machines.bulk.shutdown') }}
         </button>
+        {% if request.state.user.has_permission('machine.manage') %}
+          <select name="group_id" class="inline-select" aria-label="{{ t(request, 'machines.bulk.group_aria') }}">
+            {% if not restricted %}<option value="">{{ t(request, 'machines.bulk.no_group') }}</option>{% endif %}
+            {% for group in groups %}
+              <option value="{{ group.id }}">{{ group.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" formaction="/machines/bulk/group" class="button button-secondary">
+            {{ t(request, 'machines.bulk.move_to_group') }}
+          </button>
+        {% endif %}
       </div>
     </form>
 

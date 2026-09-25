@@ -46,6 +46,7 @@ from app.services import monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     groups_visible_to,
+    is_restricted,
     machines_visible_to,
     visible_machines_by_ids,
 )
@@ -56,6 +57,7 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.services.machine_grouping import assign_machines_to_group
 from app.services.machine_tags import (
     add_tags_to_machines,
     parse_tag_names_from_text,
@@ -345,7 +347,10 @@ async def list_machines(
             "latest_monitoring": latest_monitoring,
             "csrf_token": csrf_token,
             "bulk_error": read_flash(request, "bulk_error"),
+            "bulk_notice": read_flash(request, "bulk_notice"),
             "power_skipped": request.query_params.get("power_skipped"),
+            "groups": await _get_groups(db, current_user),
+            "restricted": await is_restricted(db, current_user),
         },
     )
     if new_cookie:
@@ -1099,6 +1104,70 @@ async def bulk_power_action(
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/bulk/group", dependencies=[_manage, Depends(verify_csrf)])
+async def bulk_assign_group(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+    group_id: str = Form(""),
+) -> Response:
+    """Move every machine in an ad-hoc selection into one group (or out of
+    any group, `group_id=""`) — the bulk equivalent of each machine's own
+    Group field on Settings, with the same `machine.manage` permission and
+    the same scope rule: a restricted account can only pick a group it can
+    see, never "no group" (see `can_see_group_id`)."""
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
+    if not machines:
+        return RedirectResponse(
+            url=_bulk_error_url(request, "machines.error.select_machine"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        target_id = uuid.UUID(group_id) if group_id.strip() else None
+    except ValueError:
+        target_id = None
+        group_id = "invalid"
+    group = await db.get(MachineGroup, target_id) if target_id else None
+    if (group_id.strip() and group is None) or not await can_see_group_id(
+        db, current_user, target_id
+    ):
+        return RedirectResponse(
+            url=_bulk_error_url(request, "machines.error.group_not_allowed"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    moved = assign_machines_to_group(machines, group)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.group.assign",
+        summary=(
+            f'Moved {len(moved)} selected machine(s) to group "{group.name}"'
+            if group
+            else f"Removed {len(moved)} selected machine(s) from their group"
+        ),
+        target_type="machine_group" if group else None,
+        target_id=group.id if group else None,
+        target_label=group.name if group else None,
+        details={
+            "group": group.name if group else None,
+            "machines": [m.name for m in moved],
+            "unchanged_count": len(machines) - len(moved),
+        },
+    )
+    notice = t(
+        request,
+        "machines.bulk.group_done" if group else "machines.bulk.group_cleared",
+        count=len(moved),
+        group=group.name if group else "",
+    )
+    return RedirectResponse(
+        url=f"/machines?bulk_notice={sign_flash(notice)}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/bulk/tags/add", dependencies=[_manage, Depends(verify_csrf)])
