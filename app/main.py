@@ -42,6 +42,7 @@ from app.web.routes import (
     impersonation,
     inform,
     live_ws,
+    logs_ws,
     machine_groups,
     machines,
     notifications,
@@ -261,6 +262,8 @@ def create_app() -> FastAPI:
     # Same no-HTTP-dependency reasoning as terminal_ws.router above — see
     # live_ws.py's own module docstring for what this one relays.
     app.include_router(live_ws.router)
+    # Live log following (Logs tab) — authenticates like terminal_ws.
+    app.include_router(logs_ws.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:

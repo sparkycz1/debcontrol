@@ -256,3 +256,34 @@ async def view_docker_logs(
             "or allow `sudo -n docker`)."
         )
     return output
+
+
+# How much history a live-follow session starts with before streaming.
+FOLLOW_INITIAL_LINES = 50
+
+
+def build_follow_command(*, source: str, path: str, container: str, search: str) -> str:
+    """The streaming (`-f`) variant of each Logs source, for the live-follow
+    WebSocket (`app/web/routes/logs_ws.py`): `journalctl -f`, `tail -F`
+    on an allowed file (follows rotation), or `docker logs -f`. A search
+    term filters with `grep --line-buffered` so matches stream immediately
+    rather than waiting for a pipe buffer to fill. Same validation as the
+    one-shot commands: the path allowlist, Docker's container-name rule."""
+    term = search.strip()
+    grep = f" | grep --line-buffered -F -- {shlex.quote(term)}" if term else ""
+    n = FOLLOW_INITIAL_LINES
+    if source == "journal":
+        options = f" -g {shlex.quote(term)}" if term else ""
+        return f"journalctl --no-pager -f -n {n}{options}"
+    if source == "file":
+        if not is_path_allowed(path, get_settings().log_file_allowed_path_list):
+            raise LogAccessError(f'"{path}" is outside the allowed log paths.')
+        return f"tail -n {n} -F -- {shlex.quote(path)} 2>&1{grep}"
+    if source == "docker":
+        if not is_container_name_valid(container):
+            raise LogAccessError(f'"{container}" is not a valid container name.')
+        return (
+            f"{DOCKER_ACCESS_PROBE}"
+            f"$D logs -f --tail {n} --timestamps {shlex.quote(container)} 2>&1{grep}"
+        )
+    raise LogAccessError(f'Unknown log source "{source}".')

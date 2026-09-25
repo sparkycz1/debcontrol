@@ -100,8 +100,8 @@ history around v0.19.0/v0.19.1).
   between the two needs a matching wiki/Architecture.md update.
 - **WebSockets do their own auth.** `app.auth.middleware` never runs for
   `scope["type"] == "websocket"` requests (Starlette only invokes
-  `http`-scoped middleware for those) — `terminal_ws.py` and `live_ws.py`
-  each re-implement the session-cookie + permission check by hand at the
+  `http`-scoped middleware for those) — `terminal_ws.py`, `logs_ws.py`
+  and `live_ws.py` each re-implement the session-cookie + permission check by hand at the
   top of the handler, before `accept()`ing the connection.
 - **Live updates are a doorbell, not a data feed.** `app/services/
   live_updates.py` publishes `{"kind": "..."}` over Redis pub/sub after a

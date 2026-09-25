@@ -95,25 +95,36 @@
   </form>
 
   {% if output is not none %}
-    <section class="log-viewer" data-log-viewer>
+    {% set can_follow = source == 'journal' or (source == 'file' and path) or (source == 'docker' and container) %}
+    <section class="log-viewer" data-log-viewer
+      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}"
+      data-search="{{ search }}"
+      data-label-follow="{{ t(request, 'machine.logs.follow') }}"
+      data-label-stop="{{ t(request, 'machine.logs.follow_stop') }}"
+      data-status-connecting="{{ t(request, 'machine.logs.follow_connecting') }}"
+      data-status-live="{{ t(request, 'machine.logs.follow_live') }}"
+      data-status-ended="{{ t(request, 'machine.logs.follow_ended') }}"{% endif %}>
       <header class="log-viewer-header">
         <div class="log-viewer-title">
           {% if source == 'docker' %}<span class="badge">Docker</span> <code>{{ container }}</code>
           {% elif source == 'file' %}<span class="badge">{{ t(request, "machine.logs.source_file") }}</span> <code>{{ path }}</code>
           {% else %}<span class="badge">{{ t(request, "machine.logs.source_journal") }}</span>{% endif %}
-          <span class="log-viewer-count">{{ t(request, "machine.logs.line_count", count=(log_lines | length)) }}</span>
+          <span class="log-viewer-count" data-log-count>{{ t(request, "machine.logs.line_count", count=(log_lines | length)) }}</span>
+          <span class="log-follow-status" data-log-follow-status role="status" aria-live="polite"></span>
         </div>
         <div class="log-viewer-actions">
+          {% if can_follow %}<button type="button" class="button button-secondary log-small-button" data-log-follow aria-pressed="false">{{ t(request, "machine.logs.follow") }}</button>{% endif %}
           <button type="button" class="button button-secondary log-small-button" data-log-wrap aria-pressed="true">{{ t(request, "machine.logs.wrap") }}</button>
           <button type="button" class="button button-secondary log-small-button" data-log-bottom>{{ t(request, "machine.logs.to_bottom") }}</button>
         </div>
       </header>
-      {% if log_lines %}
+      {% if log_lines or can_follow %}
         <ol class="log-lines is-wrapped" data-log-body>
           {% for line in log_lines %}
             <li class="log-line{% if line.level %} log-{{ line.level }}{% endif %}">{% for text, hit in line.segments %}{% if hit %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</li>
           {% endfor %}
         </ol>
+        {% if not log_lines %}<p class="log-empty" data-log-empty>{{ t(request, "machine.logs.no_output") }}</p>{% endif %}
       {% else %}
         <p class="log-empty">{{ t(request, "machine.logs.no_output") }}</p>
       {% endif %}

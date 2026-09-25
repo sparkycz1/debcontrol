@@ -25,7 +25,8 @@ groups, templates; see wiki/Architecture.md's "Notifications" section) is
 excluded for a simpler reason: it's new this round and web-UI-only for now,
 the same way SMTP settings started out — a REST equivalent is a reasonable
 follow-up, not a deliberate permanent exclusion. The interactive SSH terminal
-(`app/web/routes/terminal_ws.py`) and the AI assistant's chat
+(`app/web/routes/terminal_ws.py`, and likewise the Logs tab's live-follow
+stream in `logs_ws.py`) and the AI assistant's chat
 (`app/web/routes/ai.py`) are excluded for a different reason: both are
 inherently interactive, browser-only features (a live WebSocket relaying
 keystrokes to a PTY and a real terminal emulator's output back; a

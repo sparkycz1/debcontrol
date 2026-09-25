@@ -625,6 +625,23 @@ filter matched it, and starts scrolled to the newest line; *Wrap lines*
 and *Jump to end* are `static/js/log-viewer.js`. Log content is plain
 autoescaped text throughout — it comes from the managed machine.
 
+**Follow live** streams new lines as they're written, over a WebSocket
+(`app/web/routes/logs_ws.py`, `/machines/{id}/logs/follow/ws`) rather than
+a page refresh: `journalctl -f`, `tail -F` (keeps following across log
+rotation) or `docker logs -f`, each starting from the last 50 lines and
+filtered by the same search term (`grep --line-buffered` so matches arrive
+immediately) — built by `app.ssh.logs.build_follow_command` with the same
+path allowlist and container-name validation as the one-shot view. The
+socket authenticates exactly like the terminal's (session cookie,
+`action.terminal`, machine scope, pinned host key — all before `accept()`),
+is capped at one hour, and tears down the SSH process on disconnect. Start
+and stop are audit-logged (`machine.logs.follow` / `.follow_end`, with the
+duration), never the content. The browser builds each streamed line with
+text nodes only, applies the same error/warn coloring, keeps the newest
+5 000 lines, and only auto-scrolls while you're already at the bottom.
+Web-only, like the terminal: a never-ending stream has no useful REST shape
+(`GET /api/v1/machines/{id}/logs` covers the snapshot).
+
 ### Live updates: a WebSocket doorbell, not a data feed
 
 The Overview, Monitoring, and Updates tabs' status/facts/packages/
