@@ -22,7 +22,7 @@ from app.db.models.scheduled_task import ScheduledTask
 from app.db.models.scheduled_task_run import ScheduledTaskRun
 from app.db.models.user import User
 from app.db.session import get_db
-from app.scheduling.cron import compute_next_run
+from app.scheduling.cron import compute_next_run, next_runs
 from app.scheduling.jobs import run_scheduled_task
 from app.scheduling.targets import target_within_scope, task_within_scope
 from app.schemas.scheduled_task import ScheduledTaskCreate
@@ -126,6 +126,18 @@ async def import_scheduling_config_api(
         details=result.to_dict(),
     )
     return result.to_dict()
+
+
+@router.get("/cron-preview", dependencies=[_view])
+async def cron_preview_api(expression: str, count: int = 5) -> dict[str, object]:
+    """The next `count` (1-50) UTC run times of a cron expression — what the
+    schedule form previews as you type. 422 for an invalid expression."""
+    count = max(1, min(count, 50))
+    try:
+        runs = next_runs(expression.strip(), count=count)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return {"expression": expression.strip(), "next_runs": [run.isoformat() for run in runs]}
 
 
 @router.get("", dependencies=[_view])

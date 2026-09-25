@@ -1364,6 +1364,16 @@
     "terminal.clipboard.read_failed": "Couldn't read the clipboard — use Ctrl+V instead.",
     "checks.expected_body": "Response must contain",
     "checks.expected_body_hint": "Optional text that must appear in the response body (case-sensitive, first 1 MB) — e.g. \"ok\" from a health endpoint, so a 200 maintenance page still counts as down. Ignored for TLS checks.",
-    "machines.actions.export_inventory": "Export inventory (CSV, current filter)"
+    "machines.actions.export_inventory": "Export inventory (CSV, current filter)",
+    "scheduling.cron_preview.heading": "Next runs:",
+    "scheduling.cron_preview.invalid": "Not a valid cron expression yet — 5 fields: minute hour day-of-month month day-of-week.",
+    "scheduling.cron_preview.local": "local time",
+    "common.weekday.0": "Mon",
+    "common.weekday.1": "Tue",
+    "common.weekday.2": "Wed",
+    "common.weekday.3": "Thu",
+    "common.weekday.4": "Fri",
+    "common.weekday.5": "Sat",
+    "common.weekday.6": "Sun"
   }
 }

@@ -992,6 +992,12 @@ shut down — against a machine, group, or "All machines" on a cron expression.
   `trigger_monitoring_sample`/`send_power_to_machines` in
   `machine_actions`, no `Request`, no queue handle. A scheduled run and a
   human click take the exact same path, including skip-unpinned behavior.
+- **Live "next runs" preview** — as the cron field is typed in, the
+  form shows the next 5 run times (UTC, plus local time when `TZ`
+  differs) via htmx (`GET /scheduling/cron-preview`), or a hint if the
+  expression isn't valid yet; same computation as `next_run_at`
+  (`app.scheduling.cron.next_runs`). REST:
+  `GET /api/v1/scheduling/cron-preview?expression=...&count=N`.
 - **A fixed one-minute tick** — cron is minute-grained, so
   `run_due_scheduled_tasks` is a plain `crontab()` Beat entry. Each task
   keeps a denormalized `next_run_at` (computed on create/edit/enable,

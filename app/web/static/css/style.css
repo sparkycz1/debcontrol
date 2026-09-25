@@ -2054,3 +2054,8 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 .sparkline-ok circle { fill: var(--color-ok); }
 .sparkline-warn polyline { stroke: var(--color-warn); }
 .sparkline-warn circle { fill: var(--color-warn); }
+
+/* Schedule form: live "next runs" preview under the cron field. */
+.cron-preview { min-height: 1.2rem; margin-bottom: var(--space-3); }
+.cron-preview-list { margin: 0 0 var(--space-2); padding-left: 1.2rem; font-size: 0.88rem; }
+.cron-preview-error { color: var(--color-warn); }

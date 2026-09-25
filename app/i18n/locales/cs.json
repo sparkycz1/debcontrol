@@ -1364,6 +1364,16 @@
     "terminal.clipboard.read_failed": "Schránku se nepodařilo přečíst — použij Ctrl+V.",
     "checks.expected_body": "Odpověď musí obsahovat",
     "checks.expected_body_hint": "Volitelný text, který se musí objevit v těle odpovědi (rozlišuje velikost písmen, prvních 1 MB) — např. \"ok\" z health endpointu, aby se i stránka údržby s kódem 200 počítala jako výpadek. U TLS kontrol se ignoruje.",
-    "machines.actions.export_inventory": "Exportovat inventář (CSV, aktuální filtr)"
+    "machines.actions.export_inventory": "Exportovat inventář (CSV, aktuální filtr)",
+    "scheduling.cron_preview.heading": "Příští spuštění:",
+    "scheduling.cron_preview.invalid": "Zatím to není platný cron výraz — 5 polí: minuta hodina den-v-měsíci měsíc den-v-týdnu.",
+    "scheduling.cron_preview.local": "místního času",
+    "common.weekday.0": "Po",
+    "common.weekday.1": "Út",
+    "common.weekday.2": "St",
+    "common.weekday.3": "Čt",
+    "common.weekday.4": "Pá",
+    "common.weekday.5": "So",
+    "common.weekday.6": "Ne"
   }
 }
