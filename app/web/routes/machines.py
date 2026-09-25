@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
@@ -50,6 +50,7 @@ from app.services.access_scope import (
     machines_visible_to,
     visible_machines_by_ids,
 )
+from app.services.fleet_overview import latest_monitoring_samples
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -187,36 +188,10 @@ async def _get_pending_machines(db: AsyncSession) -> list[PendingMachine]:
 async def _get_latest_monitoring_by_machine(
     db: AsyncSession, machine_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, MachineMonitoringSample]:
-    """The single most recent monitoring sample for each machine in
-    `machine_ids` — the Cards view's small CPU/RAM indicator. One query
-    (a `row_number() OVER (PARTITION BY machine_id ...)` window, filtered
-    to rank 1), not one query per machine — this runs against the current
-    page's machines only (at most `_MACHINE_LIST_PAGE_SIZE`), so it scales
-    the same way the page itself does. Deliberately just the latest
-    reading, not a historical sparkline: a real trend line would mean
-    fetching every sample in a time window for up to a page's worth of
-    machines at once, the same "don't fan out per machine" scale concern
-    `wiki/Development.md` calls out elsewhere — see the Monitoring tab
-    (`GET /machines/{id}/monitoring`) for actual trend charts, one machine
-    at a time."""
-    if not machine_ids:
-        return {}
-    ranked = (
-        select(
-            MachineMonitoringSample,
-            func.row_number()
-            .over(
-                partition_by=MachineMonitoringSample.machine_id,
-                order_by=MachineMonitoringSample.sampled_at.desc(),
-            )
-            .label("rn"),
-        )
-        .where(MachineMonitoringSample.machine_id.in_(machine_ids))
-        .subquery()
-    )
-    latest = aliased(MachineMonitoringSample, ranked)
-    result = await db.execute(select(latest).where(ranked.c.rn == 1))
-    return {sample.machine_id: sample for sample in result.scalars().all()}
+    """The Cards view's small CPU/RAM indicator — the latest sample per
+    machine on the current page, one batched query (see
+    `app.services.fleet_overview.latest_monitoring_samples`)."""
+    return await latest_monitoring_samples(db, machine_ids)
 
 
 async def _get_package_counts(machine_id: uuid.UUID, db: AsyncSession) -> dict[str, int]:

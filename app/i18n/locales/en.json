@@ -1184,6 +1184,20 @@
     "monitoring.threshold_celsius": "Alert ≥ {value} °C",
     "notifications.condition_field.disk_full_days": "Days until a disk is full (forecast)",
     "monitoring.disk.full_in": "full in ~{days} days (+{rate}/day)",
-    "monitoring.disk.full_now": "full"
+    "monitoring.disk.full_now": "full",
+    "nav.fleet": "Fleet",
+    "fleet.title": "Fleet overview",
+    "fleet.total": "Machines",
+    "fleet.online": "Online",
+    "fleet.offline": "Offline",
+    "fleet.attention": "Need attention",
+    "fleet.disk": "Disk",
+    "fleet.temp": "Temp",
+    "fleet.load": "Load",
+    "fleet.uptime": "Up",
+    "fleet.containers": "Containers",
+    "fleet.disk_full_in": "Disk full in ~{days} d",
+    "fleet.truncated": "Showing the first {limit} machines — use the Machines list to search the rest.",
+    "fleet.empty": "No machines to show yet."
   }
 }

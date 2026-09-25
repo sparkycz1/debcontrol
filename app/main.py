@@ -36,6 +36,7 @@ from app.web.routes import (
     auth,
     branding,
     dashboard,
+    fleet,
     impersonation,
     inform,
     live_ws,
@@ -228,6 +229,7 @@ def create_app() -> FastAPI:
     app.include_router(branding.router)
     app.include_router(auth.router)
     app.include_router(dashboard.router)
+    app.include_router(fleet.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
     app.include_router(scheduling.router)

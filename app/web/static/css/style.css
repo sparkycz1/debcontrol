@@ -1234,6 +1234,72 @@ pre code { background: none; padding: 0; }
 /* The Logs tab's journal/file output — can run to thousands of lines
    (up to MAX_LINE_LIMIT), so it scrolls in place rather than growing the
    whole page. */
+/* --- Fleet page (fleet/index.html) --- */
+.fleet-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+@media (max-width: 640px) { .fleet-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.fleet-stat {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.fleet-stat-value { font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+.fleet-stat-label { color: var(--color-muted); font-size: 0.82rem; }
+.fleet-ok { color: var(--color-ok); }
+.fleet-danger { color: var(--color-danger); }
+
+.fleet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--space-3);
+}
+.fleet-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  text-decoration: none;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+.fleet-card:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+.fleet-card-ok { border-top-color: var(--color-ok); }
+.fleet-card-warn { border-top-color: var(--color-warn); }
+.fleet-card-danger { border-top-color: var(--color-danger); }
+.fleet-card-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.fleet-card-name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--color-muted); flex: none; }
+.fleet-dot-up { background: var(--color-ok); }
+.fleet-dot-down { background: var(--color-danger); }
+.fleet-meter { display: flex; align-items: center; gap: var(--space-2); font-size: 0.78rem; }
+.fleet-meter-label { width: 2.8rem; color: var(--color-muted); flex: none; }
+.fleet-meter .usage-bar-track { flex: 1; }
+.fleet-meter-value { width: 3.4rem; text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+.fleet-meter-empty .fleet-meter-value { color: var(--color-muted); }
+.fleet-fill-ok { background: var(--color-ok); }
+.fleet-fill-warn { background: var(--color-warn); }
+.fleet-fill-danger { background: var(--color-danger); }
+.fleet-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem var(--space-3);
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.fleet-foot-label { color: var(--color-muted); }
+
 /* --- Logs tab (machines/logs.html, static/js/log-viewer.js) --- */
 .log-sources {
   display: grid;

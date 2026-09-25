@@ -93,6 +93,7 @@ from app.services.access_scope import (
     machines_visible_to,
     visible_machines_by_ids,
 )
+from app.services.fleet_overview import build_fleet_overview
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -294,6 +295,18 @@ async def list_machines_api(
     query = apply_tag_filter(query, tag, tag_mode if tag_mode == "and" else "or")
     result = await db.execute(query)
     return [_machine_to_dict(m) for m in result.scalars().all()]
+
+
+@router.get("/fleet", dependencies=[_view_machines])
+async def fleet_overview_api(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
+) -> list[dict[str, object]]:
+    """The Fleet page's cards as data — every visible, active machine with
+    its latest CPU/RAM/disk/temperature/load/containers readings."""
+    query = (await machines_visible_to(db, user)).where(Machine.is_active)
+    result = await db.execute(query.order_by(Machine.name))
+    rows = await build_fleet_overview(db, list(result.scalars().all()))
+    return [row.as_dict() for row in rows]
 
 
 @router.get("/machines/package-search", dependencies=[_view_machines])

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "partials/_os_badge.html" import render as os_badge %}
+
+{% block title %}{{ t(request, "fleet.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro meter(label, value, level, text) %}
+  {% if value is number %}
+    {% set clamped = [[value, 100] | min, 0] | max %}
+    {% set rounded = ((clamped / 10) | round | int) * 10 %}
+    <div class="fleet-meter" role="img" aria-label="{{ label }}: {{ text }}">
+      <span class="fleet-meter-label">{{ label }}</span>
+      <span class="usage-bar-track"><span class="usage-bar-fill usage-bar-fill-{{ rounded }} fleet-fill-{{ level }}"></span></span>
+      <span class="fleet-meter-value">{{ text }}</span>
+    </div>
+  {% else %}
+    <div class="fleet-meter fleet-meter-empty">
+      <span class="fleet-meter-label">{{ label }}</span>
+      <span class="usage-bar-track"></span>
+      <span class="fleet-meter-value">—</span>
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "fleet.title") }}</h1>
+    <div class="page-header-actions">
+      <input type="search" class="chart-filter" data-fleet-filter
+             placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+    </div>
+  </div>
+
+  <div id="fleet-live" hx-get="/fleet" hx-select="#fleet-live" hx-target="this" hx-swap="outerHTML" hx-trigger="every 60s">
+    <div class="fleet-summary">
+      <div class="fleet-stat"><span class="fleet-stat-value">{{ counts.total }}</span><span class="fleet-stat-label">{{ t(request, "fleet.total") }}</span></div>
+      <div class="fleet-stat"><span class="fleet-stat-value fleet-ok">{{ counts.online }}</span><span class="fleet-stat-label">{{ t(request, "fleet.online") }}</span></div>
+      <div class="fleet-stat"><span class="fleet-stat-value {{ 'fleet-danger' if counts.offline else '' }}">{{ counts.offline }}</span><span class="fleet-stat-label">{{ t(request, "fleet.offline") }}</span></div>
+      <div class="fleet-stat"><span class="fleet-stat-value {{ 'fleet-danger' if counts.attention else '' }}">{{ counts.attention }}</span><span class="fleet-stat-label">{{ t(request, "fleet.attention") }}</span></div>
+    </div>
+
+    {% if truncated %}
+      <div class="alert alert-warn"><p>{{ t(request, "fleet.truncated", limit=limit) }}</p></div>
+    {% endif %}
+
+    {% if rows %}
+      <div class="fleet-grid">
+        {% for r in rows %}
+          <a class="fleet-card fleet-card-{{ r.level }}" href="/machines/{{ r.machine_id }}/monitoring" data-fleet-name="{{ r.name | lower }}">
+            <div class="fleet-card-head">
+              {{ os_badge(r.os_id, 18) }}
+              <span class="fleet-card-name">{{ r.name }}</span>
+              <span class="fleet-dot {{ 'fleet-dot-up' if r.is_reachable else ('fleet-dot-down' if r.is_reachable is sameas false else '') }}"
+                    title="{{ t(request, 'fleet.online') if r.is_reachable else (t(request, 'fleet.offline') if r.is_reachable is sameas false else '?') }}"></span>
+            </div>
+            {{ meter("CPU", r.cpu_percent, level_for(r.cpu_percent), (r.cpu_percent | chart_value('percent')) if r.cpu_percent is number else '') }}
+            {{ meter("RAM", r.ram_percent, level_for(r.ram_percent), (r.ram_percent | round(0) | int ~ '%') if r.ram_percent is number else '') }}
+            {{ meter(t(request, "fleet.disk"), r.disk_percent, level_for(r.disk_percent), (r.disk_percent | round(0) | int ~ '%') if r.disk_percent is number else '') }}
+            {% if r.temperature_c is number %}
+              {{ meter(t(request, "fleet.temp"), r.temperature_c, level_for(r.temperature_c, (70.0, 85.0)), r.temperature_c | chart_value('celsius')) }}
+            {% endif %}
+            <div class="fleet-card-foot">
+              {% if r.load1 is number %}<span><span class="fleet-foot-label">{{ t(request, "fleet.load") }}</span> {{ '%.2f' % r.load1 }}{% if r.cpu_cores %}/{{ r.cpu_cores }}{% endif %}</span>{% endif %}
+              {% if r.uptime_seconds is number %}<span><span class="fleet-foot-label">{{ t(request, "fleet.uptime") }}</span> {{ r.uptime_seconds | format_uptime }}</span>{% endif %}
+              {% if r.containers_total is number %}
+                <span class="{{ 'fleet-danger' if r.containers_problem else '' }}"><span class="fleet-foot-label">Docker</span> {{ r.containers_running }}/{{ r.containers_total }}</span>
+              {% endif %}
+              {% if r.disk_full_days is number and r.disk_full_days <= 30 %}
+                <span class="fleet-danger">{{ t(request, "fleet.disk_full_in", days=(r.disk_full_days | round(0) | int)) }}</span>
+              {% endif %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state"><p>{{ t(request, "fleet.empty") }}</p></div>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/fleet.js" defer></script>
+{% endblock %}

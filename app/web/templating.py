@@ -19,6 +19,7 @@ from app.core.config import get_settings
 from app.core.version import APP_VERSION, get_git_commit
 from app.i18n import get_locale
 from app.i18n import translate as _translate
+from app.services import fleet_overview
 from app.web import charts
 from app.web.branding import favicon_href, logo_src
 from app.web.os_logos import badge_for
@@ -100,6 +101,7 @@ def _chart(*args: Any, **kwargs: Any) -> charts.Chart:
 
 
 templates.env.globals["chart"] = _chart
+templates.env.globals["level_for"] = fleet_overview.level_for
 templates.env.globals["chart_palette"] = charts.PALETTE
 templates.env.filters["chart_value"] = charts.format_value
 templates.env.filters["bytes"] = charts.format_bytes

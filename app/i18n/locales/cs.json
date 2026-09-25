@@ -1184,6 +1184,20 @@
     "monitoring.threshold_celsius": "Upozornění ≥ {value} °C",
     "notifications.condition_field.disk_full_days": "Dní do zaplnění disku (předpověď)",
     "monitoring.disk.full_in": "plný za ~{days} dní (+{rate}/den)",
-    "monitoring.disk.full_now": "plný"
+    "monitoring.disk.full_now": "plný",
+    "nav.fleet": "Flotila",
+    "fleet.title": "Přehled flotily",
+    "fleet.total": "Stroje",
+    "fleet.online": "Online",
+    "fleet.offline": "Offline",
+    "fleet.attention": "Vyžadují pozornost",
+    "fleet.disk": "Disk",
+    "fleet.temp": "Teplota",
+    "fleet.load": "Zátěž",
+    "fleet.uptime": "Běží",
+    "fleet.containers": "Kontejnery",
+    "fleet.disk_full_in": "Disk plný za ~{days} d",
+    "fleet.truncated": "Zobrazeno prvních {limit} strojů — ostatní najdete v seznamu Stroje.",
+    "fleet.empty": "Zatím žádné stroje k zobrazení."
   }
 }

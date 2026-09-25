@@ -423,6 +423,23 @@ each sample stores only the numbers the charts need
 (`MachineMonitoringSample.docker_stats`), so image names and port lists
 aren't repeated every two minutes.
 
+### Fleet page
+
+`/fleet` (nav: **Fleet**, `machine.view`) shows every visible, active
+machine as a compact card — status dot, CPU, RAM, the fullest filesystem,
+the hottest sensor (bare metal), load/cores, uptime, running/total
+containers and a "disk full in ~N days" flag when the forecast is under
+30 days. The card's top border takes the worst reading's color (warn at
+75 %, danger at 90 %; temperatures at 70/85 °C; offline or an
+unhealthy/restarting container is always danger), and a summary strip
+counts online/offline/needing attention. Built by
+`app/services/fleet_overview.py` from each machine's latest monitoring
+sample — one batched window query for the whole page, the same one the
+Machines list's Cards view uses — plus columns already on `Machine`. The
+grid re-fetches itself every 60 s (htmx `hx-select` against the same
+page); the name filter is client-side. Capped at 500 machines (the
+paginated Machines list covers larger fleets). REST: `GET /api/v1/fleet`.
+
 ### Disk-full forecast
 
 Every hour (`forecast_all_machine_disks`, one job per machine, database

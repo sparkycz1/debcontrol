@@ -20,6 +20,9 @@
     <nav>
       <a href="/dashboard" {% if current_path == '/dashboard' %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.dashboard") }}</a>
       {% if current_user.has_permission('machine.view') %}
+        <a href="/fleet" {% if current_path.startswith('/fleet') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.fleet") }}</a>
+      {% endif %}
+      {% if current_user.has_permission('machine.view') %}
         <a href="/machines" {% if current_path.startswith('/machines') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.machines") }}</a>
       {% endif %}
       {% if current_user.has_permission('group.view') %}
