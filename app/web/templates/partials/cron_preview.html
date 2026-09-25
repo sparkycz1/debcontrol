@@ -1,0 +1,18 @@
+{# Live "next runs" preview under the schedule form's cron field — see
+   `app.web.routes.scheduling.cron_preview`. Cron is always UTC; the
+   local time (TZ) is shown alongside when it differs. #}
+{% if error %}
+  <p class="hint cron-preview-error">{{ error }}</p>
+{% elif runs %}
+  <p class="hint">{{ t(request, "scheduling.cron_preview.heading") }}</p>
+  <ul class="cron-preview-list">
+    {% for run in runs %}
+      {% set local = run | local_time %}
+      {% set utc = run.strftime("%Y-%m-%d %H:%M") %}
+      <li>
+        {{ t(request, "common.weekday." ~ run.weekday()) }} <code>{{ utc }} UTC</code>
+        {% if local != utc %}<span class="hint">({{ local }} {{ t(request, "scheduling.cron_preview.local") }})</span>{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}

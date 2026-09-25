@@ -33,7 +33,6 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
-from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -47,6 +46,7 @@ from app.services import monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     groups_visible_to,
+    is_restricted,
     machines_visible_to,
     visible_machines_by_ids,
 )
@@ -57,12 +57,14 @@ from app.services.machine_actions import (
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
+from app.services.machine_grouping import assign_machines_to_group
 from app.services.machine_tags import (
     add_tags_to_machines,
     parse_tag_names_from_text,
     remove_tags_from_machines,
     set_machine_tags,
 )
+from app.services.maintenance_windows import active_window_for
 from app.services.notifications import condition_thresholds_for_machine
 from app.services.saved_views import (
     DuplicateViewNameError,
@@ -84,8 +86,10 @@ from app.ssh.updates import PendingPackage
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
 from app.tasks import jobs as tasks
+from app.web.flash import read_flash, sign_flash
 from app.web.log_lines import parse_log_lines
 from app.web.machine_search import apply_tag_filter, machine_search_clause
+from app.web.messages import LocalizedText
 from app.web.routes.audit import _csv_safe
 from app.web.templating import t, templates
 
@@ -113,6 +117,12 @@ _terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 
 # Fingerprint shaped like "SHA256:<base64...>", as returned by AsyncSSH/OpenSSH.
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9]+:[A-Za-z0-9+/=_-]+$")
+
+
+def _bulk_error_url(request: Request, key: str) -> str:
+    """Back to the machine list with a signed, translated `bulk_error` —
+    see `app.web.flash` for why it's signed."""
+    return f"/machines?bulk_error={sign_flash(t(request, key))}"
 
 
 def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[str, str, str]]:
@@ -337,8 +347,11 @@ async def list_machines(
             "view_mode": view_mode,
             "latest_monitoring": latest_monitoring,
             "csrf_token": csrf_token,
-            "bulk_error": request.query_params.get("bulk_error"),
+            "bulk_error": read_flash(request, "bulk_error"),
+            "bulk_notice": read_flash(request, "bulk_notice"),
             "power_skipped": request.query_params.get("power_skipped"),
+            "groups": await _get_groups(db, current_user),
+            "restricted": await is_restricted(db, current_user),
         },
     )
     if new_cookie:
@@ -583,7 +596,7 @@ async def import_machines_submit(
     errors: list[str] = []
     text = csv_text.strip()
     if not text:
-        errors.append("Paste some CSV text first.")
+        errors.append(t(request, "common.error.paste_csv"))
         return templates.TemplateResponse(
             request,
             "machines/import.html",
@@ -647,6 +660,111 @@ _CONFIG_EXPORT_CSV_FIELDS = (
     "tags",
     "is_active",
 )
+
+
+_INVENTORY_CSV_FIELDS = (
+    "name",
+    "ip_address",
+    "hostname",
+    "group",
+    "tags",
+    "status",
+    "os_version",
+    "kernel_version",
+    "cpu_architecture",
+    "cpu_cores",
+    "ram_gb",
+    "upgradable",
+    "security_upgradable",
+    "reboot_required",
+    "uptime_days",
+    "host_key_pinned",
+    "facts_updated_at",
+    "updates_checked_at",
+)
+
+
+def _inventory_row(machine: Machine) -> dict[str, object]:
+    def iso(value: datetime | None) -> str:
+        return value.isoformat() if value else ""
+
+    if machine.is_reachable is None:
+        status_label = "unknown"
+    else:
+        status_label = "online" if machine.is_reachable else "offline"
+    return {
+        "name": _csv_safe(machine.name),
+        "ip_address": machine.ip_address,
+        "hostname": _csv_safe(machine.discovered_hostname or ""),
+        "group": _csv_safe(machine.group.name if machine.group else ""),
+        "tags": _csv_safe(", ".join(tag.name for tag in machine.tags)),
+        "status": status_label,
+        "os_version": _csv_safe(machine.os_version or ""),
+        "kernel_version": _csv_safe(machine.kernel_version or ""),
+        "cpu_architecture": machine.cpu_architecture or "",
+        "cpu_cores": machine.cpu_cores if machine.cpu_cores is not None else "",
+        "ram_gb": round(machine.ram_bytes / 1024**3, 1) if machine.ram_bytes else "",
+        "upgradable": machine.upgradable_count if machine.upgradable_count is not None else "",
+        "security_upgradable": (
+            machine.security_upgradable_count
+            if machine.security_upgradable_count is not None
+            else ""
+        ),
+        "reboot_required": "" if machine.reboot_required is None else machine.reboot_required,
+        "uptime_days": (
+            round(machine.uptime_seconds / 86400, 1) if machine.uptime_seconds else ""
+        ),
+        "host_key_pinned": bool(machine.host_key_fingerprint),
+        "facts_updated_at": iso(machine.facts_updated_at),
+        "updates_checked_at": iso(machine.updates_checked_at),
+    }
+
+
+@router.get("/inventory.csv")
+async def export_machine_inventory(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    q: str = "",
+    tag: list[str] = Query(default=[]),
+    tag_mode: str = "or",
+) -> Response:
+    """The machine list as a spreadsheet — every machine matching the
+    current search/tag filter (not just the visible page), with the
+    status, OS, hardware and update columns an inventory report needs.
+    Scoped exactly like the list itself. Unlike `/config/export` (the
+    structural import/export round-trip) this is a read-only report; the
+    same data is available as JSON from `GET /api/v1/machines`."""
+    tag_mode = tag_mode if tag_mode == "and" else "or"
+    query = (await machines_visible_to(db, current_user)).options(
+        selectinload(Machine.group), selectinload(Machine.tags)
+    )
+    if q.strip():
+        query = query.where(machine_search_clause(q))
+    query = apply_tag_filter(query, tag, tag_mode)
+    machines = list((await db.execute(query.order_by(Machine.name))).scalars().all())
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=_INVENTORY_CSV_FIELDS)
+    writer.writeheader()
+    for machine in machines:
+        writer.writerow(_inventory_row(machine))
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.inventory_export",
+        summary=f"Exported the machine inventory ({len(machines)} machine(s)) as CSV",
+        details={"machine_count": len(machines), "q": q or None, "tags": tag or None},
+    )
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="debcontrol-inventory-{timestamp}.csv"'
+        },
+    )
 
 
 @router.get("/config/export")
@@ -740,7 +858,7 @@ async def import_machine_config_submit(
             "machines/config_import.html",
             {
                 "csrf_token": request.state.csrf_token,
-                "errors": ["Paste some exported JSON text first."],
+                "errors": [t(request, "common.error.paste_json")],
                 "result": None,
             },
         )
@@ -849,7 +967,7 @@ async def bulk_check_updates(
     machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine.",
+            url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -875,7 +993,7 @@ async def bulk_trigger_updates(
     machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine.",
+            url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -907,7 +1025,7 @@ async def bulk_power_confirm(
     the selection back up by, unlike the group-scoped version of this)."""
     if not machine_ids:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine.",
+            url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -989,6 +1107,77 @@ async def bulk_power_action(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/bulk/group", dependencies=[_manage, Depends(verify_csrf)])
+async def bulk_assign_group(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+    group_id: str = Form(""),
+) -> Response:
+    """Move every machine in an ad-hoc selection into one group (or out of
+    any group, `group_id="none"`; nothing picked is an error, so the "no
+    group" choice is always deliberate) — the bulk equivalent of each machine's own
+    Group field on Settings, with the same `machine.manage` permission and
+    the same scope rule: a restricted account can only pick a group it can
+    see, never "no group" (see `can_see_group_id`)."""
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
+    if not machines:
+        return RedirectResponse(
+            url=_bulk_error_url(request, "machines.error.select_machine"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    choice = group_id.strip()
+    if not choice:
+        return RedirectResponse(
+            url=_bulk_error_url(request, "machines.error.pick_group"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        target_id = None if choice == "none" else uuid.UUID(choice)
+    except ValueError:
+        target_id = None
+        choice = "invalid"
+    group = await db.get(MachineGroup, target_id) if target_id else None
+    if (choice != "none" and group is None) or not await can_see_group_id(
+        db, current_user, target_id
+    ):
+        return RedirectResponse(
+            url=_bulk_error_url(request, "machines.error.group_not_allowed"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    moved = assign_machines_to_group(machines, group)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machines.bulk.group.assign",
+        summary=(
+            f'Moved {len(moved)} selected machine(s) to group "{group.name}"'
+            if group
+            else f"Removed {len(moved)} selected machine(s) from their group"
+        ),
+        target_type="machine_group" if group else None,
+        target_id=group.id if group else None,
+        target_label=group.name if group else None,
+        details={
+            "group": group.name if group else None,
+            "machines": [m.name for m in moved],
+            "unchanged_count": len(machines) - len(moved),
+        },
+    )
+    notice = t(
+        request,
+        "machines.bulk.group_done" if group else "machines.bulk.group_cleared",
+        count=len(moved),
+        group=group.name if group else "",
+    )
+    return RedirectResponse(
+        url=f"/machines?bulk_notice={sign_flash(notice)}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
 @router.post("/bulk/tags/add", dependencies=[_manage, Depends(verify_csrf)])
 async def bulk_add_tags(
     request: Request,
@@ -1004,7 +1193,7 @@ async def bulk_add_tags(
     names = parse_tag_names_from_text(tags)
     if not machines or not names:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine+and+tag.",
+            url=_bulk_error_url(request, "machines.error.select_machine_and_tag"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -1037,7 +1226,7 @@ async def bulk_remove_tags(
     names = parse_tag_names_from_text(tags)
     if not machines or not names:
         return RedirectResponse(
-            url="/machines?bulk_error=Select+at+least+one+machine+and+tag.",
+            url=_bulk_error_url(request, "machines.error.select_machine_and_tag"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -1069,6 +1258,7 @@ async def machine_detail(
         "machines/detail.html",
         {
             "machine": machine,
+            "maintenance_window": await active_window_for(db, machine),
             "csrf_token": csrf_token,
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "overview",
@@ -1108,34 +1298,10 @@ async def machine_monitoring(
     for a bad query param."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
 
-    valid_range_keys = {key for key, _label, _delta in monitoring_history.TIME_RANGES}
-    if range_key not in valid_range_keys:
-        range_key = monitoring_history.DEFAULT_TIME_RANGE
-
-    since = datetime.now(UTC) - monitoring_history.time_range_delta(range_key)
-    result = await db.execute(
-        select(MachineMonitoringSample)
-        .where(
-            MachineMonitoringSample.machine_id == machine_id,
-            MachineMonitoringSample.sampled_at >= since,
-        )
-        .order_by(MachineMonitoringSample.sampled_at)
-        .limit(monitoring_history.MAX_RAW_SAMPLES)
+    range_key = monitoring_history.normalize_range_key(range_key)
+    history, availability = await monitoring_history.load_machine_history(
+        db, machine_id, range_key
     )
-    samples = list(result.scalars().all())
-    history = monitoring_history.build_monitoring_history(samples, range_key)
-
-    reachability_result = await db.execute(
-        select(MachineReachabilitySample)
-        .where(
-            MachineReachabilitySample.machine_id == machine_id,
-            MachineReachabilitySample.checked_at >= since,
-        )
-        .order_by(MachineReachabilitySample.checked_at)
-        .limit(monitoring_history.MAX_RAW_SAMPLES)
-    )
-    reachability_samples = list(reachability_result.scalars().all())
-    availability = monitoring_history.build_availability_history(reachability_samples, range_key)
 
     # One unified "Last checked" timestamp for the whole tab, replacing a
     # separate one under each of the CPU/RAM/disk/services sample and the
@@ -1213,7 +1379,7 @@ async def refresh_machine_monitoring_endpoint(
             if isinstance(result, dict) and not result.get("ok"):
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1426,7 +1592,7 @@ async def run_onboarding_endpoint(
             else:
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The setup script did not finish in time. Reload this page shortly."
+        error = LocalizedText(request, "machine.error.setup_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1544,7 +1710,7 @@ async def run_onboarding_with_credential_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The setup script did not finish in time. Reload this page shortly."
+        error = LocalizedText(request, "machine.error.setup_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1606,7 +1772,7 @@ async def fix_readiness_directly_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "Timed out. Reload this page shortly."
+        error = LocalizedText(request, "machine.error.timeout_reload")
     except Exception as exc:
         error = str(exc)
 
@@ -1884,7 +2050,7 @@ async def test_connection_endpoint(
             async_result.get, timeout=app_settings.ssh_connect_timeout + 5
         )
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         # Celery's `AsyncResult.get()` re-raises whatever exception happened
         # inside the task (propagate=True is the default) — we want to show
@@ -1927,7 +2093,7 @@ async def refresh_facts_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -1980,7 +2146,7 @@ async def refresh_packages_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2041,7 +2207,7 @@ async def refresh_services_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2093,7 +2259,7 @@ async def check_updates_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2167,7 +2333,7 @@ async def preview_machine_update(
                 to_install_or_upgrade = list(result.get("to_install_or_upgrade") or [])
                 to_remove = list(result.get("to_remove") or [])
     except TimeoutError:
-        error = "The background job did not respond in time."
+        error = LocalizedText(request, "common.error.job_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2471,7 +2637,7 @@ async def machine_logs(
         source == "docker" and not container
     )
     if not machine.host_key_fingerprint:
-        error = "Confirm the server's key fingerprint on the Overview tab first."
+        error = LocalizedText(request, "machine.confirm_key_first_overview")
     elif fetch:
         clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
         try:
@@ -2505,7 +2671,7 @@ async def machine_logs(
                 else:
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
-            error = "The command did not finish in time."
+            error = LocalizedText(request, "common.error.command_timeout")
         except Exception as exc:
             error = str(exc)
 
@@ -2582,9 +2748,9 @@ async def machine_logs_browse(
     entries: list[dict[str, object]] = []
     error: str | None = None
     if not machine.host_key_fingerprint:
-        error = "Confirm the server's key fingerprint on the Overview tab first."
+        error = LocalizedText(request, "machine.confirm_key_first_overview")
     elif not current_path:
-        error = "No allowed log paths are configured — set LOG_FILE_ALLOWED_PATHS first."
+        error = LocalizedText(request, "machine.error.no_log_paths")
     else:
         try:
             async_result = tasks.browse_machine_log_directory.delay(
@@ -2610,7 +2776,7 @@ async def machine_logs_browse(
                 else:
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
-            error = "The command did not finish in time."
+            error = LocalizedText(request, "common.error.command_timeout")
         except Exception as exc:
             error = str(exc)
 
@@ -2680,7 +2846,7 @@ async def check_image_updates_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The check did not finish in time."
+        error = LocalizedText(request, "common.error.check_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2697,7 +2863,7 @@ async def check_image_updates_endpoint(
     )
     query = {"images_checked": "1"}
     if error is not None:
-        query["images_error"] = error[:300]
+        query["images_error"] = sign_flash(error)
     return RedirectResponse(
         url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
         status_code=status.HTTP_303_SEE_OTHER,
@@ -2736,7 +2902,7 @@ async def container_action_endpoint(
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
-        error = "The command did not finish in time."
+        error = LocalizedText(request, "common.error.command_timeout")
     except Exception as exc:
         error = str(exc)
 
@@ -2752,9 +2918,9 @@ async def container_action_endpoint(
         details={"container": container, **({"error": error} if error else {})},
     )
 
-    query = {"container": container, "container_action": action}
+    query = {"container": sign_flash(container), "container_action": action}
     if error is not None:
-        query["container_error"] = error[:300]
+        query["container_error"] = sign_flash(error)
     return RedirectResponse(
         url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
         status_code=status.HTTP_303_SEE_OTHER,

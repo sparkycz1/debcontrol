@@ -23,8 +23,10 @@ from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
+from app.services import monitoring_history
+from app.services.endpoint_check_history import load_check_history
 from app.tasks import jobs as tasks
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/checks", dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))]
@@ -42,7 +44,7 @@ def _form_error(exc: ValidationError) -> str:
 async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[str, str], str]:
     form = await request.form()
     values = {key: str(form.get(key, "")) for key in (
-        "name", "kind", "target", "expected_status", "interval_seconds",
+        "name", "kind", "target", "expected_status", "expected_body", "interval_seconds",
         "timeout_seconds", "cert_warn_days",
     )}
     values["verify_tls"] = "1" if form.get("verify_tls") else ""
@@ -53,6 +55,7 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
             kind=values["kind"],
             target=values["target"],
             expected_status=int(values["expected_status"]) if values["expected_status"] else None,
+            expected_body=values["expected_body"] or None,
             verify_tls=bool(values["verify_tls"]),
             interval_seconds=int(values["interval_seconds"] or 300),
             timeout_seconds=int(values["timeout_seconds"] or 10),
@@ -62,7 +65,7 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
     except ValidationError as exc:
         return None, values, _form_error(exc)
     except ValueError:
-        return None, values, "Numbers only in the numeric fields."
+        return None, values, t(request, "checks.error.numbers_only")
     return payload, values, ""
 
 
@@ -95,6 +98,7 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
         "kind": check.kind,
         "target": check.target,
         "expected_status": str(check.expected_status or ""),
+        "expected_body": check.expected_body or "",
         "interval_seconds": str(check.interval_seconds),
         "timeout_seconds": str(check.timeout_seconds),
         "cert_warn_days": str(check.cert_warn_days),
@@ -104,7 +108,7 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
 
 
 _DEFAULT_VALUES = {
-    "name": "", "kind": "http", "target": "", "expected_status": "",
+    "name": "", "kind": "http", "target": "", "expected_status": "", "expected_body": "",
     "interval_seconds": "300", "timeout_seconds": "10", "cert_warn_days": "14",
     "verify_tls": "1", "enabled": "1",
 }
@@ -227,3 +231,28 @@ async def run_check_now(
     )
     url = f"/checks?ran={check.id}" if error is None else "/checks?run_error=1"
     return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{check_id}")
+async def check_detail(
+    request: Request,
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+) -> Response:
+    """One check's history: uptime %, latency, uptime/latency charts over
+    the chosen range (same selector as a machine's Monitoring tab) and its
+    most recent failures — see `app.services.endpoint_check_history`."""
+    check = await _get_check_or_404(check_id, db)
+    range_key = monitoring_history.normalize_range_key(range_key)
+    history = await load_check_history(db, check.id, range_key)
+    return templates.TemplateResponse(
+        request,
+        "checks/detail.html",
+        {
+            "check": check,
+            "history": history,
+            "range_key": range_key,
+            "time_ranges": monitoring_history.TIME_RANGES,
+        },
+    )

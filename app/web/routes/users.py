@@ -18,7 +18,6 @@ existing `user.manage` rather than a `Permission` of its own — see
 from __future__ import annotations
 
 import uuid
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -50,7 +49,8 @@ from app.services.temporary_permissions import (
     list_temporary_grants,
     revoke_temporary_grant,
 )
-from app.web.templating import templates
+from app.web.flash import read_flash, sign_flash
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/users", dependencies=[Depends(require_permission(Permission.USER_MANAGE))]
@@ -68,7 +68,12 @@ async def _get_user_or_404(user_id: uuid.UUID, db: AsyncSession) -> User:
 
 
 async def _duplicate_user_error(
-    db: AsyncSession, *, exclude_user_id: uuid.UUID, username: str, email: str | None
+    request: Request,
+    db: AsyncSession,
+    *,
+    exclude_user_id: uuid.UUID,
+    username: str,
+    email: str | None,
 ) -> str | None:
     """Proactively look for a row this write would collide with, instead of
     relying on catching `IntegrityError` from the commit.
@@ -96,8 +101,8 @@ async def _duplicate_user_error(
     if conflict is None:
         return None
     if conflict.username == username:
-        return f'A user named "{username}" already exists.'
-    return "That email is already in use by another account."
+        return t(request, "users.error.username_taken", username=username)
+    return t(request, "account.error.email_in_use")
 
 
 async def _get_roles(db: AsyncSession) -> list[Role]:
@@ -116,7 +121,7 @@ async def _get_all_groups(db: AsyncSession) -> list[MachineGroup]:
 
 
 async def _parse_group_access(
-    db: AsyncSession, raw_group_ids: list[str]
+    request: Request, db: AsyncSession, raw_group_ids: list[str]
 ) -> tuple[list[uuid.UUID], str | None]:
     """Turn the submitted checkbox values into group ids, or an error
     message. An unparseable/unknown id means a tampered form (the list is
@@ -130,7 +135,7 @@ async def _parse_group_access(
         try:
             parsed.append(uuid.UUID(raw.strip()))
         except ValueError:
-            return [], "One of the selected machine groups is not a valid group."
+            return [], t(request, "users.error.group_invalid")
     if not parsed:
         return [], None
     known = set(
@@ -142,7 +147,7 @@ async def _parse_group_access(
     )
     missing = [gid for gid in parsed if gid not in known]
     if missing:
-        return [], "One of the selected machine groups no longer exists."
+        return [], t(request, "users.error.group_gone")
     return list(dict.fromkeys(parsed)), None
 
 
@@ -208,7 +213,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)) -> Re
             "users": users,
             "roles": await _get_roles(db),
             "csrf_token": request.state.csrf_token,
-            "bulk_error": request.query_params.get("bulk_error"),
+            "bulk_error": read_flash(request, "bulk_error"),
         },
     )
 
@@ -272,7 +277,7 @@ async def create_user(
             status_code=status_code,
         )
 
-    scoped_group_ids, group_error = await _parse_group_access(db, group_access)
+    scoped_group_ids, group_error = await _parse_group_access(request, db, group_access)
     if group_error is not None:
         return await _rerender([group_error], status.HTTP_422_UNPROCESSABLE_CONTENT)
 
@@ -293,7 +298,7 @@ async def create_user(
     role = await db.get(Role, payload.role_id)
     if role is None:
         return await _rerender(
-            ["Selected role no longer exists."], status.HTTP_422_UNPROCESSABLE_CONTENT
+            [t(request, "users.error.role_gone")], status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     user = User(
@@ -401,7 +406,7 @@ async def update_user(
             status_code=status_code,
         )
 
-    scoped_group_ids, group_error = await _parse_group_access(db, group_access)
+    scoped_group_ids, group_error = await _parse_group_access(request, db, group_access)
     if group_error is not None:
         return await _rerender([group_error], status.HTTP_422_UNPROCESSABLE_CONTENT)
     group_access_changed = set(scoped_group_ids) != current_group_ids
@@ -424,18 +429,18 @@ async def update_user(
     role = await db.get(Role, payload.role_id)
     if role is None:
         return await _rerender(
-            ["Selected role no longer exists."], status.HTTP_422_UNPROCESSABLE_CONTENT
+            [t(request, "users.error.role_gone")], status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     if user.id == current_user.id:
         if payload.role_id != user.role_id:
             return await _rerender(
-                ["You can't change your own role — ask another administrator."],
+                [t(request, "users.error.own_role")],
                 status.HTTP_403_FORBIDDEN,
             )
         if not payload.is_active:
             return await _rerender(
-                ["You can't deactivate your own account."], status.HTTP_403_FORBIDDEN
+                [t(request, "users.error.own_deactivate")], status.HTTP_403_FORBIDDEN
             )
         # Same reasoning as the self-role-change guard directly above: an
         # admin editing something unrelated must not be able to lock
@@ -467,7 +472,7 @@ async def update_user(
         )
         if remaining == 0:
             return await _rerender(
-                ["This is the last account that can manage users — it can't lose that access."],
+                [t(request, "users.error.last_admin")],
                 status.HTTP_409_CONFLICT,
             )
 
@@ -476,6 +481,7 @@ async def update_user(
     # UPDATE this check exists to get ahead of, defeating the point (see
     # `_duplicate_user_error`'s docstring).
     duplicate_error = await _duplicate_user_error(
+        request,
         db, exclude_user_id=user.id, username=payload.username, email=payload.email
     )
     if duplicate_error is not None:
@@ -549,22 +555,20 @@ async def grant_temporary_permission_endpoint(
 
     def _error_redirect(message: str) -> Response:
         return RedirectResponse(
-            url=f"/users/{user.id}/edit?perm_error={quote(message, safe='')}",
+            url=f"/users/{user.id}/edit?perm_error={sign_flash(message)}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
     try:
         parsed_permission = Permission(permission)
     except ValueError:
-        return _error_redirect("Unknown permission.")
+        return _error_redirect(t(request, "users.error.unknown_permission"))
     try:
         parsed_hours = int(hours)
         if not (0 < parsed_hours <= MAX_GRANT_HOURS):
             raise ValueError
     except ValueError:
-        return _error_redirect(
-            f"Duration must be a whole number of hours, 1-{MAX_GRANT_HOURS}."
-        )
+        return _error_redirect(t(request, "users.error.grant_duration", max=MAX_GRANT_HOURS))
 
     grant = await grant_temporary_permission(
         db,
@@ -643,7 +647,7 @@ async def reset_password(
                 "selected_group_ids": [
                     str(gid) for gid in (await allowed_group_ids(db, user) or [])
                 ],
-                "errors": ["Password must be at least 12 characters."],
+                "errors": [t(request, "users.error.password_too_short", min=12)],
                 "csrf_token": request.state.csrf_token,
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -731,7 +735,8 @@ async def delete_user(
 # typed-confirmation treatment `machines.py`'s bulk power actions get,
 # which is more than this round adds.
 
-_NO_OTHER_USERS_ERROR = "Select+at+least+one+other+user."
+def _bulk_error_url(request: Request, key: str) -> str:
+    return f"/users?bulk_error={sign_flash(t(request, key))}"
 
 
 @router.post("/bulk/deactivate", dependencies=[Depends(verify_csrf)])
@@ -745,7 +750,8 @@ async def bulk_deactivate_users(
     users = [u for u in selected if u.is_active]
     if not users:
         return RedirectResponse(
-            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+            url=_bulk_error_url(request, "users.error.select_other_user"),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     for user in users:
@@ -778,7 +784,8 @@ async def bulk_activate_users(
     ]
     if not users:
         return RedirectResponse(
-            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+            url=_bulk_error_url(request, "users.error.select_other_user"),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     for user in users:
@@ -804,7 +811,8 @@ async def bulk_sign_out_users(
     users = await _get_users_by_ids(db, user_ids, exclude=current_user.id)
     if not users:
         return RedirectResponse(
-            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+            url=_bulk_error_url(request, "users.error.select_other_user"),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     for user in users:
@@ -831,7 +839,8 @@ async def bulk_set_role(
     users = await _get_users_by_ids(db, user_ids, exclude=current_user.id)
     if not users:
         return RedirectResponse(
-            url=f"/users?bulk_error={_NO_OTHER_USERS_ERROR}", status_code=status.HTTP_303_SEE_OTHER
+            url=_bulk_error_url(request, "users.error.select_other_user"),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     try:
@@ -840,7 +849,7 @@ async def bulk_set_role(
         role = None
     if role is None:
         return RedirectResponse(
-            url="/users?bulk_error=Selected+role+no+longer+exists.",
+            url=_bulk_error_url(request, "users.error.role_gone"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
 

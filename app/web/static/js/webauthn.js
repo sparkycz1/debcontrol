@@ -115,6 +115,15 @@
     if (el) el.textContent = message;
   }
 
+  // Translated strings from partials/_js_i18n.html (English fallback).
+  let i18n = {};
+  try {
+    i18n = JSON.parse(document.getElementById("js-i18n").textContent);
+  } catch {
+    i18n = {};
+  }
+  const tr = (key, fallback) => i18n[key] || fallback;
+
   // `navigator.credentials`/`PublicKeyCredential` are only exposed in a
   // "secure context" — HTTPS, or http://localhost — never plain HTTP on a
   // LAN IP/hostname, regardless of how capable the browser otherwise is.
@@ -124,9 +133,9 @@
   function unsupportedReason() {
     if (window.PublicKeyCredential) return null;
     if (!window.isSecureContext) {
-      return "Passkeys need HTTPS (or http://localhost) — this page is loaded over plain HTTP. Put debcontrol behind a reverse proxy with TLS (see the wiki's Installation page) to use them.";
+      return tr("webauthn.need_https", "Passkeys need HTTPS (or http://localhost) — this page is loaded over plain HTTP. Put debcontrol behind a reverse proxy with TLS (see the wiki's Installation page) to use them.");
     }
-    return "This browser doesn't support passkeys.";
+    return tr("webauthn.unsupported", "This browser doesn't support passkeys.");
   }
 
   async function registerPasskey(trigger) {
@@ -137,11 +146,11 @@
       setStatus(statusEl, reason);
       return;
     }
-    setStatus(statusEl, "Follow your browser/device's prompt…");
+    setStatus(statusEl, tr("webauthn.follow_prompt", "Follow your browser/device's prompt…"));
     try {
       const optionsResponse = await fetch("/account/webauthn/register/options");
       if (!optionsResponse.ok) {
-        setStatus(statusEl, "Couldn't start passkey registration — reload and try again.");
+        setStatus(statusEl, tr("webauthn.register_start_failed", "Couldn't start passkey registration — reload and try again."));
         return;
       }
       const options = decodeCreationOptions(await optionsResponse.json());
@@ -149,7 +158,7 @@
       const credentialJson = credentialToJson(credential, "registration");
       submitCredential("/account/webauthn/register/verify", form, credentialJson);
     } catch (err) {
-      setStatus(statusEl, "Passkey registration was cancelled or failed: " + err.message);
+      setStatus(statusEl, tr("webauthn.register_failed", "Passkey registration was cancelled or failed: ") + err.message);
     }
   }
 
@@ -161,7 +170,7 @@
       setStatus(statusEl, reason);
       return;
     }
-    setStatus(statusEl, "Follow your browser/device's prompt…");
+    setStatus(statusEl, tr("webauthn.follow_prompt", "Follow your browser/device's prompt…"));
     try {
       // On the two-step login's password/passkey screen, the account
       // hasn't been verified yet — `username` (from that screen's own
@@ -175,7 +184,7 @@
         : "/login/webauthn/options";
       const optionsResponse = await fetch(optionsUrl);
       if (!optionsResponse.ok) {
-        setStatus(statusEl, "Couldn't start passkey sign-in — reload and try again.");
+        setStatus(statusEl, tr("webauthn.signin_start_failed", "Couldn't start passkey sign-in — reload and try again."));
         return;
       }
       const options = decodeRequestOptions(await optionsResponse.json());
@@ -183,7 +192,7 @@
       const credentialJson = credentialToJson(credential, "authentication");
       submitCredential("/login/webauthn/verify", form, credentialJson);
     } catch (err) {
-      setStatus(statusEl, "Passkey sign-in was cancelled or failed: " + err.message);
+      setStatus(statusEl, tr("webauthn.signin_failed", "Passkey sign-in was cancelled or failed: ") + err.message);
     }
   }
 

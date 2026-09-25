@@ -63,7 +63,7 @@
               {% if r.load1 is number %}<span><span class="fleet-foot-label">{{ t(request, "fleet.load") }}</span> {{ '%.2f' % r.load1 }}{% if r.cpu_cores %}/{{ r.cpu_cores }}{% endif %}</span>{% endif %}
               {% if r.uptime_seconds is number %}<span><span class="fleet-foot-label">{{ t(request, "fleet.uptime") }}</span> {{ r.uptime_seconds | format_uptime }}</span>{% endif %}
               {% if r.containers_total is number %}
-                <span class="{{ 'fleet-danger' if r.containers_problem else '' }}"><span class="fleet-foot-label">Docker</span> {{ r.containers_running }}/{{ r.containers_total }}</span>
+                <span class="{{ 'fleet-danger' if r.containers_problem else '' }}"><span class="fleet-foot-label">{{ t(request, "fleet.containers") }}</span> {{ r.containers_running }}/{{ r.containers_total }}</span>
               {% endif %}
               {% if r.disk_full_days is number and r.disk_full_days <= 30 %}
                 <span class="fleet-danger">{{ t(request, "fleet.disk_full_in", days=(r.disk_full_days | round(0) | int)) }}</span>

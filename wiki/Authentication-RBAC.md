@@ -410,15 +410,20 @@ run-onboarding/recheck-readiness/logs, the pending-machines review queue),
 machine groups (create/update/delete, membership, group- and "All
 machines"-scoped actions), the ad-hoc bulk actions from the machine list,
 scheduling (full CRUD plus enable/disable/run-now), users and roles (full
-CRUD), the audit log (list/filter/export), a read-only slice of
-Settings, and self-service account settings (currently just UI language —
+CRUD), the audit log (list/filter/export, hash-chain verification),
+notifications (rules, per-event and custom templates, delivery history,
+send-test), endpoint checks, a machine's monitoring history (the
+Monitoring tab's graphs as data) and "Refresh now", the operational slice
+of Settings (read, and `PATCH` for intervals/timeouts/retention/AI token
+limits), and self-service account settings (UI language, saved views —
 see [Per-user UI language](#per-user-ui-language-i18n)). Split across
 router modules under `app/web/routes/` (`api_v1.py` for
 machines/groups/bulk, `api_v1_scheduling.py`, `api_v1_users.py`,
 `api_v1_roles.py`, `api_v1_audit.py`, `api_v1_settings.py`,
 `api_v1_dashboard.py` for the Dashboard's trend-snapshot history and the
 scheduled fleet summary's latest output,
-`api_v1_account.py` for self-service account settings), all mounted under
+`api_v1_account.py` for self-service account settings,
+`api_v1_checks.py`, `api_v1_notifications.py`), all mounted under
 `/api/v1` in `app.main`.
 
 - **Same permission, every time** — `require_api_permission(...)` with
@@ -438,9 +443,13 @@ scheduled fleet summary's latest output,
 Deliberately still web-UI-only: **SSH key rotation** (a multi-step
 human-paced process so the app never locks itself out mid-rotation);
 **LDAP/OIDC config** and **AI provider credentials** (encrypted
-secrets); **syslog forwarding config**. `GET /api/v1/settings` exposes
-only version/commit, SSH public key/fingerprint, check intervals, and
-audit retention — all read-only. Also excluded: the **SSH terminal** and
+secrets); **syslog/SMTP/GeoIP config** and the **fleet summary schedule**.
+`/api/v1/settings` exposes version/commit and the SSH public
+key/fingerprint read-only, and the non-secret operational settings
+(background-check intervals/timeouts, every retention window, monitoring
+downsampling, AI token limits) read/write — validated against the same
+ranges as the Settings page (`app.services.settings_limits`) and audited
+under the same action codes. Also excluded: the **SSH terminal** and
 **AI chat** (inherently interactive, no REST shape); the "Fix it" flow
 submitting a **fresh one-time credential** (vs. `POST /{id}/run-onboarding`,
 which reuses the credential on file, and *is* in the API); **CSV bulk

@@ -79,7 +79,7 @@ from app.services.machine_actions import (
 from app.ssh.power import PowerAction
 from app.tasks import ai_jobs
 from app.tasks import jobs as tasks
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/ai", dependencies=[Depends(require_permission(Permission.AI_ACCESS))]
@@ -527,12 +527,14 @@ async def post_message(
     conversation = await _get_conversation(db, conversation_id, user)
     text = message.strip()
     if not text:
-        return await _render_conversation(request, db, conversation, ["Write a message first."])
+        return await _render_conversation(
+            request, db, conversation, [t(request, "ai.error.empty_message")]
+        )
 
     provider = conversation.provider
     if provider is None or not provider.enabled:
         return await _render_conversation(
-            request, db, conversation, ["This conversation's AI provider is no longer enabled."]
+            request, db, conversation, [t(request, "ai.error.provider_disabled")]
         )
     try:
         client = build_client(provider)
@@ -595,7 +597,7 @@ async def confirm_action(
 
     if entry.get("status") != PendingActionStatus.PENDING.value:
         return await _render_conversation(
-            request, db, conversation, ["That action has already been handled."]
+            request, db, conversation, [t(request, "ai.error.action_handled")]
         )
 
     tool_name = str(entry.get("tool") or "")

@@ -28,7 +28,17 @@
   const anchor = document.querySelector("[data-live-machine-id]");
   const machineId = anchor && anchor.getAttribute("data-live-machine-id");
   if (!machineId) return;
-  const machineName = anchor.getAttribute("data-live-machine-name") || "This machine";
+  // Translated strings from partials/_js_i18n.html (English fallback if
+  // the block is missing or unreadable).
+  let i18n = {};
+  try {
+    i18n = JSON.parse(document.getElementById("js-i18n").textContent);
+  } catch {
+    i18n = {};
+  }
+  const tr = (key, fallback) => i18n["live." + key] || fallback;
+  const machineName =
+    anchor.getAttribute("data-live-machine-name") || tr("notify.this_machine", "This machine");
 
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const url = `${scheme}://${window.location.host}/machines/${encodeURIComponent(machineId)}/live/ws`;
@@ -94,11 +104,11 @@
   const NOTIFY_PREF_KEY = "debcontrol:notifications-enabled";
 
   const KIND_MESSAGES = {
-    status: "Reachability status changed",
-    facts: "Facts refreshed",
-    packages: "Installed packages refreshed",
-    services: "Services refreshed",
-    updates: "Update availability changed",
+    status: tr("kind.status", "Reachability status changed"),
+    facts: tr("kind.facts", "Facts refreshed"),
+    packages: tr("kind.packages", "Installed packages refreshed"),
+    services: tr("kind.services", "Services refreshed"),
+    updates: tr("kind.updates", "Update availability changed"),
   };
 
   function notificationsWanted() {
@@ -124,7 +134,7 @@
     if (Notification.permission !== "granted") return;
     if (!notificationsWanted()) return;
     if (document.visibilityState !== "hidden") return; // tab is frontmost — the DOM update is enough
-    const body = KIND_MESSAGES[kind] || "Something changed";
+    const body = KIND_MESSAGES[kind] || tr("kind.other", "Something changed");
     let notification;
     try {
       notification = new Notification(machineName, { body, tag: `debcontrol-${machineId}` });
@@ -149,17 +159,23 @@
 
     function render() {
       if (Notification.permission === "denied") {
-        button.textContent = "🔕 Notifications blocked";
+        button.textContent = "🔕 " + tr("notify.blocked", "Notifications blocked");
         button.disabled = true;
-        button.title = "Blocked in this browser's site settings.";
+        button.title = tr("notify.blocked_title", "Blocked in this browser's site settings.");
         return;
       }
       if (Notification.permission === "granted" && notificationsWanted()) {
-        button.textContent = "🔔 Notifications on";
-        button.title = "Click to turn off background notifications for this machine's page.";
+        button.textContent = "🔔 " + tr("notify.on", "Notifications on");
+        button.title = tr(
+          "notify.on_title",
+          "Click to turn off background notifications for this machine's page.",
+        );
       } else {
-        button.textContent = "🔔 Enable notifications";
-        button.title = "Get a browser notification when this page updates while backgrounded.";
+        button.textContent = "🔔 " + tr("notify.enable", "Enable notifications");
+        button.title = tr(
+          "notify.enable_title",
+          "Get a browser notification when this page updates while backgrounded.",
+        );
       }
     }
 

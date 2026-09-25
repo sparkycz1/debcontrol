@@ -28,7 +28,7 @@ from app.db.models.scheduled_task_run import ScheduledTaskRun
 from app.db.models.user import User
 from app.db.session import get_db
 from app.scheduling.actions import all_actions, get_action
-from app.scheduling.cron import compute_next_run
+from app.scheduling.cron import compute_next_run, next_runs
 from app.scheduling.jobs import run_scheduled_task
 from app.scheduling.targets import (
     decode_target,
@@ -40,7 +40,7 @@ from app.schemas.scheduled_task import ScheduledTaskCreate
 from app.schemas.scheduling_config import SchedulingConfigExport
 from app.services.access_scope import groups_visible_to, is_restricted, machines_visible_to
 from app.services.scheduling_config import export_scheduling_config, import_scheduling_config
-from app.web.templating import templates
+from app.web.templating import t, templates
 
 router = APIRouter(
     prefix="/scheduling", dependencies=[Depends(require_permission(Permission.SCHEDULING_VIEW))]
@@ -259,7 +259,7 @@ async def import_scheduling_config_submit(
             "scheduling/config_import.html",
             {
                 "csrf_token": request.state.csrf_token,
-                "errors": ["Paste some exported JSON text first."],
+                "errors": [t(request, "common.error.paste_json")],
                 "result": None,
             },
         )
@@ -331,6 +331,25 @@ async def scheduled_task_history(
             "page": page,
             "has_older": has_older,
         },
+    )
+
+
+@router.get("/cron-preview")
+async def cron_preview(request: Request, cron_expression: str = "") -> Response:
+    """The schedule form's live "next runs" preview (htmx, as the cron field
+    is typed in) — read-only, so plain `scheduling.view` like the form."""
+    expression = cron_expression.strip()
+    runs: list[datetime] = []
+    error: str | None = None
+    if expression:
+        try:
+            runs = next_runs(expression)
+        except ValueError:
+            error = t(request, "scheduling.cron_preview.invalid")
+    return templates.TemplateResponse(
+        request,
+        "partials/cron_preview.html",
+        {"runs": runs, "error": error, "expression": expression},
     )
 
 

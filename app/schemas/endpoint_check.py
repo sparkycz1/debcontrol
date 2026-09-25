@@ -15,6 +15,7 @@ class EndpointCheckSave(BaseModel):
     kind: str
     target: str = Field(min_length=1, max_length=500)
     expected_status: int | None = Field(default=None, ge=100, le=599)
+    expected_body: str | None = Field(default=None, max_length=200)
     verify_tls: bool = True
     interval_seconds: int = Field(default=300, ge=30, le=86400)
     timeout_seconds: int = Field(default=10, ge=1, le=60)
@@ -30,6 +31,8 @@ class EndpointCheckSave(BaseModel):
         error = validate_target(self.kind, self.target)
         if error:
             raise ValueError(error)
+        self.expected_body = (self.expected_body or "").strip() or None
         if self.kind == "tls":
             self.expected_status = None
+            self.expected_body = None
         return self

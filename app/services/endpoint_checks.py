@@ -4,7 +4,9 @@ into notification events.
 
 Probes:
 - `probe_http` — GET with redirects followed; up when the status matches
-  `expected_status` (or is < 400 when none is set). An https URL also gets
+  `expected_status` (or is < 400 when none is set) and, if `expected_body`
+  is set, that text appears in the first `MAX_BODY_BYTES` of the response
+  body (read streamed, so a huge response is never loaded whole). An https URL also gets
   a `probe_tls` of its host so the certificate expiry is known.
 - `probe_tls` — a TLS handshake; the certificate's `notAfter` is read even
   when verification fails (expired/self-signed), via a second, unverified
@@ -33,6 +35,9 @@ from app.db.models.notification_rule import NotificationEventType
 # A single failed probe is often a blip; announce an outage after this many
 # consecutive failures.
 FAILURES_BEFORE_DOWN = 2
+
+# How much of a response body `expected_body` is searched in.
+MAX_BODY_BYTES = 1024 * 1024
 
 
 @dataclass
@@ -123,28 +128,52 @@ async def probe_tls(target: str, timeout_seconds: float, verify: bool = True) ->
         return ProbeResult(ok=False, error=str(exc) or exc.__class__.__name__)
 
 
+async def _read_body_prefix(response: httpx.Response) -> str:
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.aiter_bytes():
+        chunks.append(chunk)
+        size += len(chunk)
+        if size >= MAX_BODY_BYTES:
+            break
+    return b"".join(chunks)[:MAX_BODY_BYTES].decode(response.encoding or "utf-8", "replace")
+
+
 async def probe_http(
-    url: str, timeout_seconds: float, expected_status: int | None, verify: bool = True
+    url: str,
+    timeout_seconds: float,
+    expected_status: int | None,
+    verify: bool = True,
+    expected_body: str | None = None,
 ) -> ProbeResult:
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(
-            timeout=timeout_seconds, verify=verify, follow_redirects=True
-        ) as client:
-            response = await client.get(url, headers={"User-Agent": "debcontrol-check"})
+        async with (
+            httpx.AsyncClient(
+                timeout=timeout_seconds, verify=verify, follow_redirects=True
+            ) as client,
+            client.stream("GET", url, headers={"User-Agent": "debcontrol-check"}) as response,
+        ):
+            code = response.status_code
+            body = await _read_body_prefix(response) if expected_body else ""
     except httpx.TimeoutException:
         result = ProbeResult(ok=False, error="Timed out.")
     except httpx.HTTPError as exc:
         result = ProbeResult(ok=False, error=str(exc) or exc.__class__.__name__)
     else:
         latency = round((time.perf_counter() - started) * 1000, 1)
-        code = response.status_code
-        ok = code == expected_status if expected_status is not None else code < 400
+        status_ok = code == expected_status if expected_status is not None else code < 400
+        body_ok = not expected_body or expected_body in body
+        error = None
+        if not status_ok:
+            error = f"HTTP {code}"
+        elif not body_ok:
+            error = f'HTTP {code}, but the response doesn\'t contain "{expected_body}"'
         result = ProbeResult(
-            ok=ok,
+            ok=status_ok and body_ok,
             status_code=code,
             latency_ms=latency,
-            error=None if ok else f"HTTP {code}",
+            error=error,
         )
     parts = urlsplit(url)
     if parts.scheme == "https" and parts.hostname:
@@ -157,7 +186,11 @@ async def probe_http(
 async def run_probe(check: EndpointCheck) -> ProbeResult:
     if check.kind == "http":
         return await probe_http(
-            check.target, check.timeout_seconds, check.expected_status, check.verify_tls
+            check.target,
+            check.timeout_seconds,
+            check.expected_status,
+            check.verify_tls,
+            expected_body=check.expected_body,
         )
     return await probe_tls(check.target, check.timeout_seconds, check.verify_tls)
 

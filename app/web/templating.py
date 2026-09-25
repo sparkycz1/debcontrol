@@ -22,6 +22,7 @@ from app.i18n import translate as _translate
 from app.services import fleet_overview
 from app.web import charts
 from app.web.branding import favicon_href, logo_src
+from app.web.flash import read_flash
 from app.web.os_logos import badge_for
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -58,6 +59,24 @@ def local_time(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 
 templates.env.filters["local_time"] = local_time
+
+
+def to_local_input(value: datetime | None) -> str:
+    """A stored UTC timestamp as a `<input type="datetime-local">` value in
+    the configured `TZ` (the zone every other timestamp is shown in)."""
+    return local_time(value, "%Y-%m-%dT%H:%M") if value is not None else ""
+
+
+def parse_local_input(raw: str) -> datetime:
+    """The inverse of `to_local_input`: a `datetime-local` value, read in
+    the configured `TZ`, as an aware UTC datetime. Raises `ValueError`."""
+    naive = datetime.fromisoformat(raw.strip())
+    if naive.tzinfo is not None:
+        return naive.astimezone(UTC)
+    return naive.replace(tzinfo=_display_zone(get_settings().tz)).astimezone(UTC)
+
+
+templates.env.filters["local_input"] = to_local_input
 
 
 def format_uptime(seconds: int | None) -> str:
@@ -178,6 +197,19 @@ def t(request: Request, key: str, **kwargs: object) -> str:
 
 
 templates.env.globals["t"] = t
+
+
+def t_or(request: Request, key: str, fallback: str, **kwargs: object) -> str:
+    """`t()`, but `fallback` (usually the English text a Python registry
+    already carries, e.g. a scheduled action's `label`) instead of the bare
+    key when no locale — English included — has `key`. For strings whose
+    source of truth lives in code rather than `en.json`."""
+    text = t(request, key, **kwargs)
+    return fallback if text == key else text
+
+
+templates.env.globals["t_or"] = t_or
+templates.env.globals["flash"] = read_flash
 templates.env.globals["logo_src"] = logo_src
 templates.env.globals["favicon_href"] = favicon_href
 

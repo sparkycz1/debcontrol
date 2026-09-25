@@ -70,7 +70,7 @@ async def is_restricted(db: AsyncSession, user: User) -> bool:
     return await allowed_group_ids(db, user) is not None
 
 
-async def machines_visible_to(db: AsyncSession, user: User) -> Select[tuple[Machine]]:
+async def machines_visible_to(db: AsyncSession, user: User) -> Select[Machine]:
     """A `Select` for `Machine`, already scope-filtered — compose with
     `.where()` / `.order_by()` / `.options()` exactly as the call site
     already does. Machines with no group are excluded for a restricted user
@@ -82,7 +82,7 @@ async def machines_visible_to(db: AsyncSession, user: User) -> Select[tuple[Mach
     return query
 
 
-async def groups_visible_to(db: AsyncSession, user: User) -> Select[tuple[MachineGroup]]:
+async def groups_visible_to(db: AsyncSession, user: User) -> Select[MachineGroup]:
     """The `MachineGroup` equivalent of `machines_visible_to`."""
     query = select(MachineGroup)
     group_ids = await allowed_group_ids(db, user)

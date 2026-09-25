@@ -1,4 +1,4 @@
-"""REST API for Settings — deliberately a read-only subset of what
+"""REST API for Settings — deliberately a subset of what
 `app/web/routes/settings.py` exposes.
 
 What's exposed and why:
@@ -8,8 +8,11 @@ What's exposed and why:
   elsewhere (into `authorized_keys`), and version/commit is already shown
   unauthenticated-adjacent on the Settings page to any logged-in user with
   `settings.view`.
-- **Background-check intervals** and **audit log retention** — operational
-  facts, not secrets.
+- **Background-check intervals and timeouts, every retention window,
+  monitoring downsampling and the AI token limits** — operational facts,
+  not secrets. These are also *writable* here (`PATCH /api/v1/settings`,
+  `settings.manage`), with exactly the ranges the Settings page enforces
+  (`app.services.settings_limits`) and the same audit action codes.
 
 What's deliberately **not** exposed here, even to a `settings.manage`
 token:
@@ -40,6 +43,9 @@ token:
   triggers an outbound network fetch on demand. The *result* of GeoIP
   being enabled (each audit entry's `geo_*` columns) is already exposed
   read-only via `/api/v1/audit`, same as `ip_address` itself.
+- **SMTP relay and AI provider credentials/models, and the fleet summary
+  schedule** — each carries or selects a stored secret (relay password,
+  provider API key); same reasoning as syslog.
 
 If a future need justifies any of these over the API, they should get
 their own deliberate design pass (e.g. requiring a fresh confirmation
@@ -49,19 +55,32 @@ folded in here by default.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import log_event
 from app.auth.dependencies import require_api_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.version import APP_VERSION, commit_url, get_git_commit
 from app.db.models.role import Permission
 from app.db.session import get_db
+from app.services.settings_limits import (
+    AUDIT_ACTION_BY_FIELD,
+    BOUNDED_FIELDS,
+    NEEDS_RESTART_FIELDS,
+    RETENTION_FIELDS,
+    TOKEN_LIMIT_FIELDS,
+)
 from app.ssh.identity import get_or_create_identity
 
 router = APIRouter(prefix="/api/v1/settings")
 
 _view = Depends(require_api_permission(Permission.SETTINGS_VIEW))
+_manage = Depends(require_api_permission(Permission.SETTINGS_MANAGE))
+
+_WRITABLE_FIELDS = (*BOUNDED_FIELDS, *RETENTION_FIELDS, *TOKEN_LIMIT_FIELDS)
 
 
 @router.get("", dependencies=[_view])
@@ -76,8 +95,74 @@ async def get_settings_api(db: AsyncSession = Depends(get_db)) -> dict[str, obje
         "ssh_public_key": identity.public_key,
         "ssh_fingerprint": identity.fingerprint,
         "ssh_pending_fingerprint": identity.pending_fingerprint,
-        "facts_refresh_interval_seconds": app_settings.facts_refresh_interval_seconds,
-        "update_timeout_seconds": app_settings.update_timeout_seconds,
-        "ssh_connect_timeout": app_settings.ssh_connect_timeout,
-        "audit_log_retention_days": app_settings.audit_log_retention_days,
+        **{field: getattr(app_settings, field) for field in _WRITABLE_FIELDS},
+    }
+
+
+def _validate(field: str, value: object) -> tuple[int | None, str | None]:
+    """`(value, error)` — the same rules the Settings page applies."""
+    if isinstance(value, bool) or not (value is None or isinstance(value, int)):
+        suffix = "" if field in BOUNDED_FIELDS else " or null"
+        return None, f"{field}: must be a whole number{suffix}"
+    if field in BOUNDED_FIELDS:
+        minimum, maximum = BOUNDED_FIELDS[field]
+        if value is None or not (minimum <= value <= maximum):
+            return None, f"{field}: must be between {minimum} and {maximum}"
+        return value, None
+    if value is not None and value < 0:
+        return None, f"{field}: must not be negative"
+    return value, None
+
+
+@router.patch("", dependencies=[_manage])
+async def update_settings_api(
+    request: Request,
+    changes: dict[str, Any] = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Change any subset of the operational settings (see the module
+    docstring); fields left out are untouched, and `null` means "keep
+    forever"/"unlimited" for a retention or token-limit field. All or
+    nothing: any unknown field or out-of-range value is a 422 and nothing
+    is saved. `needs_restart` lists changed intervals that Celery Beat only
+    reads at startup (restart the worker/beat services to apply them)."""
+    unknown = sorted(set(changes) - set(_WRITABLE_FIELDS))
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Not a writable setting: {', '.join(unknown)}",
+        )
+    validated: dict[str, int | None] = {}
+    errors: list[str] = []
+    for field, raw in changes.items():
+        value, error = _validate(field, raw)
+        if error:
+            errors.append(error)
+        else:
+            validated[field] = value
+    if errors:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="; ".join(errors))
+
+    app_settings = await get_or_create_app_settings(db)
+    changed = {f: v for f, v in validated.items() if getattr(app_settings, f) != v}
+    for field, value in changed.items():
+        setattr(app_settings, field, value)
+    await db.commit()
+
+    # One audit entry per Settings form touched, under that form's own
+    # action code.
+    by_action: dict[str, dict[str, int | None]] = {}
+    for field, value in changed.items():
+        by_action.setdefault(AUDIT_ACTION_BY_FIELD[field], {})[field] = value
+    for action, details in by_action.items():
+        await log_event(
+            db,
+            request=request,
+            action=action,
+            summary=f"Updated {', '.join(details)} via the API",
+            details=details,
+        )
+    return {
+        "changed": sorted(changed),
+        "needs_restart": sorted(NEEDS_RESTART_FIELDS & changed.keys()),
     }

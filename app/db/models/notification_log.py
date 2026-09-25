@@ -37,6 +37,10 @@ class NotificationDeliveryChannel(enum.StrEnum):
 class NotificationDeliveryStatus(enum.StrEnum):
     SENT = "sent"
     FAILED = "failed"
+    # Not delivered on purpose: the machine was inside an active
+    # maintenance window (`target` names the window) — see
+    # `app.services.maintenance_windows`.
+    SUPPRESSED = "suppressed"
 
 
 class NotificationLog(Base):

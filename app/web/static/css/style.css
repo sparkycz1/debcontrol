@@ -185,6 +185,7 @@ p { margin: 0 0 var(--space-3); }
 .site-header nav {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
 }
 
@@ -204,6 +205,51 @@ p { margin: 0 0 var(--space-3); }
   background: var(--color-surface-raised);
   font-weight: 600;
 }
+
+/* "Administration" menu in the header nav — a <details> dropdown (no JS
+   needed under the CSP). The panel floats on wide screens and simply
+   expands in place inside the mobile column nav. */
+.nav-menu {
+  position: relative;
+  /* Reset the generic `details` panel look defined further down. */
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
+.nav-menu > summary {
+  display: block;
+  margin: 0;
+  list-style: none;
+  cursor: pointer;
+  color: var(--color-muted);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.nav-menu > summary::-webkit-details-marker { display: none; }
+.nav-menu > summary::after { content: " ▾"; font-size: 0.8em; }
+.nav-menu[open] > summary::after { content: " ▴"; }
+.nav-menu > summary:hover,
+.nav-menu[open] > summary { color: var(--color-text); background: var(--color-surface-raised); }
+.nav-menu > summary.active { color: var(--color-text); background: var(--color-surface-raised); font-weight: 600; }
+.nav-menu > summary:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.nav-menu-items {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+.site-header nav .nav-menu-items a { white-space: nowrap; }
 
 .site-header-user {
   display: flex;
@@ -261,13 +307,23 @@ p { margin: 0 0 var(--space-3); }
     order: 3;
     flex-basis: 100%;
     flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
     gap: 0;
     max-height: 0;
     overflow: hidden;
     transition: max-height var(--transition-fast);
   }
-  .nav-toggle:checked ~ nav { max-height: 24rem; }
+  .nav-toggle:checked ~ nav { max-height: 60rem; }
   .site-header nav a { padding: var(--space-3); border-radius: var(--radius-sm); }
+  .nav-menu > summary { padding: var(--space-3); }
+  .nav-menu-items {
+    position: static;
+    box-shadow: none;
+    border: none;
+    padding: 0 0 0 var(--space-4);
+    background: transparent;
+  }
   .site-header-user { order: 2; margin-left: 0; }
 }
 
@@ -1991,3 +2047,15 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 @media (prefers-reduced-motion: reduce) {
   .htmx-settling { animation: none; }
 }
+
+/* Dashboard fleet-trend sparklines (macros/charts.html) — colored through
+   the theme variables so the light theme recolors them too. */
+.sparkline-ok polyline { stroke: var(--color-ok); }
+.sparkline-ok circle { fill: var(--color-ok); }
+.sparkline-warn polyline { stroke: var(--color-warn); }
+.sparkline-warn circle { fill: var(--color-warn); }
+
+/* Schedule form: live "next runs" preview under the cron field. */
+.cron-preview { min-height: 1.2rem; margin-bottom: var(--space-3); }
+.cron-preview-list { margin: 0 0 var(--space-2); padding-left: 1.2rem; font-size: 0.88rem; }
+.cron-preview-error { color: var(--color-warn); }

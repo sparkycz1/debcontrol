@@ -1,0 +1,12 @@
+{# Translated strings for a page's JavaScript (static/js/*.js), which can't
+   call `t()` itself: `{{ js_i18n(["live.notify.enable", ...]) }}` emits
+   one JSON data block, `{"<key>": "<translated>"}`, that the script reads
+   with `JSON.parse(document.getElementById("js-i18n").textContent)` and
+   looks keys up in, keeping its own English text as the fallback. A JSON
+   data block is never executed, so `script-src 'self'` doesn't apply to
+   it. Import `with context` (it needs `request`). One per page. #}
+{% macro js_i18n(keys) -%}
+  {%- set strings = {} -%}
+  {%- for key in keys %}{% set _ = strings.update({key: t(request, key)}) %}{% endfor -%}
+  <script type="application/json" id="js-i18n">{{ strings | tojson }}</script>
+{%- endmacro %}

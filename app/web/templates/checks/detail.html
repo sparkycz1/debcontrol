@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "macros/charts.html" import chart_card with context %}
+
+{% block title %}{{ check.name }} — {{ t(request, "checks.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
+  {% set can_manage = request.state.user.has_permission('machine.manage') %}
+  <p class="hint"><a href="/checks">← {{ t(request, "checks.title") }}</a></p>
+  <div class="page-header">
+    <h1>{{ check.name }}</h1>
+    {% if can_manage %}
+      <div class="page-header-actions">
+        <a class="button button-secondary" href="/checks/{{ check.id }}/edit">{{ t(request, "checks.edit") }}</a>
+      </div>
+    {% endif %}
+  </div>
+  <p class="hint"><span class="badge">{{ check.kind | upper }}</span> <code>{{ check.target }}</code>
+    {% if check.expected_body %} · {{ t(request, "checks.expected_body") }}: <code>{{ check.expected_body }}</code>{% endif %}</p>
+
+  <div class="monitoring-toolbar">
+    <form method="get" action="/checks/{{ check.id }}" class="inline-form">
+      <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
+        {% for key, _label, _delta in time_ranges %}
+          <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ t(request, "monitoring.range." ~ key) }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
+    </form>
+    <p class="hint">{{ t(request, "checks.history.samples", count=history.sample_count) }}</p>
+  </div>
+
+  {% if history.sample_count %}
+    <div class="fleet-summary">
+      <div class="fleet-stat">
+        <span class="fleet-stat-value {{ 'fleet-ok' if history.uptime_percent >= 99.9 else ('fleet-danger' if history.uptime_percent < 99 else '') }}">{{ history.uptime_percent }} %</span>
+        <span class="fleet-stat-label">{{ t(request, "checks.history.uptime") }}</span>
+      </div>
+      <div class="fleet-stat">
+        <span class="fleet-stat-value">{{ history.avg_latency_ms | chart_value('ms') if history.avg_latency_ms is number else '—' }}</span>
+        <span class="fleet-stat-label">{{ t(request, "checks.history.avg_latency") }}</span>
+      </div>
+      <div class="fleet-stat">
+        <span class="fleet-stat-value">{{ history.p95_latency_ms | chart_value('ms') if history.p95_latency_ms is number else '—' }}</span>
+        <span class="fleet-stat-label">{{ t(request, "checks.history.p95_latency") }}</span>
+      </div>
+      <div class="fleet-stat">
+        <span class="fleet-stat-value {{ 'fleet-danger' if history.failure_count else '' }}">{{ history.failure_count }}</span>
+        <span class="fleet-stat-label">{{ t(request, "checks.history.failures") }}</span>
+      </div>
+    </div>
+
+    {% set ts = history.bucket_timestamps %}
+    <div class="monitoring-grid">
+      {{ chart_card(
+           t(request, "checks.history.uptime_chart"), t(request, "checks.history.uptime_chart_hint"),
+           chart([(t(request, "checks.history.uptime"), history.uptime_series)], ts, fmt='percent', fixed_max=100, time_format=tf),
+           empty_text=t(request, "monitoring.no_data")) }}
+      {{ chart_card(
+           t(request, "checks.history.latency_chart"), t(request, "checks.history.latency_chart_hint"),
+           chart([(t(request, "checks.history.latency"), history.latency_series)], ts, fmt='ms', time_format=tf),
+           empty_text=t(request, "monitoring.no_data")) }}
+    </div>
+
+    <section class="panel">
+      <h2>{{ t(request, "checks.history.recent_failures") }}</h2>
+      {% if history.recent_failures %}
+        <table class="data-table">
+          <thead><tr><th>{{ t(request, "checks.history.when") }}</th><th>{{ t(request, "checks.response") }}</th><th>{{ t(request, "checks.history.error") }}</th></tr></thead>
+          <tbody>
+            {% for f in history.recent_failures %}
+              <tr>
+                <td class="table-muted">{{ f.checked_at | local_time('%Y-%m-%d %H:%M:%S') }}</td>
+                <td>{% if f.status_code %}HTTP {{ f.status_code }}{% else %}—{% endif %}</td>
+                <td>{{ f.error or '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint">{{ t(request, "checks.history.no_failures") }}</p>
+      {% endif %}
+    </section>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "checks.history.empty") }}</p></div>
+  {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="/static/js/monitoring-chart.js" defer></script>
+{% endblock %}

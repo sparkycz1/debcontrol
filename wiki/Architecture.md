@@ -103,7 +103,16 @@ directly (only `worker` does).
 - Collapsible mobile nav is a checkbox-driven CSS toggle, not JS — works
   under the strict CSP (no inline scripts), stays keyboard-operable
   (visually hidden via clip/absolute positioning, not `display: none`).
-- Active nav link computed from `request.url.path` in `base.html`.
+- Active nav link computed from `request.url.path` in `base.html`. The
+  header shows the day-to-day pages (Dashboard, Fleet, Machines, Machine
+  groups, Checks, Scheduling, Notifications, AI) directly; account and
+  instance administration (Users, Roles, Audit, Settings, API docs) sits
+  in one "Administration" menu — a plain `<details>`, so no JS. Each link
+  is still shown only with its permission.
+- htmx's own injected indicator `<style>` is turned off
+  (`<meta name="htmx-config">` in `base.html`) — `style-src 'self'` would
+  block it with a console error on every page; request feedback is styled
+  in `style.css` (`.htmx-request`).
 - `.alert`'s icon is an absolutely-positioned CSS `::before`, not a flex
   sibling, so several stacked `<p>` validation errors still work.
 - A machine/group page's tabs (Overview/Monitoring/Updates/Terminal/
@@ -307,12 +316,28 @@ A rejection (missing/mismatched) is recorded in the audit log —
 `verify_csrf` calls `log_event` (`auth.csrf_rejected`, `DENIED`) before
 raising the 403.
 
+### WebSockets: an Origin check on top of the session cookie
+
+The terminal, live log follow and live-update sockets never pass through
+the CSRF middleware (a WebSocket handshake carries no form token) and
+aren't covered by CORS. `SameSite=Strict` on the session cookie keeps a
+*cross-site* page out, but a page on a sibling subdomain is still
+"same-site" and would get the cookie attached. So each socket's
+hand-written auth gate (`app.auth.websocket_origin.is_same_origin`)
+refuses a handshake whose `Origin` header names a different host/port
+than its own `Host` — browsers always send `Origin` there and page
+scripts can't forge it. A handshake with no `Origin` at all isn't a
+browser and still has to present a valid session cookie. This relies on
+the reverse proxy passing `Host` through unchanged, as passkeys already
+do (every proxy recipe in this wiki does).
+
 ### HTTP security headers
 
 Set unconditionally by the app itself, regardless of any reverse proxy
 in front: a strict CSP (no inline scripts/styles, no external origins),
 `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-`Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`.
+`Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`,
+`Cross-Origin-Opener-Policy: same-origin`.
 `Strict-Transport-Security` added when `APP_ENV=production`. Bundled
 Caddy additionally sets its own HSTS and strips `Server` at the edge.
 

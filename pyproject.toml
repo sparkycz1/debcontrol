@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.71.0"
+version = "0.73.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -17,7 +17,7 @@ dependencies = [
     # gate both pass at that version. Revisit once `openrouter` lifts it.
     "pydantic>=2.11.2",
     "pydantic-settings>=2.15.0",
-    "sqlalchemy[asyncio]>=2.0.52",
+    "sqlalchemy[asyncio]>=2.1.1",
     "asyncpg>=0.31.0",
     "alembic>=1.19.1",
     # Note: the `redis-py` client library is independent from the Redis SERVER

@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# htmx otherwise injects its own <style> for .htmx-indicator on load,
+     which `style-src 'self'` blocks (a console error on every page).
+     Request feedback is styled in style.css (`.htmx-request`) instead. #}
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <title>{% block title %}debcontrol{% endblock %}</title>
   <link rel="icon" href="{{ favicon_href() or '/static/img/favicon.svg' }}">
   <link rel="stylesheet" href="/static/css/style.css">
@@ -17,38 +21,52 @@
     <label for="nav-toggle" class="nav-toggle-label" aria-label="{{ t(request, 'nav.toggle_navigation') }}">☰</label>
     {% set current_user = request.state.user %}
     {% set current_path = request.url.path %}
+    {# Day-to-day pages first, in the order an operator moves through them
+       (overview → machines → what runs against them → who gets told);
+       account/instance administration folded into one "Administration"
+       menu — a plain <details>, so it needs no JS under the strict CSP.
+       Each entry is (href, key, permission or none, active prefix). #}
+    {% set main_links = [
+      ('/dashboard', 'nav.dashboard', none, '/dashboard'),
+      ('/fleet', 'nav.fleet', 'machine.view', '/fleet'),
+      ('/machines', 'nav.machines', 'machine.view', '/machines'),
+      ('/machine-groups', 'nav.machine_groups', 'group.view', '/machine-groups'),
+      ('/checks', 'nav.checks', 'machine.view', '/checks'),
+      ('/scheduling', 'nav.scheduling', 'scheduling.view', '/scheduling'),
+      ('/notifications', 'nav.notifications', 'notification.view', '/notifications'),
+      ('/ai', 'nav.ai', 'ai.access', '/ai'),
+    ] %}
+    {% set admin_links = [
+      ('/users', 'nav.users', 'user.manage', '/users'),
+      ('/roles', 'nav.roles', 'user.manage', '/roles'),
+      ('/audit', 'nav.audit', 'audit.view', '/audit'),
+      ('/settings', 'nav.settings', 'settings.view', '/settings'),
+      ('/api', 'nav.api_docs', none, '/api'),
+    ] %}
+    {% macro nav_link(href, key, prefix) %}
+      {% set is_active = current_path == prefix or current_path.startswith(prefix ~ '/') %}
+      <a href="{{ href }}" {% if is_active %}class="active" aria-current="page"{% endif %}>{{ t(request, key) }}</a>
+    {% endmacro %}
     <nav>
-      <a href="/dashboard" {% if current_path == '/dashboard' %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.dashboard") }}</a>
-      {% if current_user.has_permission('machine.view') %}
-        <a href="/fleet" {% if current_path.startswith('/fleet') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.fleet") }}</a>
-        <a href="/checks" {% if current_path.startswith('/checks') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.checks") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('machine.view') %}
-        <a href="/machines" {% if current_path.startswith('/machines') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.machines") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('group.view') %}
-        <a href="/machine-groups" {% if current_path.startswith('/machine-groups') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.machine_groups") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('scheduling.view') %}
-        <a href="/scheduling" {% if current_path.startswith('/scheduling') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.scheduling") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('ai.access') %}
-        <a href="/ai" {% if current_path.startswith('/ai') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.ai") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('audit.view') %}
-        <a href="/audit" {% if current_path.startswith('/audit') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.audit") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('user.manage') %}
-        <a href="/users" {% if current_path.startswith('/users') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.users") }}</a>
-        <a href="/roles" {% if current_path.startswith('/roles') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.roles") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('notification.view') %}
-        <a href="/notifications" {% if current_path.startswith('/notifications') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.notifications") }}</a>
-      {% endif %}
-      {% if current_user.has_permission('settings.view') %}
-        <a href="/settings" {% if current_path.startswith('/settings') %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.settings") }}</a>
-      {% endif %}
-      <a href="/api" {% if current_path == '/api' %}class="active" aria-current="page"{% endif %}>{{ t(request, "nav.api_docs") }}</a>
+      {% for href, key, perm, prefix in main_links if perm is none or current_user.has_permission(perm) %}
+        {{ nav_link(href, key, prefix) }}
+      {% endfor %}
+      {% set visible_admin = [] %}
+      {% for link in admin_links if link[2] is none or current_user.has_permission(link[2]) %}
+        {% set _ = visible_admin.append(link) %}
+      {% endfor %}
+      {% set ns = namespace(admin_active=false) %}
+      {% for link in visible_admin %}
+        {% if current_path == link[3] or current_path.startswith(link[3] ~ '/') %}{% set ns.admin_active = true %}{% endif %}
+      {% endfor %}
+      <details class="nav-menu">
+        <summary {% if ns.admin_active %}class="active"{% endif %}>{{ t(request, "nav.administration") }}</summary>
+        <div class="nav-menu-items">
+          {% for href, key, perm, prefix in visible_admin %}
+            {{ nav_link(href, key, prefix) }}
+          {% endfor %}
+        </div>
+      </details>
     </nav>
     <div class="site-header-user">
       {% set current_theme = 'light' if request.cookies.get('theme') == 'light' else 'dark' %}

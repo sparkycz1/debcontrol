@@ -557,3 +557,42 @@ async def test_saved_view_round_trips_multiple_tags_and_mode(client, db_session_
 
     list_page = await client.get("/machines")
     assert "prod and web" in list_page.text
+
+
+async def test_inventory_csv_export_respects_filter_and_is_audited(client, db_session_factory):
+    import csv
+    import io
+
+    from sqlalchemy import select
+
+    from app.db.models.audit_log import AuditLogEntry
+    from app.db.models.machine import AuthMethod, Machine
+
+    async with db_session_factory() as session:
+        session.add_all(
+            [
+                Machine(name="inv-web", ip_address="10.1.0.1", username="u",
+                        auth_method=AuthMethod.SSH_KEY, is_reachable=True,
+                        os_version="Debian 13", upgradable_count=4),
+                Machine(name="=cmd-db", ip_address="10.1.0.2", username="u",
+                        auth_method=AuthMethod.SSH_KEY),
+            ]
+        )
+        await session.commit()
+
+    everything = await client.get("/machines/inventory.csv")
+    assert everything.status_code == 200
+    assert everything.headers["content-type"].startswith("text/csv")
+    rows = list(csv.DictReader(io.StringIO(everything.text)))
+    by_name = {row["name"]: row for row in rows}
+    assert by_name["inv-web"]["status"] == "online"
+    assert by_name["inv-web"]["upgradable"] == "4"
+    # Formula-looking cells are neutralized, same as the audit export.
+    assert "'=cmd-db" in by_name
+
+    filtered = await client.get("/machines/inventory.csv?q=inv-web")
+    assert [row["name"] for row in csv.DictReader(io.StringIO(filtered.text))] == ["inv-web"]
+
+    async with db_session_factory() as session:
+        actions = (await session.execute(select(AuditLogEntry.action))).scalars().all()
+    assert "machine.inventory_export" in actions

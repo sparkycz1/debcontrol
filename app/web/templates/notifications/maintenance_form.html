@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "maintenance.edit_title" if window else "maintenance.new_title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "maintenance.edit_title" if window else "maintenance.new_title") }}</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">{% for error in errors %}<p>{{ error }}</p>{% endfor %}</div>
+  {% endif %}
+
+  <form method="post" action="{{ '/notifications/maintenance/' ~ window.id ~ '/edit' if window else '/notifications/maintenance' }}" class="form form-wide">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">{{ t(request, "maintenance.name") }}</label>
+    <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" maxlength="255" required
+           placeholder="{{ t(request, 'maintenance.name_placeholder') }}">
+
+    <label for="reason">{{ t(request, "maintenance.reason") }}</label>
+    <textarea id="reason" name="reason" rows="2" maxlength="2000">{{ form.get('reason', '') }}</textarea>
+
+    <label for="starts_at">{{ t(request, "maintenance.starts_at") }}</label>
+    <input type="datetime-local" id="starts_at" name="starts_at" value="{{ form.get('starts_at', '') }}" required>
+
+    <label for="ends_at">{{ t(request, "maintenance.ends_at") }}</label>
+    <input type="datetime-local" id="ends_at" name="ends_at" value="{{ form.get('ends_at', '') }}" required>
+    <p class="hint">{{ t(request, "maintenance.time_hint") }}</p>
+
+    <div class="panel">
+      <h2>{{ t(request, "maintenance.scope") }}</h2>
+      <label>
+        <input type="checkbox" name="all_machines" {% if form.get('all_machines') %}checked{% endif %}>
+        {{ t(request, "maintenance.all_machines") }}
+      </label>
+
+      <label>{{ t(request, "maintenance.groups_label") }}</label>
+      {% if all_groups %}
+        <div class="checklist-filter-group">
+          <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+                 aria-label="{{ t(request, 'maintenance.groups_label') }}">
+          <div class="permission-grid" data-checklist-items>
+            {% for group in all_groups %}
+              <label>
+                <input type="checkbox" name="machine_group_ids" value="{{ group.id }}"
+                       {{ 'checked' if group.id | string in form.get('machine_group_ids', []) else '' }}>
+                {{ group.name }}
+              </label>
+            {% endfor %}
+          </div>
+          <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
+        </div>
+      {% endif %}
+
+      <label>{{ t(request, "maintenance.machines_label") }}</label>
+      {% if all_machines %}
+        <div class="checklist-filter-group">
+          <input type="search" data-checklist-filter placeholder="{{ t(request, 'notifications.rule.filter_placeholder') }}"
+                 aria-label="{{ t(request, 'maintenance.machines_label') }}">
+          <div class="permission-grid" data-checklist-items>
+            {% for machine in all_machines %}
+              <label>
+                <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
+                       {{ 'checked' if machine.id | string in form.get('machine_ids', []) else '' }}>
+                {{ machine.name }}
+              </label>
+            {% endfor %}
+          </div>
+          <p class="hint" data-checklist-empty hidden>{{ t(request, "notifications.rule.filter_no_matches") }}</p>
+        </div>
+      {% endif %}
+      <p class="hint">{{ t(request, "maintenance.scope_hint") }}</p>
+    </div>
+
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/notifications/maintenance">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

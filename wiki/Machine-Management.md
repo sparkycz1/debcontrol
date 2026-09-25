@@ -16,6 +16,18 @@ connection is ever made to a machine whose host key fingerprint hasn't
 been explicitly confirmed by a human, and any later mismatch hard-fails
 the connection instead of silently reconnecting.
 
+### Inventory export: the machine list as a spreadsheet
+
+*More actions → Export inventory* on `/machines` downloads
+`GET /machines/inventory.csv` — every machine matching the list's current
+search/tag filter (all pages, not only the visible one), scoped like the
+list, with status, OS/kernel, CPU/RAM, pending (security) updates, reboot
+flag, uptime, host-key state and the facts/update-check timestamps.
+Formula-looking cells are neutralized the same way as the audit export,
+and each download is audited (`machine.inventory_export`). It's a
+read-only report, not the structural round-trip below; scripts get the
+same data as JSON from `GET /api/v1/machines`.
+
 ### Machine/group configuration export & import: structural, not a credentials backup
 
 `app.services.machine_config` (used by both `app/web/routes/machines.py`
@@ -182,6 +194,8 @@ group / "All machines") needs root on the target and can run long:
 - **Live output** — `run_system_update` reads stdout incrementally
   instead of buffering it all, writing to the run row every ~2s — what
   makes the page's own 3s poll show progress instead of a static spinner.
+  A script does the same with `GET /api/v1/machines/{id}/update-runs/{run_id}`
+  until `status` leaves `pending`/`running`.
 
 ### Previewing a manual update before it runs
 
@@ -358,7 +372,12 @@ Not running, or accounting off → `N/A`, not zero. The Monitoring tab's
 ### Monitoring tab layout
 
 A two-column grid of chart cards (one column below ~1000px), modeled on
-Beszel's system page, then full-width tables:
+Beszel's system page, then full-width tables. The same downsampled series
+are available as JSON at `GET /api/v1/machines/{id}/monitoring?range_key=24h`
+(one shared `bucket_timestamps` X axis; `range_key` is `1h`/`24h`/`7d`/
+`30d`/`90d`), and "Refresh now" at `POST /api/v1/machines/{id}/monitoring/refresh`
+— both through `app.services.monitoring_history.load_machine_history`,
+the same query the tab runs.
 
 - **CPU usage**, **Memory usage**, **Disk usage** (per mount), **Disk I/O**
   and **Network** (read/write and received/sent as separate series per
@@ -446,7 +465,10 @@ debcontrol server's Celery worker, so they test reachability *from
 outside*, the way users see a service:
 
 - **HTTP** — a GET against a full URL, redirects followed; up when the
-  status equals the configured one (or is below 400 when none is set). An
+  status equals the configured one (or is below 400 when none is set) and,
+  when *Response must contain* is filled in, that text appears in the
+  first 1 MB of the body (case-sensitive; streamed, never loaded whole) —
+  so a 200 maintenance page or an error JSON still counts as down. An
   https URL also reports its certificate's expiry.
 - **TLS** — a handshake with `host[:port]` (443 by default), certificate
   expiry only. With *Verify* on (the default), an invalid chain/hostname
@@ -454,8 +476,16 @@ outside*, the way users see a service:
   handshake), so an expired certificate says *when* it expired.
 
 `run_due_endpoint_checks` (Beat, every minute) enqueues each enabled check
-whose own interval (30 s–1 day) has passed. Only the latest result is
-stored (`EndpointCheck.last_*`, `cert_expires_at`). Notifications: an
+whose own interval (30 s–1 day) has passed. The latest result sits on the
+check itself (`EndpointCheck.last_*`, `cert_expires_at`) for the list
+page, and every probe is also kept as an `EndpointCheckResult` row: a
+check's name links to its **detail page** (`/checks/{id}`) with uptime %,
+average and 95th-percentile response time, availability and response-time
+charts over the same 1h–90d ranges as a machine's Monitoring tab, and the
+latest failures (`app.services.endpoint_check_history`; REST:
+`GET /api/v1/checks/{id}/history?range_key=`). The history is purged with
+the fleet-wide monitoring history retention (Settings → Checks &
+retention) by the same daily job. Notifications: an
 outage is announced after **2 consecutive failures** (`endpoint.down`),
 recovery only after an announced outage (`endpoint.recovered`), and a
 certificate inside its warn window once per certificate
@@ -866,6 +896,17 @@ Power still needs a typed confirmation phrase; an ad-hoc selection has
 no name, so it uses the fixed phrase `SELECTED MACHINES` (mirroring "All
 machines"'s `ALL MACHINES`), IDs carried forward as hidden fields.
 
+**Move to group** (needs `machine.manage`, the permission a single
+machine's Group field needs) files every selected machine into one group,
+or out of any group (`app.services.machine_grouping`). The picker starts on a
+placeholder and "no group" is its own explicit choice, so a stray click
+can't ungroup a selection. Same scope rule as
+editing one machine: a group-restricted account can only pick a group it
+sees and never "no group" (the option isn't offered, and the server
+refuses it). Audited once as `machines.bulk.group.assign`, naming only
+the machines that actually moved. REST: `POST /api/v1/machines/bulk/group`
+with `{"machine_ids": [...], "group_id": "<uuid>" | null}`.
+
 ### Supported distributions
 
 "Debian and its derivatives (e.g. Ubuntu), for as long as each is
@@ -970,6 +1011,12 @@ shut down — against a machine, group, or "All machines" on a cron expression.
   `trigger_monitoring_sample`/`send_power_to_machines` in
   `machine_actions`, no `Request`, no queue handle. A scheduled run and a
   human click take the exact same path, including skip-unpinned behavior.
+- **Live "next runs" preview** — as the cron field is typed in, the
+  form shows the next 5 run times (UTC, plus local time when `TZ`
+  differs) via htmx (`GET /scheduling/cron-preview`), or a hint if the
+  expression isn't valid yet; same computation as `next_run_at`
+  (`app.scheduling.cron.next_runs`). REST:
+  `GET /api/v1/scheduling/cron-preview?expression=...&count=N`.
 - **A fixed one-minute tick** — cron is minute-grained, so
   `run_due_scheduled_tasks` is a plain `crontab()` Beat entry. Each task
   keeps a denormalized `next_run_at` (computed on create/edit/enable,

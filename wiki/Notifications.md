@@ -225,7 +225,7 @@ template_name: High CPU alert
 `NotificationCustomTemplate.name` or the import fails with a clear error
 rather than silently dropping it.
 
-Same web-UI-only scope as the rest of this page — see "REST API" below.
+The REST API reads and writes rules in exactly this shape — see "REST API" below.
 
 ## Placeholders: variables usable in a template
 
@@ -414,6 +414,35 @@ actual ceiling is. Best-effort and visual only — `lt`/`lte`/`eq`/other
 operators aren't representable as a ceiling line and are simply not drawn;
 this never affects whether the condition itself fires.
 
+## Maintenance windows: muting notifications during planned work
+
+**Notifications → Maintenance windows** (`/notifications/maintenance`;
+`notification.view` to see, `notification.manage` to schedule) — a named
+time range (at most 31 days) covering **all machines**, chosen **machine
+groups** and/or individual **machines**. While a window is active, every
+notification *about a covered machine* is withheld: unreachable/reachable
+again, update run failed/succeeded, onboarding, condition rules. Group
+membership is evaluated when the notification fires, so a machine moved
+into a muted group mid-window is muted too.
+
+- **Nothing is lost silently** — each rule that would have fired gets a
+  delivery-history row with status **suppressed** and the window's name
+  as its target (`notify()` in `app.services.notifications`, via
+  `app.services.maintenance_windows.active_window_for`).
+- **Not muted**: events that aren't about a machine — endpoint checks
+  (down/recovered/certificate expiring) and the scheduled fleet summary.
+- **Condition rules** are edge-triggered (fire on false→true): a condition
+  that became true during the window and stays true afterwards doesn't
+  re-announce itself once the window ends — it fires again only after it
+  clears and trips again.
+- **End now** finishes an active window early (or cancels an upcoming
+  one), keeping it in the list as ended; **Delete** removes it.
+- A machine's Overview tab shows a banner while it's in maintenance.
+- Audited as `maintenance_window.create`/`.update`/`.end`/`.delete`.
+- REST: `GET/POST /api/v1/notifications/maintenance-windows`,
+  `PUT/DELETE .../{id}`, `POST .../{id}/end` — e.g. a deploy pipeline
+  opening a window right before it reboots machines.
+
 ## Audit logging
 
 Rule/template create-edit-delete are all audit-logged
@@ -431,8 +460,25 @@ troubleshooting log, not an audit trail.
 
 ## REST API
 
-Deliberately web-UI-only this round (see `api_v1.py`'s module docstring)
-— rules and templates are only reachable through the web UI today. This
-is new-and-not-yet-extended, not a permanent policy decision
-the way SSH key rotation or LDAP/OIDC config are: a REST equivalent is a
-reasonable, expected follow-up once there's a concrete need for it.
+`/api/v1/notifications/...` (`app/web/routes/api_v1_notifications.py`)
+mirrors this page with the same permissions (`notification.view` to read,
+`notification.manage` to change) and audit action codes. Rule validation
+and saving is shared with the web form and YAML import
+(`app.services.notification_rules`), so the two can't drift.
+
+| Method & path | What it does |
+|---|---|
+| `GET /rules`, `GET /rules/{id}` | Rules in the portable YAML-export shape above, plus `id` |
+| `POST /rules` | Create one (409 if the name exists) |
+| `PUT /rules/{id}` | Replace one — every field, like the form; a different `name` renames it |
+| `DELETE /rules/{id}` | Delete |
+| `POST /rules/import` | The YAML import as a JSON list: upsert by name, all or nothing |
+| `POST /rules/{id}/test` | "Send test" — email goes only to the token owner |
+| `GET /history?rule_id=&limit=&offset=` | Delivery history, newest first |
+| `GET /templates` | Every event's effective subject/body, `is_override` |
+| `PUT /templates/{event_type}`, `DELETE /templates/{event_type}` | Override / reset to default |
+| `GET/POST /custom-templates`, `PUT/DELETE /custom-templates/{id}` | Named custom templates |
+
+A fetched rule can be edited and `PUT` straight back, or `POST`ed to
+another instance — recipients, scope and template are referenced by
+email/name, never by database id.

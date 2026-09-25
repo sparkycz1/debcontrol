@@ -212,3 +212,74 @@ async def test_api_crud(client, db_session_factory, celery_calls):
 
     deleted = await client.delete(f"/api/v1/checks/{check_id}", headers=headers)
     assert deleted.status_code == 204
+
+
+# --- expected_body (HTTP checks) ---
+
+
+def _mock_http(monkeypatch: pytest.MonkeyPatch, status: int, body: bytes) -> None:
+    import httpx
+
+    real_client = httpx.AsyncClient
+
+    def _client(**kwargs: object) -> httpx.AsyncClient:
+        transport = httpx.MockTransport(lambda request: httpx.Response(status, content=body))
+        return real_client(transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+
+
+async def test_expected_body_present_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.endpoint_checks import probe_http
+
+    _mock_http(monkeypatch, 200, b'{"status": "ok"}')
+    result = await probe_http("http://svc.test/health", 5, None, expected_body='"ok"')
+    assert result.ok
+    assert result.status_code == 200
+
+
+async def test_expected_body_missing_is_down_even_with_200(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.endpoint_checks import probe_http
+
+    _mock_http(monkeypatch, 200, b"<h1>Down for maintenance</h1>")
+    result = await probe_http("http://svc.test/health", 5, None, expected_body="ok")
+    assert not result.ok
+    assert result.error is not None and "doesn't contain" in result.error
+
+
+async def test_no_expected_body_keeps_status_only_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.endpoint_checks import probe_http
+
+    _mock_http(monkeypatch, 503, b"ok")
+    result = await probe_http("http://svc.test/health", 5, None)
+    assert not result.ok
+    assert result.error == "HTTP 503"
+
+
+def test_expected_body_is_dropped_for_tls_checks() -> None:
+    from app.schemas.endpoint_check import EndpointCheckSave
+
+    payload = EndpointCheckSave(
+        name="cert", kind="tls", target="example.com:443", expected_body="ok"
+    )
+    assert payload.expected_body is None
+    blank = EndpointCheckSave(
+        name="web", kind="http", target="https://example.com", expected_body="   "
+    )
+    assert blank.expected_body is None
+
+
+async def test_expected_body_round_trips_through_the_api(client):
+    headers = await _api_token(client)
+    created = await client.post(
+        "/api/v1/checks",
+        json={"name": "health", "kind": "http", "target": "https://svc.test/health",
+              "expected_body": "ok"},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["expected_body"] == "ok"

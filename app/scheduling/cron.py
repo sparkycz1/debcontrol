@@ -31,3 +31,22 @@ def compute_next_run(expression: str, after: datetime | None = None) -> datetime
         return croniter(expression, base).get_next(datetime)
     except CroniterBadCronError as exc:
         raise ValueError(str(exc)) from exc
+
+
+# How many upcoming runs the schedule form previews.
+PREVIEW_RUN_COUNT = 5
+
+
+def next_runs(
+    expression: str, count: int = PREVIEW_RUN_COUNT, after: datetime | None = None
+) -> list[datetime]:
+    """The next `count` UTC times `expression` fires, strictly after `after`
+    (defaults to now) — the schedule form's live preview and
+    `GET /api/v1/scheduling/cron-preview`. Raises `ValueError` for an
+    invalid expression, same message as `validate_cron_expression`."""
+    validate_cron_expression(expression)
+    iterator = croniter(expression, after or datetime.now(UTC))
+    try:
+        return [iterator.get_next(datetime) for _ in range(count)]
+    except CroniterBadCronError as exc:
+        raise ValueError(str(exc)) from exc

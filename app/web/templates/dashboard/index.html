@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros/charts.html" import sparkline %}
+{% from "macros/charts.html" import sparkline with context %}
 
 {% block title %}{{ t(request, "dashboard.title") }} — debcontrol{% endblock %}
 
@@ -68,9 +68,9 @@
       <code>GET /api/v1/dashboard/trends</code>.
     </p>
     <h3>{{ t(request, "dashboard.fleet_trends.online_machines") }}</h3>
-    {{ sparkline(fleet_snapshots | map(attribute='online_machines') | list, '#46bf8a') }}
+    {{ sparkline(fleet_snapshots | map(attribute='online_machines') | list, 'ok', t(request, "dashboard.fleet_trends.online_machines")) }}
     <h3>{{ t(request, "dashboard.fleet_trends.pending_updates") }}</h3>
-    {{ sparkline(fleet_snapshots | map(attribute='needs_updates') | list, '#e0ab4a') }}
+    {{ sparkline(fleet_snapshots | map(attribute='needs_updates') | list, 'warn', t(request, "dashboard.fleet_trends.pending_updates")) }}
   </section>
   {% endif %}
 

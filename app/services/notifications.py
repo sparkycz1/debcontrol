@@ -64,6 +64,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.user import User
 from app.i18n import DEFAULT_LOCALE_CODE
+from app.services.maintenance_windows import active_window_for
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +461,28 @@ async def notify(
         rules = await _matching_rules(db, event_type, machine)
         if not rules:
             return
+
+        # A machine inside an active maintenance window: nothing is sent,
+        # but each rule that would have fired is recorded as suppressed, so
+        # "why didn't this alert go out" has an answer in the history.
+        if machine is not None:
+            window = await active_window_for(db, machine)
+            if window is not None:
+                db.add_all(
+                    _delivery_log(
+                        rule=rule,
+                        rule_name=rule.name,
+                        event_type=event_type.value,
+                        channel=NotificationDeliveryChannel(rule.delivery_channel),
+                        target=f'maintenance window "{window.name}"',
+                        machine=machine,
+                        status=NotificationDeliveryStatus.SUPPRESSED,
+                        error=None,
+                    )
+                    for rule in rules
+                )
+                await db.commit()
+                return
 
         default_template = (
             await db.execute(

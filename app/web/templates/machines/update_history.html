@@ -4,6 +4,8 @@
 {% block title %}{{ t(request, "machines.table.updates") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
+  {% from "partials/_js_i18n.html" import js_i18n with context %}
+  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.blocked", "live.notify.blocked_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ machine.name }}</h1>
   </div>

@@ -31,6 +31,7 @@ from fastapi import APIRouter, WebSocket, status
 from redis.asyncio.client import PubSub
 
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
+from app.auth.websocket_origin import is_same_origin
 from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.services.access_scope import can_see_machine
@@ -50,6 +51,11 @@ _SESSION_MAX_SECONDS = 6 * 60 * 60  # 6 hours
 async def _authenticate(websocket: WebSocket, machine_id: uuid.UUID) -> Machine | None:
     """Returns the machine if this connection may subscribe to its channel,
     or `None` after already closing the socket with an explanatory reason."""
+    # Cross-site WebSocket hijacking guard — see `app.auth.websocket_origin`.
+    if not is_same_origin(websocket.headers):
+        await websocket.close(code=_POLICY_VIOLATION, reason="Cross-origin request refused.")
+        return None
+
     raw_token = websocket.cookies.get(SESSION_COOKIE_NAME)
     if not raw_token:
         await websocket.close(code=_POLICY_VIOLATION, reason="Not authenticated.")

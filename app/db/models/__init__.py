@@ -7,6 +7,7 @@ from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings, FleetSummaryFrequency
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
+from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.fleet_summary import FleetSummary
 from app.db.models.geoip_database import GeoipDatabase
@@ -18,6 +19,7 @@ from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.maintenance_window import MaintenanceWindow
 from app.db.models.notification_condition import NotificationCondition, NotificationConditionState
 from app.db.models.notification_log import (
     NotificationDeliveryChannel,
@@ -60,6 +62,7 @@ __all__ = [
     "AuthMethod",
     "AuthProvider",
     "EndpointCheck",
+    "EndpointCheckResult",
     "FleetSnapshot",
     "FleetSummary",
     "FleetSummaryFrequency",
@@ -71,6 +74,7 @@ __all__ = [
     "MachineReachabilitySample",
     "MachineService",
     "MachineUpdateRun",
+    "MaintenanceWindow",
     "NotificationCondition",
     "NotificationConditionState",
     "NotificationCustomTemplate",

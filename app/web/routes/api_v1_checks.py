@@ -5,9 +5,11 @@ change) and audit codes as the Checks page (`app/web/routes/checks.py`)."""
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,8 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
+from app.services import monitoring_history
+from app.services.endpoint_check_history import load_check_history
 from app.tasks import jobs as tasks
 
 router = APIRouter(prefix="/api/v1/checks")
@@ -35,6 +39,7 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "kind": check.kind,
         "target": check.target,
         "expected_status": check.expected_status,
+        "expected_body": check.expected_body,
         "verify_tls": check.verify_tls,
         "interval_seconds": check.interval_seconds,
         "timeout_seconds": check.timeout_seconds,
@@ -153,3 +158,21 @@ async def run_check_api(
         target_label=check.name,
     )
     return {"status": "queued"}
+
+
+@router.get("/{check_id}/history", dependencies=[_view])
+async def check_history_api(
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """A check's detail page as data: uptime %, average/p95 latency,
+    downsampled uptime and latency series over `range_key` (`1h`/`24h`/
+    `7d`/`30d`/`90d`, sharing `bucket_timestamps` as the X axis) and the
+    latest failures."""
+    check = await _get_or_404(check_id, db)
+    range_key = monitoring_history.normalize_range_key(range_key)
+    history = await load_check_history(db, check.id, range_key)
+    encoded: dict[str, Any] = jsonable_encoder(asdict(history))
+    return encoded

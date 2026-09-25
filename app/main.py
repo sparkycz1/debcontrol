@@ -29,6 +29,7 @@ from app.web.routes import (
     api_v1_audit,
     api_v1_checks,
     api_v1_dashboard,
+    api_v1_notifications,
     api_v1_roles,
     api_v1_scheduling,
     api_v1_settings,
@@ -45,6 +46,7 @@ from app.web.routes import (
     logs_ws,
     machine_groups,
     machines,
+    maintenance,
     notifications,
     roles,
     scheduling,
@@ -224,6 +226,9 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Severs `window.opener` for any cross-origin page this app opens
+        # or is opened by (e.g. an OIDC provider's popup/redirect chain).
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
@@ -249,9 +254,11 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_dashboard.router)
     app.include_router(api_v1_account.router)
     app.include_router(api_v1_checks.router)
+    app.include_router(api_v1_notifications.router)
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)
+    app.include_router(maintenance.router)
     app.include_router(notifications.router)
     app.include_router(settings_routes.router)
     app.include_router(theme.router)

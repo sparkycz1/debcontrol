@@ -78,7 +78,7 @@ async def set_machine_tags(db: AsyncSession, machine: Machine, names: list[str])
     previous_result = await db.execute(
         select(machine_tags.c.tag_id).where(machine_tags.c.machine_id == machine.id)
     )
-    previous_tag_ids = set(previous_result.scalars().all())
+    previous_tag_ids: set[uuid.UUID] = set(previous_result.scalars().all())
 
     new_tag_ids: set[uuid.UUID] = set()
     if names:

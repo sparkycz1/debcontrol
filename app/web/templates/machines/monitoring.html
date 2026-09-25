@@ -7,6 +7,8 @@
 
 {% block content %}
   {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
+  {% from "partials/_js_i18n.html" import js_i18n with context %}
+  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.blocked", "live.notify.blocked_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ machine.name }}</h1>
   </div>
@@ -18,7 +20,7 @@
       <form method="get" action="/machines/{{ machine.id }}/monitoring" class="inline-form">
         <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
           {% for key, label, _delta in time_ranges %}
-            <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ t(request, "monitoring.range." ~ key) }}</option>
           {% endfor %}
         </select>
         <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
@@ -230,19 +232,21 @@
       </section>
     {% elif machine.docker_status == 'ok' %}
       {% set can_act = request.state.user.has_permission('action.power') and machine.host_key_fingerprint %}
-      {% set acted = request.query_params.get('container') %}
+      {% set acted = flash(request, 'container') %}
       <section class="chart-card chart-card-wide monitoring-section" id="containers">
         {% if acted and request.query_params.get('container_action') in ('start', 'stop', 'restart') %}
           {% set acted_action = t(request, "monitoring.containers.action_" ~ request.query_params.get('container_action')) %}
-          {% if request.query_params.get('container_error') %}
-            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.action_failed", action=acted_action, name=acted) }} {{ request.query_params.get('container_error') }}</p></div>
+          {% set container_error = flash(request, 'container_error') %}
+          {% if container_error %}
+            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.action_failed", action=acted_action, name=acted) }} {{ container_error }}</p></div>
           {% else %}
             <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.action_done", action=acted_action, name=acted) }}</p></div>
           {% endif %}
         {% endif %}
         {% if request.query_params.get('images_checked') %}
-          {% if request.query_params.get('images_error') %}
-            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.images_failed") }} {{ request.query_params.get('images_error') }}</p></div>
+          {% set images_error = flash(request, 'images_error') %}
+          {% if images_error %}
+            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.images_failed") }} {{ images_error }}</p></div>
           {% else %}
             <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.images_done") }}</p></div>
           {% endif %}

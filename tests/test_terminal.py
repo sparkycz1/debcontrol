@@ -27,9 +27,18 @@ class _FakeApp:
 
 
 class _FakeWebSocket:
-    def __init__(self, db_session_factory: object, *, token: str | None = None) -> None:
+    def __init__(
+        self,
+        db_session_factory: object,
+        *,
+        token: str | None = None,
+        origin: str | None = "http://testserver",
+    ) -> None:
         self.app = _FakeApp(db_session_factory)
         self.cookies: dict[str, str] = {"session": token} if token else {}
+        self.headers: dict[str, str] = {"host": "testserver"}
+        if origin is not None:
+            self.headers["origin"] = origin
         self.closed: tuple[int, str | None] | None = None
         self.accepted = False
         self.sent_text: list[str] = []
@@ -181,6 +190,34 @@ async def test_authenticate_succeeds_with_permission_and_pinned_machine(db_sessi
     assert machine.id == machine_id
     assert user.has_permission(Permission.ACTION_TERMINAL)
     assert ws.closed is None
+
+
+async def test_authenticate_rejects_a_cross_origin_handshake(db_session_factory):
+    """A valid session cookie is not enough when the handshake comes from a
+    page on another origin (e.g. a sibling subdomain the SameSite=Strict
+    cookie still reaches) — see `app.auth.websocket_origin`."""
+    machine_id = await _make_machine(db_session_factory)
+    token = await _make_session_token(
+        db_session_factory, permissions={Permission.ACTION_TERMINAL}
+    )
+    ws = _FakeWebSocket(db_session_factory, token=token, origin="https://evil.testserver")
+
+    result = await _authenticate(ws, machine_id)  # type: ignore[arg-type]
+
+    assert result is None
+    assert ws.closed == (1008, "Cross-origin request refused.")
+
+
+async def test_authenticate_allows_a_handshake_without_origin(db_session_factory):
+    """No Origin header means no browser (and so no ambient cookie to
+    hijack) — the session cookie check alone applies."""
+    machine_id = await _make_machine(db_session_factory)
+    token = await _make_session_token(
+        db_session_factory, permissions={Permission.ACTION_TERMINAL}
+    )
+    ws = _FakeWebSocket(db_session_factory, token=token, origin=None)
+
+    assert await _authenticate(ws, machine_id) is not None  # type: ignore[arg-type]
 
 
 # --- Full session lifecycle: audit logging, connection teardown ---
