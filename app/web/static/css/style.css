@@ -1991,3 +1991,10 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 @media (prefers-reduced-motion: reduce) {
   .htmx-settling { animation: none; }
 }
+
+/* Dashboard fleet-trend sparklines (macros/charts.html) — colored through
+   the theme variables so the light theme recolors them too. */
+.sparkline-ok polyline { stroke: var(--color-ok); }
+.sparkline-ok circle { fill: var(--color-ok); }
+.sparkline-warn polyline { stroke: var(--color-warn); }
+.sparkline-warn circle { fill: var(--color-warn); }

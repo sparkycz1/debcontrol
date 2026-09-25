@@ -6,19 +6,19 @@
 
 {% macro status_badge(machine) %}
   {% if machine.is_reachable is none %}
-    <span class="badge badge-warn">unknown</span>
+    <span class="badge badge-warn">{{ t(request, "groups.status.unknown") }}</span>
   {% elif machine.is_reachable %}
-    <span class="badge badge-ok">online</span>
+    <span class="badge badge-ok">{{ t(request, "groups.status.online") }}</span>
   {% else %}
-    <span class="badge badge-error">offline</span>
+    <span class="badge badge-error">{{ t(request, "groups.status.offline") }}</span>
   {% endif %}
 {% endmacro %}
 
 {% macro host_key_badge(machine) %}
   {% if machine.host_key_fingerprint %}
-    <span class="badge badge-ok">pinned</span>
+    <span class="badge badge-ok">{{ t(request, "machines.host_key.pinned") }}</span>
   {% else %}
-    <span class="badge badge-warn">unconfirmed</span>
+    <span class="badge badge-warn">{{ t(request, "machines.host_key.unconfirmed") }}</span>
   {% endif %}
 {% endmacro %}
 
@@ -110,9 +110,9 @@
         <span class="saved-view-chip">
           <a href="/machines?{{ view.query_string }}">{{ view.name }}</a>
           <form method="post" action="/machines/views/{{ view.id }}/delete" class="inline-form"
-                data-confirm="Delete the saved view &quot;{{ view.name }}&quot;?">
+                data-confirm="{{ t(request, 'audit.save_view.delete_confirm', name=(view.name | e)) | safe }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="link-button" aria-label="Delete saved view {{ view.name }}">&times;</button>
+            <button type="submit" class="link-button" aria-label="{{ t(request, 'audit.save_view.delete', name=view.name) }}">&times;</button>
           </form>
         </span>
       {% endfor %}
