@@ -423,6 +423,21 @@ each sample stores only the numbers the charts need
 (`MachineMonitoringSample.docker_stats`), so image names and port lists
 aren't repeated every two minutes.
 
+### Disk-full forecast
+
+Every hour (`forecast_all_machine_disks`, one job per machine, database
+only, no SSH), `app/services/disk_forecast.py` fits a least-squares line
+through each mount's used bytes over the last 7 days of monitoring
+samples and extrapolates it to the mount's size. The result lives on
+`Machine.disk_forecast` (`{mount: {bytes_per_day, days_until_full, ...}}`),
+shown on the Monitoring tab's Disk usage card ("full in ~23 days,
++1.2 GB/day"), exposed on `GET /api/v1/machines/{id}/hardware`, and usable
+as the `monitoring.disk_full_days` notification condition (the soonest
+mount). It needs at least 6 samples spanning 6 hours; a mount that isn't
+growing (or wouldn't fill within ~10 years) has no estimate. It's a
+trend, not a promise — a cleanup or log rotation changes the slope and
+the next hourly run picks that up.
+
 ### Hardware monitoring: physical machines only, self-healing
 
 The hardware cards appear only when `Machine.is_physical` is true (see

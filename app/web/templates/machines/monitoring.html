@@ -109,7 +109,12 @@
         {% endfor %}
         {% set fs_footer = [] %}
         {% for mount, current in history.latest_filesystems.items() %}
-          {% set _ = fs_footer.append(mount ~ ': ' ~ t(request, "monitoring.disk.usage_current", used=(current.used_bytes | bytes), size=(current.size_bytes | bytes)) ~ (' (' ~ current.use_percent ~ '%)' if current.use_percent is not none else '')) %}
+          {% set fc = (machine.disk_forecast or {}).get(mount) or {} %}
+          {% set eta = '' %}
+          {% if fc.days_until_full is number %}
+            {% set eta = ' — ' ~ (t(request, "monitoring.disk.full_now") if fc.days_until_full <= 0 else t(request, "monitoring.disk.full_in", days=(fc.days_until_full | round(0) | int), rate=(fc.bytes_per_day | bytes))) %}
+          {% endif %}
+          {% set _ = fs_footer.append(mount ~ ': ' ~ t(request, "monitoring.disk.usage_current", used=(current.used_bytes | bytes), size=(current.size_bytes | bytes)) ~ (' (' ~ current.use_percent ~ '%)' if current.use_percent is not none else '') ~ eta) %}
         {% endfor %}
         {{ chart_card(
              t(request, "monitoring.card.disk"), t(request, "monitoring.card.disk_hint"),

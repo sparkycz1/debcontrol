@@ -1181,6 +1181,9 @@
     "notifications.condition_field.docker_unhealthy_count": "Unhealthy containers (count)",
     "notifications.condition_field.docker_restarting_count": "Restarting containers (count)",
     "notifications.condition_field.docker_exited_error_count": "Containers exited with an error (count)",
-    "monitoring.threshold_celsius": "Alert ≥ {value} °C"
+    "monitoring.threshold_celsius": "Alert ≥ {value} °C",
+    "notifications.condition_field.disk_full_days": "Days until a disk is full (forecast)",
+    "monitoring.disk.full_in": "full in ~{days} days (+{rate}/day)",
+    "monitoring.disk.full_now": "full"
   }
 }

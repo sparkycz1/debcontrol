@@ -241,6 +241,10 @@ celery_app.conf.update(
 # queue needed a hand-written "kick off the first sweep" hook to get.
 _interval_settings = _bootstrap_interval_settings()
 celery_app.conf.beat_schedule = {
+    "forecast-all-machine-disks": {
+        "task": "app.tasks.jobs.forecast_all_machine_disks",
+        "schedule": crontab(minute=20),
+    },
     "ping-all-machines": {
         "task": "app.tasks.jobs.ping_all_machines",
         "schedule": timedelta(seconds=_interval_settings["reachability_check_interval_seconds"]),

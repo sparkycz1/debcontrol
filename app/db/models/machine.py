@@ -150,6 +150,9 @@ class Machine(Base):
     # — a snapshot, not a history. None = not applicable (VM / no smartctl).
     smart_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # {mount: {"bytes_per_day", "days_until_full", "used_bytes", "size_bytes"}}
+    # — see app.services.disk_forecast; recomputed hourly.
+    disk_forecast: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # --- Docker, refreshed with every monitoring sample (app.ssh.monitoring).
     # `docker_status`: None = no docker CLI, "no_access" = present but this

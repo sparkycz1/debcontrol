@@ -156,6 +156,7 @@ already tracks per machine, either from its latest facts snapshot
 | `monitoring.failed_services_count` | Latest sample's failed-service count | number |
 | `monitoring.max_temperature_c` | Hottest sensor in the latest sample (bare metal only) | number |
 | `monitoring.smart_failed_count` | Disks whose S.M.A.R.T. overall health says FAILED (bare metal only; unknown without S.M.A.R.T. data) | number |
+| `monitoring.disk_full_days` | Days until the soonest-filling mount is full at its 7-day growth rate (unknown when nothing is growing) — see Machine Management's *Disk-full forecast* | number |
 | `docker.unhealthy_count` | Containers whose healthcheck reports unhealthy | number |
 | `docker.restarting_count` | Containers currently in the `restarting` state (a restart loop) | number |
 | `docker.exited_error_count` | Stopped containers whose exit code wasn't 0 | number |

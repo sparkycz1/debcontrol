@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from app.db.models.machine import Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.services.disk_forecast import soonest_full_days
 
 ValueType = Literal["number", "string", "bool"]
 
@@ -154,6 +155,10 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
     ),
     "monitoring.smart_failed_count": ConditionField(
         "smart_failed_count", "number", lambda m, s, mount: _smart_failed_count(s)
+    ),
+    # --- Disk-full forecast (Machine.disk_forecast, recomputed hourly) ---
+    "monitoring.disk_full_days": ConditionField(
+        "disk_full_days", "number", lambda m, s, mount: soonest_full_days(m.disk_forecast)
     ),
     # --- Docker (latest container list, see Machine.docker_containers) ---
     "docker.unhealthy_count": ConditionField(

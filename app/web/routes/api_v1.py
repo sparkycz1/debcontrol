@@ -516,6 +516,7 @@ async def get_machine_hardware_api(
         "smart_devices": machine.smart_devices,
         "docker_status": machine.docker_status,
         "docker_containers": machine.docker_containers,
+        "disk_forecast": machine.disk_forecast,
         "sampled_at": latest.sampled_at.isoformat() if latest else None,
         "sensor_temps": latest.sensor_temps if latest else None,
         "sensor_fans": latest.sensor_fans if latest else None,

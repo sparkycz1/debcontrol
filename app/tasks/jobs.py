@@ -49,6 +49,7 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
+from app.services import disk_forecast
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
@@ -396,6 +397,50 @@ async def _run_container_action(machine_id: str, *, action: str, container: str)
 )
 def run_container_action_task(machine_id: str, *, action: str, container: str) -> dict[str, Any]:
     return asyncio.run(_run_container_action(machine_id, action=action, container=container))
+
+
+async def _forecast_machine_disks(machine_id: str) -> dict[str, Any]:
+    """Recompute `Machine.disk_forecast` from the last week of monitoring
+    samples (app.services.disk_forecast). No SSH — database only."""
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        now = datetime.now(UTC)
+        result = await session.execute(
+            select(MachineMonitoringSample.sampled_at, MachineMonitoringSample.filesystems)
+            .where(
+                MachineMonitoringSample.machine_id == machine.id,
+                MachineMonitoringSample.sampled_at >= now - disk_forecast.WINDOW,
+            )
+            .order_by(MachineMonitoringSample.sampled_at)
+        )
+        rows = [(_as_utc(sampled_at), filesystems) for sampled_at, filesystems in result.all()]
+        machine.disk_forecast = disk_forecast.forecast_filesystems(rows, now) or None
+        await session.commit()
+        return {"ok": True, "mounts": len(machine.disk_forecast or {})}
+
+
+@celery_app.task(name="app.tasks.jobs.forecast_machine_disks")
+def forecast_machine_disks(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_forecast_machine_disks(machine_id))
+
+
+async def _forecast_all_machine_disks() -> None:
+    """Hourly fan-out — one `forecast_machine_disks` per machine that has
+    monitoring data, never awaited inline."""
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine.id).where(Machine.is_active, Machine.monitoring_updated_at.is_not(None))
+        )
+        machine_ids = [row[0] for row in result.all()]
+    for machine_id in machine_ids:
+        forecast_machine_disks.delay(str(machine_id))
+
+
+@celery_app.task(name="app.tasks.jobs.forecast_all_machine_disks")
+def forecast_all_machine_disks() -> None:
+    asyncio.run(_forecast_all_machine_disks())
 
 
 async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:

@@ -1181,6 +1181,9 @@
     "notifications.condition_field.docker_unhealthy_count": "Nezdravé kontejnery (počet)",
     "notifications.condition_field.docker_restarting_count": "Restartující se kontejnery (počet)",
     "notifications.condition_field.docker_exited_error_count": "Kontejnery ukončené s chybou (počet)",
-    "monitoring.threshold_celsius": "Upozornění ≥ {value} °C"
+    "monitoring.threshold_celsius": "Upozornění ≥ {value} °C",
+    "notifications.condition_field.disk_full_days": "Dní do zaplnění disku (předpověď)",
+    "monitoring.disk.full_in": "plný za ~{days} dní (+{rate}/den)",
+    "monitoring.disk.full_now": "plný"
   }
 }
