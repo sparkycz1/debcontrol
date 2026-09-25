@@ -38,7 +38,9 @@ def test_parse_success():
 
 def test_parse_failure_surfaces_dockers_message():
     with pytest.raises(ContainerActionError, match="No such container"):
-        parse_container_action_output("Error response from daemon: No such container: web\n@@EXIT 1\n")
+        parse_container_action_output(
+            "Error response from daemon: No such container: web\n@@EXIT 1\n"
+        )
 
 
 def test_parse_no_access():
