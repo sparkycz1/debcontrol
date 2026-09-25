@@ -14,6 +14,8 @@ name: Release
 #   exactly that version.
 #
 # Release notes are the commit subjects since the previous `v*` tag.
+# "Latest" always goes to the highest version, so backfilling an older one
+# never steals it; running it for an existing highest tag re-marks it.
 
 on:
   push:
@@ -109,4 +111,24 @@ jobs:
           } > release-notes.md
           git tag "$TAG" "$SHA"
           git push origin "refs/tags/$TAG"
-          gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
+          # "Latest" means the highest version, not the most recently
+          # created release — a backfilled older version must not take it.
+          highest="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+          latest=false
+          if [ "$highest" = "$TAG" ]; then latest=true; fi
+          gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
+            --verify-tag --latest="$latest"
+
+      - name: Keep "Latest" on the highest version
+        # Also fixes it after the fact: re-running for an existing tag that
+        # is the highest version marks its release as Latest again.
+        if: steps.resolve.outputs.skip == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          highest="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+          if [ "$highest" = "$TAG" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --latest
+          fi
