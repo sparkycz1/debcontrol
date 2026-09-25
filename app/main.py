@@ -224,6 +224,9 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Severs `window.opener` for any cross-origin page this app opens
+        # or is opened by (e.g. an OIDC provider's popup/redirect chain).
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
