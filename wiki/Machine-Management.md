@@ -418,6 +418,21 @@ audit-logs `machine.container.<action>`, enqueues a fresh monitoring sample
 so the table catches up, and redirects back with the outcome. REST:
 `POST /api/v1/machines/{id}/containers/{name}/{action}`.
 
+**Image updates.** Once a day (04:30, `check_all_machine_image_updates`,
+one task per machine where Docker is readable) and on demand (*Check
+image updates* on the container table, `machine.manage`, or
+`POST /api/v1/machines/{id}/docker/check-images`),
+`app/ssh/image_updates.py` compares each running image's local repo
+digest(s) with the registry's current digest for the same tag, read via
+`docker buildx imagetools inspect` — manifest only, nothing is pulled.
+A differing digest marks the image **update available** in the table
+(`Machine.docker_image_updates`), and `docker.image_updates_count` can
+drive a notification. Digest-pinned references, locally built images, and
+registries this machine can't reach are "unknown". It's detection only —
+updating is still `docker compose pull && up -d` (or your own tooling);
+one registry request per distinct image per day keeps it well inside
+Docker Hub's anonymous rate limit.
+
 The latest full container list is kept once on `Machine.docker_containers`;
 each sample stores only the numbers the charts need
 (`MachineMonitoringSample.docker_stats`), so image names and port lists

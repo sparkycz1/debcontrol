@@ -68,6 +68,7 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import gather_facts
 from app.ssh.identity import get_or_create_identity
+from app.ssh.image_updates import ImageCheckError, check_image_updates
 from app.ssh.logs import (
     LogAccessError,
     list_directory,
@@ -441,6 +442,65 @@ async def _forecast_all_machine_disks() -> None:
 @celery_app.task(name="app.tasks.jobs.forecast_all_machine_disks")
 def forecast_all_machine_disks() -> None:
     asyncio.run(_forecast_all_machine_disks())
+
+
+async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
+    """Compare every running image's local digest with its registry digest
+    (app.ssh.image_updates) and store the result on the machine."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+
+        secret = await resolve_machine_credential(machine, session)
+
+        try:
+            statuses = await check_image_updates(
+                machine, secret, app_settings.ssh_connect_timeout
+            )
+        except ImageCheckError as exc:
+            return {"ok": False, "error": str(exc)}
+        except SSHConnectionError as exc:
+            logger.warning("check_machine_image_updates failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+
+        machine.docker_image_updates = dict(statuses)
+        machine.docker_images_checked_at = datetime.now(UTC)
+        await session.commit()
+        return {"ok": True, "updates": sum(1 for s in statuses.values() if s == "update")}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.check_machine_image_updates",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def check_machine_image_updates(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_check_machine_image_updates(machine_id))
+
+
+async def _check_all_machine_image_updates() -> None:
+    """Daily fan-out over machines where Docker is readable — never awaited
+    inline, one task per machine."""
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Machine.id).where(
+                Machine.is_active,
+                Machine.host_key_fingerprint.is_not(None),
+                Machine.docker_status == "ok",
+            )
+        )
+        machine_ids = [row[0] for row in result.all()]
+    for machine_id in machine_ids:
+        check_machine_image_updates.delay(str(machine_id))
+
+
+@celery_app.task(name="app.tasks.jobs.check_all_machine_image_updates")
+def check_all_machine_image_updates() -> None:
+    asyncio.run(_check_all_machine_image_updates())
 
 
 async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:

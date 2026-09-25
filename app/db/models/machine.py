@@ -162,6 +162,10 @@ class Machine(Base):
     # (MachineMonitoringSample.docker_stats).
     docker_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     docker_containers: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # {image: "update" | "current" | "unknown"} for every running image, from
+    # the daily registry-digest comparison (app.ssh.image_updates).
+    docker_image_updates: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    docker_images_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

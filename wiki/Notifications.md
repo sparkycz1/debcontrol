@@ -159,6 +159,7 @@ already tracks per machine, either from its latest facts snapshot
 | `monitoring.disk_full_days` | Days until the soonest-filling mount is full at its 7-day growth rate (unknown when nothing is growing) — see Machine Management's *Disk-full forecast* | number |
 | `docker.unhealthy_count` | Containers whose healthcheck reports unhealthy | number |
 | `docker.restarting_count` | Containers currently in the `restarting` state (a restart loop) | number |
+| `docker.image_updates_count` | Running images whose registry has a newer digest for the same tag (daily check; unknown until the first check) | number |
 | `docker.exited_error_count` | Stopped containers whose exit code wasn't 0 | number |
 
 A `monitoring.*` field reads the machine's **latest**

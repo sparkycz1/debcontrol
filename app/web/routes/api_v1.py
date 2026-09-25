@@ -530,6 +530,12 @@ async def get_machine_hardware_api(
         "docker_status": machine.docker_status,
         "docker_containers": machine.docker_containers,
         "disk_forecast": machine.disk_forecast,
+        "docker_image_updates": machine.docker_image_updates,
+        "docker_images_checked_at": (
+            machine.docker_images_checked_at.isoformat()
+            if machine.docker_images_checked_at
+            else None
+        ),
         "sampled_at": latest.sampled_at.isoformat() if latest else None,
         "sensor_temps": latest.sensor_temps if latest else None,
         "sensor_fans": latest.sensor_fans if latest else None,
@@ -1037,6 +1043,45 @@ async def recheck_readiness_api(
     with contextlib.suppress(Exception):
         await asyncio.to_thread(async_result.get, timeout=app_settings.ssh_connect_timeout + 15)
     return {"ok": True}
+
+
+@router.post("/machines/{machine_id}/docker/check-images", dependencies=[_manage_machines])
+async def check_image_updates_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Run the Docker image update check now; returns `{image: status}`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    app_settings = await get_or_create_app_settings(db)
+    error: str | None = None
+    try:
+        async_result = tasks.check_machine_image_updates.delay(str(machine.id))
+        result = await asyncio.to_thread(
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 150
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The check did not finish in time."
+    except Exception as exc:
+        error = str(exc)
+    await log_event(
+        db,
+        request=request,
+        action="machine.docker.check_images",
+        summary=f'Checked Docker image updates on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    await db.refresh(machine)
+    return {"ok": True, "images": machine.docker_image_updates or {}}
 
 
 @router.post(

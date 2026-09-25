@@ -1198,6 +1198,12 @@
     "fleet.containers": "Containers",
     "fleet.disk_full_in": "Disk full in ~{days} d",
     "fleet.truncated": "Showing the first {limit} machines — use the Machines list to search the rest.",
-    "fleet.empty": "No machines to show yet."
+    "fleet.empty": "No machines to show yet.",
+    "monitoring.containers.check_images": "Check image updates",
+    "monitoring.containers.image_update": "update available",
+    "monitoring.containers.images_checked_at": "images checked {when}",
+    "monitoring.containers.images_done": "Image update check finished.",
+    "monitoring.containers.images_failed": "Image update check failed:",
+    "notifications.condition_field.docker_image_updates_count": "Running images with an update available (count)"
   }
 }

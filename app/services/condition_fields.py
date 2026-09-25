@@ -20,6 +20,7 @@ from typing import Any, Literal
 from app.db.models.machine import Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.services.disk_forecast import soonest_full_days
+from app.ssh.image_updates import count_updates
 
 ValueType = Literal["number", "string", "bool"]
 
@@ -170,6 +171,13 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
         "docker_restarting_count",
         "number",
         lambda m, s, mount: _docker_count(m, lambda c: c.get("state") == "restarting"),
+    ),
+    "docker.image_updates_count": ConditionField(
+        "docker_image_updates_count",
+        "number",
+        lambda m, s, mount: (
+            count_updates(m.docker_image_updates) if m.docker_image_updates is not None else None
+        ),
     ),
     "docker.exited_error_count": ConditionField(
         "docker_exited_error_count",

@@ -1198,6 +1198,12 @@
     "fleet.containers": "Kontejnery",
     "fleet.disk_full_in": "Disk plný za ~{days} d",
     "fleet.truncated": "Zobrazeno prvních {limit} strojů — ostatní najdete v seznamu Stroje.",
-    "fleet.empty": "Zatím žádné stroje k zobrazení."
+    "fleet.empty": "Zatím žádné stroje k zobrazení.",
+    "monitoring.containers.check_images": "Zkontrolovat nové image",
+    "monitoring.containers.image_update": "nová verze",
+    "monitoring.containers.images_checked_at": "image zkontrolovány {when}",
+    "monitoring.containers.images_done": "Kontrola nových image dokončena.",
+    "monitoring.containers.images_failed": "Kontrola nových image se nepovedla:",
+    "notifications.condition_field.docker_image_updates_count": "Běžící image s dostupnou novou verzí (počet)"
   }
 }

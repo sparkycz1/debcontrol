@@ -2659,6 +2659,51 @@ async def machine_logs_browse(
     )
 
 
+@router.post("/{machine_id}/docker/check-images", dependencies=[_manage, Depends(verify_csrf)])
+async def check_image_updates_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """"Check for image updates now" on the container table — the same
+    registry-digest comparison the daily sweep runs, on demand."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    app_settings = await get_or_create_app_settings(db)
+
+    error: str | None = None
+    try:
+        async_result = tasks.check_machine_image_updates.delay(str(machine.id))
+        result = await asyncio.to_thread(
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 150
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The check did not finish in time."
+    except Exception as exc:
+        error = str(exc)
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.docker.check_images",
+        summary=f'Checked Docker image updates on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"error": error} if error else None,
+    )
+    query = {"images_checked": "1"}
+    if error is not None:
+        query["images_error"] = error[:300]
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @router.post(
     "/{machine_id}/containers/{container}/{action}",
     dependencies=[_power, Depends(verify_csrf)],

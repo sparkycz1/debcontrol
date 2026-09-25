@@ -240,11 +240,27 @@
             <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.action_done", action=acted_action, name=acted) }}</p></div>
           {% endif %}
         {% endif %}
+        {% if request.query_params.get('images_checked') %}
+          {% if request.query_params.get('images_error') %}
+            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.images_failed") }} {{ request.query_params.get('images_error') }}</p></div>
+          {% else %}
+            <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.images_done") }}</p></div>
+          {% endif %}
+        {% endif %}
         <header class="chart-card-header">
           <div>
             <h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3>
-            <p class="chart-card-subtitle">{{ t(request, "monitoring.containers.hint") }}</p>
+            <p class="chart-card-subtitle">
+              {{ t(request, "monitoring.containers.hint") }}
+              {% if machine.docker_images_checked_at %}— {{ t(request, "monitoring.containers.images_checked_at", when=(machine.docker_images_checked_at | local_time('%Y-%m-%d %H:%M'))) }}{% endif %}
+            </p>
           </div>
+          {% if request.state.user.has_permission('machine.manage') and machine.host_key_fingerprint %}
+            <form method="post" action="/machines/{{ machine.id }}/docker/check-images" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-secondary log-small-button">{{ t(request, "monitoring.containers.check_images") }}</button>
+            </form>
+          {% endif %}
           {% if machine.docker_containers %}
             <input type="search" class="chart-filter" data-table-filter="containers-table"
                    placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
@@ -281,7 +297,11 @@
                       {% else %}<span class="table-muted">—</span>{% endif %}
                     </td>
                     <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
-                    <td class="cell-truncate" title="{{ c.image }}">{{ c.image }}</td>
+                    <td class="cell-truncate" title="{{ c.image }}">
+                      {% set img_status = (machine.docker_image_updates or {}).get(c.image) %}
+                      {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
+                      {{ c.image }}
+                    </td>
                     <td>
                       <span class="badge {{ 'badge-ok' if c.state == 'running' else ('badge-error' if c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') else '') }}">{{ c.status or c.state }}</span>
                     </td>
