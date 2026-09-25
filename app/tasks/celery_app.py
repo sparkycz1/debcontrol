@@ -241,6 +241,10 @@ celery_app.conf.update(
 # queue needed a hand-written "kick off the first sweep" hook to get.
 _interval_settings = _bootstrap_interval_settings()
 celery_app.conf.beat_schedule = {
+    "run-due-endpoint-checks": {
+        "task": "app.tasks.jobs.run_due_endpoint_checks",
+        "schedule": timedelta(seconds=60),
+    },
     "check-all-machine-image-updates": {
         "task": "app.tasks.jobs.check_all_machine_image_updates",
         "schedule": crontab(hour=4, minute=30),

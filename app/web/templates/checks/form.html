@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "checks.edit_title") if check else t(request, "checks.new_title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "checks.edit_title") if check else t(request, "checks.new_title") }}</h1>
+  </div>
+
+  {% if error %}
+    <div class="alert alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  <form method="post" action="{{ '/checks/' ~ check.id ~ '/edit' if check else '/checks/new' }}" class="form">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+
+    <label for="name">{{ t(request, "checks.name") }}</label>
+    <input type="text" id="name" name="name" value="{{ values.name }}" maxlength="100" required>
+
+    <label for="kind">{{ t(request, "checks.type") }}</label>
+    <select id="kind" name="kind">
+      <option value="http" {% if values.kind == 'http' %}selected{% endif %}>HTTP(S) — {{ t(request, "checks.kind_http") }}</option>
+      <option value="tls" {% if values.kind == 'tls' %}selected{% endif %}>TLS — {{ t(request, "checks.kind_tls") }}</option>
+    </select>
+
+    <label for="target">{{ t(request, "checks.target") }}</label>
+    <input type="text" id="target" name="target" value="{{ values.target }}" maxlength="500" required spellcheck="false"
+           placeholder="https://example.com/health  ·  example.com:443">
+    <p class="hint">{{ t(request, "checks.target_hint") }}</p>
+
+    <label for="expected_status">{{ t(request, "checks.expected_status") }}</label>
+    <input type="number" id="expected_status" name="expected_status" value="{{ values.expected_status }}" min="100" max="599">
+    <p class="hint">{{ t(request, "checks.expected_status_hint") }}</p>
+
+    <label for="interval_seconds">{{ t(request, "checks.interval") }}</label>
+    <input type="number" id="interval_seconds" name="interval_seconds" value="{{ values.interval_seconds }}" min="30" max="86400" required>
+
+    <label for="timeout_seconds">{{ t(request, "checks.timeout") }}</label>
+    <input type="number" id="timeout_seconds" name="timeout_seconds" value="{{ values.timeout_seconds }}" min="1" max="60" required>
+
+    <label for="cert_warn_days">{{ t(request, "checks.cert_warn_days") }}</label>
+    <input type="number" id="cert_warn_days" name="cert_warn_days" value="{{ values.cert_warn_days }}" min="0" max="365" required>
+
+    <label>
+      <input type="checkbox" name="verify_tls" value="1" {% if values.verify_tls %}checked{% endif %}>
+      {{ t(request, "checks.verify_tls") }}
+    </label>
+    <label>
+      <input type="checkbox" name="enabled" value="1" {% if values.enabled %}checked{% endif %}>
+      {{ t(request, "checks.enabled") }}
+    </label>
+
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/checks">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

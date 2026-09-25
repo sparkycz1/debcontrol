@@ -102,6 +102,15 @@ def _chart(*args: Any, **kwargs: Any) -> charts.Chart:
 
 templates.env.globals["chart"] = _chart
 templates.env.globals["level_for"] = fleet_overview.level_for
+
+
+def _cert_days(expires_at: datetime) -> int:
+    """Whole days until a certificate's `notAfter` (negative once expired)."""
+    value = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
+    return int((value - datetime.now(UTC)).total_seconds() // 86400)
+
+
+templates.env.globals["cert_days"] = _cert_days
 templates.env.globals["chart_palette"] = charts.PALETTE
 templates.env.filters["chart_value"] = charts.format_value
 templates.env.filters["bytes"] = charts.format_bytes

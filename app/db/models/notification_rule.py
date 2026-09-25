@@ -94,6 +94,12 @@ class NotificationEventType(enum.StrEnum):
     # existing `notify()`/`_matching_rules` dispatch path needs no special
     # case for condition-based rules.
     CONDITION_MATCHED = "machine.condition_matched"
+    # TLS/HTTP endpoint checks (`app.services.endpoint_checks`), fired by
+    # `app.tasks.jobs._run_endpoint_check`. Not machine-scoped — like
+    # FLEET_SUMMARY_GENERATED, they match every rule's machine scope.
+    ENDPOINT_DOWN = "endpoint.down"
+    ENDPOINT_RECOVERED = "endpoint.recovered"
+    CERT_EXPIRING = "endpoint.cert_expiring"
 
 
 notification_rule_users = Table(

@@ -27,6 +27,7 @@ from app.web.routes import (
     api_v1,
     api_v1_account,
     api_v1_audit,
+    api_v1_checks,
     api_v1_dashboard,
     api_v1_roles,
     api_v1_scheduling,
@@ -35,6 +36,7 @@ from app.web.routes import (
     audit,
     auth,
     branding,
+    checks,
     dashboard,
     fleet,
     impersonation,
@@ -230,6 +232,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(dashboard.router)
     app.include_router(fleet.router)
+    app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
     app.include_router(scheduling.router)
@@ -244,6 +247,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_settings.router)
     app.include_router(api_v1_dashboard.router)
     app.include_router(api_v1_account.router)
+    app.include_router(api_v1_checks.router)
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)

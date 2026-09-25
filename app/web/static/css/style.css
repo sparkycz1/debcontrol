@@ -1860,6 +1860,8 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 .table-summary { margin: 0.15rem 0 0; color: var(--color-muted); font-size: 0.85rem; }
 .cell-truncate { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .container-actions { white-space: nowrap; }
+.container-actions > * + * { margin-left: var(--space-1); }
+.row-highlight td { background: var(--color-surface-raised); }
 .container-actions .inline-form + .inline-form { margin-left: var(--space-1); }
 
 /* Text for screen readers only (e.g. a table's actions column header). */

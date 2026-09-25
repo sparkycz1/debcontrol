@@ -71,6 +71,7 @@ terminator in front of it, always. Pick your fighter:
 |---|---|
 | 📊 **Dashboard** | Fleet counts, upcoming schedules, recent audit activity, trend sparklines, an optional **AI fleet summary** ("what changed, what needs your attention") |
 | 🛰️ **Fleet** | Every machine as one card — online/offline, CPU, RAM, fullest disk, hottest sensor, load, uptime, containers, disk-full forecast — colored by the worst reading, refreshing itself every minute (`/fleet`, `GET /api/v1/fleet`) |
+| 🔐 **Checks** | TLS certificate expiry and HTTP endpoint checks run from the debcontrol server, with down/recovered/certificate-expiring notifications (`/checks`, `/api/v1/checks`) |
 | 🖥️ **Machines** | Facts, packages (apt/flatpak/snap), live monitoring (CPU/RAM/disk/network, Docker containers, systemd services with per-service CPU/RAM, and on bare metal temperatures/fans/power/GPUs/S.M.A.R.T.), a browser SSH terminal, log browsing, tags & saved views, bulk actions, JSON/CSV export — and **update rollback** if a `dist-upgrade` goes sideways |
 | 🗂️ **Groups** | Named groups for bulk updates/power actions; the built-in "All machines" catch-all |
 | ⏱️ **Scheduling** | Cron any action against a machine/group/fleet — updates, power, custom commands, even debug "force a sweep now" buttons. Exportable/importable as JSON |

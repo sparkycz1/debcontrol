@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "checks.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  {% set can_manage = request.state.user.has_permission('machine.manage') %}
+  <div class="page-header">
+    <h1>{{ t(request, "checks.title") }}</h1>
+    {% if can_manage %}
+      <div class="page-header-actions">
+        <a class="button" href="/checks/new">{{ t(request, "checks.add") }}</a>
+      </div>
+    {% endif %}
+  </div>
+  <p class="hint">{{ t(request, "checks.intro") }}</p>
+
+  {% if run_error %}
+    <div class="alert alert-error"><p>{{ t(request, "checks.run_failed") }}</p></div>
+  {% endif %}
+
+  {% if checks %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "checks.status") }}</th>
+            <th>{{ t(request, "checks.name") }}</th>
+            <th>{{ t(request, "checks.type") }}</th>
+            <th>{{ t(request, "checks.target") }}</th>
+            <th>{{ t(request, "checks.response") }}</th>
+            <th>{{ t(request, "checks.certificate") }}</th>
+            <th>{{ t(request, "checks.last_checked") }}</th>
+            {% if can_manage %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in checks %}
+            <tr{% if ran == (c.id | string) %} class="row-highlight"{% endif %}>
+              <td>
+                {% if not c.enabled %}<span class="badge">{{ t(request, "checks.disabled") }}</span>
+                {% elif c.last_ok is sameas true %}<span class="badge badge-ok">{{ t(request, "checks.up") }}</span>
+                {% elif c.last_ok is sameas false %}<span class="badge badge-error" title="{{ c.last_error or '' }}">{{ t(request, "checks.down") }}</span>
+                {% else %}<span class="badge">{{ t(request, "checks.pending") }}</span>{% endif %}
+              </td>
+              <td><strong>{{ c.name }}</strong>{% if c.last_ok is sameas false and c.last_error %}<div class="table-summary">{{ c.last_error }}</div>{% endif %}</td>
+              <td><span class="badge">{{ c.kind | upper }}</span></td>
+              <td class="cell-truncate" title="{{ c.target }}"><code>{{ c.target }}</code></td>
+              <td>
+                {% if c.last_status_code %}HTTP {{ c.last_status_code }}{% endif %}
+                {% if c.last_latency_ms is number %}<span class="table-muted">{{ c.last_latency_ms | chart_value('ms') }}</span>{% endif %}
+                {% if not c.last_status_code and c.last_latency_ms is not number %}—{% endif %}
+              </td>
+              <td>
+                {% if c.cert_expires_at %}
+                  {% set days = cert_days(c.cert_expires_at) %}
+                  <span class="badge {{ 'badge-error' if days < 7 else ('badge-warn' if days <= c.cert_warn_days else 'badge-ok') }}"
+                        title="{{ c.cert_expires_at | local_time('%Y-%m-%d %H:%M %Z') }}">
+                    {{ t(request, "checks.cert_expired") if days < 0 else t(request, "checks.cert_days", days=days) }}
+                  </span>
+                {% else %}—{% endif %}
+              </td>
+              <td class="table-muted">{{ c.last_checked_at | local_time('%Y-%m-%d %H:%M') if c.last_checked_at else '—' }}</td>
+              {% if can_manage %}
+                <td class="container-actions">
+                  <form method="post" action="/checks/{{ c.id }}/run" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                    <button type="submit" class="button button-secondary log-small-button">{{ t(request, "checks.run_now") }}</button>
+                  </form>
+                  <a class="button button-secondary log-small-button" href="/checks/{{ c.id }}/edit">{{ t(request, "checks.edit") }}</a>
+                  <form method="post" action="/checks/{{ c.id }}/delete" class="inline-form"
+                        data-confirm="{{ t(request, 'checks.delete_confirm', name=c.name) }}">
+                    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                    <button type="submit" class="button button-danger log-small-button">{{ t(request, "checks.delete") }}</button>
+                  </form>
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "checks.empty") }}</p></div>
+  {% endif %}
+{% endblock %}

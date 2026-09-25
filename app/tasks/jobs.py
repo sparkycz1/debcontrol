@@ -39,6 +39,7 @@ from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.db import session as db_session
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
@@ -51,6 +52,7 @@ from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
 from app.services import disk_forecast
 from app.services.condition_fields import evaluate_condition, summarize_condition
+from app.services.endpoint_checks import apply_result, is_due, run_probe
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
     KIND_FACTS,
@@ -501,6 +503,45 @@ async def _check_all_machine_image_updates() -> None:
 @celery_app.task(name="app.tasks.jobs.check_all_machine_image_updates")
 def check_all_machine_image_updates() -> None:
     asyncio.run(_check_all_machine_image_updates())
+
+
+async def _run_endpoint_check(check_id: str) -> dict[str, Any]:
+    """Probe one TLS/HTTP endpoint check from this worker, store the result
+    and fire whatever notifications the transition calls for (see
+    `app.services.endpoint_checks.apply_result`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        check = await session.get(EndpointCheck, uuid.UUID(check_id))
+        if check is None:
+            return {"ok": False, "error": "Check not found."}
+        result = await run_probe(check)
+        events = apply_result(check, result, datetime.now(UTC))
+        await session.commit()
+        for event_type, context in events:
+            await notify(session, event_type, context=context)
+        return {"ok": True, "up": result.ok}
+
+
+@celery_app.task(name="app.tasks.jobs.run_endpoint_check", time_limit=180)
+def run_endpoint_check(check_id: str) -> dict[str, Any]:
+    return asyncio.run(_run_endpoint_check(check_id))
+
+
+async def _run_due_endpoint_checks() -> None:
+    """Every minute — enqueue each enabled check whose own interval has
+    elapsed, one task per check, never awaited inline."""
+    now = datetime.now(UTC)
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(EndpointCheck).where(EndpointCheck.enabled.is_(True))
+        )
+        due = [str(check.id) for check in result.scalars().all() if is_due(check, now)]
+    for check_id in due:
+        run_endpoint_check.delay(check_id)
+
+
+@celery_app.task(name="app.tasks.jobs.run_due_endpoint_checks")
+def run_due_endpoint_checks() -> None:
+    asyncio.run(_run_due_endpoint_checks())
 
 
 async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:

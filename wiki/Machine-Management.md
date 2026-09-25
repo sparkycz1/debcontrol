@@ -438,6 +438,33 @@ each sample stores only the numbers the charts need
 (`MachineMonitoringSample.docker_stats`), so image names and port lists
 aren't repeated every two minutes.
 
+### Endpoint checks (TLS certificates, HTTP)
+
+**Checks** (`/checks`; `machine.view` to see, `machine.manage` to add,
+edit, delete or *Run now*) are independent of machines — they run from the
+debcontrol server's Celery worker, so they test reachability *from
+outside*, the way users see a service:
+
+- **HTTP** — a GET against a full URL, redirects followed; up when the
+  status equals the configured one (or is below 400 when none is set). An
+  https URL also reports its certificate's expiry.
+- **TLS** — a handshake with `host[:port]` (443 by default), certificate
+  expiry only. With *Verify* on (the default), an invalid chain/hostname
+  counts as down; the expiry date is still read (a second, unverified
+  handshake), so an expired certificate says *when* it expired.
+
+`run_due_endpoint_checks` (Beat, every minute) enqueues each enabled check
+whose own interval (30 s–1 day) has passed. Only the latest result is
+stored (`EndpointCheck.last_*`, `cert_expires_at`). Notifications: an
+outage is announced after **2 consecutive failures** (`endpoint.down`),
+recovery only after an announced outage (`endpoint.recovered`), and a
+certificate inside its warn window once per certificate
+(`endpoint.cert_expiring`) — see `app/services/endpoint_checks.py`'s
+`apply_result`. Targets are fetched by the server, so only
+`machine.manage` accounts can add them (the same trust level as a
+notification webhook URL). REST: `GET/POST /api/v1/checks`,
+`PUT/DELETE /api/v1/checks/{id}`, `POST /api/v1/checks/{id}/run`.
+
 ### Fleet page
 
 `/fleet` (nav: **Fleet**, `machine.view`) shows every visible, active

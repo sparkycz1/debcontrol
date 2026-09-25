@@ -113,6 +113,21 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "{machine_name} ({machine_ip}) matched the notification rule "
             "\"{rule_name}\" at {timestamp}: {condition_summary}.\n\n{details}",
         ),
+        NotificationEventType.ENDPOINT_DOWN: (
+            "debcontrol: {endpoint_name} is down",
+            "The check \"{endpoint_name}\" ({endpoint_target}) has failed repeatedly "
+            "as of {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.ENDPOINT_RECOVERED: (
+            "debcontrol: {endpoint_name} is back up",
+            "The check \"{endpoint_name}\" ({endpoint_target}) succeeded again at "
+            "{timestamp}.",
+        ),
+        NotificationEventType.CERT_EXPIRING: (
+            "debcontrol: certificate for {endpoint_name} expires in {days} days",
+            "The TLS certificate checked by \"{endpoint_name}\" ({endpoint_target}) "
+            "expires on {expires_at} ({days} days left).",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -148,6 +163,20 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: pravidlo {rule_name} se shoduje na {machine_name}",
             "{machine_name} ({machine_ip}) odpovídá notifikačnímu pravidlu "
             "\"{rule_name}\" v {timestamp}: {condition_summary}.\n\n{details}",
+        ),
+        NotificationEventType.ENDPOINT_DOWN: (
+            "debcontrol: {endpoint_name} nefunguje",
+            "Kontrola \"{endpoint_name}\" ({endpoint_target}) opakovaně selhává "
+            "(k {timestamp}).\n\n{details}",
+        ),
+        NotificationEventType.ENDPOINT_RECOVERED: (
+            "debcontrol: {endpoint_name} opět funguje",
+            "Kontrola \"{endpoint_name}\" ({endpoint_target}) v {timestamp} opět prošla.",
+        ),
+        NotificationEventType.CERT_EXPIRING: (
+            "debcontrol: certifikát pro {endpoint_name} vyprší za {days} dní",
+            "TLS certifikát kontrolovaný \"{endpoint_name}\" ({endpoint_target}) "
+            "vyprší {expires_at} (zbývá {days} dní).",
         ),
     },
 }

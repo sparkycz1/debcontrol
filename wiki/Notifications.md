@@ -102,6 +102,9 @@ Today:
 | `machine.update_run.succeeded` | The same run finishes with `status=SUCCEEDED` instead — its own event type so a rule can opt into just failures, just successes, or both. | Yes |
 | `machine.onboarded` | A machine finishes onboarding successfully (switches over to debcontrol's own SSH identity) — see `app.tasks.jobs._run_machine_onboarding`. | Yes |
 | `fleet_summary.generated` | The AI assistant's scheduled fleet summary (Settings → AI Assistant → Scheduled fleet summary) finishes generating a new report. Frequency/provider/model stay configured there — only "who hears about it" lives here. See `app.tasks.ai_jobs._generate_fleet_summary`. | **No** — matches every rule regardless of machine/machine-group scope, since there's no single machine to check it against. |
+| `endpoint.down` | A TLS/HTTP endpoint check (**Checks**, `/checks`) failed twice in a row — announced once per outage. See Machine Management's *Endpoint checks*. | **No** — endpoints aren't machines. |
+| `endpoint.recovered` | An endpoint check succeeds again after an announced outage. | **No** |
+| `endpoint.cert_expiring` | A checked certificate is within the check's "warn N days before" window (or already expired) — once per certificate; a renewed certificate warns again when *it* gets close. | **No** |
 | `machine.condition_matched` | A rule's own **conditions** (CPU/RAM/disk/facts thresholds — see "Condition-based rules" below) all match for a machine in scope. Added to a rule's `event_types` automatically whenever it has any conditions — never checked by hand. | Yes |
 
 **Adding another event is a three-step recipe**, documented on
@@ -259,6 +262,8 @@ What `{details}` actually contains, per event:
 | `machine.update_run.succeeded` | The run's captured output. |
 | `machine.onboarded` | Empty — the subject/body wording alone already says what happened. |
 | `fleet_summary.generated` | The full generated report text (the same content shown on the Dashboard). |
+| `endpoint.down` / `endpoint.recovered` | `{endpoint_name}`, `{endpoint_target}`; `{details}` is the last error (down only). No machine placeholders. |
+| `endpoint.cert_expiring` | Also `{days}` (days left, 0 once expired) and `{expires_at}` (UTC). |
 | `machine.condition_matched` | Also provides `{rule_name}` and `{condition_summary}` (a human-readable rendering of the matched conditions, e.g. "cpu_percent gt 90"); `{details}` is empty. |
 
 ## Templates: one subject/body pair per event, per your language
