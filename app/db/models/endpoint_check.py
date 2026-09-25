@@ -32,6 +32,11 @@ class EndpointCheck(Base):
     target: Mapped[str] = mapped_column(String(500), nullable=False)
     # HTTP only: the exact status code that counts as up; None = any < 400.
     expected_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # HTTP only: text that must appear in the response body (case-sensitive,
+    # searched in the first `app.services.endpoint_checks.MAX_BODY_BYTES`);
+    # None = the status code alone decides. Catches "200 OK, but it's the
+    # maintenance page".
+    expected_body: Mapped[str | None] = mapped_column(String(200), nullable=True)
     verify_tls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)

@@ -35,6 +35,7 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "kind": check.kind,
         "target": check.target,
         "expected_status": check.expected_status,
+        "expected_body": check.expected_body,
         "verify_tls": check.verify_tls,
         "interval_seconds": check.interval_seconds,
         "timeout_seconds": check.timeout_seconds,

@@ -453,7 +453,10 @@ debcontrol server's Celery worker, so they test reachability *from
 outside*, the way users see a service:
 
 - **HTTP** — a GET against a full URL, redirects followed; up when the
-  status equals the configured one (or is below 400 when none is set). An
+  status equals the configured one (or is below 400 when none is set) and,
+  when *Response must contain* is filled in, that text appears in the
+  first 1 MB of the body (case-sensitive; streamed, never loaded whole) —
+  so a 200 maintenance page or an error JSON still counts as down. An
   https URL also reports its certificate's expiry.
 - **TLS** — a handshake with `host[:port]` (443 by default), certificate
   expiry only. With *Verify* on (the default), an invalid chain/hostname

@@ -42,7 +42,7 @@ def _form_error(exc: ValidationError) -> str:
 async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[str, str], str]:
     form = await request.form()
     values = {key: str(form.get(key, "")) for key in (
-        "name", "kind", "target", "expected_status", "interval_seconds",
+        "name", "kind", "target", "expected_status", "expected_body", "interval_seconds",
         "timeout_seconds", "cert_warn_days",
     )}
     values["verify_tls"] = "1" if form.get("verify_tls") else ""
@@ -53,6 +53,7 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
             kind=values["kind"],
             target=values["target"],
             expected_status=int(values["expected_status"]) if values["expected_status"] else None,
+            expected_body=values["expected_body"] or None,
             verify_tls=bool(values["verify_tls"]),
             interval_seconds=int(values["interval_seconds"] or 300),
             timeout_seconds=int(values["timeout_seconds"] or 10),
@@ -95,6 +96,7 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
         "kind": check.kind,
         "target": check.target,
         "expected_status": str(check.expected_status or ""),
+        "expected_body": check.expected_body or "",
         "interval_seconds": str(check.interval_seconds),
         "timeout_seconds": str(check.timeout_seconds),
         "cert_warn_days": str(check.cert_warn_days),
@@ -104,7 +106,7 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
 
 
 _DEFAULT_VALUES = {
-    "name": "", "kind": "http", "target": "", "expected_status": "",
+    "name": "", "kind": "http", "target": "", "expected_status": "", "expected_body": "",
     "interval_seconds": "300", "timeout_seconds": "10", "cert_warn_days": "14",
     "verify_tls": "1", "enabled": "1",
 }

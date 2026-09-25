@@ -32,6 +32,10 @@
     <input type="number" id="expected_status" name="expected_status" value="{{ values.expected_status }}" min="100" max="599">
     <p class="hint">{{ t(request, "checks.expected_status_hint") }}</p>
 
+    <label for="expected_body">{{ t(request, "checks.expected_body") }}</label>
+    <input type="text" id="expected_body" name="expected_body" value="{{ values.expected_body }}" maxlength="200">
+    <p class="hint">{{ t(request, "checks.expected_body_hint") }}</p>
+
     <label for="interval_seconds">{{ t(request, "checks.interval") }}</label>
     <input type="number" id="interval_seconds" name="interval_seconds" value="{{ values.interval_seconds }}" min="30" max="86400" required>
 

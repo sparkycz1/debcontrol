@@ -1361,6 +1361,8 @@
     "terminal.clipboard.unsupported": "This browser doesn't support clipboard access.",
     "terminal.clipboard.copy_failed": "Couldn't copy — clipboard access needs HTTPS (or localhost).",
     "terminal.clipboard.use_ctrl_v": "Use Ctrl+V (or right-click → Paste) — this browser doesn't allow reading the clipboard programmatically.",
-    "terminal.clipboard.read_failed": "Couldn't read the clipboard — use Ctrl+V instead."
+    "terminal.clipboard.read_failed": "Couldn't read the clipboard — use Ctrl+V instead.",
+    "checks.expected_body": "Response must contain",
+    "checks.expected_body_hint": "Optional text that must appear in the response body (case-sensitive, first 1 MB) — e.g. \"ok\" from a health endpoint, so a 200 maintenance page still counts as down. Ignored for TLS checks."
   }
 }
