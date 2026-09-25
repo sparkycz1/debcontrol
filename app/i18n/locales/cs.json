@@ -1445,6 +1445,8 @@
     "scheduling.action.run_command.label": "Spustit příkaz",
     "scheduling.action.run_command.description": "Spustí shellový příkaz na každém cílovém zařízení pod SSH uživatelem nastaveným u zařízení — účet potřebuje oprávnění, která příkaz vyžaduje (např. vlastní sudo pravidlo); nic dalšího se kvůli tomu nepřiděluje.",
     "scheduling.param.strategy": "Strategie aktualizace",
-    "scheduling.param.command": "Příkaz"
+    "scheduling.param.command": "Příkaz",
+    "machines.bulk.pick_group": "Přesunout do…",
+    "machines.error.pick_group": "Vyber skupinu, do které se mají vybraná zařízení přesunout."
   }
 }

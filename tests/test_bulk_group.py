@@ -53,10 +53,17 @@ async def test_web_bulk_move_and_clear(client, db_session_factory):
 
     cleared = await client.post(
         "/machines/bulk/group",
-        data={"csrf_token": csrf, "machine_ids": [str(ids[2])], "group_id": ""},
+        data={"csrf_token": csrf, "machine_ids": [str(ids[2])], "group_id": "none"},
     )
     assert cleared.status_code == 303
     assert (await _groups(db_session_factory))["m2"] is None
+
+    nothing_picked = await client.post(
+        "/machines/bulk/group",
+        data={"csrf_token": csrf, "machine_ids": [str(ids[0])], "group_id": ""},
+    )
+    assert "bulk_error" in nothing_picked.headers["location"]
+    assert (await _groups(db_session_factory))["m0"] == prod_id
 
     async with db_session_factory() as session:
         actions = (await session.execute(select(AuditLogEntry.action))).scalars().all()
@@ -83,7 +90,7 @@ async def test_restricted_user_cannot_move_into_hidden_group_or_ungroup(
                    group_ids={dev_id})
     await client.get("/machines")
     csrf = client.cookies.get("csrftoken")
-    for target in (str(prod_id), ""):
+    for target in (str(prod_id), "none", ""):
         response = await client.post(
             "/machines/bulk/group",
             data={"csrf_token": csrf, "machine_ids": [str(ids[0])], "group_id": target},

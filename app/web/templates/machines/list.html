@@ -313,7 +313,8 @@
         </button>
         {% if request.state.user.has_permission('machine.manage') %}
           <select name="group_id" class="inline-select" aria-label="{{ t(request, 'machines.bulk.group_aria') }}">
-            {% if not restricted %}<option value="">{{ t(request, 'machines.bulk.no_group') }}</option>{% endif %}
+            <option value="" selected disabled>{{ t(request, 'machines.bulk.pick_group') }}</option>
+            {% if not restricted %}<option value="none">{{ t(request, 'machines.bulk.no_group') }}</option>{% endif %}
             {% for group in groups %}
               <option value="{{ group.id }}">{{ group.name }}</option>
             {% endfor %}

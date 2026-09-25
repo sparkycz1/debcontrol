@@ -1116,7 +1116,8 @@ async def bulk_assign_group(
     group_id: str = Form(""),
 ) -> Response:
     """Move every machine in an ad-hoc selection into one group (or out of
-    any group, `group_id=""`) — the bulk equivalent of each machine's own
+    any group, `group_id="none"`; nothing picked is an error, so the "no
+    group" choice is always deliberate) — the bulk equivalent of each machine's own
     Group field on Settings, with the same `machine.manage` permission and
     the same scope rule: a restricted account can only pick a group it can
     see, never "no group" (see `can_see_group_id`)."""
@@ -1126,13 +1127,19 @@ async def bulk_assign_group(
             url=_bulk_error_url(request, "machines.error.select_machine"),
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    choice = group_id.strip()
+    if not choice:
+        return RedirectResponse(
+            url=_bulk_error_url(request, "machines.error.pick_group"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     try:
-        target_id = uuid.UUID(group_id) if group_id.strip() else None
+        target_id = None if choice == "none" else uuid.UUID(choice)
     except ValueError:
         target_id = None
-        group_id = "invalid"
+        choice = "invalid"
     group = await db.get(MachineGroup, target_id) if target_id else None
-    if (group_id.strip() and group is None) or not await can_see_group_id(
+    if (choice != "none" and group is None) or not await can_see_group_id(
         db, current_user, target_id
     ):
         return RedirectResponse(

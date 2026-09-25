@@ -898,7 +898,9 @@ machines"'s `ALL MACHINES`), IDs carried forward as hidden fields.
 
 **Move to group** (needs `machine.manage`, the permission a single
 machine's Group field needs) files every selected machine into one group,
-or out of any group (`app.services.machine_grouping`). Same scope rule as
+or out of any group (`app.services.machine_grouping`). The picker starts on a
+placeholder and "no group" is its own explicit choice, so a stray click
+can't ungroup a selection. Same scope rule as
 editing one machine: a group-restricted account can only pick a group it
 sees and never "no group" (the option isn't offered, and the server
 refuses it). Audited once as `machines.bulk.group.assign`, naming only

@@ -1445,6 +1445,8 @@
     "scheduling.action.shutdown.description": "Sends `shutdown -h now`. The machine stays off until someone powers it back on — there's no scheduled \"power on\".",
     "scheduling.action.run_command.label": "Run command",
     "scheduling.action.run_command.description": "Runs a shell command on each targeted machine, as that machine's own configured SSH user — the account needs whatever permission the command itself requires (e.g. its own sudo rule for a privileged command); nothing extra is granted for this.",
-    "scheduling.param.command": "Command"
+    "scheduling.param.command": "Command",
+    "machines.bulk.pick_group": "Move to…",
+    "machines.error.pick_group": "Pick the group to move the selected machines to."
   }
 }
