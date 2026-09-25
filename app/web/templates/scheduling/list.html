@@ -43,7 +43,7 @@
                 {{ t(request, "scheduling.target_group", name=(task.target_group.name if task.target_group else t(request, "scheduling.deleted"))) }}
               {% endif %}
             </td>
-            <td>{{ action_labels.get(task.action, task.action) }}</td>
+            <td>{{ t_or(request, "scheduling.action." ~ task.action ~ ".label", action_labels.get(task.action, task.action)) }}</td>
             <td><code>{{ task.cron_expression }}</code></td>
             <td>
               {% if task.is_enabled and task.next_run_at %}

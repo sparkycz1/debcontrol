@@ -78,7 +78,7 @@ terminator in front of it, always. Pick your fighter:
 | 🧠 **AI assistant** | Chat with your fleet (5 provider choices) — it can *propose* actions, never run one without you literally confirming the command first |
 | 📝 **Audit log** | Hash-chained, tamper-evident, exportable, optionally forwarded to your SIEM, with optional GeoIP country/city enrichment |
 | 👤 **Users & Roles** | Full RBAC matrix, temporary permission grants, bulk actions, SSO — export/import roles too |
-| 🔔 **Notifications** | Rules — event and/or conditions (CPU/RAM/disk/facts thresholds, shown as a reference line on the Monitoring charts too), who (users/roles), which machines/groups — email or webhook you when something happens, configurable via form or YAML, exportable/importable. Editable per-event or named custom templates, a "Send test" button, and a delivery history log |
+| 🔔 **Notifications** | Rules — event and/or conditions (CPU/RAM/disk/facts thresholds, shown as a reference line on the Monitoring charts too), who (users/roles), which machines/groups — email or webhook you when something happens, configurable via form or YAML, exportable/importable. Editable per-event or named custom templates, a "Send test" button, a delivery history log, and **maintenance windows** that mute a group's alerts during planned work |
 | 📚 **API docs** (`/api`) | Live Swagger UI over the full read/write REST API — everything the web UI can do, an API can too |
 | ⚙️ **Settings** | SSH key rotation, retention policies, LDAP/OIDC/syslog/SMTP integrations, AI provider config |
 

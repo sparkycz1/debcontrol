@@ -42,6 +42,8 @@
             <td>
               {% if entry.status == "sent" %}
                 <span class="badge badge-ok">{{ t(request, "notifications.history.status_sent") }}</span>
+              {% elif entry.status == "suppressed" %}
+                <span class="badge badge-warn">{{ t(request, "notifications.history.status_suppressed") }}</span>
               {% else %}
                 <span class="badge badge-error" title="{{ entry.error or '' }}">{{ t(request, "notifications.history.status_failed") }}</span>
               {% endif %}

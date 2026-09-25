@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "maintenance.title") }} — debcontrol{% endblock %}
+
+{% macro scope(w) -%}
+  {%- if w.all_machines -%}
+    <span class="badge badge-warn">{{ t(request, "maintenance.all_machines") }}</span>
+  {%- else -%}
+    {%- for g in w.machine_groups %}<span class="badge badge-tag">{{ g.name }}</span> {% endfor -%}
+    {%- for m in w.machines %}<span class="badge">{{ m.name }}</span> {% endfor -%}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro window_table(windows, show_actions, can_manage) %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>{{ t(request, "maintenance.name") }}</th>
+        <th>{{ t(request, "maintenance.scope") }}</th>
+        <th>{{ t(request, "maintenance.starts_at") }}</th>
+        <th>{{ t(request, "maintenance.ends_at") }}</th>
+        {% if can_manage %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in windows %}
+        <tr>
+          <td><strong>{{ w.name }}</strong>{% if w.reason %}<div class="table-summary">{{ w.reason }}</div>{% endif %}
+            {% if w.created_by %}<div class="table-summary">{{ t(request, "maintenance.created_by", user=w.created_by) }}</div>{% endif %}</td>
+          <td>{{ scope(w) }}</td>
+          <td class="table-muted">{{ w.starts_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
+          <td class="table-muted">{{ w.ends_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
+          {% if can_manage %}
+            <td class="container-actions">
+              {% if show_actions %}
+                <a class="button button-secondary log-small-button" href="/notifications/maintenance/{{ w.id }}/edit">{{ t(request, "maintenance.edit") }}</a>
+                <form method="post" action="/notifications/maintenance/{{ w.id }}/end" class="inline-form"
+                      data-confirm="{{ t(request, 'maintenance.end_confirm', name=w.name) }}">
+                  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                  <button type="submit" class="button button-secondary log-small-button">{{ t(request, "maintenance.end_now") }}</button>
+                </form>
+              {% endif %}
+              <form method="post" action="/notifications/maintenance/{{ w.id }}/delete" class="inline-form"
+                    data-confirm="{{ t(request, 'maintenance.delete_confirm', name=w.name) }}">
+                <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                <button type="submit" class="button button-danger log-small-button">{{ t(request, "maintenance.delete") }}</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
+{% block content %}
+  {% set can_manage = request.state.user.has_permission('notification.manage') %}
+  <p class="hint"><a href="/notifications">← {{ t(request, "notifications.title") }}</a></p>
+  <div class="page-header">
+    <h1>{{ t(request, "maintenance.title") }}</h1>
+    {% if can_manage %}
+      <div class="page-header-actions">
+        <a class="button" href="/notifications/maintenance/new">{{ t(request, "maintenance.add") }}</a>
+      </div>
+    {% endif %}
+  </div>
+  <p class="hint">{{ t(request, "maintenance.intro") }}</p>
+
+  <section class="panel">
+    <h2>{{ t(request, "maintenance.active") }}</h2>
+    {% if active %}{{ window_table(active, true, can_manage) }}{% else %}<p class="hint">{{ t(request, "maintenance.none_active") }}</p>{% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "maintenance.upcoming") }}</h2>
+    {% if upcoming %}{{ window_table(upcoming, true, can_manage) }}{% else %}<p class="hint">{{ t(request, "maintenance.none_upcoming") }}</p>{% endif %}
+  </section>
+
+  {% if ended %}
+    <section class="panel">
+      <h2>{{ t(request, "maintenance.ended") }}</h2>
+      {{ window_table(ended, false, can_manage) }}
+    </section>
+  {% endif %}
+{% endblock %}

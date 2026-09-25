@@ -16,6 +16,7 @@ a JSON list instead of YAML text.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.auth.dependencies import get_api_token_user, require_api_permission
+from app.db.models.maintenance_window import MaintenanceWindow
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import (
     NotificationCustomTemplate,
@@ -36,13 +38,16 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.i18n import DEFAULT_LOCALE_CODE
+from app.schemas.maintenance_window import MaintenanceWindowSave
 from app.schemas.notification import NotificationCustomTemplateCreate, NotificationTemplateUpdate
+from app.services.maintenance_windows import apply_window_data, window_state
 from app.services.notification_rules import (
     apply_portable_rule,
     delete_custom_template,
     rule_to_portable_dict,
 )
 from app.services.notifications import default_template, send_test_notification
+from app.web.routes.maintenance import window_summary
 
 router = APIRouter(prefix="/api/v1/notifications")
 _view = Depends(require_api_permission(Permission.NOTIFICATION_VIEW))
@@ -480,5 +485,157 @@ async def delete_custom_template_api(
         summary=f'Deleted notification template "{name}"',
         target_type="notification_custom_template",
         target_id=template_id,
+        target_label=name,
+    )
+
+
+# --- Maintenance windows --------------------------------------------------------
+
+
+def _window_to_dict(window: MaintenanceWindow) -> dict[str, Any]:
+    return {
+        "id": str(window.id),
+        "name": window.name,
+        "reason": window.reason,
+        "starts_at": window.starts_at.isoformat(),
+        "ends_at": window.ends_at.isoformat(),
+        "state": window_state(window),
+        "all_machines": window.all_machines,
+        "machine_group_ids": [str(g.id) for g in window.machine_groups],
+        "machine_ids": [str(m.id) for m in window.machines],
+        "created_by": window.created_by,
+    }
+
+
+async def _get_window_or_404(window_id: uuid.UUID, db: AsyncSession) -> MaintenanceWindow:
+    window = await db.get(MaintenanceWindow, window_id)
+    if window is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Maintenance window not found.")
+    return window
+
+
+@router.get("/maintenance-windows", dependencies=[_view])
+async def list_maintenance_windows_api(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
+) -> list[dict[str, Any]]:
+    """Every maintenance window, newest start first, with its `state`
+    (`active`/`upcoming`/`ended`)."""
+    result = await db.execute(
+        select(MaintenanceWindow).order_by(MaintenanceWindow.starts_at.desc())
+    )
+    return [_window_to_dict(w) for w in result.scalars().all()]
+
+
+@router.post(
+    "/maintenance-windows", dependencies=[_manage], status_code=status.HTTP_201_CREATED
+)
+async def create_maintenance_window_api(
+    payload: MaintenanceWindowSave,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Schedule a window — e.g. from a deployment pipeline right before it
+    reboots machines. Times are ISO 8601 (naive = UTC); at most 31 days."""
+    window = MaintenanceWindow(created_by=user.username)
+    await apply_window_data(db, window, payload)
+    db.add(window)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="maintenance_window.create",
+        summary=f'Scheduled maintenance window "{window.name}" ({window_summary(window)})',
+        target_type="maintenance_window",
+        target_id=window.id,
+        target_label=window.name,
+        details={
+            "starts_at": window.starts_at.isoformat(),
+            "ends_at": window.ends_at.isoformat(),
+            "scope": window_summary(window),
+        },
+    )
+    return _window_to_dict(window)
+
+
+@router.put("/maintenance-windows/{window_id}", dependencies=[_manage])
+async def update_maintenance_window_api(
+    window_id: uuid.UUID,
+    payload: MaintenanceWindowSave,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    window = await _get_window_or_404(window_id, db)
+    await apply_window_data(db, window, payload)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="maintenance_window.update",
+        summary=f'Updated maintenance window "{window.name}" ({window_summary(window)})',
+        target_type="maintenance_window",
+        target_id=window.id,
+        target_label=window.name,
+        details={
+            "starts_at": window.starts_at.isoformat(),
+            "ends_at": window.ends_at.isoformat(),
+            "scope": window_summary(window),
+        },
+    )
+    return _window_to_dict(window)
+
+
+@router.post("/maintenance-windows/{window_id}/end", dependencies=[_manage])
+async def end_maintenance_window_api(
+    window_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """End an active window now (or cancel an upcoming one); a no-op for
+    one that already ended. Notifications resume immediately."""
+    window = await _get_window_or_404(window_id, db)
+    now = datetime.now(UTC)
+    state = window_state(window, now)
+    if state != "ended":
+        if state == "upcoming":
+            window.starts_at = now
+        window.ends_at = now
+        await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="maintenance_window.end",
+            summary=f'Ended maintenance window "{window.name}" early',
+            target_type="maintenance_window",
+            target_id=window.id,
+            target_label=window.name,
+        )
+    return _window_to_dict(window)
+
+
+@router.delete(
+    "/maintenance-windows/{window_id}",
+    dependencies=[_manage],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_maintenance_window_api(
+    window_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> None:
+    window = await _get_window_or_404(window_id, db)
+    name = window.name
+    await db.delete(window)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="maintenance_window.delete",
+        summary=f'Deleted maintenance window "{name}"',
+        target_type="maintenance_window",
+        target_id=window_id,
         target_label=name,
     )

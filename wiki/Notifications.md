@@ -414,6 +414,35 @@ actual ceiling is. Best-effort and visual only — `lt`/`lte`/`eq`/other
 operators aren't representable as a ceiling line and are simply not drawn;
 this never affects whether the condition itself fires.
 
+## Maintenance windows: muting notifications during planned work
+
+**Notifications → Maintenance windows** (`/notifications/maintenance`;
+`notification.view` to see, `notification.manage` to schedule) — a named
+time range (at most 31 days) covering **all machines**, chosen **machine
+groups** and/or individual **machines**. While a window is active, every
+notification *about a covered machine* is withheld: unreachable/reachable
+again, update run failed/succeeded, onboarding, condition rules. Group
+membership is evaluated when the notification fires, so a machine moved
+into a muted group mid-window is muted too.
+
+- **Nothing is lost silently** — each rule that would have fired gets a
+  delivery-history row with status **suppressed** and the window's name
+  as its target (`notify()` in `app.services.notifications`, via
+  `app.services.maintenance_windows.active_window_for`).
+- **Not muted**: events that aren't about a machine — endpoint checks
+  (down/recovered/certificate expiring) and the scheduled fleet summary.
+- **Condition rules** are edge-triggered (fire on false→true): a condition
+  that became true during the window and stays true afterwards doesn't
+  re-announce itself once the window ends — it fires again only after it
+  clears and trips again.
+- **End now** finishes an active window early (or cancels an upcoming
+  one), keeping it in the list as ended; **Delete** removes it.
+- A machine's Overview tab shows a banner while it's in maintenance.
+- Audited as `maintenance_window.create`/`.update`/`.end`/`.delete`.
+- REST: `GET/POST /api/v1/notifications/maintenance-windows`,
+  `PUT/DELETE .../{id}`, `POST .../{id}/end` — e.g. a deploy pipeline
+  opening a window right before it reboots machines.
+
 ## Audit logging
 
 Rule/template create-edit-delete are all audit-logged

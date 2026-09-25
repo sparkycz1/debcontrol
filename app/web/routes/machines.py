@@ -64,6 +64,7 @@ from app.services.machine_tags import (
     remove_tags_from_machines,
     set_machine_tags,
 )
+from app.services.maintenance_windows import active_window_for
 from app.services.notifications import condition_thresholds_for_machine
 from app.services.saved_views import (
     DuplicateViewNameError,
@@ -1250,6 +1251,7 @@ async def machine_detail(
         "machines/detail.html",
         {
             "machine": machine,
+            "maintenance_window": await active_window_for(db, machine),
             "csrf_token": csrf_token,
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "overview",

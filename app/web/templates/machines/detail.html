@@ -17,6 +17,13 @@
     {% endif %}
   </div>
 
+  {% if maintenance_window %}
+    <div class="alert alert-warn"><p>
+      {{ t(request, "maintenance.in_progress", until=(maintenance_window.ends_at | local_time('%Y-%m-%d %H:%M %Z'))) }}:
+      {% if request.state.user.has_permission('notification.view') %}<a href="/notifications/maintenance">{{ maintenance_window.name }}</a>{% else %}{{ maintenance_window.name }}{% endif %}
+    </p></div>
+  {% endif %}
+
   {{ render_tabnav(tabs, active_tab) }}
 
   {% if machine.readiness_missing %}

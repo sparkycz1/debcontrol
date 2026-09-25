@@ -40,20 +40,20 @@
   <select id="action" name="action">
     {% for action in actions %}
       <option value="{{ action.key }}" {% if form.get('action', actions[0].key if actions else '') == action.key %}selected{% endif %}>
-        {{ action.label }}{% if action.destructive %} ⚠{% endif %}
+        {{ t_or(request, "scheduling.action." ~ action.key ~ ".label", action.label) }}{% if action.destructive %} ⚠{% endif %}
       </option>
     {% endfor %}
   </select>
   <ul class="hint">
     {% for action in actions %}
-      <li><strong>{{ action.label }}</strong> — {{ action.description }}</li>
+      <li><strong>{{ t_or(request, "scheduling.action." ~ action.key ~ ".label", action.label) }}</strong> — {{ t_or(request, "scheduling.action." ~ action.key ~ ".description", action.description) }}</li>
     {% endfor %}
   </ul>
 
   {% for action in actions %}
     {% for param in action.params %}
       <label for="param_{{ param.key }}">
-        {{ param.label }} <span class="hint">{{ t(request, "scheduling.param_only_used_for", action=(action.label | e)) | safe }}</span>
+        {{ t_or(request, "scheduling.param." ~ param.key, param.label) }} <span class="hint">{{ t(request, "scheduling.param_only_used_for", action=(t_or(request, "scheduling.action." ~ action.key ~ ".label", action.label) | e)) | safe }}</span>
       </label>
       {% if param.param_type == 'text' %}
         <input type="text" id="param_{{ param.key }}" name="param_{{ param.key }}"

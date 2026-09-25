@@ -46,6 +46,7 @@ from app.web.routes import (
     logs_ws,
     machine_groups,
     machines,
+    maintenance,
     notifications,
     roles,
     scheduling,
@@ -257,6 +258,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)
+    app.include_router(maintenance.router)
     app.include_router(notifications.router)
     app.include_router(settings_routes.router)
     app.include_router(theme.router)
