@@ -918,28 +918,36 @@ command execution as whatever the machine's account can do:
   terminal bytes in both directions; text frames carry small JSON control
   messages — a client-sent `resize` (cols/rows) and a server-sent `error`
   for a failure before there's a PTY.
-- **xterm.js, vendored locally** (MIT-licensed) with its `addon-fit` and
-  `addon-canvas` — `app/web/static/js/xterm.min.js` /
-  `xterm-addon-fit.min.js` / `xterm-addon-canvas.min.js`,
-  `app/web/static/css/xterm.css`; never a CDN.
+- **xterm.js 6, vendored locally** (MIT-licensed; `@xterm/xterm` 6.0.0,
+  `@xterm/addon-fit` 0.11.0, `@xterm/addon-webgl` 0.19.0) —
+  `app/web/static/js/xterm.min.js` / `xterm-addon-fit.min.js` /
+  `xterm-addon-webgl.min.js`, `app/web/static/css/xterm.css` plus this
+  app's own `xterm-csp.css`; never a CDN. Upgrading: replace the three
+  `lib/*.js` files and `css/xterm.css` from the npm tarballs (drop the
+  trailing `sourceMappingURL` line), then check the terminal in a real
+  browser for CSP violations — see below.
   `app/web/static/js/terminal.js` is this app's own CSP-safe wiring script
   (external file, no inline `<script>`).
-  **`addon-canvas` specifically fixes a CSP-caused bug, not just a
-  performance nicety**: xterm.js's default DOM renderer draws every ANSI
-  color by injecting a `<style>` element with the whole palette as CSS
-  rules — `style-src 'self'` (no `unsafe-inline`) silently blocks that, so
+  **The renderer choice is a CSP fix, not just a performance nicety**:
+  xterm.js's default DOM renderer draws every ANSI color by injecting a
+  `<style>` element with the whole palette as CSS rules —
+  `style-src 'self'` (no `unsafe-inline`) silently blocks that, so
   `ls --color`, a colored prompt, `htop`, etc. all rendered as plain
   foreground-only text, with nothing visible anywhere except a CSP
   violation in the browser console — a CSP violation is silent at the
   Python layer (route returns 200, tests pass), exactly the class of bug
   CLAUDE.md's "verify anything CSP-adjacent in a real browser, not just by
-  reading the code" rule exists for. The canvas addon draws glyph
-  colors straight onto a `<canvas>` (a `fillStyle` assignment, not a
-  stylesheet), which CSP's `style-src` has no say over at all —
-  `term.loadAddon(new CanvasAddon.CanvasAddon())` right after `term.open()`,
-  wrapped in try/catch so a browser with no 2D canvas support just keeps
-  the (colorless, under this CSP) DOM renderer instead of breaking the
-  whole terminal.
+  reading the code" rule exists for. The **WebGL addon** draws glyphs and
+  colors on a `<canvas>`, which CSP's `style-src` has no say over (xterm.js
+  6 removed the canvas addon that did this before v0.71.0) — loaded right
+  after `term.open()`, wrapped in try/catch, and disposed on WebGL context
+  loss. Either way xterm then falls back to the DOM renderer, which
+  **`xterm-csp.css`** keeps usable: it ships, as a same-origin stylesheet,
+  the rules xterm would otherwise inject (row font, span layout, cursor,
+  selection, the full 256-color palette, the scrollbar slider that xterm 6
+  also styles via an injected `<style>`) — only 24-bit truecolor is lost
+  in that fallback (xterm sets it via `style` attributes, also blocked).
+  Its colors mirror `terminal.js`'s theme; change both together.
 - **CSP: `connect-src 'self'`**, spelled out explicitly (it previously fell
   back to `default-src 'self'`); a same-origin `ws`/`wss` upgrade is
   covered by `'self'`.

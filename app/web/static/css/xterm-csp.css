@@ -1,0 +1,297 @@
+/* debcontrol: the styles xterm.js would otherwise inject at runtime as
+   <style> elements, which this app's CSP (style-src 'self', no
+   'unsafe-inline') blocks. Loaded after xterm.css on the terminal page.
+
+   - The WebGL renderer (the normal path, see terminal.js) draws on a
+     canvas and only needs the scrollbar-slider colors below.
+   - The DOM renderer (fallback when WebGL2 is unavailable or its context
+     is lost) needs everything: row font, span layout, cursor, selection
+     and the 256-color palette. 24-bit truecolor still can't be shown by
+     it (xterm sets it via style attributes, also blocked by the CSP).
+
+   Colors mirror the theme in static/js/terminal.js - change both
+   together. Indexes 16-255 are the standard xterm 256-color cube/ramp.
+   Generated; the rules are plain and safe to edit by hand. */
+
+.xterm .xterm-scrollable-element > .scrollbar > .slider { background: rgba(216, 222, 233, 0.2); }
+.xterm .xterm-scrollable-element > .scrollbar > .slider:hover { background: rgba(216, 222, 233, 0.35); }
+.xterm .xterm-scrollable-element > .scrollbar > .slider.active { background: rgba(216, 222, 233, 0.45); }
+
+.xterm .xterm-rows { pointer-events: none; color: #d8dee9; font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; font-kerning: none; white-space: pre; }
+.xterm .xterm-rows span { display: inline-block; height: 100%; vertical-align: top; }
+.xterm .xterm-rows span:not(.xterm-bold) { font-weight: normal; }
+.xterm .xterm-rows span.xterm-bold { font-weight: bold; }
+.xterm .xterm-rows span.xterm-italic { font-style: italic; }
+.xterm .xterm-rows .xterm-dim { opacity: 0.5; }
+
+@keyframes debcontrol-xterm-blink {
+  0% { background-color: #d8dee9; color: #0b0f16; }
+  50% { background-color: inherit; color: #d8dee9; }
+}
+.xterm .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-blink.xterm-cursor-block { animation: debcontrol-xterm-blink 1s step-end infinite; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-block { background-color: #d8dee9; color: #0b0f16; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-block:not(.xterm-cursor-blink) { background-color: #d8dee9 !important; color: #0b0f16 !important; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-outline { outline: 1px solid #d8dee9; outline-offset: -1px; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-bar { box-shadow: 1px 0 0 #d8dee9 inset; }
+.xterm .xterm-rows .xterm-cursor.xterm-cursor-underline { border-bottom: 1px solid #d8dee9; height: calc(100% - 1px); }
+
+.xterm .xterm-selection { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+.xterm .xterm-selection div { position: absolute; background-color: #3b4a6b; }
+
+.xterm .xterm-rows .xterm-fg-0 { color: #1a1f2b; } .xterm .xterm-rows .xterm-bg-0 { background-color: #1a1f2b; }
+.xterm .xterm-rows .xterm-fg-1 { color: #e0685f; } .xterm .xterm-rows .xterm-bg-1 { background-color: #e0685f; }
+.xterm .xterm-rows .xterm-fg-2 { color: #5fbf8f; } .xterm .xterm-rows .xterm-bg-2 { background-color: #5fbf8f; }
+.xterm .xterm-rows .xterm-fg-3 { color: #e0ab4a; } .xterm .xterm-rows .xterm-bg-3 { background-color: #e0ab4a; }
+.xterm .xterm-rows .xterm-fg-4 { color: #5b8fff; } .xterm .xterm-rows .xterm-bg-4 { background-color: #5b8fff; }
+.xterm .xterm-rows .xterm-fg-5 { color: #b98fe0; } .xterm .xterm-rows .xterm-bg-5 { background-color: #b98fe0; }
+.xterm .xterm-rows .xterm-fg-6 { color: #5fbfd8; } .xterm .xterm-rows .xterm-bg-6 { background-color: #5fbfd8; }
+.xterm .xterm-rows .xterm-fg-7 { color: #d8dee9; } .xterm .xterm-rows .xterm-bg-7 { background-color: #d8dee9; }
+.xterm .xterm-rows .xterm-fg-8 { color: #5c6577; } .xterm .xterm-rows .xterm-bg-8 { background-color: #5c6577; }
+.xterm .xterm-rows .xterm-fg-9 { color: #f0857a; } .xterm .xterm-rows .xterm-bg-9 { background-color: #f0857a; }
+.xterm .xterm-rows .xterm-fg-10 { color: #7fd8a8; } .xterm .xterm-rows .xterm-bg-10 { background-color: #7fd8a8; }
+.xterm .xterm-rows .xterm-fg-11 { color: #f0c46a; } .xterm .xterm-rows .xterm-bg-11 { background-color: #f0c46a; }
+.xterm .xterm-rows .xterm-fg-12 { color: #7ba6ff; } .xterm .xterm-rows .xterm-bg-12 { background-color: #7ba6ff; }
+.xterm .xterm-rows .xterm-fg-13 { color: #d0aef0; } .xterm .xterm-rows .xterm-bg-13 { background-color: #d0aef0; }
+.xterm .xterm-rows .xterm-fg-14 { color: #7fd8ea; } .xterm .xterm-rows .xterm-bg-14 { background-color: #7fd8ea; }
+.xterm .xterm-rows .xterm-fg-15 { color: #f4f6fa; } .xterm .xterm-rows .xterm-bg-15 { background-color: #f4f6fa; }
+.xterm .xterm-rows .xterm-fg-16 { color: #000000; } .xterm .xterm-rows .xterm-bg-16 { background-color: #000000; }
+.xterm .xterm-rows .xterm-fg-17 { color: #00005f; } .xterm .xterm-rows .xterm-bg-17 { background-color: #00005f; }
+.xterm .xterm-rows .xterm-fg-18 { color: #000087; } .xterm .xterm-rows .xterm-bg-18 { background-color: #000087; }
+.xterm .xterm-rows .xterm-fg-19 { color: #0000af; } .xterm .xterm-rows .xterm-bg-19 { background-color: #0000af; }
+.xterm .xterm-rows .xterm-fg-20 { color: #0000d7; } .xterm .xterm-rows .xterm-bg-20 { background-color: #0000d7; }
+.xterm .xterm-rows .xterm-fg-21 { color: #0000ff; } .xterm .xterm-rows .xterm-bg-21 { background-color: #0000ff; }
+.xterm .xterm-rows .xterm-fg-22 { color: #005f00; } .xterm .xterm-rows .xterm-bg-22 { background-color: #005f00; }
+.xterm .xterm-rows .xterm-fg-23 { color: #005f5f; } .xterm .xterm-rows .xterm-bg-23 { background-color: #005f5f; }
+.xterm .xterm-rows .xterm-fg-24 { color: #005f87; } .xterm .xterm-rows .xterm-bg-24 { background-color: #005f87; }
+.xterm .xterm-rows .xterm-fg-25 { color: #005faf; } .xterm .xterm-rows .xterm-bg-25 { background-color: #005faf; }
+.xterm .xterm-rows .xterm-fg-26 { color: #005fd7; } .xterm .xterm-rows .xterm-bg-26 { background-color: #005fd7; }
+.xterm .xterm-rows .xterm-fg-27 { color: #005fff; } .xterm .xterm-rows .xterm-bg-27 { background-color: #005fff; }
+.xterm .xterm-rows .xterm-fg-28 { color: #008700; } .xterm .xterm-rows .xterm-bg-28 { background-color: #008700; }
+.xterm .xterm-rows .xterm-fg-29 { color: #00875f; } .xterm .xterm-rows .xterm-bg-29 { background-color: #00875f; }
+.xterm .xterm-rows .xterm-fg-30 { color: #008787; } .xterm .xterm-rows .xterm-bg-30 { background-color: #008787; }
+.xterm .xterm-rows .xterm-fg-31 { color: #0087af; } .xterm .xterm-rows .xterm-bg-31 { background-color: #0087af; }
+.xterm .xterm-rows .xterm-fg-32 { color: #0087d7; } .xterm .xterm-rows .xterm-bg-32 { background-color: #0087d7; }
+.xterm .xterm-rows .xterm-fg-33 { color: #0087ff; } .xterm .xterm-rows .xterm-bg-33 { background-color: #0087ff; }
+.xterm .xterm-rows .xterm-fg-34 { color: #00af00; } .xterm .xterm-rows .xterm-bg-34 { background-color: #00af00; }
+.xterm .xterm-rows .xterm-fg-35 { color: #00af5f; } .xterm .xterm-rows .xterm-bg-35 { background-color: #00af5f; }
+.xterm .xterm-rows .xterm-fg-36 { color: #00af87; } .xterm .xterm-rows .xterm-bg-36 { background-color: #00af87; }
+.xterm .xterm-rows .xterm-fg-37 { color: #00afaf; } .xterm .xterm-rows .xterm-bg-37 { background-color: #00afaf; }
+.xterm .xterm-rows .xterm-fg-38 { color: #00afd7; } .xterm .xterm-rows .xterm-bg-38 { background-color: #00afd7; }
+.xterm .xterm-rows .xterm-fg-39 { color: #00afff; } .xterm .xterm-rows .xterm-bg-39 { background-color: #00afff; }
+.xterm .xterm-rows .xterm-fg-40 { color: #00d700; } .xterm .xterm-rows .xterm-bg-40 { background-color: #00d700; }
+.xterm .xterm-rows .xterm-fg-41 { color: #00d75f; } .xterm .xterm-rows .xterm-bg-41 { background-color: #00d75f; }
+.xterm .xterm-rows .xterm-fg-42 { color: #00d787; } .xterm .xterm-rows .xterm-bg-42 { background-color: #00d787; }
+.xterm .xterm-rows .xterm-fg-43 { color: #00d7af; } .xterm .xterm-rows .xterm-bg-43 { background-color: #00d7af; }
+.xterm .xterm-rows .xterm-fg-44 { color: #00d7d7; } .xterm .xterm-rows .xterm-bg-44 { background-color: #00d7d7; }
+.xterm .xterm-rows .xterm-fg-45 { color: #00d7ff; } .xterm .xterm-rows .xterm-bg-45 { background-color: #00d7ff; }
+.xterm .xterm-rows .xterm-fg-46 { color: #00ff00; } .xterm .xterm-rows .xterm-bg-46 { background-color: #00ff00; }
+.xterm .xterm-rows .xterm-fg-47 { color: #00ff5f; } .xterm .xterm-rows .xterm-bg-47 { background-color: #00ff5f; }
+.xterm .xterm-rows .xterm-fg-48 { color: #00ff87; } .xterm .xterm-rows .xterm-bg-48 { background-color: #00ff87; }
+.xterm .xterm-rows .xterm-fg-49 { color: #00ffaf; } .xterm .xterm-rows .xterm-bg-49 { background-color: #00ffaf; }
+.xterm .xterm-rows .xterm-fg-50 { color: #00ffd7; } .xterm .xterm-rows .xterm-bg-50 { background-color: #00ffd7; }
+.xterm .xterm-rows .xterm-fg-51 { color: #00ffff; } .xterm .xterm-rows .xterm-bg-51 { background-color: #00ffff; }
+.xterm .xterm-rows .xterm-fg-52 { color: #5f0000; } .xterm .xterm-rows .xterm-bg-52 { background-color: #5f0000; }
+.xterm .xterm-rows .xterm-fg-53 { color: #5f005f; } .xterm .xterm-rows .xterm-bg-53 { background-color: #5f005f; }
+.xterm .xterm-rows .xterm-fg-54 { color: #5f0087; } .xterm .xterm-rows .xterm-bg-54 { background-color: #5f0087; }
+.xterm .xterm-rows .xterm-fg-55 { color: #5f00af; } .xterm .xterm-rows .xterm-bg-55 { background-color: #5f00af; }
+.xterm .xterm-rows .xterm-fg-56 { color: #5f00d7; } .xterm .xterm-rows .xterm-bg-56 { background-color: #5f00d7; }
+.xterm .xterm-rows .xterm-fg-57 { color: #5f00ff; } .xterm .xterm-rows .xterm-bg-57 { background-color: #5f00ff; }
+.xterm .xterm-rows .xterm-fg-58 { color: #5f5f00; } .xterm .xterm-rows .xterm-bg-58 { background-color: #5f5f00; }
+.xterm .xterm-rows .xterm-fg-59 { color: #5f5f5f; } .xterm .xterm-rows .xterm-bg-59 { background-color: #5f5f5f; }
+.xterm .xterm-rows .xterm-fg-60 { color: #5f5f87; } .xterm .xterm-rows .xterm-bg-60 { background-color: #5f5f87; }
+.xterm .xterm-rows .xterm-fg-61 { color: #5f5faf; } .xterm .xterm-rows .xterm-bg-61 { background-color: #5f5faf; }
+.xterm .xterm-rows .xterm-fg-62 { color: #5f5fd7; } .xterm .xterm-rows .xterm-bg-62 { background-color: #5f5fd7; }
+.xterm .xterm-rows .xterm-fg-63 { color: #5f5fff; } .xterm .xterm-rows .xterm-bg-63 { background-color: #5f5fff; }
+.xterm .xterm-rows .xterm-fg-64 { color: #5f8700; } .xterm .xterm-rows .xterm-bg-64 { background-color: #5f8700; }
+.xterm .xterm-rows .xterm-fg-65 { color: #5f875f; } .xterm .xterm-rows .xterm-bg-65 { background-color: #5f875f; }
+.xterm .xterm-rows .xterm-fg-66 { color: #5f8787; } .xterm .xterm-rows .xterm-bg-66 { background-color: #5f8787; }
+.xterm .xterm-rows .xterm-fg-67 { color: #5f87af; } .xterm .xterm-rows .xterm-bg-67 { background-color: #5f87af; }
+.xterm .xterm-rows .xterm-fg-68 { color: #5f87d7; } .xterm .xterm-rows .xterm-bg-68 { background-color: #5f87d7; }
+.xterm .xterm-rows .xterm-fg-69 { color: #5f87ff; } .xterm .xterm-rows .xterm-bg-69 { background-color: #5f87ff; }
+.xterm .xterm-rows .xterm-fg-70 { color: #5faf00; } .xterm .xterm-rows .xterm-bg-70 { background-color: #5faf00; }
+.xterm .xterm-rows .xterm-fg-71 { color: #5faf5f; } .xterm .xterm-rows .xterm-bg-71 { background-color: #5faf5f; }
+.xterm .xterm-rows .xterm-fg-72 { color: #5faf87; } .xterm .xterm-rows .xterm-bg-72 { background-color: #5faf87; }
+.xterm .xterm-rows .xterm-fg-73 { color: #5fafaf; } .xterm .xterm-rows .xterm-bg-73 { background-color: #5fafaf; }
+.xterm .xterm-rows .xterm-fg-74 { color: #5fafd7; } .xterm .xterm-rows .xterm-bg-74 { background-color: #5fafd7; }
+.xterm .xterm-rows .xterm-fg-75 { color: #5fafff; } .xterm .xterm-rows .xterm-bg-75 { background-color: #5fafff; }
+.xterm .xterm-rows .xterm-fg-76 { color: #5fd700; } .xterm .xterm-rows .xterm-bg-76 { background-color: #5fd700; }
+.xterm .xterm-rows .xterm-fg-77 { color: #5fd75f; } .xterm .xterm-rows .xterm-bg-77 { background-color: #5fd75f; }
+.xterm .xterm-rows .xterm-fg-78 { color: #5fd787; } .xterm .xterm-rows .xterm-bg-78 { background-color: #5fd787; }
+.xterm .xterm-rows .xterm-fg-79 { color: #5fd7af; } .xterm .xterm-rows .xterm-bg-79 { background-color: #5fd7af; }
+.xterm .xterm-rows .xterm-fg-80 { color: #5fd7d7; } .xterm .xterm-rows .xterm-bg-80 { background-color: #5fd7d7; }
+.xterm .xterm-rows .xterm-fg-81 { color: #5fd7ff; } .xterm .xterm-rows .xterm-bg-81 { background-color: #5fd7ff; }
+.xterm .xterm-rows .xterm-fg-82 { color: #5fff00; } .xterm .xterm-rows .xterm-bg-82 { background-color: #5fff00; }
+.xterm .xterm-rows .xterm-fg-83 { color: #5fff5f; } .xterm .xterm-rows .xterm-bg-83 { background-color: #5fff5f; }
+.xterm .xterm-rows .xterm-fg-84 { color: #5fff87; } .xterm .xterm-rows .xterm-bg-84 { background-color: #5fff87; }
+.xterm .xterm-rows .xterm-fg-85 { color: #5fffaf; } .xterm .xterm-rows .xterm-bg-85 { background-color: #5fffaf; }
+.xterm .xterm-rows .xterm-fg-86 { color: #5fffd7; } .xterm .xterm-rows .xterm-bg-86 { background-color: #5fffd7; }
+.xterm .xterm-rows .xterm-fg-87 { color: #5fffff; } .xterm .xterm-rows .xterm-bg-87 { background-color: #5fffff; }
+.xterm .xterm-rows .xterm-fg-88 { color: #870000; } .xterm .xterm-rows .xterm-bg-88 { background-color: #870000; }
+.xterm .xterm-rows .xterm-fg-89 { color: #87005f; } .xterm .xterm-rows .xterm-bg-89 { background-color: #87005f; }
+.xterm .xterm-rows .xterm-fg-90 { color: #870087; } .xterm .xterm-rows .xterm-bg-90 { background-color: #870087; }
+.xterm .xterm-rows .xterm-fg-91 { color: #8700af; } .xterm .xterm-rows .xterm-bg-91 { background-color: #8700af; }
+.xterm .xterm-rows .xterm-fg-92 { color: #8700d7; } .xterm .xterm-rows .xterm-bg-92 { background-color: #8700d7; }
+.xterm .xterm-rows .xterm-fg-93 { color: #8700ff; } .xterm .xterm-rows .xterm-bg-93 { background-color: #8700ff; }
+.xterm .xterm-rows .xterm-fg-94 { color: #875f00; } .xterm .xterm-rows .xterm-bg-94 { background-color: #875f00; }
+.xterm .xterm-rows .xterm-fg-95 { color: #875f5f; } .xterm .xterm-rows .xterm-bg-95 { background-color: #875f5f; }
+.xterm .xterm-rows .xterm-fg-96 { color: #875f87; } .xterm .xterm-rows .xterm-bg-96 { background-color: #875f87; }
+.xterm .xterm-rows .xterm-fg-97 { color: #875faf; } .xterm .xterm-rows .xterm-bg-97 { background-color: #875faf; }
+.xterm .xterm-rows .xterm-fg-98 { color: #875fd7; } .xterm .xterm-rows .xterm-bg-98 { background-color: #875fd7; }
+.xterm .xterm-rows .xterm-fg-99 { color: #875fff; } .xterm .xterm-rows .xterm-bg-99 { background-color: #875fff; }
+.xterm .xterm-rows .xterm-fg-100 { color: #878700; } .xterm .xterm-rows .xterm-bg-100 { background-color: #878700; }
+.xterm .xterm-rows .xterm-fg-101 { color: #87875f; } .xterm .xterm-rows .xterm-bg-101 { background-color: #87875f; }
+.xterm .xterm-rows .xterm-fg-102 { color: #878787; } .xterm .xterm-rows .xterm-bg-102 { background-color: #878787; }
+.xterm .xterm-rows .xterm-fg-103 { color: #8787af; } .xterm .xterm-rows .xterm-bg-103 { background-color: #8787af; }
+.xterm .xterm-rows .xterm-fg-104 { color: #8787d7; } .xterm .xterm-rows .xterm-bg-104 { background-color: #8787d7; }
+.xterm .xterm-rows .xterm-fg-105 { color: #8787ff; } .xterm .xterm-rows .xterm-bg-105 { background-color: #8787ff; }
+.xterm .xterm-rows .xterm-fg-106 { color: #87af00; } .xterm .xterm-rows .xterm-bg-106 { background-color: #87af00; }
+.xterm .xterm-rows .xterm-fg-107 { color: #87af5f; } .xterm .xterm-rows .xterm-bg-107 { background-color: #87af5f; }
+.xterm .xterm-rows .xterm-fg-108 { color: #87af87; } .xterm .xterm-rows .xterm-bg-108 { background-color: #87af87; }
+.xterm .xterm-rows .xterm-fg-109 { color: #87afaf; } .xterm .xterm-rows .xterm-bg-109 { background-color: #87afaf; }
+.xterm .xterm-rows .xterm-fg-110 { color: #87afd7; } .xterm .xterm-rows .xterm-bg-110 { background-color: #87afd7; }
+.xterm .xterm-rows .xterm-fg-111 { color: #87afff; } .xterm .xterm-rows .xterm-bg-111 { background-color: #87afff; }
+.xterm .xterm-rows .xterm-fg-112 { color: #87d700; } .xterm .xterm-rows .xterm-bg-112 { background-color: #87d700; }
+.xterm .xterm-rows .xterm-fg-113 { color: #87d75f; } .xterm .xterm-rows .xterm-bg-113 { background-color: #87d75f; }
+.xterm .xterm-rows .xterm-fg-114 { color: #87d787; } .xterm .xterm-rows .xterm-bg-114 { background-color: #87d787; }
+.xterm .xterm-rows .xterm-fg-115 { color: #87d7af; } .xterm .xterm-rows .xterm-bg-115 { background-color: #87d7af; }
+.xterm .xterm-rows .xterm-fg-116 { color: #87d7d7; } .xterm .xterm-rows .xterm-bg-116 { background-color: #87d7d7; }
+.xterm .xterm-rows .xterm-fg-117 { color: #87d7ff; } .xterm .xterm-rows .xterm-bg-117 { background-color: #87d7ff; }
+.xterm .xterm-rows .xterm-fg-118 { color: #87ff00; } .xterm .xterm-rows .xterm-bg-118 { background-color: #87ff00; }
+.xterm .xterm-rows .xterm-fg-119 { color: #87ff5f; } .xterm .xterm-rows .xterm-bg-119 { background-color: #87ff5f; }
+.xterm .xterm-rows .xterm-fg-120 { color: #87ff87; } .xterm .xterm-rows .xterm-bg-120 { background-color: #87ff87; }
+.xterm .xterm-rows .xterm-fg-121 { color: #87ffaf; } .xterm .xterm-rows .xterm-bg-121 { background-color: #87ffaf; }
+.xterm .xterm-rows .xterm-fg-122 { color: #87ffd7; } .xterm .xterm-rows .xterm-bg-122 { background-color: #87ffd7; }
+.xterm .xterm-rows .xterm-fg-123 { color: #87ffff; } .xterm .xterm-rows .xterm-bg-123 { background-color: #87ffff; }
+.xterm .xterm-rows .xterm-fg-124 { color: #af0000; } .xterm .xterm-rows .xterm-bg-124 { background-color: #af0000; }
+.xterm .xterm-rows .xterm-fg-125 { color: #af005f; } .xterm .xterm-rows .xterm-bg-125 { background-color: #af005f; }
+.xterm .xterm-rows .xterm-fg-126 { color: #af0087; } .xterm .xterm-rows .xterm-bg-126 { background-color: #af0087; }
+.xterm .xterm-rows .xterm-fg-127 { color: #af00af; } .xterm .xterm-rows .xterm-bg-127 { background-color: #af00af; }
+.xterm .xterm-rows .xterm-fg-128 { color: #af00d7; } .xterm .xterm-rows .xterm-bg-128 { background-color: #af00d7; }
+.xterm .xterm-rows .xterm-fg-129 { color: #af00ff; } .xterm .xterm-rows .xterm-bg-129 { background-color: #af00ff; }
+.xterm .xterm-rows .xterm-fg-130 { color: #af5f00; } .xterm .xterm-rows .xterm-bg-130 { background-color: #af5f00; }
+.xterm .xterm-rows .xterm-fg-131 { color: #af5f5f; } .xterm .xterm-rows .xterm-bg-131 { background-color: #af5f5f; }
+.xterm .xterm-rows .xterm-fg-132 { color: #af5f87; } .xterm .xterm-rows .xterm-bg-132 { background-color: #af5f87; }
+.xterm .xterm-rows .xterm-fg-133 { color: #af5faf; } .xterm .xterm-rows .xterm-bg-133 { background-color: #af5faf; }
+.xterm .xterm-rows .xterm-fg-134 { color: #af5fd7; } .xterm .xterm-rows .xterm-bg-134 { background-color: #af5fd7; }
+.xterm .xterm-rows .xterm-fg-135 { color: #af5fff; } .xterm .xterm-rows .xterm-bg-135 { background-color: #af5fff; }
+.xterm .xterm-rows .xterm-fg-136 { color: #af8700; } .xterm .xterm-rows .xterm-bg-136 { background-color: #af8700; }
+.xterm .xterm-rows .xterm-fg-137 { color: #af875f; } .xterm .xterm-rows .xterm-bg-137 { background-color: #af875f; }
+.xterm .xterm-rows .xterm-fg-138 { color: #af8787; } .xterm .xterm-rows .xterm-bg-138 { background-color: #af8787; }
+.xterm .xterm-rows .xterm-fg-139 { color: #af87af; } .xterm .xterm-rows .xterm-bg-139 { background-color: #af87af; }
+.xterm .xterm-rows .xterm-fg-140 { color: #af87d7; } .xterm .xterm-rows .xterm-bg-140 { background-color: #af87d7; }
+.xterm .xterm-rows .xterm-fg-141 { color: #af87ff; } .xterm .xterm-rows .xterm-bg-141 { background-color: #af87ff; }
+.xterm .xterm-rows .xterm-fg-142 { color: #afaf00; } .xterm .xterm-rows .xterm-bg-142 { background-color: #afaf00; }
+.xterm .xterm-rows .xterm-fg-143 { color: #afaf5f; } .xterm .xterm-rows .xterm-bg-143 { background-color: #afaf5f; }
+.xterm .xterm-rows .xterm-fg-144 { color: #afaf87; } .xterm .xterm-rows .xterm-bg-144 { background-color: #afaf87; }
+.xterm .xterm-rows .xterm-fg-145 { color: #afafaf; } .xterm .xterm-rows .xterm-bg-145 { background-color: #afafaf; }
+.xterm .xterm-rows .xterm-fg-146 { color: #afafd7; } .xterm .xterm-rows .xterm-bg-146 { background-color: #afafd7; }
+.xterm .xterm-rows .xterm-fg-147 { color: #afafff; } .xterm .xterm-rows .xterm-bg-147 { background-color: #afafff; }
+.xterm .xterm-rows .xterm-fg-148 { color: #afd700; } .xterm .xterm-rows .xterm-bg-148 { background-color: #afd700; }
+.xterm .xterm-rows .xterm-fg-149 { color: #afd75f; } .xterm .xterm-rows .xterm-bg-149 { background-color: #afd75f; }
+.xterm .xterm-rows .xterm-fg-150 { color: #afd787; } .xterm .xterm-rows .xterm-bg-150 { background-color: #afd787; }
+.xterm .xterm-rows .xterm-fg-151 { color: #afd7af; } .xterm .xterm-rows .xterm-bg-151 { background-color: #afd7af; }
+.xterm .xterm-rows .xterm-fg-152 { color: #afd7d7; } .xterm .xterm-rows .xterm-bg-152 { background-color: #afd7d7; }
+.xterm .xterm-rows .xterm-fg-153 { color: #afd7ff; } .xterm .xterm-rows .xterm-bg-153 { background-color: #afd7ff; }
+.xterm .xterm-rows .xterm-fg-154 { color: #afff00; } .xterm .xterm-rows .xterm-bg-154 { background-color: #afff00; }
+.xterm .xterm-rows .xterm-fg-155 { color: #afff5f; } .xterm .xterm-rows .xterm-bg-155 { background-color: #afff5f; }
+.xterm .xterm-rows .xterm-fg-156 { color: #afff87; } .xterm .xterm-rows .xterm-bg-156 { background-color: #afff87; }
+.xterm .xterm-rows .xterm-fg-157 { color: #afffaf; } .xterm .xterm-rows .xterm-bg-157 { background-color: #afffaf; }
+.xterm .xterm-rows .xterm-fg-158 { color: #afffd7; } .xterm .xterm-rows .xterm-bg-158 { background-color: #afffd7; }
+.xterm .xterm-rows .xterm-fg-159 { color: #afffff; } .xterm .xterm-rows .xterm-bg-159 { background-color: #afffff; }
+.xterm .xterm-rows .xterm-fg-160 { color: #d70000; } .xterm .xterm-rows .xterm-bg-160 { background-color: #d70000; }
+.xterm .xterm-rows .xterm-fg-161 { color: #d7005f; } .xterm .xterm-rows .xterm-bg-161 { background-color: #d7005f; }
+.xterm .xterm-rows .xterm-fg-162 { color: #d70087; } .xterm .xterm-rows .xterm-bg-162 { background-color: #d70087; }
+.xterm .xterm-rows .xterm-fg-163 { color: #d700af; } .xterm .xterm-rows .xterm-bg-163 { background-color: #d700af; }
+.xterm .xterm-rows .xterm-fg-164 { color: #d700d7; } .xterm .xterm-rows .xterm-bg-164 { background-color: #d700d7; }
+.xterm .xterm-rows .xterm-fg-165 { color: #d700ff; } .xterm .xterm-rows .xterm-bg-165 { background-color: #d700ff; }
+.xterm .xterm-rows .xterm-fg-166 { color: #d75f00; } .xterm .xterm-rows .xterm-bg-166 { background-color: #d75f00; }
+.xterm .xterm-rows .xterm-fg-167 { color: #d75f5f; } .xterm .xterm-rows .xterm-bg-167 { background-color: #d75f5f; }
+.xterm .xterm-rows .xterm-fg-168 { color: #d75f87; } .xterm .xterm-rows .xterm-bg-168 { background-color: #d75f87; }
+.xterm .xterm-rows .xterm-fg-169 { color: #d75faf; } .xterm .xterm-rows .xterm-bg-169 { background-color: #d75faf; }
+.xterm .xterm-rows .xterm-fg-170 { color: #d75fd7; } .xterm .xterm-rows .xterm-bg-170 { background-color: #d75fd7; }
+.xterm .xterm-rows .xterm-fg-171 { color: #d75fff; } .xterm .xterm-rows .xterm-bg-171 { background-color: #d75fff; }
+.xterm .xterm-rows .xterm-fg-172 { color: #d78700; } .xterm .xterm-rows .xterm-bg-172 { background-color: #d78700; }
+.xterm .xterm-rows .xterm-fg-173 { color: #d7875f; } .xterm .xterm-rows .xterm-bg-173 { background-color: #d7875f; }
+.xterm .xterm-rows .xterm-fg-174 { color: #d78787; } .xterm .xterm-rows .xterm-bg-174 { background-color: #d78787; }
+.xterm .xterm-rows .xterm-fg-175 { color: #d787af; } .xterm .xterm-rows .xterm-bg-175 { background-color: #d787af; }
+.xterm .xterm-rows .xterm-fg-176 { color: #d787d7; } .xterm .xterm-rows .xterm-bg-176 { background-color: #d787d7; }
+.xterm .xterm-rows .xterm-fg-177 { color: #d787ff; } .xterm .xterm-rows .xterm-bg-177 { background-color: #d787ff; }
+.xterm .xterm-rows .xterm-fg-178 { color: #d7af00; } .xterm .xterm-rows .xterm-bg-178 { background-color: #d7af00; }
+.xterm .xterm-rows .xterm-fg-179 { color: #d7af5f; } .xterm .xterm-rows .xterm-bg-179 { background-color: #d7af5f; }
+.xterm .xterm-rows .xterm-fg-180 { color: #d7af87; } .xterm .xterm-rows .xterm-bg-180 { background-color: #d7af87; }
+.xterm .xterm-rows .xterm-fg-181 { color: #d7afaf; } .xterm .xterm-rows .xterm-bg-181 { background-color: #d7afaf; }
+.xterm .xterm-rows .xterm-fg-182 { color: #d7afd7; } .xterm .xterm-rows .xterm-bg-182 { background-color: #d7afd7; }
+.xterm .xterm-rows .xterm-fg-183 { color: #d7afff; } .xterm .xterm-rows .xterm-bg-183 { background-color: #d7afff; }
+.xterm .xterm-rows .xterm-fg-184 { color: #d7d700; } .xterm .xterm-rows .xterm-bg-184 { background-color: #d7d700; }
+.xterm .xterm-rows .xterm-fg-185 { color: #d7d75f; } .xterm .xterm-rows .xterm-bg-185 { background-color: #d7d75f; }
+.xterm .xterm-rows .xterm-fg-186 { color: #d7d787; } .xterm .xterm-rows .xterm-bg-186 { background-color: #d7d787; }
+.xterm .xterm-rows .xterm-fg-187 { color: #d7d7af; } .xterm .xterm-rows .xterm-bg-187 { background-color: #d7d7af; }
+.xterm .xterm-rows .xterm-fg-188 { color: #d7d7d7; } .xterm .xterm-rows .xterm-bg-188 { background-color: #d7d7d7; }
+.xterm .xterm-rows .xterm-fg-189 { color: #d7d7ff; } .xterm .xterm-rows .xterm-bg-189 { background-color: #d7d7ff; }
+.xterm .xterm-rows .xterm-fg-190 { color: #d7ff00; } .xterm .xterm-rows .xterm-bg-190 { background-color: #d7ff00; }
+.xterm .xterm-rows .xterm-fg-191 { color: #d7ff5f; } .xterm .xterm-rows .xterm-bg-191 { background-color: #d7ff5f; }
+.xterm .xterm-rows .xterm-fg-192 { color: #d7ff87; } .xterm .xterm-rows .xterm-bg-192 { background-color: #d7ff87; }
+.xterm .xterm-rows .xterm-fg-193 { color: #d7ffaf; } .xterm .xterm-rows .xterm-bg-193 { background-color: #d7ffaf; }
+.xterm .xterm-rows .xterm-fg-194 { color: #d7ffd7; } .xterm .xterm-rows .xterm-bg-194 { background-color: #d7ffd7; }
+.xterm .xterm-rows .xterm-fg-195 { color: #d7ffff; } .xterm .xterm-rows .xterm-bg-195 { background-color: #d7ffff; }
+.xterm .xterm-rows .xterm-fg-196 { color: #ff0000; } .xterm .xterm-rows .xterm-bg-196 { background-color: #ff0000; }
+.xterm .xterm-rows .xterm-fg-197 { color: #ff005f; } .xterm .xterm-rows .xterm-bg-197 { background-color: #ff005f; }
+.xterm .xterm-rows .xterm-fg-198 { color: #ff0087; } .xterm .xterm-rows .xterm-bg-198 { background-color: #ff0087; }
+.xterm .xterm-rows .xterm-fg-199 { color: #ff00af; } .xterm .xterm-rows .xterm-bg-199 { background-color: #ff00af; }
+.xterm .xterm-rows .xterm-fg-200 { color: #ff00d7; } .xterm .xterm-rows .xterm-bg-200 { background-color: #ff00d7; }
+.xterm .xterm-rows .xterm-fg-201 { color: #ff00ff; } .xterm .xterm-rows .xterm-bg-201 { background-color: #ff00ff; }
+.xterm .xterm-rows .xterm-fg-202 { color: #ff5f00; } .xterm .xterm-rows .xterm-bg-202 { background-color: #ff5f00; }
+.xterm .xterm-rows .xterm-fg-203 { color: #ff5f5f; } .xterm .xterm-rows .xterm-bg-203 { background-color: #ff5f5f; }
+.xterm .xterm-rows .xterm-fg-204 { color: #ff5f87; } .xterm .xterm-rows .xterm-bg-204 { background-color: #ff5f87; }
+.xterm .xterm-rows .xterm-fg-205 { color: #ff5faf; } .xterm .xterm-rows .xterm-bg-205 { background-color: #ff5faf; }
+.xterm .xterm-rows .xterm-fg-206 { color: #ff5fd7; } .xterm .xterm-rows .xterm-bg-206 { background-color: #ff5fd7; }
+.xterm .xterm-rows .xterm-fg-207 { color: #ff5fff; } .xterm .xterm-rows .xterm-bg-207 { background-color: #ff5fff; }
+.xterm .xterm-rows .xterm-fg-208 { color: #ff8700; } .xterm .xterm-rows .xterm-bg-208 { background-color: #ff8700; }
+.xterm .xterm-rows .xterm-fg-209 { color: #ff875f; } .xterm .xterm-rows .xterm-bg-209 { background-color: #ff875f; }
+.xterm .xterm-rows .xterm-fg-210 { color: #ff8787; } .xterm .xterm-rows .xterm-bg-210 { background-color: #ff8787; }
+.xterm .xterm-rows .xterm-fg-211 { color: #ff87af; } .xterm .xterm-rows .xterm-bg-211 { background-color: #ff87af; }
+.xterm .xterm-rows .xterm-fg-212 { color: #ff87d7; } .xterm .xterm-rows .xterm-bg-212 { background-color: #ff87d7; }
+.xterm .xterm-rows .xterm-fg-213 { color: #ff87ff; } .xterm .xterm-rows .xterm-bg-213 { background-color: #ff87ff; }
+.xterm .xterm-rows .xterm-fg-214 { color: #ffaf00; } .xterm .xterm-rows .xterm-bg-214 { background-color: #ffaf00; }
+.xterm .xterm-rows .xterm-fg-215 { color: #ffaf5f; } .xterm .xterm-rows .xterm-bg-215 { background-color: #ffaf5f; }
+.xterm .xterm-rows .xterm-fg-216 { color: #ffaf87; } .xterm .xterm-rows .xterm-bg-216 { background-color: #ffaf87; }
+.xterm .xterm-rows .xterm-fg-217 { color: #ffafaf; } .xterm .xterm-rows .xterm-bg-217 { background-color: #ffafaf; }
+.xterm .xterm-rows .xterm-fg-218 { color: #ffafd7; } .xterm .xterm-rows .xterm-bg-218 { background-color: #ffafd7; }
+.xterm .xterm-rows .xterm-fg-219 { color: #ffafff; } .xterm .xterm-rows .xterm-bg-219 { background-color: #ffafff; }
+.xterm .xterm-rows .xterm-fg-220 { color: #ffd700; } .xterm .xterm-rows .xterm-bg-220 { background-color: #ffd700; }
+.xterm .xterm-rows .xterm-fg-221 { color: #ffd75f; } .xterm .xterm-rows .xterm-bg-221 { background-color: #ffd75f; }
+.xterm .xterm-rows .xterm-fg-222 { color: #ffd787; } .xterm .xterm-rows .xterm-bg-222 { background-color: #ffd787; }
+.xterm .xterm-rows .xterm-fg-223 { color: #ffd7af; } .xterm .xterm-rows .xterm-bg-223 { background-color: #ffd7af; }
+.xterm .xterm-rows .xterm-fg-224 { color: #ffd7d7; } .xterm .xterm-rows .xterm-bg-224 { background-color: #ffd7d7; }
+.xterm .xterm-rows .xterm-fg-225 { color: #ffd7ff; } .xterm .xterm-rows .xterm-bg-225 { background-color: #ffd7ff; }
+.xterm .xterm-rows .xterm-fg-226 { color: #ffff00; } .xterm .xterm-rows .xterm-bg-226 { background-color: #ffff00; }
+.xterm .xterm-rows .xterm-fg-227 { color: #ffff5f; } .xterm .xterm-rows .xterm-bg-227 { background-color: #ffff5f; }
+.xterm .xterm-rows .xterm-fg-228 { color: #ffff87; } .xterm .xterm-rows .xterm-bg-228 { background-color: #ffff87; }
+.xterm .xterm-rows .xterm-fg-229 { color: #ffffaf; } .xterm .xterm-rows .xterm-bg-229 { background-color: #ffffaf; }
+.xterm .xterm-rows .xterm-fg-230 { color: #ffffd7; } .xterm .xterm-rows .xterm-bg-230 { background-color: #ffffd7; }
+.xterm .xterm-rows .xterm-fg-231 { color: #ffffff; } .xterm .xterm-rows .xterm-bg-231 { background-color: #ffffff; }
+.xterm .xterm-rows .xterm-fg-232 { color: #080808; } .xterm .xterm-rows .xterm-bg-232 { background-color: #080808; }
+.xterm .xterm-rows .xterm-fg-233 { color: #121212; } .xterm .xterm-rows .xterm-bg-233 { background-color: #121212; }
+.xterm .xterm-rows .xterm-fg-234 { color: #1c1c1c; } .xterm .xterm-rows .xterm-bg-234 { background-color: #1c1c1c; }
+.xterm .xterm-rows .xterm-fg-235 { color: #262626; } .xterm .xterm-rows .xterm-bg-235 { background-color: #262626; }
+.xterm .xterm-rows .xterm-fg-236 { color: #303030; } .xterm .xterm-rows .xterm-bg-236 { background-color: #303030; }
+.xterm .xterm-rows .xterm-fg-237 { color: #3a3a3a; } .xterm .xterm-rows .xterm-bg-237 { background-color: #3a3a3a; }
+.xterm .xterm-rows .xterm-fg-238 { color: #444444; } .xterm .xterm-rows .xterm-bg-238 { background-color: #444444; }
+.xterm .xterm-rows .xterm-fg-239 { color: #4e4e4e; } .xterm .xterm-rows .xterm-bg-239 { background-color: #4e4e4e; }
+.xterm .xterm-rows .xterm-fg-240 { color: #585858; } .xterm .xterm-rows .xterm-bg-240 { background-color: #585858; }
+.xterm .xterm-rows .xterm-fg-241 { color: #626262; } .xterm .xterm-rows .xterm-bg-241 { background-color: #626262; }
+.xterm .xterm-rows .xterm-fg-242 { color: #6c6c6c; } .xterm .xterm-rows .xterm-bg-242 { background-color: #6c6c6c; }
+.xterm .xterm-rows .xterm-fg-243 { color: #767676; } .xterm .xterm-rows .xterm-bg-243 { background-color: #767676; }
+.xterm .xterm-rows .xterm-fg-244 { color: #808080; } .xterm .xterm-rows .xterm-bg-244 { background-color: #808080; }
+.xterm .xterm-rows .xterm-fg-245 { color: #8a8a8a; } .xterm .xterm-rows .xterm-bg-245 { background-color: #8a8a8a; }
+.xterm .xterm-rows .xterm-fg-246 { color: #949494; } .xterm .xterm-rows .xterm-bg-246 { background-color: #949494; }
+.xterm .xterm-rows .xterm-fg-247 { color: #9e9e9e; } .xterm .xterm-rows .xterm-bg-247 { background-color: #9e9e9e; }
+.xterm .xterm-rows .xterm-fg-248 { color: #a8a8a8; } .xterm .xterm-rows .xterm-bg-248 { background-color: #a8a8a8; }
+.xterm .xterm-rows .xterm-fg-249 { color: #b2b2b2; } .xterm .xterm-rows .xterm-bg-249 { background-color: #b2b2b2; }
+.xterm .xterm-rows .xterm-fg-250 { color: #bcbcbc; } .xterm .xterm-rows .xterm-bg-250 { background-color: #bcbcbc; }
+.xterm .xterm-rows .xterm-fg-251 { color: #c6c6c6; } .xterm .xterm-rows .xterm-bg-251 { background-color: #c6c6c6; }
+.xterm .xterm-rows .xterm-fg-252 { color: #d0d0d0; } .xterm .xterm-rows .xterm-bg-252 { background-color: #d0d0d0; }
+.xterm .xterm-rows .xterm-fg-253 { color: #dadada; } .xterm .xterm-rows .xterm-bg-253 { background-color: #dadada; }
+.xterm .xterm-rows .xterm-fg-254 { color: #e4e4e4; } .xterm .xterm-rows .xterm-bg-254 { background-color: #e4e4e4; }
+.xterm .xterm-rows .xterm-fg-255 { color: #eeeeee; } .xterm .xterm-rows .xterm-bg-255 { background-color: #eeeeee; }
+.xterm .xterm-rows .xterm-fg-257 { color: #0b0f16; } .xterm .xterm-rows .xterm-bg-257 { background-color: #d8dee9; }

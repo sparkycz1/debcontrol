@@ -302,14 +302,14 @@ async def test_terminal_page_loads_with_permission_and_pinned_fingerprint(
     assert "terminal-container" in response.text
 
 
-async def test_terminal_page_loads_the_canvas_addon(client, db_session_factory):
+async def test_terminal_page_loads_the_csp_safe_renderer(client, db_session_factory):
     """Regression guard: xterm.js's default DOM renderer draws ANSI colors
-    via a dynamically injected <style> element, which this app's CSP
+    via dynamically injected <style> elements, which this app's CSP
     (`style-src 'self'`, no `unsafe-inline`) silently blocks — every color
     code renders as plain foreground-only text, with no error visible
-    anywhere except the browser console. The canvas addon draws colors via
-    <canvas> instead, which CSP's style-src has no say over. See
-    `terminal.js`'s own comment for the full story."""
+    anywhere except the browser console. The WebGL addon draws on a
+    <canvas> instead, and xterm-csp.css carries the rules the DOM fallback
+    would otherwise inject. See `terminal.js`'s own comment."""
     await client.get("/machines/new")
     machine_id = await _create_machine(client, client.cookies.get("csrftoken"))
     await _pin_host_key(db_session_factory, machine_id)
@@ -317,7 +317,9 @@ async def test_terminal_page_loads_the_canvas_addon(client, db_session_factory):
     response = await client.get(f"/machines/{machine_id}/terminal")
 
     assert response.status_code == 200
-    assert '<script src="/static/js/xterm-addon-canvas.min.js">' in response.text
+    assert '<script src="/static/js/xterm-addon-webgl.min.js">' in response.text
+    assert '<link rel="stylesheet" href="/static/css/xterm-csp.css">' in response.text
+    assert "xterm-addon-canvas" not in response.text
 
 
 async def test_detail_page_shows_terminal_link_only_with_permission_and_pinned_key(

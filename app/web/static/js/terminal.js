@@ -2,7 +2,7 @@
 // (app/web/routes/terminal_ws.py). Protocol: binary WebSocket frames carry
 // raw terminal bytes in both directions; text frames carry JSON control
 // messages (a client-sent "resize", a server-sent "error"). CSP-safe: no
-// inline scripts — vendored xterm.js/addon-fit load before this file (see
+// inline scripts — vendored xterm.js 6 + addon-fit/addon-webgl load before this file (see
 // machines/terminal.html), and this is loaded as its own external file,
 // same convention as htmx/confirm.js/bulk-select.js.
 //
@@ -73,20 +73,23 @@
   term.loadAddon(fitAddon);
   term.open(container);
 
-  // xterm.js's default renderer draws each cell's colors by injecting a
-  // <style> element with the whole theme/ANSI palette as CSS rules — this
-  // app's CSP (`style-src 'self'`, no `unsafe-inline`) silently blocks
-  // that, so every ANSI color code (an `ls --color`, a colored prompt,
-  // htop, ...) rendered as plain foreground-only text with no error
-  // anywhere. The canvas addon draws glyphs and their colors straight onto
-  // a <canvas> instead — a `fillStyle` assignment, not a stylesheet — which
-  // CSP's style-src has no say over at all. Wrapped in try/catch: a
-  // browser with no 2D canvas support (essentially none in practice) just
-  // keeps the default DOM renderer instead of breaking the whole terminal.
-  try {
-    term.loadAddon(new CanvasAddon.CanvasAddon());
-  } catch (err) {
-    // Fall through to the (colorless, under this CSP) DOM renderer.
+  // xterm.js's default DOM renderer styles cells by injecting <style>
+  // elements (palette, cursor, selection, span layout) — this app's CSP
+  // (`style-src 'self'`, no `unsafe-inline`) silently blocks those. The
+  // WebGL addon draws glyphs and colors on a <canvas> instead, which CSP's
+  // style-src has no say over (xterm.js 6 dropped the older canvas addon
+  // that used to fill this role). When WebGL2 isn't available, or its
+  // context is lost later (GPU reset, driver update), the terminal falls
+  // back to the DOM renderer, kept usable by the static rules in
+  // css/xterm-csp.css — everything but 24-bit truecolor.
+  if (typeof WebglAddon !== "undefined") {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch (err) {
+      // No WebGL2 here — the DOM renderer + xterm-csp.css take over.
+    }
   }
 
   fitAddon.fit();
