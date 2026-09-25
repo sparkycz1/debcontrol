@@ -476,8 +476,16 @@ outside*, the way users see a service:
   handshake), so an expired certificate says *when* it expired.
 
 `run_due_endpoint_checks` (Beat, every minute) enqueues each enabled check
-whose own interval (30 s–1 day) has passed. Only the latest result is
-stored (`EndpointCheck.last_*`, `cert_expires_at`). Notifications: an
+whose own interval (30 s–1 day) has passed. The latest result sits on the
+check itself (`EndpointCheck.last_*`, `cert_expires_at`) for the list
+page, and every probe is also kept as an `EndpointCheckResult` row: a
+check's name links to its **detail page** (`/checks/{id}`) with uptime %,
+average and 95th-percentile response time, availability and response-time
+charts over the same 1h–90d ranges as a machine's Monitoring tab, and the
+latest failures (`app.services.endpoint_check_history`; REST:
+`GET /api/v1/checks/{id}/history?range_key=`). The history is purged with
+the fleet-wide monitoring history retention (Settings → Checks &
+retention) by the same daily job. Notifications: an
 outage is announced after **2 consecutive failures** (`endpoint.down`),
 recovery only after an announced outage (`endpoint.recovered`), and a
 certificate inside its warn window once per certificate

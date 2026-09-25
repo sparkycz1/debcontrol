@@ -7,6 +7,7 @@ from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings, FleetSummaryFrequency
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
+from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.fleet_summary import FleetSummary
 from app.db.models.geoip_database import GeoipDatabase
@@ -60,6 +61,7 @@ __all__ = [
     "AuthMethod",
     "AuthProvider",
     "EndpointCheck",
+    "EndpointCheckResult",
     "FleetSnapshot",
     "FleetSummary",
     "FleetSummaryFrequency",

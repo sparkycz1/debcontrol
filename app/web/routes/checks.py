@@ -23,6 +23,8 @@ from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
+from app.services import monitoring_history
+from app.services.endpoint_check_history import load_check_history
 from app.tasks import jobs as tasks
 from app.web.templating import t, templates
 
@@ -229,3 +231,28 @@ async def run_check_now(
     )
     url = f"/checks?ran={check.id}" if error is None else "/checks?run_error=1"
     return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{check_id}")
+async def check_detail(
+    request: Request,
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+) -> Response:
+    """One check's history: uptime %, latency, uptime/latency charts over
+    the chosen range (same selector as a machine's Monitoring tab) and its
+    most recent failures — see `app.services.endpoint_check_history`."""
+    check = await _get_check_or_404(check_id, db)
+    range_key = monitoring_history.normalize_range_key(range_key)
+    history = await load_check_history(db, check.id, range_key)
+    return templates.TemplateResponse(
+        request,
+        "checks/detail.html",
+        {
+            "check": check,
+            "history": history,
+            "range_key": range_key,
+            "time_ranges": monitoring_history.TIME_RANGES,
+        },
+    )

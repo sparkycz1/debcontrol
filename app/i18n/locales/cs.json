@@ -1380,6 +1380,21 @@
     "machines.bulk.move_to_group": "Přesunout do skupiny",
     "machines.bulk.group_done": "Přesunuto {count} zařízení do skupiny \"{group}\".",
     "machines.bulk.group_cleared": "{count} zařízení vyřazeno ze skupiny.",
-    "machines.error.group_not_allowed": "Vyber skupinu zařízení, ke které má tento účet přístup."
+    "machines.error.group_not_allowed": "Vyber skupinu zařízení, ke které má tento účet přístup.",
+    "checks.history.samples": "Kontrol v tomto rozsahu: {count}",
+    "checks.history.uptime": "Dostupnost",
+    "checks.history.avg_latency": "Průměrná odezva",
+    "checks.history.p95_latency": "Odezva (95. percentil)",
+    "checks.history.failures": "Neúspěšné kontroly",
+    "checks.history.uptime_chart": "Dostupnost",
+    "checks.history.uptime_chart_hint": "Podíl kontrol, při kterých byl endpoint dostupný",
+    "checks.history.latency_chart": "Doba odezvy",
+    "checks.history.latency_chart_hint": "Čas do odpovědi (HTTP) nebo navázání spojení (TLS)",
+    "checks.history.latency": "Doba odezvy",
+    "checks.history.recent_failures": "Poslední výpadky (posledních 20)",
+    "checks.history.when": "Kdy",
+    "checks.history.error": "Chyba",
+    "checks.history.no_failures": "V tomto rozsahu žádné neúspěšné kontroly.",
+    "checks.history.empty": "V tomto rozsahu zatím žádné výsledky — historie se ukládá od první kontroly po instalaci této verze."
   }
 }

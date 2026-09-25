@@ -1380,6 +1380,21 @@
     "machines.bulk.move_to_group": "Move to group",
     "machines.bulk.group_done": "Moved {count} machine(s) to group \"{group}\".",
     "machines.bulk.group_cleared": "Removed {count} machine(s) from their group.",
-    "machines.error.group_not_allowed": "Pick a machine group this account has access to."
+    "machines.error.group_not_allowed": "Pick a machine group this account has access to.",
+    "checks.history.samples": "{count} probe(s) in this range",
+    "checks.history.uptime": "Uptime",
+    "checks.history.avg_latency": "Average response",
+    "checks.history.p95_latency": "95th percentile response",
+    "checks.history.failures": "Failed probes",
+    "checks.history.uptime_chart": "Availability",
+    "checks.history.uptime_chart_hint": "Share of probes that were up",
+    "checks.history.latency_chart": "Response time",
+    "checks.history.latency_chart_hint": "Time to the response (HTTP) or handshake (TLS)",
+    "checks.history.latency": "Response time",
+    "checks.history.recent_failures": "Recent failures (latest 20)",
+    "checks.history.when": "When",
+    "checks.history.error": "Error",
+    "checks.history.no_failures": "No failed probes in this range.",
+    "checks.history.empty": "No results in this range yet — history is kept from the first probe after this version was installed."
   }
 }

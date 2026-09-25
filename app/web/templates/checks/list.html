@@ -43,7 +43,7 @@
                 {% elif c.last_ok is sameas false %}<span class="badge badge-error" title="{{ c.last_error or '' }}">{{ t(request, "checks.down") }}</span>
                 {% else %}<span class="badge">{{ t(request, "checks.pending") }}</span>{% endif %}
               </td>
-              <td><strong>{{ c.name }}</strong>{% if c.last_ok is sameas false and c.last_error %}<div class="table-summary">{{ c.last_error }}</div>{% endif %}</td>
+              <td><a href="/checks/{{ c.id }}"><strong>{{ c.name }}</strong></a>{% if c.last_ok is sameas false and c.last_error %}<div class="table-summary">{{ c.last_error }}</div>{% endif %}</td>
               <td><span class="badge">{{ c.kind | upper }}</span></td>
               <td class="cell-truncate" title="{{ c.target }}"><code>{{ c.target }}</code></td>
               <td>

@@ -3,8 +3,9 @@ server itself (not from a managed machine) — see
 `app.services.endpoint_checks` for the probes and the notification
 transitions, `app.tasks.jobs.run_due_endpoint_checks` for scheduling.
 
-Only the latest result is kept (the `last_*` columns): this is "is it up
-right now, and when does its certificate expire," not a history table.
+The `last_*` columns are the latest result — "is it up right now, and
+when does its certificate expire" for the list page. Every probe is also
+kept as an `EndpointCheckResult` row (uptime/latency history).
 """
 
 from __future__ import annotations

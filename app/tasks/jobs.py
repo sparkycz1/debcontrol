@@ -40,6 +40,7 @@ from app.core.app_settings import get_or_create_app_settings
 from app.db import session as db_session
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
+from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
@@ -514,7 +515,18 @@ async def _run_endpoint_check(check_id: str) -> dict[str, Any]:
         if check is None:
             return {"ok": False, "error": "Check not found."}
         result = await run_probe(check)
-        events = apply_result(check, result, datetime.now(UTC))
+        now = datetime.now(UTC)
+        events = apply_result(check, result, now)
+        session.add(
+            EndpointCheckResult(
+                check_id=check.id,
+                checked_at=now,
+                ok=result.ok,
+                status_code=result.status_code,
+                latency_ms=result.latency_ms,
+                error=(result.error or None) and result.error[:500],
+            )
+        )
         await session.commit()
         for event_type, context in events:
             await notify(session, event_type, context=context)
@@ -1536,12 +1548,13 @@ _MONITORING_SAMPLE_PURGE_ACTOR = "retention policy (automatic)"
 
 
 async def _purge_old_monitoring_samples() -> None:
-    """Delete `MachineMonitoringSample` **and** `MachineReachabilitySample`
-    rows older than each machine's effective retention —
+    """Delete `MachineMonitoringSample`, `MachineReachabilitySample` **and**
+    `EndpointCheckResult` rows older than each machine's effective
+    retention (endpoint check results: the fleet-wide default only) —
     `Machine.monitoring_history_retention_days` if set, else
     `AppSettings.monitoring_history_retention_days` (`None` on both = keep
-    that machine's samples forever). One retention setting covers both
-    tables — they're the same "how long does this fleet's own history
+    that machine's samples forever). One retention setting covers every
+    history table — they're the same "how long does this fleet's own history
     stick around" question, not two knobs to configure. One `DELETE` per
     machine per table rather than a single global cutoff (unlike
     `_purge_old_machine_update_runs`) since retention can differ per
@@ -1591,6 +1604,20 @@ async def _purge_old_monitoring_samples() -> None:
                     delete(MachineReachabilitySample).where(*reachability_filter)
                 )
                 total_deleted += reachability_deleted
+
+        # Endpoint check history follows the fleet-wide default only (a check
+        # belongs to no machine, so there's no per-machine override to apply).
+        if default_retention_days:
+            check_filter = EndpointCheckResult.checked_at < now - timedelta(
+                days=default_retention_days
+            )
+            count_result = await session.execute(
+                select(func.count()).select_from(EndpointCheckResult).where(check_filter)
+            )
+            checks_deleted = count_result.scalar_one()
+            if checks_deleted:
+                await session.execute(delete(EndpointCheckResult).where(check_filter))
+                total_deleted += checks_deleted
 
         if not total_deleted:
             return
