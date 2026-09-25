@@ -311,7 +311,9 @@ keys, from Python:
   `main`, `.github/workflows/release.yml` tags it `vX.Y.Z` and publishes
   the GitHub release by itself (notes: commit subjects since the previous
   tag); a missed version can be released by hand from Actions → Release →
-  Run workflow (`version` + the commit on `main` carrying it).
+  Run workflow (`version` + the commit on `main` carrying it). "Latest" on
+  the Releases page always goes to the highest version, never to a
+  backfilled older one.
 - New CSS must use the existing `--color-*` variables (`app/web/static/css/style.css`),
   never a hardcoded color — the light theme (`:root[data-theme="light"]`)
   overrides only those variables, so a hardcoded color renders identically,
