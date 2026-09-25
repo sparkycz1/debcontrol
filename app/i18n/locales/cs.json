@@ -1363,6 +1363,7 @@
     "terminal.clipboard.use_ctrl_v": "Použij Ctrl+V (nebo pravé tlačítko → Vložit) — tento prohlížeč nedovoluje číst schránku skriptem.",
     "terminal.clipboard.read_failed": "Schránku se nepodařilo přečíst — použij Ctrl+V.",
     "checks.expected_body": "Odpověď musí obsahovat",
-    "checks.expected_body_hint": "Volitelný text, který se musí objevit v těle odpovědi (rozlišuje velikost písmen, prvních 1 MB) — např. \"ok\" z health endpointu, aby se i stránka údržby s kódem 200 počítala jako výpadek. U TLS kontrol se ignoruje."
+    "checks.expected_body_hint": "Volitelný text, který se musí objevit v těle odpovědi (rozlišuje velikost písmen, prvních 1 MB) — např. \"ok\" z health endpointu, aby se i stránka údržby s kódem 200 počítala jako výpadek. U TLS kontrol se ignoruje.",
+    "machines.actions.export_inventory": "Exportovat inventář (CSV, aktuální filtr)"
   }
 }

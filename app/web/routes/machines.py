@@ -656,6 +656,111 @@ _CONFIG_EXPORT_CSV_FIELDS = (
 )
 
 
+_INVENTORY_CSV_FIELDS = (
+    "name",
+    "ip_address",
+    "hostname",
+    "group",
+    "tags",
+    "status",
+    "os_version",
+    "kernel_version",
+    "cpu_architecture",
+    "cpu_cores",
+    "ram_gb",
+    "upgradable",
+    "security_upgradable",
+    "reboot_required",
+    "uptime_days",
+    "host_key_pinned",
+    "facts_updated_at",
+    "updates_checked_at",
+)
+
+
+def _inventory_row(machine: Machine) -> dict[str, object]:
+    def iso(value: datetime | None) -> str:
+        return value.isoformat() if value else ""
+
+    if machine.is_reachable is None:
+        status_label = "unknown"
+    else:
+        status_label = "online" if machine.is_reachable else "offline"
+    return {
+        "name": _csv_safe(machine.name),
+        "ip_address": machine.ip_address,
+        "hostname": _csv_safe(machine.discovered_hostname or ""),
+        "group": _csv_safe(machine.group.name if machine.group else ""),
+        "tags": _csv_safe(", ".join(tag.name for tag in machine.tags)),
+        "status": status_label,
+        "os_version": _csv_safe(machine.os_version or ""),
+        "kernel_version": _csv_safe(machine.kernel_version or ""),
+        "cpu_architecture": machine.cpu_architecture or "",
+        "cpu_cores": machine.cpu_cores if machine.cpu_cores is not None else "",
+        "ram_gb": round(machine.ram_bytes / 1024**3, 1) if machine.ram_bytes else "",
+        "upgradable": machine.upgradable_count if machine.upgradable_count is not None else "",
+        "security_upgradable": (
+            machine.security_upgradable_count
+            if machine.security_upgradable_count is not None
+            else ""
+        ),
+        "reboot_required": "" if machine.reboot_required is None else machine.reboot_required,
+        "uptime_days": (
+            round(machine.uptime_seconds / 86400, 1) if machine.uptime_seconds else ""
+        ),
+        "host_key_pinned": bool(machine.host_key_fingerprint),
+        "facts_updated_at": iso(machine.facts_updated_at),
+        "updates_checked_at": iso(machine.updates_checked_at),
+    }
+
+
+@router.get("/inventory.csv")
+async def export_machine_inventory(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    q: str = "",
+    tag: list[str] = Query(default=[]),
+    tag_mode: str = "or",
+) -> Response:
+    """The machine list as a spreadsheet — every machine matching the
+    current search/tag filter (not just the visible page), with the
+    status, OS, hardware and update columns an inventory report needs.
+    Scoped exactly like the list itself. Unlike `/config/export` (the
+    structural import/export round-trip) this is a read-only report; the
+    same data is available as JSON from `GET /api/v1/machines`."""
+    tag_mode = tag_mode if tag_mode == "and" else "or"
+    query = (await machines_visible_to(db, current_user)).options(
+        selectinload(Machine.group), selectinload(Machine.tags)
+    )
+    if q.strip():
+        query = query.where(machine_search_clause(q))
+    query = apply_tag_filter(query, tag, tag_mode)
+    machines = list((await db.execute(query.order_by(Machine.name))).scalars().all())
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=_INVENTORY_CSV_FIELDS)
+    writer.writeheader()
+    for machine in machines:
+        writer.writerow(_inventory_row(machine))
+
+    await log_event(
+        db,
+        request=request,
+        action="machine.inventory_export",
+        summary=f"Exported the machine inventory ({len(machines)} machine(s)) as CSV",
+        details={"machine_count": len(machines), "q": q or None, "tags": tag or None},
+    )
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="debcontrol-inventory-{timestamp}.csv"'
+        },
+    )
+
+
 @router.get("/config/export")
 async def export_machine_config_endpoint(
     request: Request,

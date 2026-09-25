@@ -55,6 +55,8 @@
         <summary class="button button-secondary">{{ t(request, 'machines.actions.more') }}</summary>
         <div class="actions-menu-list">
           <a href="/machines/package-search">{{ t(request, 'machines.actions.package_search') }}</a>
+          {# Keeps the current search/tag filter (a stray `page` is ignored). #}
+          <a href="/machines/inventory.csv{% if request.url.query %}?{{ request.url.query }}{% endif %}">{{ t(request, 'machines.actions.export_inventory') }}</a>
           <a href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
           <a href="/machines/config/export?format=json">{{ t(request, 'machines.actions.export_json') }}</a>
           <a href="/machines/config/export?format=csv">{{ t(request, 'machines.actions.export_csv') }}</a>

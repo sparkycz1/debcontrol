@@ -16,6 +16,18 @@ connection is ever made to a machine whose host key fingerprint hasn't
 been explicitly confirmed by a human, and any later mismatch hard-fails
 the connection instead of silently reconnecting.
 
+### Inventory export: the machine list as a spreadsheet
+
+*More actions → Export inventory* on `/machines` downloads
+`GET /machines/inventory.csv` — every machine matching the list's current
+search/tag filter (all pages, not only the visible one), scoped like the
+list, with status, OS/kernel, CPU/RAM, pending (security) updates, reboot
+flag, uptime, host-key state and the facts/update-check timestamps.
+Formula-looking cells are neutralized the same way as the audit export,
+and each download is audited (`machine.inventory_export`). It's a
+read-only report, not the structural round-trip below; scripts get the
+same data as JSON from `GET /api/v1/machines`.
+
 ### Machine/group configuration export & import: structural, not a credentials backup
 
 `app.services.machine_config` (used by both `app/web/routes/machines.py`
