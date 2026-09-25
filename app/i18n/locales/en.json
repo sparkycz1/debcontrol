@@ -1175,6 +1175,12 @@
     "monitoring.containers.confirm_stop": "Stop container \"{name}\"? Whatever it serves goes down until it's started again.",
     "monitoring.containers.confirm_restart": "Restart container \"{name}\"? It will be briefly unavailable.",
     "monitoring.containers.action_done": "{action}: {name} — done.",
-    "monitoring.containers.action_failed": "{action}: {name} failed."
+    "monitoring.containers.action_failed": "{action}: {name} failed.",
+    "notifications.condition_field.max_temperature_c": "Highest sensor temperature (°C)",
+    "notifications.condition_field.smart_failed_count": "Disks failing S.M.A.R.T. (count)",
+    "notifications.condition_field.docker_unhealthy_count": "Unhealthy containers (count)",
+    "notifications.condition_field.docker_restarting_count": "Restarting containers (count)",
+    "notifications.condition_field.docker_exited_error_count": "Containers exited with an error (count)",
+    "monitoring.threshold_celsius": "Alert ≥ {value} °C"
   }
 }

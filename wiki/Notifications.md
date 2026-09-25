@@ -154,6 +154,11 @@ already tracks per machine, either from its latest facts snapshot
 | `monitoring.ram_percent` | Computed from the latest sample's `ram_used_bytes`/`ram_total_bytes` | number |
 | `monitoring.filesystem_use_percent` | One filesystem's usage — needs a **mount point** (e.g. `/var`) to disambiguate | number |
 | `monitoring.failed_services_count` | Latest sample's failed-service count | number |
+| `monitoring.max_temperature_c` | Hottest sensor in the latest sample (bare metal only) | number |
+| `monitoring.smart_failed_count` | Disks whose S.M.A.R.T. overall health says FAILED (bare metal only; unknown without S.M.A.R.T. data) | number |
+| `docker.unhealthy_count` | Containers whose healthcheck reports unhealthy | number |
+| `docker.restarting_count` | Containers currently in the `restarting` state (a restart loop) | number |
+| `docker.exited_error_count` | Stopped containers whose exit code wasn't 0 | number |
 
 A `monitoring.*` field reads the machine's **latest**
 `MachineMonitoringSample`; a machine with no sample yet simply never

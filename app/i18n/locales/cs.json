@@ -1175,6 +1175,12 @@
     "monitoring.containers.confirm_stop": "Zastavit kontejner „{name}“? Co obsluhuje, bude nedostupné, dokud ho znovu nespustíte.",
     "monitoring.containers.confirm_restart": "Restartovat kontejner „{name}“? Na chvíli bude nedostupný.",
     "monitoring.containers.action_done": "{action}: {name} — hotovo.",
-    "monitoring.containers.action_failed": "{action}: {name} se nepovedlo."
+    "monitoring.containers.action_failed": "{action}: {name} se nepovedlo.",
+    "notifications.condition_field.max_temperature_c": "Nejvyšší teplota senzoru (°C)",
+    "notifications.condition_field.smart_failed_count": "Disky se selhávajícím S.M.A.R.T. (počet)",
+    "notifications.condition_field.docker_unhealthy_count": "Nezdravé kontejnery (počet)",
+    "notifications.condition_field.docker_restarting_count": "Restartující se kontejnery (počet)",
+    "notifications.condition_field.docker_exited_error_count": "Kontejnery ukončené s chybou (počet)",
+    "monitoring.threshold_celsius": "Upozornění ≥ {value} °C"
   }
 }

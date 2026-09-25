@@ -174,8 +174,10 @@
       {% if machine.is_physical and machine.monitoring_updated_at %}
         {% set temps = [] %}
         {% for name, values in history.temps_by_sensor.items() %}{% set _ = temps.append((name, values)) %}{% endfor %}
+        {% set temp_threshold = condition_thresholds.get('monitoring.max_temperature_c') %}
         {{ chart_card(t(request, "monitoring.card.temperature"), t(request, "monitoring.card.temperature_hint"),
-                      chart(temps, ts, fmt='celsius', zero_based=false, time_format=tf),
+                      chart(temps, ts, fmt='celsius', zero_based=false, time_format=tf, threshold=temp_threshold,
+                            threshold_label=(t(request, "monitoring.threshold_celsius", value=(temp_threshold | round(0) | int)) if temp_threshold is not none else none)),
                       filter=(temps | length > 3), empty_text=t(request, "monitoring.hardware.none_found")) }}
 
         {% set fans = [] %}

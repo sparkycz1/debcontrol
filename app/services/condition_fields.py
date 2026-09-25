@@ -50,6 +50,39 @@ def _filesystem_percent(
     return None
 
 
+def _max_temperature(sample: MachineMonitoringSample | None) -> float | None:
+    """Hottest sensor in the latest sample — one threshold covers every
+    sensor, whatever they're called on this machine."""
+    readings = [
+        float(t["celsius"])
+        for t in (sample.sensor_temps or [] if sample else [])
+        if isinstance(t, dict) and isinstance(t.get("celsius"), (int, float))
+    ]
+    return max(readings) if readings else None
+
+
+def _smart_failed_count(sample: MachineMonitoringSample | None) -> int | None:
+    """Disks whose S.M.A.R.T. overall health said FAILED. None (unknown)
+    when the latest sample has no S.M.A.R.T. data at all — a VM, or no
+    smartctl access — so a "count > 0" rule can't silently pass there."""
+    if sample is None or not sample.smart_disks:
+        return None
+    return sum(1 for d in sample.smart_disks if isinstance(d, dict) and d.get("healthy") is False)
+
+
+def _docker_count(machine: Machine, predicate: Callable[[dict[str, Any]], bool]) -> int | None:
+    """Containers matching `predicate` in the latest container list. None
+    unless Docker was actually readable (`docker_status == "ok"`)."""
+    if machine.docker_status != "ok":
+        return None
+    return sum(1 for c in (machine.docker_containers or []) if isinstance(c, dict) and predicate(c))
+
+
+def _exited_with_error(container: dict[str, Any]) -> bool:
+    status = str(container.get("status") or "")
+    return container.get("state") in ("exited", "dead") and not status.startswith("Exited (0)")
+
+
 CONDITION_FIELDS: dict[str, ConditionField] = {
     "machine.os_id": ConditionField(
         "os_id", "string", lambda m, s, mount: m.os_id
@@ -114,6 +147,29 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
         "failed_services_count",
         "number",
         lambda m, s, mount: s.failed_services_count if s else None,
+    ),
+    # --- Hardware (bare metal only; unknown on a VM, so never matches) ---
+    "monitoring.max_temperature_c": ConditionField(
+        "max_temperature_c", "number", lambda m, s, mount: _max_temperature(s)
+    ),
+    "monitoring.smart_failed_count": ConditionField(
+        "smart_failed_count", "number", lambda m, s, mount: _smart_failed_count(s)
+    ),
+    # --- Docker (latest container list, see Machine.docker_containers) ---
+    "docker.unhealthy_count": ConditionField(
+        "docker_unhealthy_count",
+        "number",
+        lambda m, s, mount: _docker_count(m, lambda c: c.get("health") == "unhealthy"),
+    ),
+    "docker.restarting_count": ConditionField(
+        "docker_restarting_count",
+        "number",
+        lambda m, s, mount: _docker_count(m, lambda c: c.get("state") == "restarting"),
+    ),
+    "docker.exited_error_count": ConditionField(
+        "docker_exited_error_count",
+        "number",
+        lambda m, s, mount: _docker_count(m, _exited_with_error),
     ),
 }
 
