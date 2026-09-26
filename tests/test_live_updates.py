@@ -127,6 +127,9 @@ async def test_refresh_facts_publishes_a_facts_event(
             "process_count": 5,
             "filesystems": [],
             "network_interfaces": [],
+            "listening_ports": None,
+            "admin_users": [],
+            "login_users": [],
             "is_physical": True,
             "smart_devices": None,
         }

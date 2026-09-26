@@ -65,12 +65,15 @@ from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStat
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig
 from app.db.models.audit_log import AuditOutcome
+from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
+from app.services import machine_timeline
 from app.services.access_scope import machines_visible_to
+from app.services.endpoint_check_history import load_check_history
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
@@ -381,15 +384,113 @@ async def _get_explain_machine(db: AsyncSession, user: User, machine_id: uuid.UU
     return machine
 
 
+def _machine_state_lines(machine: Machine) -> str:
+    """The machine's current state, as context for a history summary."""
+    reachable = (
+        "unknown" if machine.is_reachable is None else "yes" if machine.is_reachable else "no"
+    )
+    pending = "unknown" if machine.upgradable_count is None else str(machine.upgradable_count)
+    lines = [
+        f"- OS: {machine.os_version or 'unknown'}, kernel {machine.kernel_version or 'unknown'}",
+        f"- Reachable right now: {reachable}",
+        f"- Pending apt updates: {pending} (security: {machine.security_upgradable_count or 0})",
+        f"- Reboot required: {'yes' if machine.reboot_required else 'no'}",
+    ]
+    lines.extend(
+        f"- Filesystem {fs.get('mount')} is {fs.get('use_percent')}% full"
+        for fs in machine.filesystems or []
+        if isinstance(fs, dict) and (fs.get("use_percent") or 0) >= 85
+    )
+    if machine.readiness_missing:
+        lines.append("- Readiness check found missing: " + "; ".join(machine.readiness_missing))
+    return "\n".join(lines)
+
+
+async def _build_endpoint_check_prompt(
+    db: AsyncSession, check_id: uuid.UUID | None
+) -> tuple[str, str]:
+    if check_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing check_id.")
+    check = await db.get(EndpointCheck, check_id)
+    if check is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Check not found.")
+    history = await load_check_history(db, check.id, "7d")
+    prompt = (
+        f'The endpoint check "{check.name}" ({check.kind.upper()} {check.target}) is '
+        + ("currently DOWN" if check.last_ok is False else "currently up")
+        + f".\nLast error: {check.last_error or 'none'}\n"
+        f"Last 7 days: {history.sample_count} probes, uptime "
+        f"{history.uptime_percent if history.uptime_percent is not None else 'unknown'}%, "
+        f"{history.failure_count} failed, average response "
+        f"{history.avg_latency_ms if history.avg_latency_ms is not None else 'unknown'} ms.\n"
+    )
+    if check.cert_expires_at:
+        prompt += f"Certificate expires: {check.cert_expires_at:%Y-%m-%d}\n"
+    if history.recent_failures:
+        prompt += "Recent failures (newest first):\n" + "\n".join(
+            f"- {f.checked_at:%Y-%m-%d %H:%M} UTC: "
+            + (f"HTTP {f.status_code} " if f.status_code else "")
+            + (f.error or "")
+            for f in history.recent_failures
+        ) + "\n"
+    prompt += (
+        "\nSummarize what has been happening with this endpoint (when it failed, how "
+        "often, whether it looks intermittent or like one outage), what the errors most "
+        "likely mean, and what I should check first."
+    )
+    return prompt, f'Asked the AI assistant about the endpoint check "{check.name}"'
+
+
 async def _build_explain_prompt(
-    db: AsyncSession, user: User, kind: str, machine_id: uuid.UUID, run_id: uuid.UUID | None
+    db: AsyncSession,
+    user: User,
+    kind: str,
+    machine_id: uuid.UUID | None,
+    run_id: uuid.UUID | None,
+    *,
+    check_id: uuid.UUID | None = None,
+    days: int = machine_timeline.DEFAULT_RANGE_DAYS,
 ) -> tuple[str, str]:
     """Returns `(prompt_text, audit_summary)` for the "Ask AI why" button,
     or raises `HTTPException` if there's nothing to explain (an unknown
     run, or a readiness check that isn't actually missing anything —
     both would only happen via a hand-crafted request, not the button
-    itself, which never renders in either case)."""
+    itself, which never renders in either case).
+
+    `history` (a machine's History tab) and `endpoint_check` (a check's
+    detail page) ask for a summary of what happened rather than an
+    explanation of one failure — built from the same data those pages
+    show, scoped the same way (the timeline includes audited actions only
+    for a user with `audit.view`)."""
+    if kind == "endpoint_check":
+        if not user.has_permission(Permission.MACHINE_VIEW):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Check not found.")
+        return await _build_endpoint_check_prompt(db, check_id)
+
+    if machine_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing machine_id.")
     machine = await _get_explain_machine(db, user, machine_id)
+
+    if kind == "history":
+        timeline = await machine_timeline.load_timeline(
+            db,
+            machine,
+            days=days,
+            include_audit=user.has_permission(Permission.AUDIT_VIEW),
+        )
+        events = machine_timeline.timeline_as_text(machine, timeline) or "(nothing recorded)"
+        prompt = (
+            f'Here is the recorded history of machine "{machine.name}" over the last '
+            f"{timeline.days} day(s), oldest first — notes people wrote, detected "
+            "configuration changes, update runs, reachability outages"
+            + (" and audited actions" if timeline.includes_audit else "")
+            + f":\n{events}\n\nCurrent state:\n{_machine_state_lines(machine)}\n\n"
+            "Summarize what happened to this machine in this period: any incidents "
+            "(outages, failed updates) and what most likely caused them, judging by what "
+            "changed around the same time, and whether anything still needs attention. "
+            "Finish with the next step you'd recommend. Don't invent events that aren't listed."
+        )
+        return prompt, f'Asked the AI assistant to summarize the history of "{machine.name}"'
 
     if kind == "update_run":
         if run_id is None:
@@ -440,8 +541,10 @@ async def explain_with_ai(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     kind: str = Form(...),
-    machine_id: uuid.UUID = Form(...),
+    machine_id: uuid.UUID | None = Form(None),
     run_id: uuid.UUID | None = Form(None),
+    check_id: uuid.UUID | None = Form(None),
+    days: int = Form(machine_timeline.DEFAULT_RANGE_DAYS),
 ) -> Response:
     """The "Ask AI why" button on a failed update run (`partials/
     update_run_status.html`) and a machine's readiness banner
@@ -451,7 +554,9 @@ async def explain_with_ai(
     model is first in `get_selectable_models` (same one the "New
     conversation" form lists first) rather than asking the user to choose
     again — this is meant to be one click, not a detour through a form."""
-    prompt, audit_summary = await _build_explain_prompt(db, user, kind, machine_id, run_id)
+    prompt, audit_summary = await _build_explain_prompt(
+        db, user, kind, machine_id, run_id, check_id=check_id, days=days
+    )
 
     selectable = await get_selectable_models(db)
     if not selectable:

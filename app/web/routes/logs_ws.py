@@ -73,9 +73,10 @@ async def follow_logs_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> 
     path = params.get("path", "").strip()
     container = params.get("container", "").strip()
     search = params.get("search", "")
+    priority = params.get("priority", "")
     try:
         command = build_follow_command(
-            source=source, path=path, container=container, search=search
+            source=source, path=path, container=container, search=search, priority=priority
         )
     except LogAccessError as exc:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc)[:120])

@@ -106,6 +106,8 @@ Today:
 | `endpoint.recovered` | An endpoint check succeeds again after an announced outage. | **No** |
 | `endpoint.cert_expiring` | A checked certificate is within the check's "warn N days before" window (or already expired) — once per certificate; a renewed certificate warns again when *it* gets close. | **No** |
 | `machine.condition_matched` | A rule's own **conditions** (CPU/RAM/disk/facts thresholds — see "Condition-based rules" below) all match for a machine in scope. Added to a rule's `event_types` automatically whenever it has any conditions — never checked by hand. | Yes |
+| `machine.config_changed` | A facts refresh found tracked facts different from the previous refresh — kernel, OS, hostname, CPU cores, RAM, disks, filesystems, IP addresses, listening TCP ports, admin or login accounts (Machine Management's *Configuration drift*). One notification per refresh listing every change; a fact that was unknown before is never a change. See `app.services.config_drift.record_fact_changes`. | Yes |
+| `machine.security_updates` | An update check found apt security updates that weren't pending at the previous check, with the CVEs they fix where the changelog names them. Not repeated while they stay pending; the first check after upgrading debcontrol only sets the baseline. See `app.services.config_drift.record_new_security_updates`. | Yes |
 
 **Adding another event is a three-step recipe**, documented on
 `NotificationEventType`'s own docstring in code:
@@ -265,6 +267,8 @@ What `{details}` actually contains, per event:
 | `endpoint.down` / `endpoint.recovered` | `{endpoint_name}`, `{endpoint_target}`; `{details}` is the last error (down only). No machine placeholders. |
 | `endpoint.cert_expiring` | Also `{days}` (days left, 0 once expired) and `{expires_at}` (UTC). |
 | `machine.condition_matched` | Also provides `{rule_name}` and `{condition_summary}` (a human-readable rendering of the matched conditions, e.g. "cpu_percent gt 90"); `{details}` is empty. |
+| `machine.config_changed` | Also `{changes}` — one line per change, e.g. `Kernel: 6.1.0-25 → 6.1.0-26`, `Listening TCP ports: +0.0.0.0:8080 -0.0.0.0:21`; `{details}` is the same text. |
+| `machine.security_updates` | Also `{package_count}`, `{packages}` (one `- name version (CVE-…)` line each) and `{cves}` (comma-separated, newest first, `—` when none are known); `{details}` is the package list. |
 
 ## Templates: one subject/body pair per event, per your language
 

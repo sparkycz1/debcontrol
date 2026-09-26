@@ -23,7 +23,7 @@ from app.db.models.saved_machine_view import SavedMachineView
 # *filter*, not an arbitrary querystring (see the model's own docstring).
 # `tag` is repeatable (a view can capture more than one tag); everything
 # else is single-valued.
-ALLOWED_VIEW_PARAMS = ("q", "tag", "tag_mode")
+ALLOWED_VIEW_PARAMS = ("q", "tag", "tag_mode", "status", "group")
 _MULTI_VALUED_PARAMS = frozenset({"tag"})
 
 MAX_VIEW_NAME_LENGTH = 100
@@ -35,7 +35,8 @@ class DuplicateViewNameError(Exception):
 
 def build_query_string(params: dict[str, str | list[str]]) -> str:
     """`{"q": "web", "tag": ["prod", "web"], "tag_mode": "and"}` ->
-    `"q=web&tag=prod&tag=web&tag_mode=and"` — only the recognized filter
+    `"q=web&tag=prod&tag=web&tag_mode=and"` (plus `status`/`group` — the
+    Status and Group filters, `app.web.machine_search`) — only the recognized filter
     keys, in `ALLOWED_VIEW_PARAMS` order, blanks/empty lists dropped.
     Empty when every filter is blank (a saved "no filter" view —
     legitimate, e.g. "everything, sorted the way I like"). `tag_mode` is

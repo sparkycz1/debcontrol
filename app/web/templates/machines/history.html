@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "machine.tab.history") }} — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  {% set user = request.state.user %}
+  {% set can_manage = user.has_permission('machine.manage') %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+    {% if user.has_permission('ai.access') %}
+      <div class="page-header-actions">
+        <form method="post" action="/ai/explain" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="kind" value="history">
+          <input type="hidden" name="machine_id" value="{{ machine.id }}">
+          <input type="hidden" name="days" value="{{ timeline.days }}">
+          <button type="submit" class="button button-secondary">{{ t(request, "history.ask_ai") }}</button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <p class="hint">{{ t(request, "history.intro") }}{% if not timeline.includes_audit %} {{ t(request, "history.no_audit_access") }}{% endif %}</p>
+
+  {% if can_manage %}
+    <section class="panel">
+      <h2>{{ t(request, "history.add_note") }}</h2>
+      {% if note_error %}<div class="alert alert-error"><p>{{ t(request, "history.note_empty") }}</p></div>{% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/notes" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="note-body" class="visually-hidden">{{ t(request, "history.add_note") }}</label>
+        <textarea id="note-body" name="body" rows="3" maxlength="{{ max_note_length }}" required
+                  placeholder="{{ t(request, 'history.note_placeholder') }}"></textarea>
+        <button type="submit" class="button">{{ t(request, "history.save_note") }}</button>
+      </form>
+    </section>
+  {% endif %}
+
+  <form method="get" action="/machines/{{ machine.id }}/history" class="search-form">
+    <select name="days" data-autosubmit aria-label="{{ t(request, 'history.range') }}">
+      {% for d in ranges %}
+        <option value="{{ d }}" {% if d == timeline.days %}selected{% endif %}>{{ t(request, "history.range_24h") if d == 1 else t(request, "history.range_days", days=d) }}</option>
+      {% endfor %}
+    </select>
+    <select name="kind" data-autosubmit aria-label="{{ t(request, 'history.kind') }}">
+      <option value="" {% if not kind %}selected{% endif %}>{{ t(request, "history.kind.all") }}</option>
+      {% for k in kinds if k != 'audit' or timeline.includes_audit %}
+        <option value="{{ k }}" {% if k == kind %}selected{% endif %}>{{ t(request, "history.kind." ~ k) }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
+  </form>
+
+  {% if timeline.truncated %}
+    <div class="alert alert-warn"><p>{{ t(request, "history.truncated", count=(timeline.events | length)) }}</p></div>
+  {% endif %}
+
+  {% if timeline.events %}
+    <ol class="timeline">
+      {% for e in timeline.events %}
+        <li class="timeline-item timeline-kind-{{ e.kind }}{% if e.outcome %} timeline-{{ e.outcome }}{% endif %}">
+          <div class="timeline-meta">
+            <time datetime="{{ e.at.isoformat() }}">{{ e.at | local_time('%Y-%m-%d %H:%M') }}</time>
+            <span class="badge">{{ t(request, "history.kind." ~ e.kind) }}</span>
+            {% if e.actor %}<span class="table-muted">{{ e.actor }}</span>{% endif %}
+          </div>
+          <div class="timeline-body">
+            {% if e.kind == 'note' %}
+              <p class="timeline-note-text">{{ e.detail }}</p>
+              {% if can_manage %}
+                <form method="post" action="/machines/{{ machine.id }}/notes/{{ e.data.note_id }}/delete" class="inline-form"
+                      data-confirm="{{ t(request, 'history.delete_note_confirm') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="link-button">{{ t(request, "history.delete_note") }}</button>
+                </form>
+              {% endif %}
+            {% elif e.kind == 'change' and e.data.field == 'security_updates' %}
+              <p>{{ t(request, "history.security_updates", packages=(e.data.new or '')) }}</p>
+            {% elif e.kind == 'change' %}
+              <p><strong>{{ t(request, "history.field." ~ e.data.field) }}</strong>:
+                {% if e.data.is_set %}
+                  {% if e.data.new %}<span class="timeline-added">+ {{ e.data.new }}</span>{% endif %}
+                  {% if e.data.old %}<span class="timeline-removed">− {{ e.data.old }}</span>{% endif %}
+                {% else %}
+                  {{ e.data.old }} → {{ e.data.new }}
+                {% endif %}
+              </p>
+            {% elif e.kind == 'update_run' %}
+              <p>
+                <a href="{{ e.link }}">{{ t(request, "history.update_run", strategy=('dist-upgrade' if e.data.strategy == 'dist_upgrade' else 'full-upgrade')) }}</a>
+                {% if e.data.status == 'succeeded' %}<span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
+                {% elif e.data.status == 'failed' %}<span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
+                {% elif e.data.status == 'running' %}<span class="badge badge-warn">{{ t(request, "machine.update_run.running") }}</span>
+                {% else %}<span class="badge badge-warn">{{ t(request, "machine.update_run.pending") }}</span>{% endif %}
+              </p>
+              {% if e.detail %}<p class="table-summary">{{ e.detail }}</p>{% endif %}
+            {% elif e.kind == 'reachability' %}
+              <p><span class="badge {{ 'badge-ok' if e.data.reachable else 'badge-error' }}">{{ t(request, "history.reachable_again" if e.data.reachable else "history.unreachable") }}</span></p>
+            {% else %}
+              <p>{{ e.summary }}{% if e.outcome == 'error' %} <span class="badge badge-error">{{ e.data.outcome }}</span>{% endif %}</p>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "history.empty") }}</p></div>
+  {% endif %}
+{% endblock %}

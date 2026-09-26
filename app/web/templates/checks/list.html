@@ -7,11 +7,10 @@
   {% set can_manage = request.state.user.has_permission('machine.manage') %}
   <div class="page-header">
     <h1>{{ t(request, "checks.title") }}</h1>
-    {% if can_manage %}
-      <div class="page-header-actions">
-        <a class="button" href="/checks/new">{{ t(request, "checks.add") }}</a>
-      </div>
-    {% endif %}
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/checks/sla">{{ t(request, "checks.sla.title") }}</a>
+      {% if can_manage %}<a class="button" href="/checks/new">{{ t(request, "checks.add") }}</a>{% endif %}
+    </div>
   </div>
   <p class="hint">{{ t(request, "checks.intro") }}</p>
 

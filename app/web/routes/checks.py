@@ -10,7 +10,7 @@ import uuid
 
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,7 @@ from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.services import monitoring_history
 from app.services.endpoint_check_history import load_check_history
+from app.services.endpoint_sla import load_sla_report, selectable_months, sla_report_csv
 from app.tasks import jobs as tasks
 from app.web.templating import t, templates
 
@@ -44,8 +45,9 @@ def _form_error(exc: ValidationError) -> str:
 async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[str, str], str]:
     form = await request.form()
     values = {key: str(form.get(key, "")) for key in (
-        "name", "kind", "target", "expected_status", "expected_body", "interval_seconds",
-        "timeout_seconds", "cert_warn_days",
+        "name", "kind", "target", "expected_status", "expected_body", "unexpected_body",
+        "json_path", "json_expected", "max_latency_ms", "sla_target_percent",
+        "interval_seconds", "timeout_seconds", "cert_warn_days",
     )}
     values["verify_tls"] = "1" if form.get("verify_tls") else ""
     values["enabled"] = "1" if form.get("enabled") else ""
@@ -56,6 +58,15 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
             target=values["target"],
             expected_status=int(values["expected_status"]) if values["expected_status"] else None,
             expected_body=values["expected_body"] or None,
+            unexpected_body=values["unexpected_body"] or None,
+            json_path=values["json_path"] or None,
+            json_expected=values["json_expected"] or None,
+            max_latency_ms=int(values["max_latency_ms"]) if values["max_latency_ms"] else None,
+            sla_target_percent=(
+                float(values["sla_target_percent"].replace(",", "."))
+                if values["sla_target_percent"]
+                else None
+            ),
             verify_tls=bool(values["verify_tls"]),
             interval_seconds=int(values["interval_seconds"] or 300),
             timeout_seconds=int(values["timeout_seconds"] or 10),
@@ -99,6 +110,11 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
         "target": check.target,
         "expected_status": str(check.expected_status or ""),
         "expected_body": check.expected_body or "",
+        "unexpected_body": check.unexpected_body or "",
+        "json_path": check.json_path or "",
+        "json_expected": check.json_expected or "",
+        "max_latency_ms": str(check.max_latency_ms or ""),
+        "sla_target_percent": _format_percent(check.sla_target_percent),
         "interval_seconds": str(check.interval_seconds),
         "timeout_seconds": str(check.timeout_seconds),
         "cert_warn_days": str(check.cert_warn_days),
@@ -107,8 +123,14 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
     }
 
 
+def _format_percent(value: float | None) -> str:
+    return "" if value is None else f"{value:g}"
+
+
 _DEFAULT_VALUES = {
     "name": "", "kind": "http", "target": "", "expected_status": "", "expected_body": "",
+    "unexpected_body": "", "json_path": "", "json_expected": "", "max_latency_ms": "",
+    "sla_target_percent": "",
     "interval_seconds": "300", "timeout_seconds": "10", "cert_warn_days": "14",
     "verify_tls": "1", "enabled": "1",
 }
@@ -124,6 +146,32 @@ async def list_checks(request: Request, db: AsyncSession = Depends(get_db)) -> R
             "checks": list(result.scalars().all()),
             "run_error": request.query_params.get("run_error"),
             "ran": request.query_params.get("ran"),
+        },
+    )
+
+
+@router.get("/sla")
+async def sla_report(
+    request: Request, db: AsyncSession = Depends(get_db), month: str = ""
+) -> Response:
+    """Monthly availability per check against its SLA target — see
+    `app.services.endpoint_sla`."""
+    report = await load_sla_report(db, month)
+    return templates.TemplateResponse(
+        request,
+        "checks/sla.html",
+        {"report": report, "months": selectable_months()},
+    )
+
+
+@router.get("/sla.csv")
+async def sla_report_export(db: AsyncSession = Depends(get_db), month: str = "") -> Response:
+    report = await load_sla_report(db, month)
+    return PlainTextResponse(
+        sla_report_csv(report),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="debcontrol-sla-{report.month}.csv"'
         },
     )
 

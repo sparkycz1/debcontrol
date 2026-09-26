@@ -31,6 +31,9 @@ _SECTION_MARKERS = (
     "PROCESSES",
     "FILESYSTEMS",
     "NETWORK",
+    "LISTEN",
+    "ADMINS",
+    "LOGINS",
     "VIRT",
     "SMART",
 )
@@ -92,6 +95,19 @@ FACTS_COMMAND = (
     "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
     "echo ===NETWORK===; "
     "ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}'; "
+    # Listening TCP sockets, local address:port only (`ss` is iproute2,
+    # like `ip` above; no root needed for the addresses, only for the
+    # owning process, which isn't asked for). Config-drift input — see
+    # app.services.config_drift.
+    "echo ===LISTEN===; ss -Htln 2>/dev/null | awk '{print $4}'; "
+    # Local accounts with admin rights (members of sudo/wheel/admin, plus
+    # every uid 0 account) and local login accounts (uid 1000-65533) —
+    # read from the local /etc files, never `getent`, so a machine joined
+    # to LDAP/AD doesn't enumerate its whole directory on every refresh.
+    "echo ===ADMINS===; "
+    "awk -F: '$1==\"sudo\"||$1==\"wheel\"||$1==\"admin\"{print $4}' /etc/group 2>/dev/null "
+    "| tr ',' '\\n'; awk -F: '$3==0{print $1}' /etc/passwd 2>/dev/null; "
+    "echo ===LOGINS===; awk -F: '$3>=1000&&$3<65534{print $1}' /etc/passwd 2>/dev/null; "
     # `systemd-detect-virt` prints "none" and exits 1 on bare metal, or the
     # hypervisor/container technology name (and exits 0) inside one — the
     # standard, widely-available way to tell (ships with systemd itself,
@@ -129,6 +145,13 @@ class MachineFacts(TypedDict):
     process_count: int | None
     filesystems: list[dict[str, Any]]
     network_interfaces: list[dict[str, Any]]
+    # Sorted, de-duplicated `address:port` of listening TCP sockets
+    # (`0.0.0.0:22`, `[::]:443`, `127.0.0.1:5432`); None = `ss` printed
+    # nothing at all (not installed), [] never happens in practice.
+    listening_ports: list[str] | None
+    # Sorted local admin accounts / login accounts — see FACTS_COMMAND.
+    admin_users: list[str]
+    login_users: list[str]
     # True on bare metal, False inside a VM/container, None if it couldn't
     # be determined at all (no systemd-detect-virt) — see FACTS_COMMAND's
     # own VIRT comment.
@@ -139,12 +162,35 @@ class MachineFacts(TypedDict):
 
 
 def _split_sections(raw: str) -> dict[str, str]:
-    pattern = "|".join(f"==={name}===" for name in _SECTION_MARKERS)
-    parts = re.split(f"(?:{pattern})", raw)
-    # The first chunk (before the first marker) is discarded; what remains
-    # lines up 1:1 with _SECTION_MARKERS, in the order the command emits them.
-    body = parts[1:]
-    return dict(zip(_SECTION_MARKERS, (chunk.strip() for chunk in body), strict=False))
+    """{marker name: section text}, keyed by the marker actually found —
+    so output missing a section (an older command, a shell that died
+    halfway) never shifts every later section onto the wrong name."""
+    pattern = "|".join(re.escape(name) for name in _SECTION_MARKERS)
+    parts = re.split(f"===({pattern})===", raw)
+    # parts = [before-first-marker, name1, body1, name2, body2, ...]
+    return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
+
+
+def _parse_listening(section: str) -> list[str] | None:
+    """`ss -Htln`'s local-address column -> sorted unique `address:port`.
+    A zone suffix (`127.0.0.53%lo:53`) is dropped; `*:80` is kept as is."""
+    if not section.strip():
+        return None
+    found: set[str] = set()
+    for line in section.splitlines():
+        value = line.strip()
+        address, sep, port = value.rpartition(":")
+        if not sep or not port.isdigit():
+            continue
+        address = address.split("%", 1)[0] if not address.startswith("[") else address
+        found.add(f"{address}:{port}")
+    return sorted(found, key=lambda item: (int(item.rpartition(":")[2]), item))
+
+
+def _sorted_names(section: str) -> list[str]:
+    """One account name per line -> sorted unique list."""
+    names = {line.strip() for line in section.splitlines() if line.strip()}
+    return sorted(names)
 
 
 def parse_facts_output(raw: str) -> MachineFacts:
@@ -221,6 +267,10 @@ def parse_facts_output(raw: str) -> MachineFacts:
         interface, address = fields
         network_interfaces.append({"interface": interface.rstrip(":"), "address": address})
 
+    listening_ports = _parse_listening(sections.get("LISTEN", ""))
+    admin_users = _sorted_names(sections.get("ADMINS", ""))
+    login_users = _sorted_names(sections.get("LOGINS", ""))
+
     virt_raw = sections.get("VIRT", "").strip().lower()
     is_physical: bool | None = None
     if virt_raw:
@@ -242,6 +292,9 @@ def parse_facts_output(raw: str) -> MachineFacts:
         process_count=process_count,
         filesystems=filesystems,
         network_interfaces=network_interfaces,
+        listening_ports=listening_ports,
+        admin_users=admin_users,
+        login_users=login_users,
         is_physical=is_physical,
         smart_devices=parse_smart_section(sections.get("SMART", "")),
     )

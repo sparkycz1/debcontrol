@@ -59,6 +59,7 @@ from app.db.models.app_settings import FleetSummaryFrequency
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.fleet_summary import FleetSummary
 from app.db.models.machine import Machine
+from app.db.models.machine_change import MachineChange
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.models.notification_rule import NotificationEventType
 from app.db.models.user import User
@@ -424,6 +425,22 @@ async def _build_fleet_summary_prompt(
     )
     denied_event_count = denied_events_result.scalar_one()
 
+    changes_result = await session.execute(
+        select(Machine.name, MachineChange.field)
+        .join(MachineChange, MachineChange.machine_id == Machine.id)
+        .where(Machine.is_active, MachineChange.detected_at >= since)
+    )
+    changed_names: dict[str, set[str]] = {}
+    for name, changed_field in changes_result.all():
+        changed_names.setdefault(name, set()).add(changed_field)
+    changed_shown = _format_named_list(
+        [
+            f"{name} ({', '.join(sorted(fields))})"
+            for name, fields in sorted(changed_names.items())[:_FLEET_SUMMARY_LIST_LIMIT]
+        ],
+        len(changed_names),
+    )
+
     offline_shown = _format_named_list(
         offline_names[:_FLEET_SUMMARY_LIST_LIMIT], len(offline_names)
     )
@@ -439,6 +456,7 @@ async def _build_fleet_summary_prompt(
         f"- Needs reboot: {stats['needs_reboot']} machine(s)\n"
         f"- Readiness check found something missing on: "
         f"{_format_named_list(readiness_names[:_FLEET_SUMMARY_LIST_LIMIT], len(readiness_names))}\n"
+        f"- Configuration changes detected in the period on: {changed_shown}\n"
         f"- Failed update runs in the period: {failed_update_count}\n"
         f"- Denied/failed audit events in the period: {denied_event_count}\n"
     )

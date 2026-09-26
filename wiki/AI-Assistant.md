@@ -200,7 +200,7 @@ Chat text itself isn't copied into the audit log — it records what was
 
 ## 🩺 "Ask AI why"
 
-A one-click shortcut from two places that already show a problem: **a
+A one-click shortcut from places that already show a problem: **a
 failed update run** (button appears once status is `failed`), and **the
 readiness banner** (while `readiness_missing` is non-empty).
 
@@ -213,6 +213,24 @@ conversation" list, and answers in your UI language if not English.
 Scoped like every other machine view — re-checked server-side against
 your account's access regardless of whether the button was even visible
 to you. From there, an ordinary conversation.
+
+Two more entry points ask for a **summary** instead of an explanation of
+one failure:
+
+- **Summarize with AI** on a machine's **History** tab (`kind=history`):
+  the time line for the selected range (up to the newest 120 events,
+  oldest first — notes, detected changes, update runs, outages, and
+  audited actions only if you have `audit.view`) plus the machine's
+  current state (reachability, pending/security updates, reboot needed,
+  filesystems ≥ 85 % full, readiness findings), asking what happened,
+  what most likely caused it and what to do next.
+- **Summarize with AI** on an endpoint check's detail page
+  (`kind=endpoint_check`, needs `machine.view` like the Checks page): its
+  current state, last error, the last 7 days' probe numbers and its recent
+  failures.
+
+The scheduled fleet summary below also lists the machines with a detected
+configuration change in the period.
 
 ## 🗓️ Scheduled fleet summary
 

@@ -169,8 +169,14 @@ def test_parse_apt_upgradable_packages_extracts_names_and_versions():
             "name": "firefox-esr",
             "current_version": "114.0esr-1~deb12u1",
             "new_version": "115.13.0esr-1~deb12u1",
+            "security": True,
         },
-        {"name": "bash", "current_version": "5.2.15-1", "new_version": "5.2.15-2"},
+        {
+            "name": "bash",
+            "current_version": "5.2.15-1",
+            "new_version": "5.2.15-2",
+            "security": False,
+        },
     ]
 
 

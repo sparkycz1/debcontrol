@@ -43,6 +43,8 @@ from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
+from app.db.models.machine_change import RETENTION_DAYS as MACHINE_CHANGE_RETENTION_DAYS
+from app.db.models.machine_change import MachineChange
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
@@ -51,7 +53,7 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
-from app.services import disk_forecast
+from app.services import config_drift, disk_forecast
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import apply_result, is_due, run_probe
 from app.services.fleet_stats import compute_fleet_stats
@@ -224,7 +226,7 @@ def run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
 
 
 async def _view_machine_journal(
-    machine_id: str, *, lines: int, search: str, since: str, until: str
+    machine_id: str, *, lines: int, search: str, since: str, until: str, priority: str = ""
 ) -> dict[str, Any]:
     """The Logs tab's default view — no persistence, a fresh read-only SSH
     round trip every time (see `app.ssh.logs`'s module docstring for the
@@ -249,6 +251,7 @@ async def _view_machine_journal(
                 search=search,
                 since=since,
                 until=until,
+                priority=priority,
             )
         except SSHConnectionError as exc:
             logger.warning("view_machine_journal failed for %s: %s", machine.name, exc)
@@ -262,10 +265,12 @@ async def _view_machine_journal(
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
 def view_machine_journal(
-    machine_id: str, *, lines: int, search: str, since: str, until: str
+    machine_id: str, *, lines: int, search: str, since: str, until: str, priority: str = ""
 ) -> dict[str, Any]:
     return asyncio.run(
-        _view_machine_journal(machine_id, lines=lines, search=search, since=since, until=until)
+        _view_machine_journal(
+            machine_id, lines=lines, search=search, since=since, until=until, priority=priority
+        )
     )
 
 
@@ -1033,6 +1038,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
             logger.warning("refresh_machine_facts failed for %s: %s", machine.name, exc)
             return {"ok": False, "error": str(exc)}
 
+        before = config_drift.snapshot(machine)
         machine.discovered_hostname = facts["hostname"]
         machine.os_version = facts["os_version"]
         machine.os_id = facts["os_id"]
@@ -1048,10 +1054,16 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.process_count = facts["process_count"]
         machine.filesystems = facts["filesystems"]
         machine.network_interfaces = facts["network_interfaces"]
+        machine.listening_ports = facts["listening_ports"]
+        machine.admin_users = facts["admin_users"]
+        machine.login_users = facts["login_users"]
         machine.is_physical = facts["is_physical"]
         machine.smart_devices = facts["smart_devices"]
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
+        await config_drift.record_fact_changes(
+            session, machine, config_drift.diff_snapshots(before, config_drift.snapshot(machine))
+        )
         await publish_machine_event(machine_id, KIND_FACTS)
 
         return {"ok": True}
@@ -1619,6 +1631,20 @@ async def _purge_old_monitoring_samples() -> None:
                 await session.execute(delete(EndpointCheckResult).where(check_filter))
                 total_deleted += checks_deleted
 
+        # Detected configuration changes (the History tab) — a fixed year,
+        # independent of the sample retention above: they're rare, small,
+        # and "when did this port start listening" is worth keeping longer.
+        change_filter = MachineChange.detected_at < now - timedelta(
+            days=MACHINE_CHANGE_RETENTION_DAYS
+        )
+        count_result = await session.execute(
+            select(func.count()).select_from(MachineChange).where(change_filter)
+        )
+        changes_deleted = count_result.scalar_one()
+        if changes_deleted:
+            await session.execute(delete(MachineChange).where(change_filter))
+            total_deleted += changes_deleted
+
         if not total_deleted:
             return
 
@@ -1990,10 +2016,18 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
         machine.snap_upgradable_packages = [dict(p) for p in result.snap_upgradable_packages]
 
         if result.exit_status == 0:
+            previous_packages = machine.apt_upgradable_packages
             machine.upgradable_count = result.upgradable_count
             machine.security_upgradable_count = result.security_upgradable_count
             machine.apt_upgradable_packages = [dict(p) for p in result.apt_upgradable_packages]
             await session.commit()
+            await config_drift.record_new_security_updates(
+                session,
+                machine,
+                config_drift.new_security_packages(
+                    previous_packages, machine.apt_upgradable_packages
+                ),
+            )
             await publish_machine_event(machine_id, KIND_UPDATES)
             return {"ok": True}
 

@@ -30,6 +30,25 @@
     </span>
     <span class="hint">{{ t(request, "machine.checked_at", when=(machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</span>
   </p>
+  {% set security_packages = machine.apt_upgradable_packages | selectattr("security") | list if machine.apt_upgradable_packages else [] %}
+  {% if security_packages %}
+    {% from "partials/_cve_links.html" import render as render_cves, urgency_badge with context %}
+    <details open>
+      <summary>{{ t(request, "security.pending_heading", count=(security_packages | length)) }}</summary>
+      <ul class="security-package-list">
+        {% for pkg in security_packages %}
+          <li>
+            <code>{{ pkg.name }}</code>
+            {%- if pkg.current_version and pkg.new_version %}: {{ pkg.current_version }} → {{ pkg.new_version }}{% elif pkg.new_version %}: {{ pkg.new_version }}{% endif %}
+            {{ urgency_badge(pkg.urgency) }}
+            {% if pkg.cves %}<div class="table-summary">{{ render_cves(pkg.cves, machine.os_id) }}</div>
+            {% elif pkg.cves is sameas none or pkg.cves is not defined %}<div class="table-summary">{{ t(request, "security.cves_unknown") }}</div>
+            {% else %}<div class="table-summary">{{ t(request, "security.no_cves_listed") }}</div>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
   {% if machine.apt_upgradable_packages %}
     <details>
       <summary>{{ t(request, "machine.availability.which_apt") }}</summary>
@@ -39,6 +58,7 @@
             <code>{{ pkg.name }}</code>
             {%- if pkg.current_version and pkg.new_version %}: {{ pkg.current_version }} → {{ pkg.new_version }}
             {%- elif pkg.new_version %}: {{ pkg.new_version }}{% endif %}
+            {% if pkg.security %}<span class="badge badge-warn">{{ t(request, "security.badge") }}</span>{% endif %}
           </li>
         {% endfor %}
       </ul>

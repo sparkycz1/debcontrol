@@ -262,6 +262,38 @@ apt's entry gets a real version diff (`apt list --upgradable`'s
 `[upgradable from: X]` suffix, parsed with a regex); flatpak/snap only
 surface the available version.
 
+### Security updates and the CVEs they fix
+
+Each apt entry also carries `security` — the package comes from a
+`*-security` suite — and, for those, the **CVE ids the update fixes** and
+its changelog **urgency** (`app/ssh/security_advisories.py`). Every
+Debian/Ubuntu security upload names its CVEs in the changelog, and
+`apt-get changelog <package>` prints the changelog of the version apt
+would install, newest entry first: everything above the entry for the
+installed version is what the update brings. So the lookup runs *on the
+machine*, over the update check's own SSH connection — no CVE database,
+no API key, nothing sent from the debcontrol server — and only the parsed
+ids and urgency are stored in `apt_upgradable_packages`. It is kept cheap:
+only security packages, only a (package, new version) not already looked
+up by a previous check, one changelog per *source* package (`dpkg-query
+${source:Package}`), at most 15 per check with a 20 s timeout each, and
+the loop stops at the first empty answer (a machine without a route to
+its distribution's changelog server costs one timeout per check, not
+fifteen). A lookup that didn't happen stays "not looked up yet" and is
+retried on the next check.
+
+The Updates tab lists pending security updates first, with urgency and
+CVE links (Debian's security tracker, or Ubuntu's for an Ubuntu machine).
+**Machines → ⋯ → Security updates** (`/machines/security-updates`,
+`machine.view`, scoped like the machine list) groups every pending
+security update across the fleet by package and version, most urgent
+first, with the machines it's pending on — REST:
+`GET /api/v1/machines/security-updates`. Security updates that weren't
+pending at the previous check fire the `machine.security_updates`
+notification (package list and CVEs as placeholders) and appear on the
+machine's History tab; the first check after upgrading debcontrol only
+sets the baseline.
+
 ### Facts gathered
 
 All in one `FACTS_COMMAND` round trip (`app/ssh/facts.py`), using the same
@@ -295,6 +327,14 @@ snapshots below each have their own equivalent button:
   global-scope (not loopback/link-local) IPv4 addresses. `iproute2` is
   standard on any non-minimal Debian/Ubuntu install; missing entirely just
   yields an empty list, same graceful degradation as every other fact.
+- **Listening TCP ports** (`Machine.listening_ports`): `ss -Htln`'s
+  local `address:port` column (iproute2, no root — only the owning
+  process would need it, and that isn't asked for).
+- **Admin and login accounts** (`admin_users`, `login_users`): members of
+  the `sudo`/`wheel`/`admin` groups plus every uid-0 account, and local
+  accounts with uid 1000–65533 — read from `/etc/group` / `/etc/passwd`
+  directly, never `getent`, so a machine joined to LDAP/AD doesn't
+  enumerate its whole directory on every refresh.
 - **Physical vs. virtual** (`Machine.is_physical`): `systemd-detect-virt`
   — prints `none` and exits non-zero on bare metal, or the hypervisor name
   and exits 0 inside a VM/container. `None` (unknown) if the binary itself
@@ -302,6 +342,23 @@ snapshots below each have their own equivalent button:
   every facts refresh, so a machine physically migrated between bare metal
   and a VM (or vice versa) picks up the right behavior on its own next
   sweep, no manual toggle.
+
+### Configuration drift: what changed since the last refresh
+
+Each facts refresh compares a snapshot of the tracked facts before and
+after (`app/services/config_drift.py`): hostname, OS, kernel, CPU cores,
+RAM (whole GiB — MemTotal moves by a few MB between kernels), disks,
+mounted filesystems, IP addresses, listening TCP ports, admin accounts
+and login accounts. Every difference becomes a `MachineChange` row
+(before/after, or removed/added for the set-valued ones) shown on the
+machine's **History** tab, and one `machine.config_changed` notification
+lists them all (`{changes}`). A value that was unknown before (never
+refreshed, or a fact this version started collecting) or can't be told
+now is not a change — so upgrading debcontrol doesn't flood anyone. It's
+the unattended sweep's output, so it is *not* audit-logged (the audit
+trail stays what people and schedules did). Rows are purged after a year
+by the daily monitoring-history purge. **Machines → Status → Configuration
+changed (7 days)** filters the list to machines with a recent change.
 
 ### flatpak and snap: optional, guarded, never blocking apt
 
@@ -465,15 +522,24 @@ debcontrol server's Celery worker, so they test reachability *from
 outside*, the way users see a service:
 
 - **HTTP** — a GET against a full URL, redirects followed; up when the
-  status equals the configured one (or is below 400 when none is set) and,
-  when *Response must contain* is filled in, that text appears in the
-  first 1 MB of the body (case-sensitive; streamed, never loaded whole) —
-  so a 200 maintenance page or an error JSON still counts as down. An
-  https URL also reports its certificate's expiry.
+  status equals the configured one (or is below 400 when none is set) and
+  every body assertion that's filled in holds, all checked against the
+  first 1 MB of the body (case-sensitive; streamed, never loaded whole):
+  *Response must contain* (so a 200 maintenance page still counts as
+  down), *Response must not contain* ("Internal Server Error", a stack
+  trace marker), and a **JSON path** (`status`, `checks.db.ok`,
+  `items.0.state`) whose value must equal *Expected JSON value* — strings
+  bare, everything else as JSON (`true`, `42`); with no expected value the
+  path only has to exist and not be null/false
+  (`app.services.endpoint_checks.evaluate_json_path`). An https URL also
+  reports its certificate's expiry.
 - **TLS** — a handshake with `host[:port]` (443 by default), certificate
   expiry only. With *Verify* on (the default), an invalid chain/hostname
   counts as down; the expiry date is still read (a second, unverified
   handshake), so an expired certificate says *when* it expired.
+
+Either kind can also have a **maximum response time**: slower than that
+counts as a failure ("up, but unusably slow").
 
 `run_due_endpoint_checks` (Beat, every minute) enqueues each enabled check
 whose own interval (30 s–1 day) has passed. The latest result sits on the
@@ -494,6 +560,19 @@ certificate inside its warn window once per certificate
 `machine.manage` accounts can add them (the same trust level as a
 notification webhook URL). REST: `GET/POST /api/v1/checks`,
 `PUT/DELETE /api/v1/checks/{id}`, `POST /api/v1/checks/{id}/run`.
+
+**SLA report** (`/checks/sla`, CSV at `/checks/sla.csv`, REST
+`GET /api/v1/checks/sla?month=YYYY-MM`): per check, for one calendar month
+in UTC — probes, availability %, an *estimated* downtime (failed probes ×
+the check interval — probes are samples, so that's the resolution there
+is), the number of separate outages (a failed probe after an up one, via
+a `LAG()` window, never by loading every row) and whether the check's
+optional **SLA target** (e.g. 99.9 %) was met
+(`app/services/endpoint_sla.py`). It reads the stored history, so a month
+older than the retention setting is only partly covered — the report says
+from which date the data starts. A check's detail page also has
+**Summarize with AI** (with `ai.access`): a new assistant conversation
+seeded with its status, the last 7 days' numbers and recent failures.
 
 ### Fleet page
 
@@ -638,6 +717,17 @@ above uses — reading logs is a materially different trust level than a
 fact, even without root, and an admin who can already open the terminal
 could read any of it directly anyway.
 
+The journal can be narrowed to a **priority** (`journalctl -p`: *error
+and worse*, *warning and worse*, …; only journalctl's own level names are
+accepted, also for Follow live and `GET /api/v1/machines/{id}/logs?priority=`).
+**Saved log views** keep a named set of Logs filters (source, file path,
+container, priority, search, since/until, lines) per account and offer it
+on *every* machine's Logs tab — "errors in the last hour" is useful
+everywhere. Like the machine list's saved views, the stored query string
+is rebuilt from the known parameters only (`app/services/saved_log_views.py`);
+REST: `GET/POST /api/v1/account/saved-log-views`,
+`DELETE /api/v1/account/saved-log-views/{id}`.
+
 The Docker picker lists the containers from the latest monitoring sample
 (`Machine.docker_containers`, see *Docker containers* above) — no extra
 round trip just to fill a dropdown — and defaults to the first running
@@ -781,6 +871,29 @@ Included in config export/import and the REST API payload, same as
 `description`/`tags` — structural, not a credential. Left out of CSV
 specifically: its flat-row shape doesn't suit a multi-paragraph field, and JSON already round-trips it in full.
 
+### History tab: one time line per machine
+
+**History** (`/machines/{id}/history`, `machine.view`) merges what
+debcontrol already records about the machine into one list, newest first
+(`app/services/machine_timeline.py`): **notes** people added, detected
+**changes** (configuration drift and newly pending security updates, see
+above), **update runs** with their outcome, **reachability** outages (the
+up→down and down→up transitions in the reachability samples, found with a
+`LAG()` window), and **audited actions** on the machine — the last only
+for a viewer with `audit.view`, since the audit trail keeps its own
+permission; read-only `*.view` entries are left out. 24 h to 1 year, one
+event type at a time if wanted, capped at 300 events per view.
+
+A **note** is a dated, attributed entry ("replaced the PSU", "don't
+reboot before Friday") — the runbook above stays the place for standing
+instructions. Adding or deleting one needs `machine.manage` and is
+audit-logged (`machine.note.add` / `.delete`). **Summarize with AI**
+(with `ai.access`) starts an assistant conversation seeded with the
+visible time line (same permission filtering) and the machine's current
+state, asking what happened, what likely caused it and what to do next.
+REST: `GET /api/v1/machines/{id}/timeline?days=&kind=`,
+`POST /api/v1/machines/{id}/notes`, `DELETE /api/v1/machines/{id}/notes/{note_id}`.
+
 ### Machine tags: cross-cutting, independent of the group tree
 
 A free-form **Tags** field (comma-separated) alongside — not instead of —
@@ -871,13 +984,20 @@ Included in config export/import — structural like `description`, no special e
 
 ### Saved machine-list views: a personal bookmark, not shared config
 
-"Save this view" (shown once `q`/`tag` is set) names the current filter
+Besides search and tags, the list filters by **Status** (offline, updates
+pending, security updates pending, needs reboot, configuration changed in
+the last 7 days, host key not confirmed) and **Group** (or "no group") —
+`app.web.machine_search.apply_status_filter` / `apply_group_filter`, the
+same on `GET /api/v1/machines?status=&group=` and the CSV inventory.
+
+"Save this view" (shown once any filter is set) names the current filter
 for replay later, no retyping. Per-account, not fleet-wide — needs
 nothing beyond `machine.view`, and one account never sees or deletes
 another's.
 
 `query_string` is never accepted verbatim — `build_query_string` only
-encodes the fixed, known parameter set (`q`, `tag`) a client actually
+encodes the fixed, known parameter set (`q`, `tag`, `tag_mode`, `status`,
+`group`) a client actually
 submitted, so a saved view can't capture an arbitrary querystring, and
 identical filters always produce the identical stored string. A `UNIQUE
 (user_id, name)` constraint is the actual duplicate guard.

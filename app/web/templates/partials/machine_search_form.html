@@ -18,6 +18,27 @@
       {% endfor %}
     </select>
   {% endif %}
+  {# Status/group filters — the machine list only (it passes
+     `status_filters`); tags already chosen stay in the query. #}
+  {% if status_filters is defined %}
+    {% for t_val in tag %}<input type="hidden" name="tag" value="{{ t_val }}">{% endfor %}
+    {% if tag_mode == 'and' %}<input type="hidden" name="tag_mode" value="and">{% endif %}
+    <select name="status" aria-label="{{ t(request, 'machines.filter.status') }}">
+      <option value="">{{ t(request, 'machines.filter.any_status') }}</option>
+      {% for s in status_filters %}
+        <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ t(request, 'machines.filter.status.' ~ s) }}</option>
+      {% endfor %}
+    </select>
+    {% if groups %}
+      <select name="group" aria-label="{{ t(request, 'machines.filter.group') }}">
+        <option value="">{{ t(request, 'machines.filter.any_group') }}</option>
+        <option value="none" {% if group_filter == 'none' %}selected{% endif %}>{{ t(request, 'machines.filter.no_group') }}</option>
+        {% for g in groups %}
+          <option value="{{ g.id }}" {% if group_filter == (g.id | string) %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+  {% endif %}
   <button type="submit" class="button">{{ t(request, 'machines.search.submit') }}</button>
-  {% if q or tag %}<a class="button button-secondary" href="{{ request.url.path }}">{{ t(request, 'machines.search.clear') }}</a>{% endif %}
+  {% if q or tag or status_filter or group_filter %}<a class="button button-secondary" href="{{ request.url.path }}">{{ t(request, 'machines.search.clear') }}</a>{% endif %}
 </form>

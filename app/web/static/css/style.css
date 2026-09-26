@@ -2059,3 +2059,40 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 .cron-preview { min-height: 1.2rem; margin-bottom: var(--space-3); }
 .cron-preview-list { margin: 0 0 var(--space-2); padding-left: 1.2rem; font-size: 0.88rem; }
 .cron-preview-error { color: var(--color-warn); }
+
+/* Machine History tab (machines/history.html): a vertical time line, one
+   item per event, the left rule coloured by outcome. */
+.timeline { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
+.timeline-item {
+  display: grid;
+  grid-template-columns: minmax(10rem, 13rem) 1fr;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-border-strong);
+  border-bottom: 1px solid var(--color-border);
+}
+.timeline-item.timeline-ok { border-left-color: var(--color-ok); }
+.timeline-item.timeline-error { border-left-color: var(--color-danger); }
+.timeline-item.timeline-warn { border-left-color: var(--color-warn); }
+.timeline-item.timeline-kind-note { border-left-color: var(--color-accent); }
+.timeline-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  font-size: 0.88rem;
+}
+.timeline-meta time { color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.timeline-body p { margin: 0 0 0.2rem; overflow-wrap: anywhere; }
+.timeline-note-text { white-space: pre-wrap; }
+.timeline-added { color: var(--color-ok); }
+.timeline-removed { color: var(--color-danger); }
+@media (max-width: 640px) {
+  .timeline-item { grid-template-columns: 1fr; gap: var(--space-1); }
+  .timeline-meta { flex-direction: row; flex-wrap: wrap; align-items: center; }
+}
+
+/* Pending security updates: package list and CVE links. */
+.security-package-list { margin: var(--space-2) 0; padding-left: 1.2rem; }
+.security-package-list li { margin-bottom: var(--space-1); }
+.cve-link { font-variant-numeric: tabular-nums; white-space: nowrap; }

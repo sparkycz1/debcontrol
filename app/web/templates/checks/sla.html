@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "checks.sla.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <p class="hint"><a href="/checks">← {{ t(request, "checks.title") }}</a></p>
+  <div class="page-header">
+    <h1>{{ t(request, "checks.sla.title") }}</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/checks/sla.csv?month={{ report.month }}">{{ t(request, "checks.sla.export_csv") }}</a>
+    </div>
+  </div>
+  <p class="hint">{{ t(request, "checks.sla.intro") }}</p>
+
+  <div class="monitoring-toolbar">
+    <form method="get" action="/checks/sla" class="inline-form">
+      <select name="month" class="inline-select" data-autosubmit aria-label="{{ t(request, 'checks.sla.month') }}">
+        {% for m in months %}
+          <option value="{{ m }}" {% if m == report.month %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
+    </form>
+    {% if report.is_current_month %}<p class="hint">{{ t(request, "checks.sla.month_in_progress") }}</p>{% endif %}
+  </div>
+
+  {% if report.rows %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "checks.name") }}</th>
+            <th>{{ t(request, "checks.sla.uptime") }}</th>
+            <th>{{ t(request, "checks.sla.target") }}</th>
+            <th>{{ t(request, "checks.sla.downtime") }}</th>
+            <th>{{ t(request, "checks.sla.outages") }}</th>
+            <th>{{ t(request, "checks.sla.probes") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.rows %}
+            <tr>
+              <td>
+                <a href="/checks/{{ row.check_id }}"><strong>{{ row.name }}</strong></a>
+                <div class="table-summary"><span class="badge">{{ row.kind | upper }}</span> <code>{{ row.target }}</code></div>
+              </td>
+              <td>{% if row.uptime_percent is not none %}<strong>{{ row.uptime_percent }} %</strong>{% else %}—{% endif %}</td>
+              <td>
+                {% if row.target_percent is not none %}
+                  {{ row.target_percent }} %
+                  {% if row.met is sameas true %}<span class="badge badge-ok">{{ t(request, "checks.sla.met") }}</span>
+                  {% elif row.met is sameas false %}<span class="badge badge-error">{{ t(request, "checks.sla.missed") }}</span>{% endif %}
+                {% else %}<span class="table-muted">{{ t(request, "checks.sla.no_target") }}</span>{% endif %}
+              </td>
+              <td>{{ row.downtime_seconds | format_uptime if row.probes else '—' }}</td>
+              <td>{{ row.outages if row.probes else '—' }}</td>
+              <td class="table-muted">
+                {{ row.probes }}
+                {% if row.coverage_from and row.coverage_from > report.start and not report.is_current_month %}
+                  <div class="table-summary">{{ t(request, "checks.sla.coverage_from", date=(row.coverage_from | local_time('%Y-%m-%d'))) }}</div>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint stack-gap">{{ t(request, "checks.sla.downtime_hint") }}</p>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "checks.empty") }}</p></div>
+  {% endif %}
+{% endblock %}

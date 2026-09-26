@@ -4,11 +4,21 @@ listed."""
 
 from __future__ import annotations
 
-from sqlalchemy import ColumnElement, or_
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.sql import Select
 
 from app.db.models.machine import Machine
+from app.db.models.machine_change import MachineChange
 from app.db.models.machine_tag import Tag
+
+# The machine list's "Status" filter (`?status=`), shared with
+# `GET /api/v1/machines` — see `apply_status_filter`.
+STATUS_FILTERS = ("offline", "updates", "security", "reboot", "changed", "unconfirmed")
+# "changed" = a configuration change detected within this many days.
+CHANGED_WITHIN_DAYS = 7
 
 _SEARCH_COLUMNS = (
     Machine.name,
@@ -65,3 +75,49 @@ def apply_tag_filter[S: Select[Machine]](query: S, tags: list[str], tag_mode: st
             query = query.where(Machine.tags.any(Tag.name == name))
         return query
     return query.where(Machine.tags.any(Tag.name.in_(names)))
+
+
+def apply_status_filter[S: Select[Machine]](query: S, status: str) -> S:
+    """Filter by one of `STATUS_FILTERS` (anything else: unchanged) —
+    offline (the reachability check fails), updates (any pending apt/
+    flatpak/snap update), security (pending apt security updates), reboot
+    (a newer kernel is installed than running), changed (a configuration
+    change detected in the last `CHANGED_WITHIN_DAYS` days — see
+    `app.services.config_drift`), unconfirmed (no pinned host key yet)."""
+    if status == "offline":
+        return query.where(Machine.is_reachable.is_(False))
+    if status == "updates":
+        return query.where(
+            or_(
+                Machine.upgradable_count > 0,
+                Machine.flatpak_upgradable_count > 0,
+                Machine.snap_upgradable_count > 0,
+            )
+        )
+    if status == "security":
+        return query.where(Machine.security_upgradable_count > 0)
+    if status == "reboot":
+        return query.where(Machine.reboot_required.is_(True))
+    if status == "changed":
+        since = datetime.now(UTC) - timedelta(days=CHANGED_WITHIN_DAYS)
+        return query.where(
+            Machine.id.in_(
+                select(MachineChange.machine_id).where(MachineChange.detected_at >= since)
+            )
+        )
+    if status == "unconfirmed":
+        return query.where(Machine.host_key_fingerprint.is_(None))
+    return query
+
+
+def apply_group_filter[S: Select[Machine]](query: S, group: str) -> S:
+    """`group` is a machine group id, or `"none"` for machines in no group;
+    anything else leaves `query` unchanged. Access scoping stays the
+    caller's `machines_visible_to` query's job."""
+    if group == "none":
+        return query.where(Machine.group_id.is_(None))
+    try:
+        group_id = uuid.UUID(group)
+    except (ValueError, TypeError):
+        return query
+    return query.where(Machine.group_id == group_id)
