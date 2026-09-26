@@ -85,12 +85,45 @@ def build_security_overview(machines: list[Machine]) -> list[SecurityUpdateRow]:
     )
 
 
+def machines_without_package_details(machines: list[Machine]) -> list[Machine]:
+    """Pure: machines whose last check counted pending security updates but
+    whose stored package list flags none of them — a list stored before
+    per-package security flags existed (pre-0.75.0), which the next update
+    check replaces. Shown on the page so the count elsewhere (Dashboard,
+    Machines list) and this page's rows never silently disagree."""
+    return sorted(
+        (
+            m
+            for m in machines
+            if m.security_upgradable_count
+            and not any(
+                isinstance(p, dict) and p.get("security")
+                for p in (m.apt_upgradable_packages or [])
+            )
+        ),
+        key=lambda m: m.name.lower(),
+    )
+
+
+async def _load_machines(db: AsyncSession, visible_machines: Select[Machine]) -> list[Machine]:
+    result = await db.execute(
+        visible_machines.where(Machine.is_active, Machine.security_upgradable_count > 0)
+    )
+    return list(result.scalars().all())
+
+
 async def load_security_overview(
     db: AsyncSession, visible_machines: Select[Machine]
 ) -> list[SecurityUpdateRow]:
     """`visible_machines` is the caller's already access-scoped machine
     query (`app.services.access_scope.machines_visible_to`)."""
-    result = await db.execute(
-        visible_machines.where(Machine.is_active, Machine.security_upgradable_count > 0)
-    )
-    return build_security_overview(list(result.scalars().all()))
+    return build_security_overview(await _load_machines(db, visible_machines))
+
+
+async def load_security_overview_with_gaps(
+    db: AsyncSession, visible_machines: Select[Machine]
+) -> tuple[list[SecurityUpdateRow], list[Machine]]:
+    """`load_security_overview` plus `machines_without_package_details`,
+    from the same single query."""
+    machines = await _load_machines(db, visible_machines)
+    return build_security_overview(machines), machines_without_package_details(machines)

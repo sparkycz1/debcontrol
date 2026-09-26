@@ -41,6 +41,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import client_ip
+from app.auth import session_policy
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie
@@ -90,6 +92,25 @@ _TOTP_ENROLL_ALLOWLIST = frozenset(
 
 def _is_public(path: str) -> bool:
     return path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES)
+
+
+# Outside Settings -> Security's network allowlist: assets the block page
+# itself needs, the container health check, and machine self-registration
+# (machine-to-machine, token-authenticated, typically from networks an
+# operator never signs in from).
+_NETWORK_EXEMPT_PATHS = frozenset({"/healthz", "/api/inform"})
+_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/")
+
+
+async def _network_allowed(request: Request) -> bool:
+    path = request.url.path
+    if path in _NETWORK_EXEMPT_PATHS or path.startswith(_NETWORK_EXEMPT_PREFIXES):
+        return True
+    policy = session_policy.fresh_cached_policy()
+    if policy is None:
+        async with request.app.state.db_session_factory() as db:
+            policy = await session_policy.load_policy(db)
+    return policy.allows_ip(client_ip(request))
 
 
 def _redirect_to_login(request: Request) -> Response:
@@ -179,6 +200,26 @@ async def require_auth(
     # non-default language. `Settings.default_locale` (DEFAULT_LANGUAGE)
     # is the deploy-wide starting point; see app.i18n's module docstring.
     request.state.locale = get_locale(None, default=get_settings().default_locale)
+
+    if not await _network_allowed(request):
+        # Before any session lookup or login form: from outside the allowed
+        # networks there is nothing to sign in to. Same message for every
+        # path, so it reveals nothing beyond "not from here".
+        blocked: Response
+        if request.url.path.startswith("/api/") or request.headers.get(
+            "accept", ""
+        ).startswith("application/json"):
+            blocked = JSONResponse(
+                {"detail": "Access from this network is not allowed."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        else:
+            blocked = Response(
+                "Access to debcontrol from this network is not allowed.",
+                status_code=status.HTTP_403_FORBIDDEN,
+                media_type="text/plain; charset=utf-8",
+            )
+        return blocked
 
     if not _is_public(request.url.path):
         session = None

@@ -890,7 +890,7 @@ def _stat_values(html: str) -> list[str]:
 def _group_count(html: str) -> str:
     import re
 
-    match = re.search(r'href="/machine-groups">\s*(\d+) group\(s\)', html)
+    match = re.search(r'href="/machine-groups">\s*(\d+) groups?\b', html)
     assert match is not None, html
     return match.group(1)
 

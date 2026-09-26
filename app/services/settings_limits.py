@@ -22,7 +22,23 @@ BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "reachability_check_concurrency": (1, 1000),
     "notification_condition_check_interval_seconds": (10, 86400),
     "monitoring_downsample_interval_minutes": (1, 1440),
+    # Settings -> Security's sign-in policy (app.auth.session_policy).
+    "session_idle_timeout_minutes": (5, 43200),
+    "session_absolute_max_hours": (1, 8760),
+    "login_max_failed_attempts": (1, 100),
+    "login_lockout_minutes": (1, 1440),
 }
+
+# Fields whose new value must reach `app.auth.session_policy`'s in-process
+# cache at once — the saving handler invalidates it.
+SIGN_IN_POLICY_FIELDS: frozenset[str] = frozenset(
+    {
+        "session_idle_timeout_minutes",
+        "session_absolute_max_hours",
+        "login_max_failed_attempts",
+        "login_lockout_minutes",
+    }
+)
 
 # A whole number of days >= 0, or `None` for "keep forever"/"disabled".
 RETENTION_FIELDS: tuple[str, ...] = (
@@ -61,6 +77,10 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "ai_daily_token_limit": "settings.ai_limits.update",
     "ai_weekly_token_limit": "settings.ai_limits.update",
     "ai_monthly_token_limit": "settings.ai_limits.update",
+    "session_idle_timeout_minutes": "settings.sign_in_policy.update",
+    "session_absolute_max_hours": "settings.sign_in_policy.update",
+    "login_max_failed_attempts": "settings.sign_in_policy.update",
+    "login_lockout_minutes": "settings.sign_in_policy.update",
 }
 
 # Read only by Celery Beat at its own start, so a change needs a

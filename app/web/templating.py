@@ -18,7 +18,7 @@ from markupsafe import Markup
 
 from app.core.config import get_settings
 from app.core.version import APP_VERSION, get_git_commit
-from app.i18n import get_locale
+from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
 from app.services import fleet_overview
 from app.web import charts
@@ -198,6 +198,37 @@ def t(request: Request, key: str, **kwargs: object) -> str:
 
 
 templates.env.globals["t"] = t
+
+
+def audit_text(
+    request: Request, action: str, summary: str, target_label: str | None = None
+) -> str:
+    """`{{ audit_text(request, entry.action, entry.summary) }}` — an audit
+    entry's one-line description in the reader's language.
+
+    `summary` is written in English when the event is recorded (it also
+    goes to exports, syslog and the API, which stay English), so it's what
+    an English reader sees — it's the more specific text. Any other
+    language shows the translated label for the action code instead —
+    `audit.action_label.<action>`, else the label of its parent code
+    (`machine.power.reboot` -> `machine.power`), else the English summary
+    when neither is translated. The label describes *what* happened; the
+    table row still shows who and the outcome next to it; pass
+    `target_label` where no separate target column shows it, and it's
+    appended to a translated label (`Zobrazení journalu: prx`)."""
+    locale = getattr(request.state, "locale", None) or get_locale(None)
+    if locale.code == DEFAULT_LOCALE_CODE:
+        return summary
+    code = action
+    while code:
+        label = locale.strings.get(f"audit.action_label.{code}")
+        if label is not None:
+            return f"{label}: {target_label}" if target_label else label
+        code = code.rpartition(".")[0]
+    return summary
+
+
+templates.env.globals["audit_text"] = audit_text
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"

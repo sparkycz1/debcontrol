@@ -37,3 +37,20 @@ document.addEventListener("change", (event) => {
     if (checkbox.form === form) checkbox.checked = target.checked;
   }
 });
+
+// A bulk-action bar marked `data-bulk-bar="<checkbox name>"` gets the
+// `has-selection` class while at least one such checkbox in its form is
+// ticked — the phone layout hides the bar until then (style.css).
+function refreshBulkBars() {
+  for (const bar of document.querySelectorAll("[data-bulk-bar]")) {
+    const form = bar.closest("form");
+    const name = bar.getAttribute("data-bulk-bar");
+    if (!form || !name) continue;
+    const any = [...document.querySelectorAll(`input[name="${name}"]`)].some(
+      (checkbox) => checkbox.form === form && checkbox.checked,
+    );
+    bar.classList.toggle("has-selection", any);
+  }
+}
+document.addEventListener("change", refreshBulkBars);
+document.addEventListener("DOMContentLoaded", refreshBulkBars);

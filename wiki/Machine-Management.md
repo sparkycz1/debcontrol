@@ -292,7 +292,11 @@ first, with the machines it's pending on — REST:
 pending at the previous check fire the `machine.security_updates`
 notification (package list and CVEs as placeholders) and appear on the
 machine's History tab; the first check after upgrading debcontrol only
-sets the baseline.
+sets the baseline. A machine whose stored package list predates
+per-package security flags (saved before 0.75.0) still reports its
+security *count*; the page lists such machines above the table, linking
+to their Updates tab, until their next update check fills in the
+details.
 
 ### Facts gathered
 
@@ -579,11 +583,14 @@ seeded with its status, the last 7 days' numbers and recent failures.
 `/fleet` (nav: **Fleet**, `machine.view`) shows every visible, active
 machine as a compact card — status dot, CPU, RAM, the fullest filesystem,
 the hottest sensor (bare metal), load/cores, uptime, running/total
-containers and a "disk full in ~N days" flag when the forecast is under
+containers, pending updates (security ones called out), "reboot
+required" and a "disk full in ~N days" flag when the forecast is under
 30 days. The card's top border takes the worst reading's color (warn at
 75 %, danger at 90 %; temperatures at 70/85 °C; offline or an
-unhealthy/restarting container is always danger), and a summary strip
-counts online/offline/needing attention. Built by
+unhealthy/restarting container is always danger; pending security
+updates or a pending reboot are at least warn), and a summary strip
+counts online/offline/needing attention — a danger reading, pending
+security updates or a pending reboot (`FleetRow.needs_attention`). Built by
 `app/services/fleet_overview.py` from each machine's latest monitoring
 sample — one batched window query for the whole page, the same one the
 Machines list's Cards view uses — plus columns already on `Machine`. The

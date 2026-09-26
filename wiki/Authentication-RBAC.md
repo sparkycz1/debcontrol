@@ -57,9 +57,12 @@ same endpoint a post-password TOTP/passkey confirmation lands at.
 `UserSession` is a DB row per login; the cookie carries an opaque random
 token, only its SHA-256 is stored — a DB leak alone doesn't hand over a
 live session. Revocable immediately: disabling a user, a password reset,
-or "log out everywhere" all mark rows revoked. Sessions slide
-(`SESSION_IDLE_TIMEOUT`, 12h, extended per request) up to an absolute
-cap (`SESSION_ABSOLUTE_MAX`, 30 days).
+or "log out everywhere" all mark rows revoked. Sessions slide (the idle
+timeout, default 12h, extended per request) up to an absolute cap
+(default 30 days) — both set on **Settings → Security → Sign-in** (see
+[Sign-in policy](#sign-in-policy-session-lifetime-lockout-allowed-networks)).
+The cookie itself lives for the absolute cap; the idle timeout is
+enforced server-side on every request.
 
 The middleware runs outside FastAPI's DI, opening a DB session via
 `request.app.state.db_session_factory` — same pattern `app/tasks/jobs.py`
@@ -200,7 +203,39 @@ An orthogonal layer on top of the permission matrix — permissions decide
 
 Both the password/LDAP-bind step and the TOTP-code step increment
 `failed_login_attempts`/`locked_until`: **5 failures locks the account
-for 15 minutes**, reset on any success.
+for 15 minutes** by default (both numbers on Settings → Security), reset
+on any success.
+
+### Sign-in policy: session lifetime, lockout, allowed networks
+
+**Settings → Security → Sign-in** (`settings.manage`, audit action
+`settings.sign_in_policy.update`) holds four numbers — idle timeout
+(minutes), maximum session length (hours), failed attempts before
+lockout, lockout duration (minutes) — and an optional **network
+allowlist**: IPs/CIDRs, one per line, empty = from anywhere. All live on
+`AppSettings` (defaults = the values that used to be hardcoded, so an
+upgrade changes nothing) and are read through `app.auth.session_policy`,
+which caches the policy in process for 10 s so the per-request checks
+cost no extra query; a save invalidates that process's cache at once,
+other workers follow within the TTL.
+
+The allowlist is enforced first thing in `app.auth.middleware` — before
+any session lookup, so even the login form is unreachable from outside —
+for the web UI and the REST API alike, and by the terminal/log/live
+WebSocket handlers themselves (the middleware never runs for those).
+Exempt: `/static/`, `/branding/`, `/healthz` and machine self-registration
+(`POST /api/inform`). The client address is the one
+`app.core.proxy_headers` resolves, so behind a reverse proxy it only
+works with trusted proxy headers configured. The form refuses a list
+that excludes the address saving it (the one way to lock yourself out
+with no way back but the database). The four numbers are also writable
+via `PATCH /api/v1/settings`; the allowlist deliberately isn't (see
+`api_v1_settings.py`'s docstring — the web form's self-lockout guard
+doesn't carry over to a script running elsewhere).
+
+The same tab lists every active local/LDAP account with neither TOTP nor
+a passkey, pointing at the role-level "require two-factor" switch that
+makes it mandatory.
 
 ### Generic failure messages, except for lockout
 
@@ -369,6 +404,23 @@ then the literal key, so a partial translation degrades to readable
 English, never a blank/crash. Picked up on next process restart (parsed
 once at first use, per process) — no migration, no Settings toggle.
 
+**Plurals**: a call passing an integer `count` first looks for
+`<key>.<category>` — the CLDR plural category of `count` in that locale
+(`app.i18n.plural_category`: English `one`/`other`, Czech
+`one`/`few`/`other`, i.e. 1 / 2–4 / everything else) — then falls back
+to `<key>`. So a string needs plural variants only in the languages whose
+grammar needs them (`"dashboard.group_count.few": "{count} skupiny"`);
+never write "skupin(a)"/"user(s)" into a string that has a count.
+
+**Audit descriptions**: an audit entry's `summary` is written in English
+at the time of the event (it's also what exports, syslog and the API
+carry). The Jinja global `audit_text(request, action, summary)` shows it
+as-is to English readers and, in any other language, the translated
+label for the action code instead (`audit.action_label.<code>`, else the
+parent code's, else the English summary) — with the English summary on
+hover. A new audit action code gets an `audit.action_label.*` key in
+every locale file, like any other string.
+
 Wired in three places: `app.auth.middleware` sets `request.state.locale`
 on *every* request (anonymous default, or the account's choice once a
 session resolves); the Jinja global `t(request, "some.key", **kwargs)`
@@ -443,11 +495,14 @@ scheduled fleet summary's latest output,
 Deliberately still web-UI-only: **SSH key rotation** (a multi-step
 human-paced process so the app never locks itself out mid-rotation);
 **LDAP/OIDC config** and **AI provider credentials** (encrypted
-secrets); **syslog/SMTP/GeoIP config** and the **fleet summary schedule**.
+secrets); **syslog/SMTP/GeoIP config** and the **fleet summary schedule**;
+the **sign-in network allowlist** (the web form's "doesn't lock you out"
+guard can't carry over to a script).
 `/api/v1/settings` exposes version/commit and the SSH public
 key/fingerprint read-only, and the non-secret operational settings
 (background-check intervals/timeouts, every retention window, monitoring
-downsampling, AI token limits) read/write — validated against the same
+downsampling, AI token limits, the sign-in policy's session-lifetime and
+lockout numbers) read/write — validated against the same
 ranges as the Settings page (`app.services.settings_limits`) and audited
 under the same action codes. Also excluded: the **SSH terminal** and
 **AI chat** (inherently interactive, no REST shape); the "Fix it" flow
@@ -460,7 +515,9 @@ import** (a script already has `POST /machines` or `POST /api/inform`).
 The REST API is browsable and callable from
 [**Swagger UI**](https://swagger.io/tools/swagger-ui/) at `GET /api`,
 generated from the app's own live route definitions (FastAPI's
-`openapi()`), so docs and API can't drift apart.
+`openapi()`), so docs and API can't drift apart. Only paths under
+`/api/` are documented — the web UI's own form/htmx routes are dropped
+from the generated schema (`_custom_openapi`).
 
 > [!NOTE]
 > **This requires being logged in AND `User.api_access_enabled`**, the

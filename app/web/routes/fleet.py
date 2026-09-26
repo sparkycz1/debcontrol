@@ -48,7 +48,7 @@ async def fleet_overview(
                 "total": len(rows),
                 "online": sum(1 for r in rows if r.is_reachable),
                 "offline": sum(1 for r in rows if r.is_reachable is False),
-                "attention": sum(1 for r in rows if r.level == "danger"),
+                "attention": sum(1 for r in rows if r.needs_attention),
             },
         },
     )

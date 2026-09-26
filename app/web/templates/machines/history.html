@@ -100,7 +100,7 @@
             {% elif e.kind == 'reachability' %}
               <p><span class="badge {{ 'badge-ok' if e.data.reachable else 'badge-error' }}">{{ t(request, "history.reachable_again" if e.data.reachable else "history.unreachable") }}</span></p>
             {% else %}
-              <p>{{ e.summary }}{% if e.outcome == 'error' %} <span class="badge badge-error">{{ e.data.outcome }}</span>{% endif %}</p>
+              <p title="{{ e.summary }}">{{ audit_text(request, e.data.action, e.summary) if e.kind == 'audit' and e.data.action else e.summary }}{% if e.outcome == 'error' %} <span class="badge badge-error">{{ t(request, "audit.outcome_" ~ e.data.outcome) if e.data.outcome else '' }}</span>{% endif %}</p>
             {% endif %}
           </div>
         </li>

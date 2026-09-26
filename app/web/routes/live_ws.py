@@ -30,6 +30,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, status
 from redis.asyncio.client import PubSub
 
+from app.auth import session_policy
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
 from app.auth.websocket_origin import is_same_origin
 from app.db.models.machine import Machine
@@ -54,6 +55,9 @@ async def _authenticate(websocket: WebSocket, machine_id: uuid.UUID) -> Machine 
     # Cross-site WebSocket hijacking guard — see `app.auth.websocket_origin`.
     if not is_same_origin(websocket.headers):
         await websocket.close(code=_POLICY_VIOLATION, reason="Cross-origin request refused.")
+        return None
+    if not await session_policy.websocket_network_allowed(websocket):
+        await websocket.close(code=_POLICY_VIOLATION, reason="Not allowed from this network.")
         return None
 
     raw_token = websocket.cookies.get(SESSION_COOKIE_NAME)

@@ -5,6 +5,14 @@
 {% block title %}{{ t(request, "monitoring.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
 
+{#- The machine's own interval override, else the instance-wide default
+    it falls back to (named as such). -#}
+{% macro interval_text(override, default) -%}
+  {%- if override -%}{{ t(request, "monitoring.interval_seconds", seconds=override) }}
+  {%- elif default -%}{{ t(request, "monitoring.interval_default", seconds=default) }}
+  {%- else -%}{{ t(request, "monitoring.instance_default") }}{%- endif -%}
+{%- endmacro %}
+
 {% block content %}
   {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
   {% from "partials/_js_i18n.html" import js_i18n with context %}
@@ -47,7 +55,7 @@
   {% if not machine.monitoring_updated_at and not availability.sample_count %}
     <section class="panel">
       <p class="hint">
-        {{ t(request, "monitoring.not_gathered_yet", interval=(machine.monitoring_interval_seconds or t(request, "monitoring.instance_default")), seconds=(t(request, "monitoring.seconds_suffix") if machine.monitoring_interval_seconds else "")) }}
+        {{ t(request, "monitoring.not_gathered_yet", interval=interval_text(machine.monitoring_interval_seconds, app_settings.monitoring_interval_seconds if app_settings else none)) }}
       </p>
     </section>
   {% else %}
@@ -166,7 +174,7 @@
         {% set ats = availability.bucket_timestamps %}
         {{ chart_card(
              t(request, "monitoring.availability.heading"),
-             t(request, "monitoring.card.availability_hint", interval=(machine.reachability_check_interval_seconds or t(request, "monitoring.instance_default")), seconds=(t(request, "monitoring.seconds_suffix") if machine.reachability_check_interval_seconds else "")),
+             t(request, "monitoring.card.availability_hint", interval=interval_text(machine.reachability_check_interval_seconds, app_settings.reachability_check_interval_seconds if app_settings else none)),
              chart([(t(request, "monitoring.availability.uptime"), availability.uptime_percent)], ats, fmt='percent', fixed_max=100, time_format=tf, colors=(chart_palette[1],)),
              footer=(t(request, "monitoring.availability.latest_check") ~ ' ' ~ (t(request, "monitoring.availability.reachable") if availability.latest_reachable else t(request, "monitoring.availability.unreachable")) if availability.latest_reachable is not none else none),
              empty_text=t(request, "monitoring.no_data")) }}

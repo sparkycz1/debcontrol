@@ -11,7 +11,7 @@
     <h1>{{ t(request, "nav.api_docs") }}</h1>
   </div>
   <p class="hint">
-    {{ t(request, "api_docs.hint_before") }}
+    {{ t(request, "api_docs.hint_before") | safe }}
     <strong>{{ t(request, "api_docs.authorize") }}</strong>{{ t(request, "api_docs.hint_middle") }}
     <a href="/account">{{ t(request, "account.title") }}</a>{{ t(request, "api_docs.hint_after") }}
     <a href="https://github.com/sparkycz1/debcontrol/wiki/Architecture#the-rest-api-read-and-write-mirroring-the-web-ui">{{ t(request, "api_docs.architecture_link") }}</a>{{ t(request, "api_docs.hint_final") }}

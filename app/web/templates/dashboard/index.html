@@ -111,11 +111,11 @@
           <tr>
             <td>{{ entry.created_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
             <td>{{ entry.actor or '—' }}</td>
-            <td>{{ entry.summary }}</td>
+            <td title="{{ entry.summary }}">{{ audit_text(request, entry.action, entry.summary, entry.target_label) }}</td>
             <td>
               {% if entry.outcome.value == 'success' %}<span class="badge badge-ok">{{ t(request, "dashboard.activity.outcome_success") }}</span>
               {% elif entry.outcome.value == 'denied' %}<span class="badge badge-warn">{{ t(request, "dashboard.activity.outcome_denied") }}</span>
-              {% else %}<span class="badge badge-error">{{ entry.outcome.value }}</span>{% endif %}
+              {% else %}<span class="badge badge-error">{{ t(request, "audit.outcome_failure") }}</span>{% endif %}
             </td>
           </tr>
           {% endfor %}

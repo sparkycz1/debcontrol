@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth.middleware import require_auth
@@ -21,6 +22,7 @@ from app.core.proxy_headers import ProxyHeadersMiddleware
 from app.core.version import APP_VERSION
 from app.db.session import AsyncSessionLocal
 from app.scheduling.builtin_actions import register_builtin_actions
+from app.web.error_pages import html_http_exception_handler
 from app.web.routes import (
     ai,
     api_docs,
@@ -113,6 +115,16 @@ def _custom_openapi(app: FastAPI) -> dict[str, Any]:
         description=app.description,
         routes=app.routes,
     )
+    # Only the REST API itself (`/api/v1/...`, `/api/inform`) — the web UI's
+    # own form/htmx routes are session-cookie HTML endpoints, not an API
+    # anyone should script against, and listing them buried the real API.
+    # Filtered on the generated paths: `app.routes` holds included routers
+    # as wrappers, not their individual routes.
+    schema["paths"] = {
+        path: operations
+        for path, operations in schema.get("paths", {}).items()
+        if path.startswith("/api/")
+    }
     schema.setdefault("components", {}).setdefault("securitySchemes", {})["bearerAuth"] = {
         "type": "http",
         "scheme": "bearer",
@@ -174,6 +186,7 @@ def create_app() -> FastAPI:
         openapi_url=None,
     )
     app.openapi = lambda: _custom_openapi(app)  # type: ignore[method-assign]
+    app.add_exception_handler(StarletteHTTPException, html_http_exception_handler)  # type: ignore[arg-type]
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

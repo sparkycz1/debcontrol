@@ -9,8 +9,9 @@ What's exposed and why:
   unauthenticated-adjacent on the Settings page to any logged-in user with
   `settings.view`.
 - **Background-check intervals and timeouts, every retention window,
-  monitoring downsampling and the AI token limits** — operational facts,
-  not secrets. These are also *writable* here (`PATCH /api/v1/settings`,
+  monitoring downsampling, the AI token limits and the sign-in policy's
+  session lifetime/lockout numbers** — operational facts, not secrets.
+  These are also *writable* here (`PATCH /api/v1/settings`,
   `settings.manage`), with exactly the ranges the Settings page enforces
   (`app.services.settings_limits`) and the same audit action codes.
 
@@ -43,6 +44,12 @@ token:
   triggers an outbound network fetch on demand. The *result* of GeoIP
   being enabled (each audit entry's `geo_*` columns) is already exposed
   read-only via `/api/v1/audit`, same as `ip_address` itself.
+- **The sign-in network allowlist** (`login_allowed_networks`, Settings ->
+  Security) — a wrong value locks every browser *and* every API token out
+  of the instance at once; the web form refuses a list that excludes the
+  address saving it, a safeguard that doesn't carry over to a script
+  running from somewhere else. Same "changes who can reach the app at
+  all" reasoning as LDAP/OIDC above.
 - **SMTP relay and AI provider credentials/models, and the fleet summary
   schedule** — each carries or selects a stored secret (relay password,
   provider API key); same reasoning as syslog.
@@ -61,6 +68,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
+from app.auth import session_policy
 from app.auth.dependencies import require_api_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.version import APP_VERSION, commit_url, get_git_commit
@@ -71,6 +79,7 @@ from app.services.settings_limits import (
     BOUNDED_FIELDS,
     NEEDS_RESTART_FIELDS,
     RETENTION_FIELDS,
+    SIGN_IN_POLICY_FIELDS,
     TOKEN_LIMIT_FIELDS,
 )
 from app.ssh.identity import get_or_create_identity
@@ -148,6 +157,8 @@ async def update_settings_api(
     for field, value in changed.items():
         setattr(app_settings, field, value)
     await db.commit()
+    if SIGN_IN_POLICY_FIELDS & changed.keys():
+        session_policy.invalidate()
 
     # One audit entry per Settings form touched, under that form's own
     # action code.

@@ -24,6 +24,7 @@ from app.ai.usage import (
     check_within_limits,
     get_usage_totals,
 )
+from app.core.app_settings import get_or_create_app_settings
 from app.core.security import decrypt_secret, encrypt_secret
 from app.db import session as db_session
 from app.db.models.ai_conversation import AiConversation
@@ -404,7 +405,8 @@ async def test_a_turn_over_the_daily_limit_is_rejected_before_any_provider_call(
     conversation_id = await create_conversation(db_session_factory, user.id, provider_id, model_id)
 
     async with db_session_factory() as db:
-        db.add(AppSettings(id=SINGLETON_ID, ai_daily_token_limit=100))
+        # The `client` fixture's login already created the settings row.
+        (await get_or_create_app_settings(db)).ai_daily_token_limit = 100
         db.add(
             AiUsageRecord(
                 user_id=user.id,

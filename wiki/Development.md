@@ -227,6 +227,11 @@ module docstring for the full parameter list (`outcome`, `target_type`/
   what happened to it (`machine.power.reboot`, `scheduled_task.create`) —
   keep new ones consistent with what's already there so `/audit`'s search
   box stays useful.
+- `summary` is English (it's what exports, syslog and the API carry); for
+  readers in other languages add an `audit.action_label.<your.code>` key
+  to **every** locale file — the Audit page, the Dashboard's recent
+  activity and a machine's History tab show that label instead (see
+  [Authentication & RBAC → Per-user UI language](Authentication-RBAC.md#per-user-ui-language-i18n)).
 - A background job with no `Request` (like a scheduled task firing on its
   own) passes `ip_address=None` implicitly and sets `actor=` to a fixed
   label instead — see `app/scheduling/jobs.py`'s `_SCHEDULER_ACTOR`.

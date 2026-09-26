@@ -103,6 +103,12 @@ directly (only `worker` does).
 - Collapsible mobile nav is a checkbox-driven CSS toggle, not JS — works
   under the strict CSP (no inline scripts), stays keyboard-operable
   (visually hidden via clip/absolute positioning, not `display: none`).
+- Phone widths (≤ 640 px): the theme toggle, account and sign-out fold
+  into that same menu; machine/group tabs become one horizontally
+  scrollable row; data tables mark secondary columns `.col-optional`
+  (hidden there — the Machines table keeps name, status and updates);
+  and a bulk-action bar marked `data-bulk-bar` stays hidden until a row
+  is ticked (`bulk-select.js` toggles `has-selection`).
 - Active nav link computed from `request.url.path` in `base.html`. The
   header shows the day-to-day pages (Dashboard, Fleet, Machines, Machine
   groups, Checks, Scheduling, Notifications, AI) directly; account and
@@ -256,9 +262,9 @@ keeps pointing at the parent's pool.
 ```
 app/
   audit.py      the single audit-log write path (hash chaining, verification)
-  auth/         login (local/LDAP/OIDC), sessions, RBAC permissions, TOTP,
-                per-IP rate limiting, per-user API tokens — see
-                Authentication-RBAC.md
+  auth/         login (local/LDAP/OIDC), sessions, sign-in policy,
+                RBAC permissions, TOTP, per-IP rate limiting, per-user
+                API tokens — see Authentication-RBAC.md
   core/         config (pydantic-settings), logging, encryption, CSRF,
                 editable app settings (app/core/app_settings.py)
   db/           SQLAlchemy models + async session
@@ -360,6 +366,14 @@ characters). Checked once, at process startup. FastAPI's built-in
 (`app/main.py`) — `/api` and `/openapi.json` are hand-written routes
 instead, gated by login + `api_access_enabled` (see [Authentication &
 RBAC → Interactive docs](Authentication-RBAC.md#interactive-docs-swagger-ui-at-api)).
+
+### Error pages
+
+A 403/404 on a browser `GET` from a signed-in account renders
+`error.html` inside the normal layout (`app/web/error_pages.py`);
+everything else — the REST API, htmx fragment requests, other statuses
+— keeps FastAPI's JSON `{"detail": ...}` body, which those callers
+handle themselves.
 
 ### Container hardening
 

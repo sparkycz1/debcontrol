@@ -25,6 +25,14 @@ rather than a blank string or a crash, the same "never worse than doing
 nothing" defensive style `app.ssh.facts` already uses for an unreadable
 fact.
 
+Plurals: when a call passes an integer `count`, `translate()` first looks
+for `<key>.<category>` — the CLDR plural category of `count` in that
+locale (`plural_category()`: English has `one`/`other`, Czech
+`one`/`few`/`other`) — then falls back to `<key>` itself. So a string only
+needs plural variants in the languages whose grammar needs them
+(`"roles.assigned_to.one"`, `".few"`, `".other"` in cs.json), and every
+existing single-form key keeps working unchanged.
+
 Deliberately not `gettext`/Babel: this app has no other i18n need (dates
 render in `Settings.tz`, not per-locale — see `app.web.templating.
 local_time`) and a flat JSON key→string map is the lowest-friction format
@@ -144,6 +152,29 @@ def get_locale(code: str | None, *, default: str | None = None) -> Locale:
     return locales[DEFAULT_LOCALE_CODE]
 
 
+def plural_category(code: str, count: int) -> str:
+    """The CLDR cardinal plural category of an integer `count` in locale
+    `code` — only the integer rules, since counts here are always whole.
+    Czech (and Slovak): 1 -> one, 2-4 -> few, everything else (0, 5+) ->
+    other. English and any language without its own rule here: 1 -> one,
+    else other."""
+    n = abs(count)
+    if code in ("cs", "sk"):
+        if n == 1:
+            return "one"
+        if 2 <= n <= 4:
+            return "few"
+        return "other"
+    return "one" if n == 1 else "other"
+
+
+def _lookup(locale: Locale, key: str) -> str | None:
+    template = locale.strings.get(key)
+    if template is None and locale.code != DEFAULT_LOCALE_CODE:
+        template = _registry()[DEFAULT_LOCALE_CODE].strings.get(key)
+    return template
+
+
 def translate(locale: Locale, key: str, **kwargs: object) -> str:
     """`locale`'s own string for `key`, falling back to the default
     locale's, falling back to the literal key itself — see module
@@ -152,9 +183,14 @@ def translate(locale: Locale, key: str, **kwargs: object) -> str:
     string like `"Hello, {name}!"`); a template referencing a placeholder
     no caller supplied is returned unsubstituted rather than raising —
     a translation typo should never break a page render."""
-    template = locale.strings.get(key)
-    if template is None and locale.code != DEFAULT_LOCALE_CODE:
-        template = _registry()[DEFAULT_LOCALE_CODE].strings.get(key)
+    template: str | None = None
+    count = kwargs.get("count")
+    if isinstance(count, int) and not isinstance(count, bool):
+        # A plural form in *this* locale first (English's plural forms
+        # don't fit another language's grammar), then the plain key.
+        template = locale.strings.get(f"{key}.{plural_category(locale.code, count)}")
+    if template is None:
+        template = _lookup(locale, key)
     if template is None:
         return key
     if not kwargs:

@@ -49,14 +49,14 @@
               {% if rule.delivery_channel == "webhook" %}
                 <span class="badge badge-tag">{{ t(request, "notifications.rule.send_via_webhook") }}</span>
               {% else %}
-                {{ rule.users | length }} {{ t(request, "notifications.users_word") }}, {{ rule.roles | length }} {{ t(request, "notifications.roles_word") }}
+                {{ t(request, "notifications.users_count", count=(rule.users | length)) }}, {{ t(request, "notifications.roles_count", count=(rule.roles | length)) }}
               {% endif %}
             </td>
             <td>
               {% if not rule.machines and not rule.machine_groups %}
                 {{ t(request, "notifications.scope_all") }}
               {% else %}
-                {{ rule.machines | length }} {{ t(request, "notifications.machines_word") }}, {{ rule.machine_groups | length }} {{ t(request, "notifications.machine_groups_word") }}
+                {{ t(request, "notifications.machines_count", count=(rule.machines | length)) }}, {{ t(request, "notifications.machine_groups_count", count=(rule.machine_groups | length)) }}
               {% endif %}
             </td>
             <td>{{ t(request, "notifications.yes") if rule.enabled else t(request, "notifications.no") }}</td>

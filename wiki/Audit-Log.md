@@ -33,6 +33,12 @@ self-registration token, a rejected form, a failed/locked-out login).
   `db` dependency and calls `log_event` (`auth.csrf_rejected`, `DENIED`)
   before raising the 403 — see "CSRF protection" below.
 - **No pagination cursor beyond offset.**
+- **Stored in English, shown localized.** `summary` is written once, in
+  English (exports, syslog and `/api/v1/audit` carry it as-is); the web
+  pages show a reader in another language the translated label for the
+  action code instead, with the English summary on hover
+  (`audit_text()` in `app/web/templating.py`). `details` renders as
+  `key: value` pairs, not raw JSON.
 
 ### 🌍 GeoIP: resolving a source IP to a country/city
 
