@@ -856,7 +856,7 @@ p { margin: 0 0 var(--space-3); }
    Jinja filter — app/web/templating.py) — the panel's own <h2>Runbook</h2>
    already used the page's h2 size, so headings *inside* the rendered
    Markdown are scaled down a notch to stay subordinate to it rather than
-   competing at the same size. #}
+   competing at the same size. */
 .runbook :is(h1, h2, h3, h4) { font-size: 1rem; margin-top: var(--space-4); }
 .runbook :is(h1, h2, h3, h4):first-child { margin-top: 0; }
 .runbook :is(ul, ol) { padding-left: 1.4em; }

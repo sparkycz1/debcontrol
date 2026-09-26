@@ -3,6 +3,7 @@ imported from routers without a circular dependency)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -197,6 +198,30 @@ def t(request: Request, key: str, **kwargs: object) -> str:
 
 
 templates.env.globals["t"] = t
+
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@lru_cache(maxsize=256)
+def _static_fingerprint(path: str) -> str:
+    try:
+        return hashlib.sha256((STATIC_DIR / path).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "missing"
+
+
+def static_url(path: str) -> str:
+    """`/static/<path>?v=<content hash>` — every page references its CSS/JS
+    through this, so a new release's files get a new URL and a browser
+    never keeps rendering new HTML with a stale cached stylesheet (which
+    silently breaks every layout added since). The hash is computed once per
+    file per process, and `app.main` serves such versioned URLs as
+    immutable."""
+    return f"/static/{path}?v={_static_fingerprint(path)}"
+
+
+templates.env.globals["static_url"] = static_url
 
 
 def t_or(request: Request, key: str, fallback: str, **kwargs: object) -> str:

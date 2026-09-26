@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ t(request, "totp_challenge.title") }} — debcontrol</title>
   <link rel="icon" href="{{ favicon_href() or '/static/img/favicon.svg' }}">
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="{{ static_url('css/style.css') }}">
 </head>
 <body class="auth-body">
   {% from "partials/_brand.html" import render as render_brand %}
@@ -50,6 +50,6 @@
   </main>
   {% from "partials/_js_i18n.html" import js_i18n with context %}
   {{ js_i18n(["webauthn.need_https", "webauthn.unsupported", "webauthn.follow_prompt", "webauthn.register_start_failed", "webauthn.register_failed", "webauthn.signin_start_failed", "webauthn.signin_failed"]) }}
-  <script src="/static/js/webauthn.js" defer></script>
+  <script src="{{ static_url('js/webauthn.js') }}" defer></script>
 </body>
 </html>

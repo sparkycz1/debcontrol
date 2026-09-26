@@ -3,7 +3,7 @@
 {% block title %}{{ t(request, "nav.api_docs") }} — debcontrol{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="/static/css/swagger-ui.css">
+  <link rel="stylesheet" href="{{ static_url('css/swagger-ui.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -20,7 +20,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="/static/js/swagger-ui-bundle.js"></script>
-  <script src="/static/js/swagger-ui-standalone-preset.js"></script>
-  <script src="/static/js/swagger-init.js" defer></script>
+  <script src="{{ static_url('js/swagger-ui-bundle.js') }}"></script>
+  <script src="{{ static_url('js/swagger-ui-standalone-preset.js') }}"></script>
+  <script src="{{ static_url('js/swagger-init.js') }}" defer></script>
 {% endblock %}

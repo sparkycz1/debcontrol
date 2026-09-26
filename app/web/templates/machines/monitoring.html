@@ -499,6 +499,6 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="/static/js/monitoring-chart.js" defer></script>
-  <script src="/static/js/live-updates.js" defer></script>
+  <script src="{{ static_url('js/monitoring-chart.js') }}" defer></script>
+  <script src="{{ static_url('js/live-updates.js') }}" defer></script>
 {% endblock %}

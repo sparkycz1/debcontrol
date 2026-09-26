@@ -9,7 +9,7 @@
   <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <title>{% block title %}debcontrol{% endblock %}</title>
   <link rel="icon" href="{{ favicon_href() or '/static/img/favicon.svg' }}">
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="{{ static_url('css/style.css') }}">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -114,16 +114,16 @@
     </p>
   </footer>
 
-  <script src="/static/js/htmx.min.js" defer></script>
-  <script src="/static/js/confirm.js" defer></script>
-  <script src="/static/js/bulk-select.js" defer></script>
-  <script src="/static/js/model-picker.js" defer></script>
-  <script src="/static/js/auto-submit.js" defer></script>
-  <script src="/static/js/smtp-encryption.js" defer></script>
-  <script src="/static/js/checklist-filter.js" defer></script>
-  <script src="/static/js/notification-conditions.js" defer></script>
-  <script src="/static/js/notification-delivery.js" defer></script>
-  <script src="/static/js/ai-auto-confirm.js" defer></script>
+  <script src="{{ static_url('js/htmx.min.js') }}" defer></script>
+  <script src="{{ static_url('js/confirm.js') }}" defer></script>
+  <script src="{{ static_url('js/bulk-select.js') }}" defer></script>
+  <script src="{{ static_url('js/model-picker.js') }}" defer></script>
+  <script src="{{ static_url('js/auto-submit.js') }}" defer></script>
+  <script src="{{ static_url('js/smtp-encryption.js') }}" defer></script>
+  <script src="{{ static_url('js/checklist-filter.js') }}" defer></script>
+  <script src="{{ static_url('js/notification-conditions.js') }}" defer></script>
+  <script src="{{ static_url('js/notification-delivery.js') }}" defer></script>
+  <script src="{{ static_url('js/ai-auto-confirm.js') }}" defer></script>
   {% block extra_scripts %}{% endblock %}
 </body>
 </html>

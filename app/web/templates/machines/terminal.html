@@ -4,8 +4,8 @@
 {% block title %}{{ t(request, "machine.terminal.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="/static/css/xterm.css">
-  <link rel="stylesheet" href="/static/css/xterm-csp.css">
+  <link rel="stylesheet" href="{{ static_url('css/xterm.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/xterm-csp.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -27,10 +27,10 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="/static/js/xterm.min.js"></script>
-  <script src="/static/js/xterm-addon-fit.min.js"></script>
-  <script src="/static/js/xterm-addon-webgl.min.js"></script>
+  <script src="{{ static_url('js/xterm.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-fit.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-webgl.min.js') }}"></script>
   {% from "partials/_js_i18n.html" import js_i18n with context %}
   {{ js_i18n(["terminal.status.connecting", "terminal.status.connected", "terminal.status.error", "terminal.status.disconnected_reason", "terminal.status.disconnected", "terminal.status.connection_error", "terminal.clipboard.need_https", "terminal.clipboard.unsupported", "terminal.clipboard.copy_failed", "terminal.clipboard.use_ctrl_v", "terminal.clipboard.read_failed"]) }}
-  <script src="/static/js/terminal.js" defer></script>
+  <script src="{{ static_url('js/terminal.js') }}" defer></script>
 {% endblock %}
