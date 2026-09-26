@@ -313,7 +313,12 @@ keys, from Python:
   tag); a missed version can be released by hand from Actions → Release →
   Run workflow (`version` + the commit on `main` carrying it). "Latest" on
   the Releases page always goes to the highest version, never to a
-  backfilled older one.
+  backfilled older one. Notes leave out commits that only touch CI,
+  tests, docs/wiki or version numbers; running the workflow by hand for an
+  already-released version rewrites its notes that way.
+- Merged pull request branches are deleted automatically
+  (`.github/workflows/cleanup-branches.yml`), so there's nothing to clean
+  up by hand after a merge.
 - New CSS must use the existing `--color-*` variables (`app/web/static/css/style.css`),
   never a hardcoded color — the light theme (`:root[data-theme="light"]`)
   overrides only those variables, so a hardcoded color renders identically,
