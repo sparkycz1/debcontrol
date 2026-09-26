@@ -23,10 +23,13 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = _REPO_ROOT / "app" / "web" / "templates"
 
-# Matches src="/static/..." or href="/static/..." (single or double quotes).
-# Anything after a "?" (a cache-busting query string, not used today but
-# harmless to allow for) or "#" is stripped before checking the path.
-_STATIC_REF_RE = re.compile(r"""\b(?:src|href)\s*=\s*["'](/static/[^"'?#]+)""")
+# Matches src="/static/..." / href="/static/..." (anything after "?" or "#"
+# stripped) and the `static_url('...')` template global every template now
+# links assets through (`app.web.templating.static_url`, which appends a
+# cache-busting content hash) — group 1 or group 2 is the path.
+_STATIC_REF_RE = re.compile(
+    r"""\b(?:src|href)\s*=\s*["'](/static/[^"'?#]+)|static_url\(\s*["']([^"']+)["']\s*\)"""
+)
 
 
 def test_every_referenced_static_asset_exists_on_disk() -> None:
@@ -34,7 +37,7 @@ def test_every_referenced_static_asset_exists_on_disk() -> None:
     for template_path in TEMPLATES_DIR.rglob("*.html"):
         text = template_path.read_text(encoding="utf-8")
         for match in _STATIC_REF_RE.finditer(text):
-            static_path = match.group(1)
+            static_path = match.group(1) or f"/static/{match.group(2)}"
             # "/static/x" -> app/web/static/x
             on_disk = _REPO_ROOT / "app" / "web" / static_path.lstrip("/")
             if not on_disk.is_file():
@@ -49,3 +52,10 @@ def test_every_referenced_static_asset_exists_on_disk() -> None:
         "(see this test's own module docstring for the bug this guards against):\n"
         + "\n".join(missing)
     )
+
+
+def test_templates_actually_reference_assets() -> None:
+    """Guards the guard: if the reference syntax changes again and the
+    regex above stops matching, the check above would pass vacuously."""
+    base = (TEMPLATES_DIR / "base.html").read_text(encoding="utf-8")
+    assert len(_STATIC_REF_RE.findall(base)) >= 5

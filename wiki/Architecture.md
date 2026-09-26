@@ -109,6 +109,15 @@ directly (only `worker` does).
   instance administration (Users, Roles, Audit, Settings, API docs) sits
   in one "Administration" menu — a plain `<details>`, so no JS. Each link
   is still shown only with its permission.
+- **Static assets are versioned.** Templates link every CSS/JS file as
+  `{{ static_url('css/style.css') }}` → `/static/css/style.css?v=<content
+  hash>` (`app.web.templating.static_url`, hash computed once per process).
+  A versioned URL is served `Cache-Control: public, max-age=31536000,
+  immutable`; a bare `/static/...` gets `no-cache` (revalidated via ETag).
+  Without this a browser could keep a heuristically-cached old
+  `style.css` after an upgrade and render the new HTML unstyled.
+  `tests/test_static_assets_exist.py` checks every `static_url(...)`
+  reference exists on disk.
 - htmx's own injected indicator `<style>` is turned off
   (`<meta name="htmx-config">` in `base.html`) — `style-src 'self'` would
   block it with a console error on every page; request feedback is styled

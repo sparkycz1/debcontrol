@@ -354,8 +354,8 @@ async def test_terminal_page_loads_the_csp_safe_renderer(client, db_session_fact
     response = await client.get(f"/machines/{machine_id}/terminal")
 
     assert response.status_code == 200
-    assert '<script src="/static/js/xterm-addon-webgl.min.js">' in response.text
-    assert '<link rel="stylesheet" href="/static/css/xterm-csp.css">' in response.text
+    assert '<script src="/static/js/xterm-addon-webgl.min.js?v=' in response.text
+    assert '<link rel="stylesheet" href="/static/css/xterm-csp.css?v=' in response.text
     assert "xterm-addon-canvas" not in response.text
 
 

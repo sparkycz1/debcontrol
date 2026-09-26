@@ -25,12 +25,12 @@
   <svg viewBox="0 0 {{ width }} {{ height }}" width="100%" height="{{ height }}"
        preserveAspectRatio="none" role="img" aria-label="{{ label }}"
        class="sparkline sparkline-{{ tone }}">
-    <polyline fill="none" stroke-width="2"
+    <polyline fill="none" stroke="currentColor" stroke-width="2"
               stroke-linejoin="round" stroke-linecap="round"
               points="{{ coords | join(' ') }}"></polyline>
     {% for point in coords %}
       {% set xy = point.split(',') %}
-      <circle cx="{{ xy[0] }}" cy="{{ xy[1] }}" r="2.5"></circle>
+      <circle cx="{{ xy[0] }}" cy="{{ xy[1] }}" r="2.5" fill="currentColor"></circle>
     {% endfor %}
   </svg>
   <p class="hint">
