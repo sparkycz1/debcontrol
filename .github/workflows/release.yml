@@ -13,7 +13,10 @@ name: Release
 #   The commit must be on `main` and its `app/core/version.py` must say
 #   exactly that version.
 #
-# Release notes are the commit subjects since the previous `v*` tag.
+# Release notes are the commit subjects since the previous `v*` tag,
+# leaving out commits that only touch CI, docs/wiki or version numbers.
+# Running it by hand for a version that is already released rewrites that
+# release's notes the same way.
 # "Latest" always goes to the highest version, so backfilling an older one
 # never steals it; running it for an existing highest tag re-marks it.
 
@@ -89,6 +92,43 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      - name: Write release notes
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # The previous release = the highest other version tag this commit
+          # contains (not `git describe`, which follows first parents only and
+          # skips a version that arrived through a merge's second parent).
+          previous="$(git tag -l 'v*' --sort=-v:refname --merged "$SHA" | grep -vxF "$TAG" | head -n 1 || true)"
+          if [ -n "$previous" ]; then range="$previous..$SHA"; else range="$SHA"; fi
+          # Notes are for people running the app: a commit that only touches
+          # CI, tests, docs/wiki or the version numbers themselves isn't listed.
+          internal='^(\.github/|tests/|wiki/|CLAUDE\.md$|README\.md$|app/core/version\.py$|pyproject\.toml$|uv\.lock$)'
+          : > changes.md
+          for commit in $(git rev-list --no-merges --reverse "$range" | tail -n 200); do
+            files="$(git diff-tree --no-commit-id --name-only -r "$commit")"
+            if [ -n "$files" ] && ! grep -qvE "$internal" <<< "$files"; then
+              continue
+            fi
+            git log -1 --format='- %s' "$commit" >> changes.md
+          done
+          {
+            echo "## Changes"
+            echo
+            if [ -s changes.md ]; then
+              tac changes.md
+            else
+              echo "- Maintenance release (no user-facing changes)."
+            fi
+            if [ -n "$previous" ]; then
+              echo
+              echo "**Full diff:** https://github.com/$GITHUB_REPOSITORY/compare/$previous...$TAG"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
       - name: Tag and publish the release
         if: steps.resolve.outputs.skip == 'false'
         env:
@@ -97,18 +137,6 @@ jobs:
           SHA: ${{ steps.resolve.outputs.sha }}
         run: |
           set -euo pipefail
-          previous="$(git describe --tags --abbrev=0 --match 'v*' "$SHA^" 2>/dev/null || true)"
-          {
-            echo "## Changes"
-            echo
-            if [ -n "$previous" ]; then
-              git log --no-merges --format='- %s' "$previous..$SHA"
-              echo
-              echo "**Full diff:** https://github.com/$GITHUB_REPOSITORY/compare/$previous...$TAG"
-            else
-              git log --no-merges --format='- %s' -n 30 "$SHA"
-            fi
-          } > release-notes.md
           git tag "$TAG" "$SHA"
           git push origin "refs/tags/$TAG"
           # "Latest" means the highest version, not the most recently
@@ -119,16 +147,25 @@ jobs:
           gh release create "$TAG" --title "$TAG" --notes-file release-notes.md \
             --verify-tag --latest="$latest"
 
-      - name: Keep "Latest" on the highest version
-        # Also fixes it after the fact: re-running for an existing tag that
-        # is the highest version marks its release as Latest again.
-        if: steps.resolve.outputs.skip == 'true'
+      - name: Refresh an existing release
+        # Run by hand for a version that already has its release: rewrites
+        # its notes with the rules above and, if it is the highest version,
+        # marks it Latest again. A push re-run leaves an existing release
+        # (and any notes edited on GitHub) alone.
+        if: steps.resolve.outputs.skip == 'true' && github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
+          else
+            gh release edit "$TAG" --notes-file release-notes.md
+          fi
           highest="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
-          if [ "$highest" = "$TAG" ] && gh release view "$TAG" >/dev/null 2>&1; then
+          if [ "$highest" = "$TAG" ]; then
             gh release edit "$TAG" --latest
+          else
+            gh release edit "$TAG" --latest=false
           fi

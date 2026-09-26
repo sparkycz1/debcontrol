@@ -1,0 +1,39 @@
+name: Clean up merged branches
+
+# Deletes a pull request's head branch as soon as it is merged, so merged
+# work branches don't pile up. Limited to branches in this repository (a
+# fork's branch isn't ours to delete) and never touches `main`. Equivalent
+# to the repository setting "Automatically delete head branches", kept in
+# code so it holds regardless of how the repository is configured.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  delete-branch:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the merged head branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Already gone (deleted by hand, or by the repository setting) is fine.
+          if gh api "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH"
+            echo "Deleted $BRANCH"
+          else
+            echo "$BRANCH already deleted"
+          fi

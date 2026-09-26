@@ -190,7 +190,8 @@ Before considering a change finished, not just "the code works":
 8. **Tag and release.** `.github/workflows/release.yml` does this
    automatically: a push to `main` that changes `app/core/version.py` gets
    tagged `vX.Y.Z` and a GitHub release (notes = commit subjects since the
-   previous tag). A version bump that never becomes a tag/release is
+   previous tag, minus commits that only touch CI, tests, docs/wiki or
+   version numbers — so write user-facing commit subjects). A version bump that never becomes a tag/release is
    invisible to `scripts/upgrade.sh` and to anyone reading the Releases
    page, so check the workflow run went green. If a version was missed,
    run the workflow by hand (Actions → Release → Run workflow, `version` +
