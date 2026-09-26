@@ -22,6 +22,7 @@ from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.services import monitoring_history
 from app.services.endpoint_check_history import load_check_history
+from app.services.endpoint_sla import load_sla_report
 from app.tasks import jobs as tasks
 
 router = APIRouter(prefix="/api/v1/checks")
@@ -40,6 +41,11 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "target": check.target,
         "expected_status": check.expected_status,
         "expected_body": check.expected_body,
+        "unexpected_body": check.unexpected_body,
+        "json_path": check.json_path,
+        "json_expected": check.json_expected,
+        "max_latency_ms": check.max_latency_ms,
+        "sla_target_percent": check.sla_target_percent,
         "verify_tls": check.verify_tls,
         "interval_seconds": check.interval_seconds,
         "timeout_seconds": check.timeout_seconds,
@@ -67,6 +73,25 @@ async def list_checks_api(
 ) -> list[dict[str, Any]]:
     result = await db.execute(select(EndpointCheck).order_by(EndpointCheck.name))
     return [_to_dict(c) for c in result.scalars().all()]
+
+
+@router.get("/sla", dependencies=[_view])
+async def sla_report_api(
+    db: AsyncSession = Depends(get_db),
+    month: str = "",
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """The Checks → SLA report as data, for one calendar month in UTC
+    (`month=YYYY-MM`, default the current one): per check probes, uptime %,
+    estimated downtime, outage count and whether `sla_target_percent` was
+    met."""
+    report = await load_sla_report(db, month)
+    return {
+        "month": report.month,
+        "start": report.start.isoformat(),
+        "end": report.end.isoformat(),
+        "checks": [row.as_dict() for row in report.rows],
+    }
 
 
 @router.post("", dependencies=[_manage], status_code=status.HTTP_201_CREATED)

@@ -1,0 +1,18 @@
+{# CVE ids as links to the distribution's own tracker — Ubuntu's for an
+   Ubuntu machine, Debian's security tracker otherwise (it also covers
+   Debian derivatives such as Proxmox VE). `limit` caps how many are
+   linked inline; the rest are counted. #}
+{% macro render(cves, os_id, limit=8) %}
+  {%- set base = 'https://ubuntu.com/security/' if os_id == 'ubuntu' else 'https://security-tracker.debian.org/tracker/' -%}
+  {%- for cve in cves[:limit] -%}
+    <a href="{{ base }}{{ cve | urlencode }}" target="_blank" rel="noopener noreferrer" class="cve-link">{{ cve }}</a>{% if not loop.last %}, {% endif %}
+  {%- endfor -%}
+  {%- if cves | length > limit %} {{ t(request, "security.more_cves", count=(cves | length - limit)) }}{% endif -%}
+{% endmacro %}
+
+{# The urgency from the package's changelog, as a badge. #}
+{% macro urgency_badge(urgency) %}
+  {%- if urgency -%}
+    <span class="badge {{ 'badge-error' if urgency in ('high', 'critical', 'emergency') else ('badge-warn' if urgency == 'medium' else '') }}">{{ t(request, "security.urgency." ~ urgency) }}</span>
+  {%- endif -%}
+{% endmacro %}

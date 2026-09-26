@@ -100,6 +100,15 @@ class NotificationEventType(enum.StrEnum):
     ENDPOINT_DOWN = "endpoint.down"
     ENDPOINT_RECOVERED = "endpoint.recovered"
     CERT_EXPIRING = "endpoint.cert_expiring"
+    # Configuration drift (`app.services.config_drift`): a facts refresh
+    # saw a tracked fact change (kernel, OS, listening ports, admin/login
+    # accounts, disks, IPs, ...) — fired from `app.tasks.jobs.
+    # _refresh_machine_facts`, once per refresh with every change listed.
+    MACHINE_CONFIG_CHANGED = "machine.config_changed"
+    # New apt security updates became pending since the previous check,
+    # with the CVEs they fix where known — fired from `app.tasks.jobs.
+    # _check_machine_updates`.
+    SECURITY_UPDATES_AVAILABLE = "machine.security_updates"
 
 
 notification_rule_users = Table(

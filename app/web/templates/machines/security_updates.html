@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "partials/_cve_links.html" import render as render_cves, urgency_badge with context %}
+
+{% block title %}{{ t(request, "security.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "security.title") }}</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machines">{{ t(request, "machine.package_search.back") }}</a>
+    </div>
+  </div>
+  <p class="hint">{{ t(request, "security.intro") }}</p>
+
+  {% if rows %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "security.package") }}</th>
+            <th>{{ t(request, "security.urgency") }}</th>
+            <th>{{ t(request, "security.cves") }}</th>
+            <th>{{ t(request, "security.machines") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td><code>{{ row.package }}</code>{% if row.new_version %}<div class="table-summary">{{ row.new_version }}</div>{% endif %}</td>
+              <td>{{ urgency_badge(row.urgency) if row.urgency else '—' }}</td>
+              <td>
+                {% if row.cves %}{{ render_cves(row.cves, row.machines[0].os_id if row.machines else none, limit=12) }}
+                {% elif row.cves is none %}<span class="table-muted">{{ t(request, "security.cves_unknown") }}</span>
+                {% else %}<span class="table-muted">{{ t(request, "security.no_cves_listed") }}</span>{% endif %}
+              </td>
+              <td>
+                {% for m in row.machines %}<a href="/machines/{{ m.id }}/updates">{{ m.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+                <div class="table-summary">{{ t(request, "security.machine_count", count=(row.machines | length)) }}</div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "security.none_pending") }}</p></div>
+  {% endif %}
+{% endblock %}

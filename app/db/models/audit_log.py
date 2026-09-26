@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Integer, String
+from sqlalchemy import JSON, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -67,6 +67,11 @@ class AuditLogEntry(Base):
     """
 
     __tablename__ = "audit_log_entries"
+    __table_args__ = (
+        # A machine's History tab reads "entries about this target, in a
+        # time range" (`app.services.machine_timeline`).
+        Index("ix_audit_log_entries_target_id_created_at", "target_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     created_at: Mapped[datetime] = mapped_column(

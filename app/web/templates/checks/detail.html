@@ -10,14 +10,26 @@
   <p class="hint"><a href="/checks">← {{ t(request, "checks.title") }}</a></p>
   <div class="page-header">
     <h1>{{ check.name }}</h1>
-    {% if can_manage %}
-      <div class="page-header-actions">
+    <div class="page-header-actions">
+      {% if request.state.user.has_permission('ai.access') %}
+        <form method="post" action="/ai/explain" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+          <input type="hidden" name="kind" value="endpoint_check">
+          <input type="hidden" name="check_id" value="{{ check.id }}">
+          <button type="submit" class="button button-secondary">{{ t(request, "history.ask_ai") }}</button>
+        </form>
+      {% endif %}
+      {% if can_manage %}
         <a class="button button-secondary" href="/checks/{{ check.id }}/edit">{{ t(request, "checks.edit") }}</a>
-      </div>
-    {% endif %}
+      {% endif %}
+    </div>
   </div>
   <p class="hint"><span class="badge">{{ check.kind | upper }}</span> <code>{{ check.target }}</code>
-    {% if check.expected_body %} · {{ t(request, "checks.expected_body") }}: <code>{{ check.expected_body }}</code>{% endif %}</p>
+    {% if check.expected_body %} · {{ t(request, "checks.expected_body") }}: <code>{{ check.expected_body }}</code>{% endif %}
+    {% if check.unexpected_body %} · {{ t(request, "checks.unexpected_body") }}: <code>{{ check.unexpected_body }}</code>{% endif %}
+    {% if check.json_path %} · JSON: <code>{{ check.json_path }}{% if check.json_expected %} = {{ check.json_expected }}{% endif %}</code>{% endif %}
+    {% if check.max_latency_ms %} · {{ t(request, "checks.max_latency") }}: {{ check.max_latency_ms }} ms{% endif %}
+    {% if check.sla_target_percent %} · SLA {{ check.sla_target_percent }} %{% endif %}</p>
 
   <div class="monitoring-toolbar">
     <form method="get" action="/checks/{{ check.id }}" class="inline-form">

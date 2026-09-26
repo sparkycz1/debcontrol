@@ -138,6 +138,12 @@ class Machine(Base):
     # and IPv4 addresses per network interface (via `ip addr`).
     filesystems: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     network_interfaces: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Listening TCP `address:port`s, local admin accounts and local login
+    # accounts (see app.ssh.facts) — refreshed with the facts and compared
+    # against the previous refresh by app.services.config_drift.
+    listening_ports: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    admin_users: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    login_users: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     # Detected via `systemd-detect-virt` (see app.ssh.facts) — True on bare
     # metal, False inside a VM/container, None if it couldn't be
     # determined (no systemd-detect-virt binary). Gates whether the

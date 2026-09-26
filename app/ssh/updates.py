@@ -47,13 +47,14 @@ import re
 import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import asyncssh
 
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.ssh.client import open_connection
+from app.ssh.security_advisories import lookup_advisories
 
 
 class PendingPackage(TypedDict):
@@ -63,6 +64,14 @@ class PendingPackage(TypedDict):
     # update" means. `None` only for a source where a listing command
     # genuinely doesn't report it (kept for symmetry, unused today).
     new_version: str | None
+    # apt only: from a `*-security` suite. Absent on flatpak/snap entries
+    # and on lists stored before debcontrol tracked it.
+    security: NotRequired[bool]
+    # apt security updates only: the CVE ids the update fixes and the
+    # highest changelog urgency (see app.ssh.security_advisories); absent
+    # or None = not looked up (yet).
+    cves: NotRequired[list[str] | None]
+    urgency: NotRequired[str | None]
 
 def _with_root_fallback(command: str) -> str:
     """`command`, run via passwordless sudo, or run directly if sudo isn't
@@ -247,7 +256,12 @@ def parse_apt_upgradable_packages(raw: str) -> list[PendingPackage]:
         match = _UPGRADABLE_FROM_RE.search(line)
         current_version = match.group(1).strip() if match else None
         packages.append(
-            PendingPackage(name=name, current_version=current_version, new_version=new_version)
+            PendingPackage(
+                name=name,
+                current_version=current_version,
+                new_version=new_version,
+                security="security" in first_token.partition("/")[2],
+            )
         )
     return packages
 
@@ -332,6 +346,32 @@ class UpdateCheckResult:
     snap_upgradable_packages: list[PendingPackage] = field(default_factory=list)
 
 
+def carry_over_advisories(
+    packages: list[PendingPackage], previous: list[dict[str, object]] | None
+) -> list[PendingPackage]:
+    """Copy `cves`/`urgency` from the previous check's list onto every
+    security package whose (name, new version) was already looked up, and
+    return the security packages that still need a lookup."""
+    known = {
+        (str(p.get("name")), str(p.get("new_version"))): p
+        for p in previous or []
+        if isinstance(p, dict) and p.get("cves") is not None
+    }
+    missing: list[PendingPackage] = []
+    for package in packages:
+        if not package.get("security"):
+            continue
+        before = known.get((package["name"], str(package["new_version"])))
+        if before is not None:
+            cves = before.get("cves")
+            package["cves"] = [str(c) for c in cves] if isinstance(cves, list) else []
+            urgency = before.get("urgency")
+            package["urgency"] = str(urgency) if urgency else None
+        else:
+            missing.append(package)
+    return missing
+
+
 async def check_updates(
     machine: Machine,
     secret: str | None,
@@ -342,15 +382,33 @@ async def check_updates(
     upgradable across apt, flatpak, and snap, without installing or
     upgrading anything. Same root/sudo requirement as `run_system_update`
     — see the module docstring.
+
+    Pending apt security updates also get the CVEs they fix, from their
+    changelogs (`app.ssh.security_advisories`), over the same connection —
+    only for the ones `machine.apt_upgradable_packages` doesn't already
+    have an answer for.
     """
     async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
         result = await conn.run(_CHECK_UPDATES_COMMAND, check=False, timeout=run_timeout_seconds)
+        stdout = result.stdout or ""
+        output = stdout if isinstance(stdout, str) else stdout.decode()
+        exit_status = result.exit_status if result.exit_status is not None else -1
+        apt_packages = parse_apt_upgradable_packages(output)
+        missing = carry_over_advisories(apt_packages, machine.apt_upgradable_packages)
+        if exit_status == 0 and missing:
+            try:
+                advisories = await lookup_advisories(
+                    conn, [dict(p) for p in missing], run_timeout_seconds
+                )
+            except (asyncssh.Error, OSError, TimeoutError):
+                advisories = {}
+            for package in missing:
+                advisory = advisories.get(package["name"])
+                if advisory is not None:
+                    package["cves"] = advisory.cves
+                    package["urgency"] = advisory.urgency
 
-    stdout = result.stdout or ""
-    output = stdout if isinstance(stdout, str) else stdout.decode()
-    exit_status = result.exit_status if result.exit_status is not None else -1
     upgradable_count, security_upgradable_count = parse_upgradable_output(output)
-    apt_packages = parse_apt_upgradable_packages(output)
     flatpak_packages = parse_flatpak_upgradable_packages(output)
     snap_packages = parse_snap_upgradable_packages(output)
     return UpdateCheckResult(

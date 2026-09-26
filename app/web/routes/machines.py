@@ -32,6 +32,7 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.db.models.machine_note import MAX_NOTE_LENGTH
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_tag import Tag
@@ -42,7 +43,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
-from app.services import monitoring_history
+from app.services import machine_timeline, monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     groups_visible_to,
@@ -58,6 +59,7 @@ from app.services.machine_actions import (
 )
 from app.services.machine_config import export_machine_config, import_machine_config
 from app.services.machine_grouping import assign_machines_to_group
+from app.services.machine_notes import EmptyNoteError, add_note, delete_note
 from app.services.machine_tags import (
     add_tags_to_machines,
     parse_tag_names_from_text,
@@ -66,6 +68,13 @@ from app.services.machine_tags import (
 )
 from app.services.maintenance_windows import active_window_for
 from app.services.notifications import condition_thresholds_for_machine
+from app.services.saved_log_views import (
+    ALLOWED_LOG_VIEW_PARAMS,
+    build_log_query_string,
+    create_saved_log_view,
+    delete_saved_log_view,
+    list_saved_log_views,
+)
 from app.services.saved_views import (
     DuplicateViewNameError,
     build_query_string,
@@ -73,6 +82,7 @@ from app.services.saved_views import (
     delete_saved_view,
     list_saved_views,
 )
+from app.services.security_updates import load_security_overview
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
@@ -88,7 +98,13 @@ from app.ssh.updates import PendingPackage
 from app.tasks import jobs as tasks
 from app.web.flash import read_flash, sign_flash
 from app.web.log_lines import parse_log_lines
-from app.web.machine_search import apply_tag_filter, machine_search_clause
+from app.web.machine_search import (
+    STATUS_FILTERS,
+    apply_group_filter,
+    apply_status_filter,
+    apply_tag_filter,
+    machine_search_clause,
+)
 from app.web.messages import LocalizedText
 from app.web.routes.audit import _csv_safe
 from app.web.templating import t, templates
@@ -148,6 +164,7 @@ def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[
     # discover host key) already have, rather than a whole tab for two
     # buttons. `GET /{id}/power` itself still redirects there for anyone
     # with the old URL bookmarked/linked — see `power_tab`.
+    tabs.append(("history", t(request, "machine.tab.history"), f"{base}/history"))
     tabs.append(("settings", t(request, "machine.tab.settings"), f"{base}/edit"))
     return tabs
 
@@ -303,14 +320,18 @@ async def list_machines(
     q: str = "",
     tag: list[str] = Query(default=[]),
     tag_mode: str = "or",
+    status_filter: str = Query("", alias="status"),
+    group: str = "",
     page: int = 1,
 ) -> Response:
     page = max(page, 1)
     tag_mode = tag_mode if tag_mode == "and" else "or"
+    status_filter, group = _clean_list_filters(status_filter, group)
     query = (await machines_visible_to(db, current_user)).options(selectinload(Machine.group))
     if q.strip():
         query = query.where(machine_search_clause(q))
     query = apply_tag_filter(query, tag, tag_mode)
+    query = apply_group_filter(apply_status_filter(query, status_filter), group)
 
     offset = (page - 1) * _MACHINE_LIST_PAGE_SIZE
     result = await db.execute(
@@ -342,6 +363,13 @@ async def list_machines(
             "q": q,
             "tag": tag,
             "tag_mode": tag_mode,
+            "status_filter": status_filter,
+            "status_filters": STATUS_FILTERS,
+            "group_filter": group,
+            "filter_qs": build_query_string(
+                {"q": q, "tag": tag, "tag_mode": tag_mode, "status": status_filter,
+                 "group": group}
+            ),
             "page": page,
             "has_more": has_more,
             "view_mode": view_mode,
@@ -357,6 +385,18 @@ async def list_machines(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+def _clean_list_filters(status_filter: str, group: str) -> tuple[str, str]:
+    """Only a known status and a well-formed group id (or "none") survive —
+    what a saved view may store and what the links on the page repeat."""
+    status_filter = status_filter if status_filter in STATUS_FILTERS else ""
+    if group != "none":
+        try:
+            group = str(uuid.UUID(group))
+        except ValueError:
+            group = ""
+    return status_filter, group
 
 
 def _safe_machines_redirect(next_path: str) -> str:
@@ -401,12 +441,17 @@ async def save_machine_view(
     q: str = Form(""),
     tag: list[str] = Form(default=[]),
     tag_mode: str = Form("or"),
+    status_filter: str = Form("", alias="status"),
+    group: str = Form(""),
 ) -> Response:
     """"Save this view" on the machine list — captures only the known
     filter fields (never an arbitrary querystring, see
     `app.services.saved_views`), so a saved view always replays as exactly
     the same filtered `GET /machines` request."""
-    query_string = build_query_string({"q": q, "tag": tag, "tag_mode": tag_mode})
+    status_filter, group = _clean_list_filters(status_filter, group)
+    query_string = build_query_string(
+        {"q": q, "tag": tag, "tag_mode": tag_mode, "status": status_filter, "group": group}
+    )
     if not name.strip():
         return RedirectResponse(
             url=f"/machines?{query_string}", status_code=status.HTTP_303_SEE_OTHER
@@ -728,9 +773,11 @@ async def export_machine_inventory(
     q: str = "",
     tag: list[str] = Query(default=[]),
     tag_mode: str = "or",
+    status_filter: str = Query("", alias="status"),
+    group: str = "",
 ) -> Response:
     """The machine list as a spreadsheet — every machine matching the
-    current search/tag filter (not just the visible page), with the
+    current search/tag/status/group filter (not just the visible page), with the
     status, OS, hardware and update columns an inventory report needs.
     Scoped exactly like the list itself. Unlike `/config/export` (the
     structural import/export round-trip) this is a read-only report; the
@@ -742,6 +789,8 @@ async def export_machine_inventory(
     if q.strip():
         query = query.where(machine_search_clause(q))
     query = apply_tag_filter(query, tag, tag_mode)
+    status_filter, group = _clean_list_filters(status_filter, group)
+    query = apply_group_filter(apply_status_filter(query, status_filter), group)
     machines = list((await db.execute(query.order_by(Machine.name))).scalars().all())
 
     buffer = io.StringIO()
@@ -895,6 +944,21 @@ async def import_machine_config_submit(
 
 
 _PACKAGE_SEARCH_LIMIT = 500
+
+
+@router.get("/security-updates")
+async def security_updates(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Every pending apt security update across the visible fleet, grouped
+    by package and version, with the CVEs it fixes and the machines it's
+    pending on — see `app.services.security_updates`."""
+    rows = await load_security_overview(db, await machines_visible_to(db, current_user))
+    return templates.TemplateResponse(
+        request, "machines/security_updates.html", {"rows": rows}
+    )
 
 
 @router.get("/package-search")
@@ -2513,6 +2577,88 @@ async def machine_update_history(
     return response
 
 
+@router.get("/{machine_id}/history")
+async def machine_history(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    days: int = machine_timeline.DEFAULT_RANGE_DAYS,
+    kind: str = "",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The History tab — notes, detected changes, update runs,
+    reachability transitions and (with `audit.view`) audited actions on
+    one time line; see `app.services.machine_timeline`."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    kind = kind if kind in machine_timeline.TIMELINE_KINDS else ""
+    timeline = await machine_timeline.load_timeline(
+        db,
+        machine,
+        days=days,
+        include_audit=current_user.has_permission(Permission.AUDIT_VIEW),
+        kinds={kind} if kind else None,
+    )
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/history.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(request, machine, current_user),
+            "active_tab": "history",
+            "csrf_token": csrf_token,
+            "timeline": timeline,
+            "ranges": machine_timeline.TIMELINE_RANGES,
+            "kinds": machine_timeline.TIMELINE_KINDS,
+            "kind": kind,
+            "note_error": request.query_params.get("note_error"),
+            "max_note_length": MAX_NOTE_LENGTH,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/{machine_id}/notes", dependencies=[_manage, Depends(verify_csrf)])
+async def add_machine_note(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    body: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    try:
+        await add_note(db, request, machine, current_user, body)
+    except EmptyNoteError:
+        return RedirectResponse(
+            url=f"/machines/{machine.id}/history?note_error=1",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/history", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post(
+    "/{machine_id}/notes/{note_id}/delete", dependencies=[_manage, Depends(verify_csrf)]
+)
+async def delete_machine_note(
+    request: Request,
+    machine_id: uuid.UUID,
+    note_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not await delete_note(db, request, machine, note_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/history", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
 @router.get("/{machine_id}/update-availability-panel")
 async def machine_update_availability_panel(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
@@ -2609,6 +2755,7 @@ async def machine_logs(
     until: str = "",
     source: str = "",
     container: str = "",
+    priority: str = "",
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """The Logs tab — journal by default, one allowed file when `path` is
@@ -2626,6 +2773,7 @@ async def machine_logs(
 
     if source not in ("journal", "file", "docker"):
         source = "file" if path.strip() else "journal"
+    priority = ssh_logs.normalize_priority(priority) if source == "journal" else ""
     docker_containers = machine.docker_containers or []
     if source == "docker" and not container and docker_containers:
         running = [c for c in docker_containers if c.get("state") == "running"]
@@ -2655,12 +2803,16 @@ async def machine_logs(
                     str(machine.id), path=path.strip(), lines=clamped_lines, search=search
                 )
             else:
+                # `priority` only when set, so a worker still running the
+                # previous version (mid-upgrade) accepts the call.
+                journal_options = {"priority": priority} if priority else {}
                 async_result = tasks.view_machine_journal.delay(
                     str(machine.id),
                     lines=clamped_lines,
                     search=search,
                     since=since,
                     until=until,
+                    **journal_options,
                 )
             result = await asyncio.to_thread(
                 async_result.get, timeout=app_settings.ssh_connect_timeout + 15
@@ -2713,6 +2865,15 @@ async def machine_logs(
             "search": search,
             "since": since,
             "until": until,
+            "priority": priority,
+            "priorities": ssh_logs.JOURNAL_PRIORITIES,
+            "saved_log_views": await list_saved_log_views(db, current_user.id),
+            "log_view_qs": build_log_query_string(
+                {"source": source, "path": path, "container": container, "priority": priority,
+                 "search": search, "since": since, "until": until,
+                 "lines": str(lines) if lines != ssh_logs.DEFAULT_LINE_LIMIT else ""}
+            ),
+            "view_error": request.query_params.get("view_error"),
             "default_lines": ssh_logs.DEFAULT_LINE_LIMIT,
             "allowed_paths": get_settings().log_file_allowed_path_list,
         },
@@ -2720,6 +2881,51 @@ async def machine_logs(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post("/{machine_id}/logs/views", dependencies=[_terminal, Depends(verify_csrf)])
+async def save_log_view(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    name: str = Form(""),
+) -> Response:
+    """"Save this view" on the Logs tab — only the Logs filters are kept
+    (`app.services.saved_log_views`), not the machine, so the view can be
+    replayed on any machine's Logs tab."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    form = await request.form()
+    query_string = build_log_query_string(
+        {key: str(form.get(key, "")) for key in ALLOWED_LOG_VIEW_PARAMS}
+    )
+    base = f"/machines/{machine.id}/logs?{query_string}"
+    if not name.strip():
+        return RedirectResponse(url=base, status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        await create_saved_log_view(db, current_user.id, name, query_string)
+    except DuplicateViewNameError:
+        return RedirectResponse(
+            url=f"{base}&view_error=duplicate_name", status_code=status.HTTP_303_SEE_OTHER
+        )
+    return RedirectResponse(url=base, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post(
+    "/{machine_id}/logs/views/{view_id}/delete",
+    dependencies=[_terminal, Depends(verify_csrf)],
+)
+async def delete_log_view(
+    machine_id: uuid.UUID,
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    await delete_saved_log_view(db, current_user.id, view_id)
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/logs", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 def _join_log_path(directory: str, name: str) -> str:

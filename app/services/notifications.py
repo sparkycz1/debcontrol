@@ -27,6 +27,10 @@ add another):
 - `app.tasks.jobs._run_machine_update` — UPDATE_RUN_FAILED / UPDATE_RUN_SUCCEEDED.
 - `app.tasks.jobs._run_machine_onboarding` — MACHINE_ONBOARDED, on success.
 - `app.tasks.ai_jobs._generate_fleet_summary` — FLEET_SUMMARY_GENERATED.
+- `app.tasks.jobs._refresh_machine_facts` / `_check_machine_updates` (via
+  `app.services.config_drift`) — MACHINE_CONFIG_CHANGED /
+  SECURITY_UPDATES_AVAILABLE, only for what changed since the previous
+  refresh/check.
 - `app.tasks.jobs._evaluate_notification_conditions` — CONDITION_MATCHED,
   fired only on the true transition of a rule's own
   `NotificationCondition`s (see `app.db.models.notification_condition`),
@@ -129,6 +133,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "The TLS certificate checked by \"{endpoint_name}\" ({endpoint_target}) "
             "expires on {expires_at} ({days} days left).",
         ),
+        NotificationEventType.MACHINE_CONFIG_CHANGED: (
+            "debcontrol: configuration of {machine_name} changed",
+            "debcontrol noticed these changes on {machine_name} ({machine_ip}) at "
+            "{timestamp}:\n\n{changes}",
+        ),
+        NotificationEventType.SECURITY_UPDATES_AVAILABLE: (
+            "debcontrol: {package_count} new security update(s) for {machine_name}",
+            "New security updates are pending on {machine_name} ({machine_ip}) as of "
+            "{timestamp}:\n\n{packages}\n\nCVEs: {cves}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -178,6 +192,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: certifikát pro {endpoint_name} vyprší za {days} dní",
             "TLS certifikát kontrolovaný \"{endpoint_name}\" ({endpoint_target}) "
             "vyprší {expires_at} (zbývá {days} dní).",
+        ),
+        NotificationEventType.MACHINE_CONFIG_CHANGED: (
+            "debcontrol: konfigurace {machine_name} se změnila",
+            "debcontrol zaznamenal na {machine_name} ({machine_ip}) v {timestamp} tyto "
+            "změny:\n\n{changes}",
+        ),
+        NotificationEventType.SECURITY_UPDATES_AVAILABLE: (
+            "debcontrol: {package_count} nových bezpečnostních aktualizací pro {machine_name}",
+            "Na {machine_name} ({machine_ip}) čekají od {timestamp} nové bezpečnostní "
+            "aktualizace:\n\n{packages}\n\nCVE: {cves}",
         ),
     },
 }

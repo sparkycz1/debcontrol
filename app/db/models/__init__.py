@@ -12,8 +12,10 @@ from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.fleet_summary import FleetSummary
 from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
+from app.db.models.machine_change import MachineChange
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.db.models.machine_note import MachineNote
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_service import MachineService
@@ -35,6 +37,7 @@ from app.db.models.notification_rule import (
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.models.saved_audit_view import SavedAuditView
+from app.db.models.saved_log_view import SavedLogView
 from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
 from app.db.models.scheduled_task_run import ScheduledTaskRun, ScheduledTaskRunStatus
@@ -68,8 +71,10 @@ __all__ = [
     "FleetSummaryFrequency",
     "GeoipDatabase",
     "Machine",
+    "MachineChange",
     "MachineGroup",
     "MachineMonitoringSample",
+    "MachineNote",
     "MachinePackage",
     "MachineReachabilitySample",
     "MachineService",
@@ -91,6 +96,7 @@ __all__ = [
     "RolePermission",
     "SSHIdentity",
     "SavedAuditView",
+    "SavedLogView",
     "SavedMachineView",
     "ScheduleTargetType",
     "ScheduledTask",

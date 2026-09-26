@@ -38,6 +38,22 @@ class EndpointCheck(Base):
     # None = the status code alone decides. Catches "200 OK, but it's the
     # maintenance page".
     expected_body: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # HTTP only: text that must NOT appear in the body (same search window)
+    # — "Internal Server Error", "maintenance", a stack-trace marker.
+    unexpected_body: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # HTTP only: a JSON assertion on the response — `json_path` is a dotted
+    # path into the parsed body (`status`, `checks.db.ok`, `items.0.state`),
+    # `json_expected` the value it must equal, compared as JSON text
+    # (`true`, `42`, `ok`); no expected value = the path just has to exist
+    # and not be null/false. See `app.services.endpoint_checks.evaluate_json_path`.
+    json_path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    json_expected: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Slower than this counts as a failure ("up, but unusably slow");
+    # None = no latency limit. HTTP and TLS alike.
+    max_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The availability this check promises, e.g. 99.9 — only used by the
+    # monthly SLA report (`app.services.endpoint_sla`); None = no target.
+    sla_target_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     verify_tls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)

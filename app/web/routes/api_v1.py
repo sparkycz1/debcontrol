@@ -77,6 +77,7 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.db.models.machine_note import MAX_NOTE_LENGTH
 from app.db.models.machine_package import MachinePackage
 from app.db.models.machine_service import MachineService
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -87,7 +88,7 @@ from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
-from app.services import monitoring_history
+from app.services import machine_timeline, monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     can_see_machine,
@@ -104,12 +105,14 @@ from app.services.machine_actions import (
 )
 from app.services.machine_config import export_machine_config, import_machine_config
 from app.services.machine_grouping import assign_machines_to_group
+from app.services.machine_notes import EmptyNoteError, add_note, delete_note
 from app.services.machine_tags import (
     add_tags_to_machines,
     normalize_tag_names,
     remove_tags_from_machines,
     set_machine_tags,
 )
+from app.services.security_updates import load_security_overview
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
@@ -124,7 +127,7 @@ from app.tasks.jobs import (
     run_machine_update,
     send_machine_power_command,
 )
-from app.web.machine_search import apply_tag_filter
+from app.web.machine_search import apply_group_filter, apply_status_filter, apply_tag_filter
 
 router = APIRouter(prefix="/api/v1")
 
@@ -294,9 +297,15 @@ async def list_machines_api(
     user: User = Depends(get_api_token_user),
     tag: list[str] = Query(default=[]),
     tag_mode: str = "or",
+    status_filter: str = Query("", alias="status"),
+    group: str = "",
 ) -> list[dict[str, object]]:
+    """Same filters as the Machines page: `tag` (repeatable, `tag_mode=and`
+    to require all), `status` (offline / updates / security / reboot /
+    changed / unconfirmed) and `group` (a group id, or `none`)."""
     query = (await machines_visible_to(db, user)).options(selectinload(Machine.group))
     query = apply_tag_filter(query, tag, tag_mode if tag_mode == "and" else "or")
+    query = apply_group_filter(apply_status_filter(query, status_filter), group)
     result = await db.execute(query)
     return [_machine_to_dict(m) for m in result.scalars().all()]
 
@@ -311,6 +320,98 @@ async def fleet_overview_api(
     result = await db.execute(query.order_by(Machine.name))
     rows = await build_fleet_overview(db, list(result.scalars().all()))
     return [row.as_dict() for row in rows]
+
+
+@router.get("/machines/security-updates", dependencies=[_view_machines])
+async def security_updates_api(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
+) -> list[dict[str, object]]:
+    """Machines → Security updates as data: every pending apt security
+    update across the visible fleet, grouped by (package, new version),
+    with `cves` (None = not looked up yet), `urgency` and the machines it's
+    pending on — see `app.services.security_updates`."""
+    rows = await load_security_overview(db, await machines_visible_to(db, user))
+    return [row.as_dict() for row in rows]
+
+
+@router.get("/machines/{machine_id}/timeline", dependencies=[_view_machines])
+async def machine_timeline_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+    days: int = machine_timeline.DEFAULT_RANGE_DAYS,
+    kind: str = "",
+) -> dict[str, object]:
+    """A machine's History tab as data, newest first: notes, detected
+    changes, update runs, reachability transitions and — only for a token
+    whose user has `audit.view` — audited actions. `days` is one of
+    1/7/30/90/365, `kind` optionally one of `note`/`change`/`update_run`/
+    `reachability`/`audit`. See `app.services.machine_timeline`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    timeline = await machine_timeline.load_timeline(
+        db,
+        machine,
+        days=days,
+        include_audit=user.has_permission(Permission.AUDIT_VIEW),
+        kinds={kind} if kind in machine_timeline.TIMELINE_KINDS else None,
+    )
+    return {
+        "days": timeline.days,
+        "since": timeline.since.isoformat(),
+        "truncated": timeline.truncated,
+        "includes_audit": timeline.includes_audit,
+        "events": [event.as_dict() for event in timeline.events],
+    }
+
+
+class MachineNoteCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=MAX_NOTE_LENGTH)
+
+
+@router.post(
+    "/machines/{machine_id}/notes",
+    dependencies=[_manage_machines],
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_machine_note_api(
+    machine_id: uuid.UUID,
+    payload: MachineNoteCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Add a note to the machine's history — same as the History tab's
+    form (`machine.manage`, audited as `machine.note.add`)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    try:
+        note = await add_note(db, request, machine, user, payload.body)
+    except EmptyNoteError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The note is empty."
+        ) from None
+    return {
+        "id": str(note.id),
+        "author": note.author,
+        "body": note.body,
+        "created_at": note.created_at.isoformat() if note.created_at else None,
+    }
+
+
+@router.delete(
+    "/machines/{machine_id}/notes/{note_id}",
+    dependencies=[_manage_machines],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_machine_note_api(
+    machine_id: uuid.UUID,
+    note_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> None:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not await delete_note(db, request, machine, note_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
 
 
 @router.get("/machines/package-search", dependencies=[_view_machines])
@@ -1244,11 +1345,13 @@ async def machine_logs_api(
     since: str = "",
     until: str = "",
     container: str = "",
+    priority: str = "",
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    """The API equivalent of `GET /machines/{id}/logs` — journal by default,
-    one allow-listed file when `path` is given, or one Docker container's
-    logs when `container` is given. Gated behind
+    """The API equivalent of `GET /machines/{id}/logs` — journal by default
+    (`priority` = a journalctl level such as `err` shows that level and
+    worse), one allow-listed file when `path` is given, or one Docker
+    container's logs when `container` is given. Gated behind
     `ACTION_TERMINAL`, same as the web route, not `MACHINE_VIEW` — see
     `app.ssh.logs`'s module docstring for why. Never stored anywhere."""
     machine = await _get_machine_or_404(machine_id, db, user)
@@ -1278,8 +1381,16 @@ async def machine_logs_api(
                 str(machine.id), path=path.strip(), lines=clamped_lines, search=search
             )
         else:
+            journal_options: dict[str, str] = {}
+            if ssh_logs.normalize_priority(priority):
+                journal_options["priority"] = ssh_logs.normalize_priority(priority)
             async_result = tasks.view_machine_journal.delay(
-                str(machine.id), lines=clamped_lines, search=search, since=since, until=until
+                str(machine.id),
+                lines=clamped_lines,
+                search=search,
+                since=since,
+                until=until,
+                **journal_options,
             )
         result = await asyncio.to_thread(
             async_result.get, timeout=app_settings.ssh_connect_timeout + 15

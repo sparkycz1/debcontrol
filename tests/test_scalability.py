@@ -44,7 +44,7 @@ async def test_machines_list_paginates_instead_of_loading_everything(
     page_one = await client.get("/machines")
     assert page_one.status_code == 200
     assert page_one.text.count("/machines/") >= 100
-    assert 'href="/machines?q=&page=2"' in page_one.text
+    assert 'href="/machines?page=2"' in page_one.text
     assert "Previous" not in page_one.text
 
     page_two = await client.get("/machines?page=2")

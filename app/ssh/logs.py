@@ -76,7 +76,20 @@ def _clamp_lines(lines: int) -> int:
     return max(1, min(lines, MAX_LINE_LIMIT))
 
 
-def build_journal_command(*, lines: int, search: str, since: str, until: str) -> str:
+# journalctl's own priority names, most to least severe; `-p <name>` shows
+# that level and everything more severe.
+JOURNAL_PRIORITIES = ("emerg", "alert", "crit", "err", "warning", "notice", "info", "debug")
+
+
+def normalize_priority(priority: str) -> str:
+    """A known `JOURNAL_PRIORITIES` name, or "" (no priority filter)."""
+    value = priority.strip().lower()
+    return value if value in JOURNAL_PRIORITIES else ""
+
+
+def build_journal_command(
+    *, lines: int, search: str, since: str, until: str, priority: str = ""
+) -> str:
     """`journalctl` — no root needed to read the system journal on a
     default Debian/Ubuntu install (the invoking user just needs to be in
     the `systemd-journal`/`adm` group, or the journal to be world-readable,
@@ -86,6 +99,8 @@ def build_journal_command(*, lines: int, search: str, since: str, until: str) ->
     set of time expressions ("yesterday", "-1h", ...) than this app would
     otherwise have to parse."""
     parts = ["journalctl", "--no-pager", "-n", str(_clamp_lines(lines))]
+    if normalize_priority(priority):
+        parts += ["-p", normalize_priority(priority)]
     if search.strip():
         parts += ["-g", shlex.quote(search.strip())]
     if since.strip():
@@ -141,10 +156,13 @@ async def view_journal(
     search: str = "",
     since: str = "",
     until: str = "",
+    priority: str = "",
 ) -> str:
     """Connect to a machine and return the requested slice of its systemd
     journal. Requires a pinned host key."""
-    command = build_journal_command(lines=lines, search=search, since=since, until=until)
+    command = build_journal_command(
+        lines=lines, search=search, since=since, until=until, priority=priority
+    )
     async with await open_connection(machine, secret, timeout_seconds) as conn:
         result = await conn.run(command, check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
@@ -262,7 +280,9 @@ async def view_docker_logs(
 FOLLOW_INITIAL_LINES = 50
 
 
-def build_follow_command(*, source: str, path: str, container: str, search: str) -> str:
+def build_follow_command(
+    *, source: str, path: str, container: str, search: str, priority: str = ""
+) -> str:
     """The streaming (`-f`) variant of each Logs source, for the live-follow
     WebSocket (`app/web/routes/logs_ws.py`): `journalctl -f`, `tail -F`
     on an allowed file (follows rotation), or `docker logs -f`. A search
@@ -274,6 +294,8 @@ def build_follow_command(*, source: str, path: str, container: str, search: str)
     n = FOLLOW_INITIAL_LINES
     if source == "journal":
         options = f" -g {shlex.quote(term)}" if term else ""
+        if normalize_priority(priority):
+            options += f" -p {normalize_priority(priority)}"
         return f"journalctl --no-pager -f -n {n}{options}"
     if source == "file":
         if not is_path_allowed(path, get_settings().log_file_allowed_path_list):

@@ -34,6 +34,24 @@
     </a>
   </nav>
 
+  {% if saved_log_views %}
+    <div class="saved-views">
+      {% for view in saved_log_views %}
+        <span class="saved-view-chip">
+          <a href="{{ base }}?{{ view.query_string }}">{{ view.name }}</a>
+          <form method="post" action="{{ base }}/views/{{ view.id }}/delete" class="inline-form"
+                data-confirm="{{ t(request, 'audit.save_view.delete_confirm', name=(view.name | e)) | safe }}">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+            <button type="submit" class="link-button" aria-label="{{ t(request, 'audit.save_view.delete', name=view.name) }}">&times;</button>
+          </form>
+        </span>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if view_error == 'duplicate_name' %}
+    <div class="alert alert-error"><p>{{ t(request, 'machines.save_view.duplicate') }}</p></div>
+  {% endif %}
+
   {% if error %}
     <div class="alert alert-error"><p>{{ error }}</p></div>
   {% endif %}
@@ -72,6 +90,17 @@
       <span>{{ t(request, "machine.logs.search") }}</span>
       <input type="search" name="search" value="{{ search }}" placeholder="{{ t(request, 'machine.logs.search_placeholder') }}">
     </label>
+    {% if source == 'journal' %}
+      <label class="log-field">
+        <span>{{ t(request, "machine.logs.priority") }}</span>
+        <select name="priority">
+          <option value="" {% if not priority %}selected{% endif %}>{{ t(request, "machine.logs.priority_any") }}</option>
+          {% for p in priorities %}
+            <option value="{{ p }}" {% if p == priority %}selected{% endif %}>{{ t(request, "machine.logs.priority." ~ p) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
     {% if source != 'file' %}
       <label class="log-field">
         <span>{{ t(request, "machine.logs.since") }}</span>
@@ -95,9 +124,26 @@
   </form>
 
   {% if output is not none %}
+    <form method="post" action="{{ base }}/views" class="inline-form stack-gap">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+      <input type="hidden" name="source" value="{{ source }}">
+      <input type="hidden" name="path" value="{{ path }}">
+      <input type="hidden" name="container" value="{{ container }}">
+      <input type="hidden" name="priority" value="{{ priority }}">
+      <input type="hidden" name="search" value="{{ search }}">
+      <input type="hidden" name="since" value="{{ since }}">
+      <input type="hidden" name="until" value="{{ until }}">
+      <input type="hidden" name="lines" value="{{ lines if lines != default_lines else '' }}">
+      <input type="text" name="name" class="inline-text-input" maxlength="100" required
+             placeholder="{{ t(request, 'machine.logs.save_view_placeholder') }}">
+      <button type="submit" class="button button-secondary">{{ t(request, 'machines.save_view.submit') }}</button>
+    </form>
+  {% endif %}
+
+  {% if output is not none %}
     {% set can_follow = source == 'journal' or (source == 'file' and path) or (source == 'docker' and container) %}
     <section class="log-viewer" data-log-viewer
-      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}"
+      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}&amp;priority={{ priority | urlencode }}"
       data-search="{{ search }}"
       data-label-follow="{{ t(request, 'machine.logs.follow') }}"
       data-label-stop="{{ t(request, 'machine.logs.follow_stop') }}"
