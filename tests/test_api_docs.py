@@ -49,7 +49,8 @@ async def test_openapi_schema_documents_bearer_auth_for_the_rest_api(client):
     machines_get = schema["paths"]["/api/v1/machines"]["get"]
     assert machines_get["security"] == [{"bearerAuth": []}]
 
-    # Web-only routes (session-cookie auth, not the REST API) shouldn't be
-    # tagged with the API's bearer scheme.
-    dashboard_get = schema["paths"]["/dashboard"]["get"]
-    assert "security" not in dashboard_get
+    # Web-only routes (session-cookie auth, not the REST API) aren't part of
+    # the documented API at all.
+    assert "/dashboard" not in schema["paths"]
+    assert "/login" not in schema["paths"]
+    assert all(path.startswith("/api/") for path in schema["paths"])

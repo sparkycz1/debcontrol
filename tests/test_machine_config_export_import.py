@@ -165,7 +165,7 @@ async def test_import_skips_existing_machine_name(client):
         data={"json_text": json.dumps(payload), "csrf_token": csrf_token},
     )
     assert response.status_code == 200
-    assert "Skipped 1 machine(s)" in response.text
+    assert "Skipped 1 machine (name" in response.text
     assert "already exists" in response.text
 
 

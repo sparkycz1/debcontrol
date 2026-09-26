@@ -47,7 +47,7 @@ async def test_web_bulk_move_and_clear(client, db_session_factory):
     )
     assert response.status_code == 303
     followed = await client.get(response.headers["location"])
-    assert 'Moved 2 machine(s) to group "prod".' in followed.text.replace("&#34;", '"')
+    assert 'Moved 2 machines to group "prod".' in followed.text.replace("&#34;", '"')
     groups = await _groups(db_session_factory)
     assert groups["m0"] == prod_id and groups["m1"] == prod_id and groups["m2"] != prod_id
 

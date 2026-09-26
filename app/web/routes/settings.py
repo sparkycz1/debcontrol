@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Form, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.ai.base import AiProviderError
 from app.ai.config import (
@@ -24,7 +25,8 @@ from app.ai.config import (
     replace_fetched_models,
 )
 from app.ai.providers import build_client
-from app.audit import log_event, verify_chain
+from app.audit import client_ip, log_event, verify_chain
+from app.auth import session_policy
 from app.auth.dependencies import require_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
@@ -48,8 +50,10 @@ from app.db.models.geoip_database import SINGLETON_ID as GEOIP_SINGLETON_ID
 from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.role import Permission
+from app.db.models.user import AuthProvider, User
+from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
-from app.services.settings_limits import BOUNDED_FIELDS
+from app.services.settings_limits import BOUNDED_FIELDS, SIGN_IN_POLICY_FIELDS
 from app.ssh.identity import (
     activate_pending_identity,
     discard_pending_identity,
@@ -112,6 +116,18 @@ async def _render_settings(
     # singleton-row idea as `get_or_create_app_settings` above.
     ai_configs = await get_or_create_ai_provider_configs(db)
     geoip_database = await db.get(GeoipDatabase, GEOIP_SINGLETON_ID)
+    has_passkey = select(WebAuthnCredential.id).where(WebAuthnCredential.user_id == User.id)
+    without_second_factor = await db.execute(
+        select(User)
+        .options(selectinload(User.role))
+        .where(
+            User.is_active,
+            User.auth_provider != AuthProvider.OIDC,
+            User.totp_enabled.is_(False),
+            ~has_passkey.exists(),
+        )
+        .order_by(User.username)
+    )
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     context: dict[str, object] = {
         "identity": identity,
@@ -129,6 +145,13 @@ async def _render_settings(
         "selectable_models": await get_selectable_models(db),
         "tabs": _tabs(request),
         "active_tab": tab,
+        # Settings -> Security: local/LDAP accounts with neither TOTP nor a
+        # passkey (OIDC accounts are the identity provider's to cover).
+        "users_without_second_factor": list(without_second_factor.scalars().all()),
+        "sign_in_limits": {
+            name: BOUNDED_FIELDS[name] for name in SIGN_IN_POLICY_FIELDS
+        },
+        "client_ip": client_ip(request),
         **extra,
     }
     response = templates.TemplateResponse(request, "settings/index.html", context)
@@ -331,6 +354,74 @@ async def update_audit_retention(
         ),
     )
 
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/sign-in-policy", dependencies=[_manage, Depends(verify_csrf)])
+async def update_sign_in_policy(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    session_idle_timeout_minutes: str = Form(""),
+    session_absolute_max_hours: str = Form(""),
+    login_max_failed_attempts: str = Form(""),
+    login_lockout_minutes: str = Form(""),
+    login_allowed_networks: str = Form(""),
+) -> Response:
+    """Settings -> Security's sign-in policy (`app.auth.session_policy`).
+
+    The network allowlist is refused when it would exclude the address
+    saving it — the one mistake here that would lock the operator out of
+    the instance with no way back in short of editing the database."""
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+    values: dict[str, int] = {}
+    for name, raw, label_key in (
+        ("session_idle_timeout_minutes", session_idle_timeout_minutes,
+         "settings.security.idle_timeout"),
+        ("session_absolute_max_hours", session_absolute_max_hours,
+         "settings.security.absolute_max"),
+        ("login_max_failed_attempts", login_max_failed_attempts,
+         "settings.security.max_failed_attempts"),
+        ("login_lockout_minutes", login_lockout_minutes, "settings.security.lockout_minutes"),
+    ):
+        minimum, maximum = BOUNDED_FIELDS[name]
+        value, error = _parse_bounded_int(
+            request, raw, label=t(request, label_key), minimum=minimum, maximum=maximum
+        )
+        if error:
+            errors.append(error)
+        elif value is not None:
+            values[name] = value
+
+    networks, invalid = session_policy.parse_networks(login_allowed_networks)
+    if invalid:
+        errors.append(
+            t(request, "settings.security.invalid_networks", entries=", ".join(invalid[:5]))
+        )
+    elif networks and not session_policy.ip_allowed(client_ip(request), networks):
+        errors.append(
+            t(request, "settings.security.networks_exclude_you", ip=client_ip(request) or "?")
+        )
+    if errors:
+        return await _render_settings(request, db, errors, tab="security")
+
+    normalized_networks = "\n".join(str(n) for n in networks) or None
+    for name, value in values.items():
+        setattr(app_settings, name, value)
+    app_settings.login_allowed_networks = normalized_networks
+    await db.commit()
+    session_policy.invalidate()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.sign_in_policy.update",
+        summary="Updated the sign-in policy",
+        details={
+            **values,
+            "login_allowed_networks": [str(n) for n in networks],
+        },
+    )
     return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
 
 

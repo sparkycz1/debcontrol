@@ -66,7 +66,7 @@ async def test_import_creates_role(client):
         data={"json_text": json.dumps(payload), "csrf_token": csrf_token},
     )
     assert response.status_code == 200
-    assert "Created 1 role(s)" in response.text
+    assert "Created 1 role." in response.text
 
     roles_page = await client.get("/roles")
     assert "imported-role" in roles_page.text
@@ -92,7 +92,7 @@ async def test_import_skips_existing_role_name(client):
         data={"json_text": json.dumps(payload), "csrf_token": csrf_token},
     )
     assert response.status_code == 200
-    assert "Skipped 1 role(s)" in response.text
+    assert "Skipped 1 role (" in response.text
     assert "already exists" in response.text
 
 
@@ -114,7 +114,7 @@ async def test_import_drops_unknown_permission_with_warning(client):
         data={"json_text": json.dumps(payload), "csrf_token": csrf_token},
     )
     assert response.status_code == 200
-    assert "Created 1 role(s)" in response.text
+    assert "Created 1 role." in response.text
     assert "some.future.permission" in response.text
 
 

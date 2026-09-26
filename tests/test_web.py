@@ -623,7 +623,7 @@ async def test_trigger_group_update_batches_and_skips_unpinned(client, db_sessio
     assert batch_page.status_code == 200
     assert f"/machines/{pinned_id}" in batch_page.text
     assert f"/machines/{unpinned_id}" not in batch_page.text
-    assert "1 machine(s) were skipped" in batch_page.text
+    assert "1 machine was skipped" in batch_page.text
 
 
 async def test_check_updates_requires_pinned_host_key(client):

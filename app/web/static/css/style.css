@@ -324,7 +324,17 @@ p { margin: 0 0 var(--space-3); }
     padding: 0 0 0 var(--space-4);
     background: transparent;
   }
-  .site-header-user { order: 2; margin-left: 0; }
+  /* Theme toggle, account and sign-out fold into the hamburger menu
+     instead of taking a row of their own above every page. */
+  .site-header-user {
+    order: 4;
+    flex-basis: 100%;
+    margin-left: 0;
+    padding: var(--space-3);
+    border-top: 1px solid var(--color-border);
+    display: none;
+  }
+  .nav-toggle:checked ~ .site-header-user { display: flex; }
 }
 
 /* Phone-width tightening — everything above already reflows (flex-wrap,
@@ -615,6 +625,19 @@ p { margin: 0 0 var(--space-3); }
   border-bottom-color: var(--color-accent);
 }
 
+/* Phones: one horizontally scrollable row instead of wrapping onto three
+   lines and pushing the tab's content below the fold. */
+@media (max-width: 640px) {
+  .tab-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab-nav::-webkit-scrollbar { display: none; }
+  .tab-nav a { flex: none; white-space: nowrap; padding: var(--space-2) var(--space-3); }
+}
+
 /* --- Buttons --- */
 
 .button {
@@ -748,6 +771,9 @@ p { margin: 0 0 var(--space-3); }
 }
 
 .data-table th { white-space: nowrap; }
+.data-table td.cell-nowrap { white-space: nowrap; }
+/* A wide table that must never push the page itself sideways. */
+.table-scroll { overflow-x: auto; }
 
 .data-table th {
   color: var(--color-muted);
@@ -1310,6 +1336,7 @@ pre code { background: none; padding: 0; }
 .fleet-stat-label { color: var(--color-muted); font-size: 0.82rem; }
 .fleet-ok { color: var(--color-ok); }
 .fleet-danger { color: var(--color-danger); }
+.fleet-warn { color: var(--color-warn); }
 
 .fleet-grid {
   display: grid;
@@ -2096,3 +2123,21 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 .security-package-list { margin: var(--space-2) 0; padding-left: 1.2rem; }
 .security-package-list li { margin-bottom: var(--space-1); }
 .cve-link { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Machines list (Table view) on phones: only what's needed to spot a
+   problem — name, status, updates — so those never scroll off-screen;
+   IP/hostname/group/tags/host key stay a tap away on the machine itself
+   (or in the Cards view). The bulk-action bar only appears once something
+   is selected, so its Shutdown button isn't sitting under a thumb on
+   every visit (bulk-select.js toggles `has-selection`). */
+@media (max-width: 640px) {
+  .data-table .col-optional { display: none; }
+  /* A long uppercase header ("AKTUALIZACE") may wrap rather than widen
+     the column past the screen. */
+  .data-table th { white-space: normal; }
+  /* Repeated here: the phone-width padding near the top of this file is
+     declared before the base `.data-table td` rule and so never won. */
+  .data-table th, .data-table td { padding: 0.5rem 0.6rem; }
+  [data-bulk-bar]:not(.has-selection) { display: none; }
+  [data-bulk-bar] .button-danger { margin-left: auto; }
+}

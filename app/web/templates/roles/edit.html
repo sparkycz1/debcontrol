@@ -5,12 +5,18 @@
 {% block content %}
   <div class="page-header">
     <h1>{{ t(request, "roles.edit_heading") }}</h1>
-    <form method="post" action="/roles/{{ role.id }}/delete"
-          class="inline-form" data-confirm='{{ t(request, "roles.delete_confirm", name=(role.name | e)) | safe }}'>
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button button-danger"
-              {{ 'disabled' if role.users else '' }}>{{ t(request, "roles.delete_role") }}</button>
-    </form>
+    {% if role.users %}
+      {# Not deletable while assigned — a neutral, visibly inert control
+         with the reason attached, not a red button that merely looks dim. #}
+      <button type="button" class="button button-secondary" disabled
+              title="{{ t(request, 'roles.assigned_to', count=(role.users | length)) }}">{{ t(request, "roles.delete_role") }}</button>
+    {% else %}
+      <form method="post" action="/roles/{{ role.id }}/delete"
+            class="inline-form" data-confirm='{{ t(request, "roles.delete_confirm", name=(role.name | e)) | safe }}'>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-danger">{{ t(request, "roles.delete_role") }}</button>
+      </form>
+    {% endif %}
   </div>
 
   {% if role.users %}

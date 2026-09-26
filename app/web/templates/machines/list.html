@@ -254,14 +254,14 @@
             <tr>
               <th><input type="checkbox" data-select-all="machine_ids" aria-label="{{ t(request, 'machines.bulk.select_all') }}"></th>
               <th>{{ t(request, 'machines.table.name') }}</th>
-              <th>{{ t(request, 'machines.table.ip') }}</th>
-              <th>{{ t(request, 'machines.table.hostname') }}</th>
-              <th>{{ t(request, 'machines.table.group') }}</th>
-              <th>{{ t(request, 'machines.table.tags') }}</th>
+              <th class="col-optional">{{ t(request, 'machines.table.ip') }}</th>
+              <th class="col-optional">{{ t(request, 'machines.table.hostname') }}</th>
+              <th class="col-optional">{{ t(request, 'machines.table.group') }}</th>
+              <th class="col-optional">{{ t(request, 'machines.table.tags') }}</th>
               <th>{{ t(request, 'machines.table.status') }}</th>
               <th>{{ t(request, 'machines.table.updates') }}</th>
-              <th>{{ t(request, 'machines.table.host_key') }}</th>
-              <th></th>
+              <th class="col-optional">{{ t(request, 'machines.table.host_key') }}</th>
+              <th class="col-optional"></th>
             </tr>
           </thead>
           <tbody>
@@ -272,16 +272,16 @@
                   {{ render_os_badge(machine.os_id) }}
                   <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>
                 </td>
-                <td>{{ machine.ip_address }}</td>
-                <td>{{ machine.discovered_hostname or '—' }}</td>
-                <td>
+                <td class="col-optional">{{ machine.ip_address }}</td>
+                <td class="col-optional">{{ machine.discovered_hostname or '—' }}</td>
+                <td class="col-optional">
                   {% if machine.group %}
                     <a href="/machine-groups/{{ machine.group.id }}">{{ machine.group.name }}</a>
                   {% else %}
                     <span class="hint">—</span>
                   {% endif %}
                 </td>
-                <td>
+                <td class="col-optional">
                   {% if machine.tags %}
                     {{ tag_chips(machine) }}
                   {% else %}
@@ -290,15 +290,15 @@
                 </td>
                 <td>{{ status_badge(machine) }}</td>
                 <td>{% include "partials/machine_update_status_cell.html" %}</td>
-                <td>{{ host_key_badge(machine) }}</td>
-                <td><a href="/machines/{{ machine.id }}">{{ t(request, 'machines.table.details') }}</a></td>
+                <td class="col-optional">{{ host_key_badge(machine) }}</td>
+                <td class="col-optional"><a href="/machines/{{ machine.id }}">{{ t(request, 'machines.table.details') }}</a></td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       {% endif %}
 
-      <div class="page-header-actions" id="bulk-actions-bar">
+      <div class="page-header-actions" id="bulk-actions-bar" data-bulk-bar="machine_ids">
         <span class="hint">{{ t(request, 'machines.bulk.with_selected') }}</span>
         <button type="submit" formaction="/machines/bulk/check-updates" class="button button-secondary">
           {{ t(request, 'machines.bulk.check_updates') }}

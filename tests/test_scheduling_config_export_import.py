@@ -73,7 +73,7 @@ async def test_import_creates_task_for_all_machines(client):
         data={"json_text": json.dumps(payload), "csrf_token": csrf_token},
     )
     assert response.status_code == 200
-    assert "Created 1 scheduled task(s)" in response.text
+    assert "Created 1 scheduled task." in response.text
 
     listing = await client.get("/scheduling")
     assert "imported-nightly" in listing.text
@@ -102,7 +102,7 @@ async def test_import_resolves_machine_target_by_name(client):
         data={"json_text": json.dumps(payload), "csrf_token": csrf_token},
     )
     assert response.status_code == 200
-    assert "Created 1 scheduled task(s)" in response.text
+    assert "Created 1 scheduled task." in response.text
 
     listing = await client.get("/scheduling")
     assert "task-for-import-target" in listing.text

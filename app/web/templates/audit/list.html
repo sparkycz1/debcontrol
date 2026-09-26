@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{{ t(request, "audit.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -45,7 +46,7 @@
       <option value="" {% if not outcome %}selected{% endif %}>{{ t(request, "audit.search.any_outcome") }}</option>
       {% for o in outcomes %}
         <option value="{{ o.value }}" {% if outcome == o.value %}selected{% endif %}>
-          {{ o.value }}
+          {{ t(request, "audit.outcome_" ~ o.value) }}
         </option>
       {% endfor %}
     </select>
@@ -80,6 +81,7 @@
   {% endif %}
 
   {% if entries %}
+    <div class="table-scroll">
     <table class="data-table">
       <thead>
         <tr>
@@ -95,7 +97,7 @@
       <tbody>
         {% for entry in entries %}
           <tr>
-            <td>{{ entry.created_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
+            <td class="cell-nowrap">{{ entry.created_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
             <td>{{ entry.actor or '—' }}</td>
             <td>
               {{ entry.ip_address or '—' }}
@@ -103,7 +105,7 @@
                 <span class="hint">({{ entry.geo_city ~ ', ' if entry.geo_city }}{{ entry.geo_country }})</span>
               {% endif %}
             </td>
-            <td><code>{{ entry.action }}</code></td>
+            <td class="cell-nowrap"><code>{{ entry.action }}</code></td>
             <td>
               {% if entry.target_label %}
                 {{ entry.target_type }}: {{ entry.target_label }}
@@ -111,13 +113,19 @@
                 —
               {% endif %}
             </td>
-            <td>
-              {{ entry.summary }}
+            <td title="{{ entry.summary }}">
+              {{ audit_text(request, entry.action, entry.summary) }}
               {% if entry.details %}
-                <br><span class="hint">{{ entry.details }}</span>
+                <br><span class="hint">
+                  {%- if entry.details is mapping -%}
+                    {%- for key, value in entry.details | dictsort -%}
+                      {{ key }}: {{ value | join(', ') if value is iterable and value is not string and value is not mapping else value }}{% if not loop.last %} · {% endif %}
+                    {%- endfor -%}
+                  {%- else -%}{{ entry.details }}{%- endif -%}
+                </span>
               {% endif %}
             </td>
-            <td>
+            <td class="cell-nowrap">
               {% if entry.outcome.value == 'success' %}
                 <span class="badge badge-ok">{{ t(request, "audit.outcome_success") }}</span>
               {% elif entry.outcome.value == 'denied' %}
@@ -130,6 +138,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
 
     <div class="page-header-actions">
       {% if page > 1 %}

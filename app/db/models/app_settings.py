@@ -27,7 +27,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, func
+from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -103,6 +103,28 @@ class AppSettings(Base):
     audit_log_retention_days: Mapped[int | None] = mapped_column(
         Integer, nullable=True, default=90
     )
+
+    # --- Sign-in policy (Settings -> Security, see app.auth.session_policy).
+    # Defaults are the values that used to be hardcoded in app.auth.sessions
+    # and app.auth.login, so an upgrading instance behaves identically until
+    # an admin changes one. ---
+    #
+    # A session with no request for this long expires (sliding window).
+    session_idle_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, default=720, nullable=False
+    )
+    # ...and every session ends this long after sign-in, however active.
+    session_absolute_max_hours: Mapped[int] = mapped_column(
+        Integer, default=720, nullable=False
+    )
+    # Consecutive failed sign-ins (password or second factor) that lock an
+    # account, and for how long — app.auth.login._register_failed_attempt.
+    login_max_failed_attempts: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    login_lockout_minutes: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    # Newline/comma-separated IPs or CIDR networks the web UI and the REST
+    # API accept requests from; NULL/empty = anywhere. Checked against the
+    # client address as resolved by app.core.proxy_headers.
+    login_allowed_networks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Same idea, for the daily fleet_snapshots row written by
     # app.tasks.jobs.record_fleet_snapshot and purged by

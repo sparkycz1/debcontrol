@@ -41,8 +41,8 @@ async def test_bulk_import_creates_pending_machines(client, db_session_factory):
         },
     )
     assert response.status_code == 200
-    assert "Added 2 pending machine(s)" in response.text
-    assert "Skipped 1 row(s)" in response.text
+    assert "Added 2 pending machines" in response.text
+    assert "Skipped 1 row with" in response.text
 
     async with db_session_factory() as db:
         result = await db.execute(select(PendingMachine))

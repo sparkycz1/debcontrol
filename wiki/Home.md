@@ -70,7 +70,7 @@ terminator in front of it, always. Pick your fighter:
 | Tab | The highlights (not the whole story — see [Architecture](Architecture.md)) |
 |---|---|
 | 📊 **Dashboard** | Fleet counts, upcoming schedules, recent audit activity, trend sparklines, an optional **AI fleet summary** ("what changed, what needs your attention") |
-| 🛰️ **Fleet** | Every machine as one card — online/offline, CPU, RAM, fullest disk, hottest sensor, load, uptime, containers, disk-full forecast — colored by the worst reading, refreshing itself every minute (`/fleet`, `GET /api/v1/fleet`) |
+| 🛰️ **Fleet** | Every machine as one card — online/offline, CPU, RAM, fullest disk, hottest sensor, load, uptime, containers, pending updates, reboot required, disk-full forecast — colored by the worst reading, refreshing itself every minute (`/fleet`, `GET /api/v1/fleet`) |
 | 🔐 **Checks** | TLS certificate expiry and HTTP endpoint checks run from the debcontrol server — status code, "must / must not contain" text, a JSON-path assertion, a response-time limit — with down/recovered/certificate-expiring notifications, uptime/latency history, a **monthly SLA report** (CSV too) and a "Summarize with AI" button (`/checks`, `/checks/sla`, `/api/v1/checks`) |
 | 🖥️ **Machines** | Facts, packages (apt/flatpak/snap), live monitoring (CPU/RAM/disk/network, Docker containers, systemd services with per-service CPU/RAM, and on bare metal temperatures/fans/power/GPUs/S.M.A.R.T.), a browser SSH terminal, log browsing (journal priority filter, saved log views), tags, status/group filters & saved views, bulk actions, JSON/CSV config export and a filtered CSV inventory report — and **update rollback** if a `dist-upgrade` goes sideways. A **History** tab puts notes, detected configuration changes (kernel, OS, listening ports, admin/login accounts, disks, IPs), update runs, outages and audited actions on one time line, with an AI summary of what happened. **Security updates** lists every pending apt security update fleet-wide with the CVEs it fixes (read from the package changelog) |
 | 🗂️ **Groups** | Named groups for bulk updates/power actions; the built-in "All machines" catch-all |
@@ -80,7 +80,7 @@ terminator in front of it, always. Pick your fighter:
 | 👤 **Users & Roles** | Full RBAC matrix, temporary permission grants, bulk actions, SSO — export/import roles too |
 | 🔔 **Notifications** | Rules — event and/or conditions (CPU/RAM/disk/facts thresholds, shown as a reference line on the Monitoring charts too), who (users/roles), which machines/groups — email or webhook you when something happens, configurable via form or YAML, exportable/importable. Editable per-event or named custom templates, a "Send test" button, a delivery history log, and **maintenance windows** that mute a group's alerts during planned work. Events include configuration drift and newly pending security updates (with CVEs) |
 | 📚 **API docs** (`/api`) | Live Swagger UI over the full read/write REST API — everything the web UI can do, an API can too |
-| ⚙️ **Settings** | SSH key rotation, retention policies, LDAP/OIDC/syslog/SMTP integrations, AI provider config |
+| ⚙️ **Settings** | SSH key rotation, retention policies, sign-in policy (session lifetime, lockout, allowed networks, accounts without 2FA), LDAP/OIDC/syslog/SMTP integrations, AI provider config |
 
 Want the granular, paragraph-by-paragraph feature list this table used to
 be? That level of detail now lives where it belongs — next to the *why*,

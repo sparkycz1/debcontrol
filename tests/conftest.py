@@ -19,7 +19,7 @@ os.environ.setdefault("REDIS_PASSWORD", "test-only-not-for-real-use")
 os.environ.setdefault("INFORM_TOKEN", "test-only-inform-token-not-for-real-use-000000")
 
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from collections.abc import Set as AbstractSet
 from typing import Any
 
@@ -30,6 +30,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.auth import session_policy
 from app.auth.security import hash_password
 from app.auth.sessions import SESSION_COOKIE_NAME, create_session
 from app.db.base import Base
@@ -82,6 +83,16 @@ class RecordedCeleryCalls(list[tuple[str, tuple[Any, ...], dict[str, Any]]]):
     @property
     def names(self) -> list[str]:
         return [name for name, _args, _kwargs in self]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_sign_in_policy() -> Iterator[None]:
+    """`app.auth.session_policy` caches the policy in process for a few
+    seconds; every test gets its own in-memory database, so a policy cached
+    from the previous test's settings must never carry over."""
+    session_policy.invalidate()
+    yield
+    session_policy.invalidate()
 
 
 @pytest.fixture(autouse=True)

@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.auth import session_policy
 from app.auth import totp as totp_module
 from app.auth.ldap import LdapUnavailableError
 from app.auth.ldap import authenticate as ldap_authenticate
@@ -32,9 +33,6 @@ from app.db.models.app_settings import AppSettings
 from app.db.models.role import Permission, Role
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
-
-_MAX_FAILED_ATTEMPTS = 5
-_LOCKOUT_DURATION = timedelta(minutes=15)
 
 
 async def find_user_for_login(db: AsyncSession, username: str) -> User | None:
@@ -50,9 +48,11 @@ async def find_user_for_login(db: AsyncSession, username: str) -> User | None:
 
 
 async def _register_failed_attempt(db: AsyncSession, user: User) -> None:
+    # Threshold and duration: Settings -> Security (app.auth.session_policy).
+    policy = await session_policy.load_policy(db)
     user.failed_login_attempts += 1
-    if user.failed_login_attempts >= _MAX_FAILED_ATTEMPTS:
-        user.locked_until = datetime.now(UTC) + _LOCKOUT_DURATION
+    if user.failed_login_attempts >= policy.max_failed_attempts:
+        user.locked_until = datetime.now(UTC) + policy.lockout_duration
     await db.commit()
 
 

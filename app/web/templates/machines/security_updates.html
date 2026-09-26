@@ -13,6 +13,17 @@
   </div>
   <p class="hint">{{ t(request, "security.intro") }}</p>
 
+  {% if undetailed %}
+    <div class="alert alert-warn">
+      <p>{{ t(request, "security.undetailed_intro") }}</p>
+      <ul>
+        {% for m in undetailed %}
+          <li><a href="/machines/{{ m.id }}/updates">{{ m.name }}</a> — {{ t(request, "security.undetailed_count", count=m.security_upgradable_count) }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
   {% if rows %}
     <div class="monitoring-table-wrap">
       <table class="data-table">
@@ -43,7 +54,7 @@
         </tbody>
       </table>
     </div>
-  {% else %}
+  {% elif not undetailed %}
     <div class="empty-state"><p>{{ t(request, "security.none_pending") }}</p></div>
   {% endif %}
 {% endblock %}

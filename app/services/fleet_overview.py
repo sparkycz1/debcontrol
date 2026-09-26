@@ -1,6 +1,6 @@
 """The Fleet page (`/fleet`) and its REST twin: every visible machine as one
 compact row of its latest readings — status, CPU, RAM, fullest disk,
-hottest sensor, load, containers — built from each machine's single most
+hottest sensor, load, containers, pending updates — built from each machine's single most
 recent monitoring sample (one batched window query, see
 `latest_monitoring_samples`) plus a few columns already on `Machine`.
 """
@@ -83,9 +83,16 @@ class FleetRow:
     containers_total: int | None
     containers_problem: int | None
     disk_full_days: float | None
+    upgradable_count: int | None
+    security_upgradable_count: int | None
+    reboot_required: bool | None
     sampled_at: datetime | None
     # The worst of the colored metrics — drives the card's accent.
     level: Level
+    # Counted by the page's "needs attention" tile: a danger-level reading,
+    # or something an operator has to act on even while every gauge is
+    # green — pending security updates, a pending reboot.
+    needs_attention: bool
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -131,10 +138,13 @@ def build_fleet_row(machine: Machine, sample: MachineMonitoringSample | None) ->
     level: Level = "unknown"
     if machine.is_reachable is False or containers_problem or "danger" in levels:
         level = "danger"
-    elif "warn" in levels:
+    elif "warn" in levels or machine.security_upgradable_count or machine.reboot_required:
         level = "warn"
     elif "ok" in levels:
         level = "ok"
+    needs_attention = bool(
+        level == "danger" or machine.security_upgradable_count or machine.reboot_required
+    )
 
     return FleetRow(
         machine_id=str(machine.id),
@@ -154,8 +164,12 @@ def build_fleet_row(machine: Machine, sample: MachineMonitoringSample | None) ->
         containers_total=containers_total,
         containers_problem=containers_problem,
         disk_full_days=soonest_full_days(machine.disk_forecast),
+        upgradable_count=machine.upgradable_count,
+        security_upgradable_count=machine.security_upgradable_count,
+        reboot_required=machine.reboot_required,
         sampled_at=sample.sampled_at if sample else None,
         level=level,
+        needs_attention=needs_attention,
     )
 
 

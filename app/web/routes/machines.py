@@ -82,7 +82,7 @@ from app.services.saved_views import (
     delete_saved_view,
     list_saved_views,
 )
-from app.services.security_updates import load_security_overview
+from app.services.security_updates import load_security_overview_with_gaps
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
@@ -955,9 +955,11 @@ async def security_updates(
     """Every pending apt security update across the visible fleet, grouped
     by package and version, with the CVEs it fixes and the machines it's
     pending on — see `app.services.security_updates`."""
-    rows = await load_security_overview(db, await machines_visible_to(db, current_user))
+    rows, undetailed = await load_security_overview_with_gaps(
+        db, await machines_visible_to(db, current_user)
+    )
     return templates.TemplateResponse(
-        request, "machines/security_updates.html", {"rows": rows}
+        request, "machines/security_updates.html", {"rows": rows, "undetailed": undetailed}
     )
 
 
@@ -1398,6 +1400,9 @@ async def machine_monitoring(
             # level, drawn as a reference line on the matching chart below
             # — see app.services.notifications.condition_thresholds_for_machine.
             "condition_thresholds": await condition_thresholds_for_machine(db, machine),
+            # Shown next to the charts when the machine has no interval
+            # override of its own, so the hint names an actual number.
+            "app_settings": await get_or_create_app_settings(db),
         },
     )
     if new_cookie:

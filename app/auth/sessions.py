@@ -3,9 +3,10 @@ isn't a stateless signed cookie), plus the short-lived signed "pending 2FA"
 ticket used between "password/LDAP check passed" and "TOTP code confirmed".
 
 Session lifetime: sliding — each validated request pushes `expires_at` out
-by `SESSION_IDLE_TIMEOUT`, capped at `SESSION_ABSOLUTE_MAX` from creation, so
-an abandoned-but-never-explicitly-logged-out browser tab still eventually
-needs a fresh login.
+by the idle timeout, capped at the absolute maximum from creation, so an
+abandoned-but-never-explicitly-logged-out browser tab still eventually
+needs a fresh login. Both come from Settings -> Security
+(`app.auth.session_policy`).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import binascii
 import hashlib
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select, update
@@ -23,14 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.responses import Response
 
+from app.auth import session_policy
 from app.core.config import get_settings
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_session import UserSession
 
 SESSION_COOKIE_NAME = "session"
-SESSION_IDLE_TIMEOUT = timedelta(hours=12)
-SESSION_ABSOLUTE_MAX = timedelta(days=30)
 
 IMPERSONATION_RETURN_COOKIE_NAME = "impersonation_return"
 _IMPERSONATION_RETURN_SALT = "impersonation-return"
@@ -83,10 +83,11 @@ async def create_session(
 ) -> tuple[UserSession, str]:
     raw_token = secrets.token_urlsafe(32)
     now = datetime.now(UTC)
+    policy = await session_policy.load_policy(db)
     session = UserSession(
         user_id=user.id,
         token_hash=_hash_token(raw_token),
-        expires_at=now + SESSION_IDLE_TIMEOUT,
+        expires_at=now + policy.idle_timeout,
         ip_address=ip_address,
         user_agent=(user_agent or "")[:255] or None,
     )
@@ -114,14 +115,15 @@ async def get_valid_session(db: AsyncSession, raw_token: str) -> UserSession | N
     session = result.scalar_one_or_none()
     if session is None or session.revoked_at is not None:
         return None
-    absolute_cutoff = _as_aware_utc(session.created_at) + SESSION_ABSOLUTE_MAX
+    policy = await session_policy.load_policy(db)
+    absolute_cutoff = _as_aware_utc(session.created_at) + policy.absolute_max
     if not _is_in_future(session.expires_at) or not _is_in_future(absolute_cutoff):
         return None
     if not session.user.is_active:
         return None
 
     now = datetime.now(UTC)
-    session.expires_at = min(now + SESSION_IDLE_TIMEOUT, absolute_cutoff)
+    session.expires_at = min(now + policy.idle_timeout, absolute_cutoff)
     session.last_seen_at = now
     await db.commit()
     return session
@@ -164,11 +166,12 @@ async def start_impersonation(
     browser's session cookie over to this new one."""
     raw_token = secrets.token_urlsafe(32)
     now = datetime.now(UTC)
+    policy = await session_policy.load_policy(db)
     session = UserSession(
         user_id=target.id,
         impersonator_id=admin.id,
         token_hash=_hash_token(raw_token),
-        expires_at=now + SESSION_IDLE_TIMEOUT,
+        expires_at=now + policy.idle_timeout,
         ip_address=ip_address,
         user_agent=(user_agent or "")[:255] or None,
     )
@@ -244,7 +247,9 @@ def set_session_cookie(response: Response, raw_token: str) -> None:
         httponly=True,
         samesite="strict",
         secure=get_settings().is_production,
-        max_age=int(SESSION_IDLE_TIMEOUT.total_seconds()),
+        # The browser may keep the cookie for the session's whole possible
+        # life; the idle timeout is enforced server-side on every request.
+        max_age=int(session_policy.last_known_policy().absolute_max.total_seconds()),
     )
 
 

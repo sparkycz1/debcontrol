@@ -1,4 +1,58 @@
   <section class="panel">
+    <h2>{{ t(request, "settings.security.sign_in") }}</h2>
+    <p class="hint">{{ t(request, "settings.security.sign_in_hint") }}</p>
+
+    <form method="post" action="/settings/sign-in-policy" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <label for="session_idle_timeout_minutes">{{ t(request, "settings.security.idle_timeout") }}</label>
+      <input type="number" id="session_idle_timeout_minutes" name="session_idle_timeout_minutes" required
+             min="{{ sign_in_limits.session_idle_timeout_minutes[0] }}" max="{{ sign_in_limits.session_idle_timeout_minutes[1] }}" step="1"
+             value="{{ app_settings.session_idle_timeout_minutes }}">
+      <p class="hint">{{ t(request, "settings.security.idle_timeout_hint") }}</p>
+
+      <label for="session_absolute_max_hours">{{ t(request, "settings.security.absolute_max") }}</label>
+      <input type="number" id="session_absolute_max_hours" name="session_absolute_max_hours" required
+             min="{{ sign_in_limits.session_absolute_max_hours[0] }}" max="{{ sign_in_limits.session_absolute_max_hours[1] }}" step="1"
+             value="{{ app_settings.session_absolute_max_hours }}">
+      <p class="hint">{{ t(request, "settings.security.absolute_max_hint") }}</p>
+
+      <label for="login_max_failed_attempts">{{ t(request, "settings.security.max_failed_attempts") }}</label>
+      <input type="number" id="login_max_failed_attempts" name="login_max_failed_attempts" required
+             min="{{ sign_in_limits.login_max_failed_attempts[0] }}" max="{{ sign_in_limits.login_max_failed_attempts[1] }}" step="1"
+             value="{{ app_settings.login_max_failed_attempts }}">
+
+      <label for="login_lockout_minutes">{{ t(request, "settings.security.lockout_minutes") }}</label>
+      <input type="number" id="login_lockout_minutes" name="login_lockout_minutes" required
+             min="{{ sign_in_limits.login_lockout_minutes[0] }}" max="{{ sign_in_limits.login_lockout_minutes[1] }}" step="1"
+             value="{{ app_settings.login_lockout_minutes }}">
+      <p class="hint">{{ t(request, "settings.security.lockout_hint") }}</p>
+
+      <label for="login_allowed_networks">{{ t(request, "settings.security.allowed_networks") }}</label>
+      <textarea id="login_allowed_networks" name="login_allowed_networks" rows="3"
+                placeholder="192.168.1.0/24&#10;10.8.0.0/16">{{ app_settings.login_allowed_networks or '' }}</textarea>
+      <p class="hint">{{ t(request, "settings.security.allowed_networks_hint", ip=(client_ip or '?')) }}</p>
+
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "settings.security.second_factor") }}</h2>
+    {% if users_without_second_factor %}
+      <p class="hint">{{ t(request, "settings.security.second_factor_missing_hint") }}</p>
+      <ul>
+        {% for u in users_without_second_factor %}
+          <li><a href="/users/{{ u.id }}/edit">{{ u.username }}</a> <span class="hint">— {{ u.role.name if u.role else '—' }}{% if u.role and u.role.require_totp %}, {{ t(request, "settings.security.second_factor_required_by_role") }}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+      <p class="hint">{{ t(request, "settings.security.second_factor_enforce_hint") }} <a href="/roles">{{ t(request, "nav.roles") }}</a>.</p>
+    {% else %}
+      <p><span class="badge badge-ok">{{ t(request, "settings.security.second_factor_all_set") }}</span></p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
     <h2>{{ t(request, "settings.security.audit_log") }}</h2>
 
     <p class="hint">
@@ -32,7 +86,7 @@
     <p class="hint stack-gap">
       {{ t(request, "settings.security.export_hint_before") }}
       <a href="/audit/export?format=csv">CSV</a> ·
-      <a href="/audit/export?format=json">JSON</a>{{ t(request, "settings.security.export_hint_after") }}
+      <a href="/audit/export?format=json">JSON</a>{{ t(request, "settings.security.export_hint_after") | safe }}
     </p>
   </section>
 
