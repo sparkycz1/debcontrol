@@ -33,7 +33,7 @@
           {{ t(request, "machine.edit.readiness_sudoers_hint") | safe }}
         </p>
         <pre><code>cat &gt; /etc/sudoers.d/{{ machine.username }} &lt;&lt;'EOF'
-{{ machine.username }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
+{{ machine.username }} ALL=(root) NOPASSWD: {{ sudo_command_list }}
 EOF
 chmod 440 /etc/sudoers.d/{{ machine.username }}
 visudo -cf /etc/sudoers.d/{{ machine.username }}</code></pre>

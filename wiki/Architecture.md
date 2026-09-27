@@ -1,410 +1,199 @@
 # 🏗️ Architecture
 
-*The deep-dive reference — every "why", including the ones learned the hard way. Start at [Home](Home.md) if you just want the map.*
+*The stack, project layout and cross-cutting security. Start at
+[Home](Home.md) for the feature map.*
 
 ## 🗺️ Where to find things
 
-This page covers the stack, project layout, and the cross-cutting
-security essentials (CSRF, HTTP headers, startup validation, container
-hardening). Everything feature-specific has its own page, split out here
-specifically so a long single document doesn't get harder to search as
-the app grows:
-
 | Page | Covers |
 |---|---|
-| [🔐 Authentication & RBAC](Authentication-RBAC.md) | Logins (local/LDAP/OIDC), sessions, roles/permissions, temporary grants, machine-group scoping, TOTP/WebAuthn, per-user API tokens, per-user UI language, the REST API's own auth model |
-| [🖥️ Machine Management](Machine-Management.md) | SSH host key pinning, secrets, config export/import, system updates (run/preview/rollback/check), facts/packages/services, monitoring, logs, live updates, readiness checks, tags, saved views, bulk actions, power, the interactive terminal, scheduling |
-| [📝 Audit Log](Audit-Log.md) | Who/what/outcome/when, hash-chain integrity, retention, CSV/JSON export, syslog/SIEM forwarding, the Dashboard's daily trend snapshot |
-| [🔔 Notifications](Notifications.md) | Rules (event/recipients/scope), role-based targeting, searchable pickers, templates & available placeholders, per-recipient locale, SMTP delivery |
-| [🧠 AI Assistant](AI-Assistant.md) | The chat assistant, its tool/permission model, the scheduled fleet summary |
-| [🔑 SSH Host Key Verification](SSH-Host-Key-Verification.md) | Why there's no "trust on first use," and how pinning/mismatch detection works |
+| [🔐 Authentication & RBAC](Authentication-RBAC.md) | Logins, sessions, roles, scoping, 2FA, API tokens, UI language, the REST API |
+| [🖥️ Machine Management](Machine-Management.md) | Host keys, secrets, updates, facts, monitoring, Proxmox, Docker, checks, logs, terminal, scheduling |
+| [📝 Audit Log](Audit-Log.md) | What's recorded, hash chain, retention, export, syslog |
+| [🔔 Notifications](Notifications.md) | Events, conditions, recipients, templates, delivery, maintenance windows |
+| [🧠 AI Assistant](AI-Assistant.md) | The assistant, its permission model, the fleet summary |
+| [🔑 SSH Host Key Verification](SSH-Host-Key-Verification.md) | Why there's no trust-on-first-use |
 
 ## 🧱 Stack
 
 | Layer | Choice | Notes |
 |---|---|---|
 | Language | Python 3.14.7 | |
-| Web framework | FastAPI | async, OpenAPI schema for free |
-| Templates / UI | Jinja2 + [htmx](https://htmx.org) (vendored locally) | no SPA build, no CDN |
-| Database | PostgreSQL 18.6 | via `asyncpg` + SQLAlchemy 2.0 (async); image pinned to an exact patch |
-| Migrations | Alembic | async engine |
-| Task queue / broker | Redis 8.10.1 | **broker _and_ result backend** for [Celery](https://docs.celeryq.dev/); also backs the login rate limiter and the Dashboard's short-TTL fleet-stats cache (`app.services.dashboard_cache`); image pinned to an exact patch |
-| Background tasks | [Celery](https://docs.celeryq.dev/) + Celery Beat | one `worker` process pool, exactly one `beat` scheduler — see [Background tasks](#background-tasks-celery-and-celery-beat) |
-| SSH client | [AsyncSSH](https://asyncssh.readthedocs.io/) | async, strict host key verification, modern algorithms (Ed25519) |
-| Cron scheduling | [`croniter`](https://github.com/kiorky/croniter) | parses standard 5-field cron expressions for Scheduling |
-| Auth: passwords | [`argon2-cffi`](https://github.com/hynek/argon2-cffi) | argon2id hashing for local accounts |
-| Auth: LDAP | [`ldap3`](https://github.com/cannatag/ldap3) | pure Python, no system libldap headers needed |
-| Auth: OIDC | [`Authlib`](https://authlib.org/) | discovery, authorization-code flow, ID token validation |
-| Auth: TOTP | [`pyotp`](https://github.com/pyauth/pyotp) + [`qrcode`](https://github.com/lincolnloop/python-qrcode) | RFC 6238 two-factor codes; QR rendered as inline SVG |
-| Auth: WebAuthn/passkeys | [`webauthn`](https://github.com/duo-labs/py_webauthn) (py_webauthn) | registration/authentication ceremony verification (attestation/assertion signatures) |
-| Reverse proxy (optional) | [Caddy](https://caddyproxy.com/) | automatic HTTPS, TLS 1.3 only, HTTP/3 |
-| Packaging / lockfile | [`uv`](https://docs.astral.sh/uv/) | `uv.lock` is committed |
-| Containers | Docker (multi-stage build) + Docker Compose | |
+| Web | FastAPI + Jinja2 + [htmx](https://htmx.org) 2 | server-rendered, no SPA, everything vendored |
+| Database | PostgreSQL 18.6 | asyncpg + SQLAlchemy 2.0 async, Alembic |
+| Broker / cache | Redis 8.10.2 | Celery broker **and** result backend, login rate limiter, Dashboard cache |
+| Background work | [Celery](https://docs.celeryq.dev/) + Beat | see [below](#background-tasks-celery-and-celery-beat) |
+| SSH | [AsyncSSH](https://asyncssh.readthedocs.io/) | strict host-key pinning |
+| Auth | argon2-cffi, ldap3, Authlib, pyotp + qrcode, py_webauthn | |
+| Cron | croniter | |
+| Proxy (optional) | [Caddy](https://caddyproxy.com/) 2.11.4 | automatic HTTPS |
+| Packaging | [uv](https://docs.astral.sh/uv/) | `uv.lock` committed |
+| Deployment | Docker multi-stage build + Compose | |
 
 ```mermaid
 flowchart LR
-    Browser["Browser<br/>htmx, no SPA build"]
+    Browser["Browser<br/>htmx"]
     Web["web<br/>FastAPI"]
     DB[("PostgreSQL")]
-    Redis[("Redis<br/>broker + result backend")]
+    Redis[("Redis")]
     Worker["worker<br/>Celery"]
-    Beat["beat<br/>Celery Beat scheduler"]
+    Beat["beat"]
     Machines[["Managed machines<br/>SSH"]]
 
     Browser <-->|HTTP / WebSocket| Web
     Web <--> DB
     Web -->|enqueue| Redis
     Redis --> Worker
-    Beat -->|periodic sweeps| Redis
+    Beat -->|periodic jobs| Redis
     Worker <--> DB
     Worker -->|AsyncSSH| Machines
 ```
 
-One request/reply web tier, one Celery worker pool, one Beat scheduler —
-see [Background tasks](#background-tasks-celery-and-celery-beat) for what
-Beat actually schedules and why `web` never talks to a managed machine
-directly (only `worker` does).
-
+Managed machines are reached from `worker` tasks; `web` connects directly
+only for the two streaming features, the terminal and live log follow.
 
 ### Dependency version notes
 
-- **`redis-py` carries no upper pin** in `pyproject.toml` — just a lower
-  bound (`redis[hiredis]>=5.3.1`). The effective ceiling comes from
-  `kombu[redis]` (Celery's transport layer), which declares
-  `redis >=4.5.2,!=4.5.5,!=5.0.2,<6.5`; the resolver currently lands on
-  **redis-py 6.4.0**.
-  > [!NOTE]
-  > The client library version and the Redis **server** version are
-  > independent. redis-py 5.x and 6.x both talk to a Redis 8.x server —
-  > do not try to "match" them.
-- **`openrouter` (the AI provider SDK) pins this project's `pydantic`
-  floor** — every 1.x release (the SDK's current, "stable as of v1.0"
-  line) declares `pydantic>=2.11.2,<2.13`, so `uv.lock` currently resolves
-  `pydantic` to 2.12.x rather than the newest 2.13+. Not a feature
-  constraint of this app's own code; revisit once a future `openrouter`
-  release lifts that upper pydantic bound. See `OpenRouterClient` for the
-  other 0.x→1.x shape changes this upgrade needed (`models.list_async`'s
-  response nesting/pagination/optionality — `chat.send_async` was
-  unaffected).
-- Versions in `pyproject.toml` are lower bounds (`>=`); exact, reproducible
-  versions come from the committed `uv.lock`.
-- Docker images for stateful services (`postgres:18.6`, `redis:8.10.1`,
-  `caddy:2.11.4`) are pinned to an exact patch version, bumped deliberately
-  — see [Installation](Installation.md#updating).
+- `pyproject.toml` has lower bounds; exact versions come from `uv.lock`.
+- **redis-py** has no upper pin — `kombu[redis]` sets the real ceiling.
+  The client version is independent of the Redis *server* version.
+- **pydantic** stays on 2.12.x because `openrouter` 1.x requires
+  `pydantic<2.13`; revisit when it lifts that.
+- Stateful images (`postgres:18.6`, `redis:8.10.2`, `caddy:2.11.4`) and
+  the Python base image are pinned to exact versions and bumped
+  deliberately — see [Installation](Installation.md#updating).
+- Vendored front-end libraries: htmx 2.0.11, xterm.js 6.0.0 (+ fit 0.11.0,
+  webgl 0.19.0), Swagger UI 5.33.0.
 
-### Server-rendered + htmx, not a SPA
+### Front end: server-rendered + htmx
 
-- Server-rendered Jinja2: no frontend build/deploy pipeline, no
-  client-side API tokens, no JS framework supply chain.
-- htmx only for host-key discovery and connection testing, vendored
-  locally, not CDN.
-- One shared stylesheet, a small utility-class set (`.button`, `.panel`,
-  `.data-table`, `.badge`, `.alert`, `.form`, `.page-header`, ...).
-- Collapsible mobile nav is a checkbox-driven CSS toggle, not JS — works
-  under the strict CSP (no inline scripts), stays keyboard-operable
-  (visually hidden via clip/absolute positioning, not `display: none`).
-- Page width: every list, dashboard and machine page uses the wide
-  layout (`{% block main_class %}container-wide{% endblock %}`); only
-  standalone forms (new/edit, account, settings) stay narrow.
-- Machines list bulk actions: a hint until a row is ticked, then the
-  actions with the selected count — routine ones first, Reboot/Shut down
-  set apart at the far end (`.bulk-danger-zone`).
-- Phone widths (≤ 640 px): the theme toggle, account and sign-out fold
-  into that same menu; machine/group tabs become one horizontally
-  scrollable row; data tables mark secondary columns `.col-optional`
-  (hidden there — the Machines table keeps name, status and updates);
-  and wide tables tighten their padding.
-- Active nav link computed from `request.url.path` in `base.html`. The
-  header shows the day-to-day pages (Dashboard, Machines, Security,
-  Machine groups, Checks, Scheduling, Notifications, and AI once a model
-  is enabled) directly; account and instance administration (Users,
-  Roles, Audit, Settings, Backup & restore, API docs) sits
-  in one "Administration" menu — a plain `<details>`, so no JS. Each link
-  is still shown only with its permission.
-- **Static assets are versioned.** Templates link every CSS/JS file as
-  `{{ static_url('css/style.css') }}` → `/static/css/style.css?v=<content
-  hash>` (`app.web.templating.static_url`, hash computed once per process).
-  A versioned URL is served `Cache-Control: public, max-age=31536000,
-  immutable`; a bare `/static/...` gets `no-cache` (revalidated via ETag).
-  Without this a browser could keep a heuristically-cached old
-  `style.css` after an upgrade and render the new HTML unstyled.
-  `tests/test_static_assets_exist.py` checks every `static_url(...)`
-  reference exists on disk.
-- htmx's own injected indicator `<style>` is turned off
-  (`<meta name="htmx-config">` in `base.html`) — `style-src 'self'` would
-  block it with a console error on every page; request feedback is styled
-  in `style.css` (`.htmx-request`).
-- `.alert`'s icon is an absolutely-positioned CSS `::before`, not a flex
-  sibling, so several stacked `<p>` validation errors still work.
-- A machine/group page's tabs (Overview/Monitoring/Updates/Terminal/
-  Logs/Power/Settings — Terminal/Logs gated behind `action.terminal`)
-  share a sub-nav row (`partials/_tabnav.html`) — plain links, no JS
-  tabs. Each route builds its own `tabs`/`active_tab` context so the set
-  and order stay identical everywhere; a tab a user lacks permission for
-  is left out entirely, never shown disabled.
-- Settings uses the same tabnav macro but stays one route
-  (`GET /settings?tab=general|security|integrations|ai`) rather than one
-  per tab — nine sections' worth of POST handlers all redirect back to
-  *some* tab regardless of which one they belong to, so each just needs
-  to know its own (`update_ldap_settings` always → `?tab=integrations`);
-  an unrecognized/missing tab falls back to General.
-- A few fragments a Beat sweep can change with no browser request —
-  online/offline badge, Facts panel, packages summary, update
-  availability — self-poll every 20-30s against a plain, SSH-free
-  "current DB state" GET route. Each poll target's content lives in an
-  inner partial, not the id'd wrapper itself — the wrapper keeps the id/
-  `hx-trigger`, the poll response swaps in as `innerHTML` (returning the
-  wrapper itself would nest a duplicate inside itself every tick). The
-  update-run page's own poll predates this convention and self-replaces
-  (`outerHTML`) instead, since it also needs to *stop* polling at a
-  terminal state by dropping its own `hx-trigger` — only works if the
-  whole polling element gets replaced.
+- Jinja2 pages, htmx for partial updates and polling; no build step, no
+  CDN, one stylesheet. Colors come from `--color-*` variables so the light
+  theme (`:root[data-theme="light"]`) only overrides those.
+- The strict CSP forbids inline scripts and styles, so every script is a
+  file under `static/js/`, htmx's injected indicator style is disabled,
+  and widths use classes instead of `style=`.
+- Static URLs carry a content hash (`static_url()`, `?v=…`) and are cached
+  as immutable; unversioned ones revalidate. `tests/test_static_assets_exist.py`
+  checks every reference.
+- Navigation: day-to-day pages in the header, administration in one
+  `<details>` menu; links appear only with their permission. Machine and
+  group pages share a tab row (`partials/_tabnav.html`); a tab you lack
+  permission for isn't shown. Settings is one route with `?tab=`.
+- Phone widths (≤ 640 px) fold the header into a CSS-only menu, make tab
+  rows scroll and hide `.col-optional` table columns.
+- Self-polling fragments swap `innerHTML` into a stable wrapper; the live
+  WebSocket "doorbell" (Machine Management → *Live updates*) triggers
+  them early.
 
 ### Background tasks: Celery and Celery Beat
 
-All background work runs on **Celery**, with the existing Redis instance
-(`REDIS_URL`) as **both** the broker and the result backend:
-
 | Kind | Examples | Triggered by |
 |---|---|---|
-| **Periodic sweeps** | reachability ping, facts refresh, package refresh, update-availability check, condition-based notification evaluation | Celery **Beat**, on `timedelta` schedules read from Settings |
-| **Daily housekeeping** | audit-log purge, fleet snapshot, snapshot purge | Celery **Beat**, on `crontab()` schedules |
-| **One-off, per machine** | SSH connect test, facts/packages refresh, apt update, update preview, reboot/shutdown | a route or another task calling `some_task.delay(...)` |
+| Periodic sweeps | reachability, facts, packages, update checks, monitoring, conditions, endpoint checks | Beat (`timedelta`, from Settings) |
+| Daily housekeeping | purges, fleet snapshot, image-update check | Beat (`crontab`) |
+| One-off | connection test, refresh, update run, preview, power, onboarding | `task.delay(...)` from a route or another task |
 
-Two Compose services back this: **`worker`** (executes tasks; safe to
-scale) and **`beat`** (publishes the schedule; **must never be scaled past
-one replica** — every replica would publish the same entries, so each daily
-purge would fire once per replica).
+Two Compose services: **`worker`** (scale freely) and **`beat`** (exactly
+**one** replica — more would duplicate every schedule). A fan-out enqueues
+one task per machine and never awaits them inline.
 
-Every periodic job is a declarative entry in
-`celery_app.conf.beat_schedule`; no job re-enqueues itself. Beat owns the
-cadence.
-
-#### Async bodies, sync task wrappers
-
-Celery tasks are synchronous; this app's logic (SQLAlchemy async sessions,
-`asyncssh`) is not. Every job is written twice over:
-
-```python
-async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
-    ...  # the real work
-
-@celery_app.task(name="app.tasks.jobs.refresh_machine_facts")
-def refresh_machine_facts(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_refresh_machine_facts(machine_id))
-```
-
-The wrapper is exactly one line so no logic lives on the sync side; tests
-call the `_`-prefixed coroutine directly.
-
-The periodic read-only SSH collectors (monitoring, facts, packages,
-services, readiness, update and image-update checks) are the one
-exception: their wrapper is `return run_in_worker_loop(_do_thing(...))`
-(`app.tasks.runner`) — one event loop kept for the worker process's life
-instead of a fresh one per task, so `app.ssh.pool` can keep one SSH
-connection per machine open between checks rather than logging in to the
-machine every time (Machine Management → *Keeping the journal quiet*).
-The DB side is unaffected — worker children use `NullPool` (below), so no
-DB connection outlives a task either way.
-
-Every task is registered with an **explicit `name=`** rather than Celery's
-auto-derived dotted path. Beat entries, `.delay()` call sites, and messages
-already sitting in Redis all refer to a task by name — moving or renaming a
-module must not silently orphan queued messages. The names are a contract.
+**Async bodies, sync wrappers.** Every job is `async def _do_thing(...)`
+plus a one-line `@celery_app.task(name="...") def do_thing(...): return
+asyncio.run(_do_thing(...))`. Tests call the coroutine. The periodic
+read-only SSH collectors use `run_in_worker_loop(...)` instead, keeping one
+event loop per worker process so `app.ssh.pool` can reuse SSH connections.
+Task names are explicit and form a contract (queued messages and Beat
+entries refer to them).
 
 > [!WARNING]
-> **`celery.exceptions.TimeoutError` is not the builtin `TimeoutError`** —
-> it does not subclass it. A few routes enqueue a task and block on its
-> result inline; every one of them must catch
-> `from celery.exceptions import TimeoutError as CeleryTimeoutError`.
-> Catching the builtin compiles fine and turns the timeout branch into dead
-> code. Related: `AsyncResult.get()` is a **blocking, synchronous** call,
-> so those routes wrap it in `asyncio.to_thread(...)` — calling it straight
-> from an `async def` handler stalls the entire event loop for the full
-> duration.
+> `celery.exceptions.TimeoutError` is **not** the builtin `TimeoutError`.
+> Routes that wait for a result must catch the Celery one and wrap
+> `AsyncResult.get()` in `asyncio.to_thread(...)` — it blocks.
 
 #### Fork safety: the DB engine is rebuilt in every worker child
 
-> [!IMPORTANT]
-> Never shows up in the test suite (in-memory SQLite, single process) —
-> only a real Postgres deployment.
-
-Celery's default worker pool is **prefork**: the parent imports the whole
-app — including `app/db/session.py`'s module-level async engine — and
-*then* forks, so every child would otherwise inherit the same asyncpg
-pool and open TCP sockets. Symptoms: sporadic
-`InterfaceError`/`InternalClientError`, results for the wrong query, a
-wedged worker.
-
-`app/tasks/celery_app.py` connects a **`worker_process_init`** signal
-handler that builds a fresh engine and session factory inside each forked
-child, after the fork:
-
-```python
-@worker_process_init.connect
-def _init_worker_process(**kwargs):
-    from app.db import session as db_session
-    db_session.engine = create_async_engine(...)
-    db_session.AsyncSessionLocal = async_sessionmaker(bind=db_session.engine, ...)
-    register_builtin_actions()   # idempotent; each child needs its own registry
-```
-
-> [!CAUTION]
-> The inherited engine is **never** `dispose()`d — that would close sockets
-> the parent and every sibling are still using. It is abandoned, not closed.
-
-For that rebind to be visible, **every job body must reach the factory
-through the module** — `db_session.AsyncSessionLocal(...)`, never
-`from app.db.session import AsyncSessionLocal`. A name bound at import time
-keeps pointing at the parent's pool.
-
-> [!IMPORTANT]
-> That fresh per-child engine used the default `QueuePool` until v0.7.2 —
-> which was its own bug, of a similar "invisible in tests, real in
-> production" shape. Every task body is `asyncio.run(...)`ing its own
-> coroutine (see above), so each task gets a **brand new event loop**. A
-> real connection pool hands a later task, in the same forked child, a
-> connection that was opened on an *earlier* task's (by then closed) loop —
-> and asyncpg raises `RuntimeError("... attached to a different loop")` the
-> moment it's used. `worker_process_init` now builds this engine with
-> `poolclass=NullPool`: every checkout opens a fresh connection and every
-> checkin closes it, so a connection can never outlive the loop that
-> created it. This only applies to the Celery worker's engine — the FastAPI
-> web process has one long-lived event loop for its whole life and keeps a
-> real pool.
+Celery forks its workers after importing the app, so a child would
+otherwise share the parent's asyncpg pool (sporadic `InterfaceError`s,
+wrong results). `worker_process_init` builds a fresh engine and session
+factory in each child, with `poolclass=NullPool` (each task has its own
+event loop; a pooled connection from an earlier loop would fail). The
+inherited engine is abandoned, never `dispose()`d. Consequently, **task
+code always opens sessions as `db_session.AsyncSessionLocal()` through the
+module**, never via `from app.db.session import AsyncSessionLocal`. This
+never shows up in tests (single-process SQLite).
 
 ## 📂 Project structure
 
 ```
 app/
-  audit.py      the single audit-log write path (hash chaining, verification)
-  auth/         login (local/LDAP/OIDC), sessions, sign-in policy,
-                RBAC permissions, TOTP, per-IP rate limiting, per-user
-                API tokens — see Authentication-RBAC.md
-  core/         config (pydantic-settings), logging, encryption, CSRF,
-                editable app settings (app/core/app_settings.py)
+  audit.py      the audit-log write path (hash chain, verification)
+  auth/         logins, sessions, sign-in policy, RBAC, 2FA, rate limit, API tokens
+  core/         config, logging, encryption, CSRF, editable app settings
   db/           SQLAlchemy models + async session
-  schemas/      Pydantic schemas for forms
-  scheduling/   cron-scheduled actions: registry, cron parsing, scheduler jobs
-  services/     logic shared between manual routes and the scheduler
-  ssh/          AsyncSSH client (host key pinning), facts, updates, power
-  tasks/        Celery app (beat schedule, fork-safety hook) + task bodies
-  web/          FastAPI routers, Jinja2 templates, static files
-alembic/        DB migrations
-tests/          pytest (async, isolated from real infrastructure)
-scripts/        helper scripts (secret generation, first-admin bootstrap,
-                console-only account recovery, one-command upgrade)
-ansible/        onboarding playbook — see Ansible-Onboarding.md
+  i18n/         locale files and lookup
+  schemas/      Pydantic schemas
+  scheduling/   cron actions registry and scheduler
+  services/     logic shared by web, API and scheduler
+  ssh/          AsyncSSH client, facts, updates, monitoring, Proxmox, logs, power
+  tasks/        Celery app, Beat schedule and job bodies
+  web/          routers, templates, static files
+alembic/        migrations
+tests/          pytest (no real Postgres/Redis/SSH)
+scripts/        setup, secrets, admin bootstrap, recovery, backup, upgrade
+ansible/        onboarding playbook
 wiki/           this documentation
 ```
 
 ## 🔒 Security essentials
 
-See [Authentication & RBAC](Authentication-RBAC.md) for logins, sessions,
-and permissions; [Machine Management](Machine-Management.md) for SSH
-handling, secrets at rest, and FIPS alignment; [Audit
-Log](Audit-Log.md) for integrity/retention. Below is what's left:
-cross-cutting hardening that isn't specific to any one feature. See
-"Deliberately out of scope" at the bottom for what's missing entirely.
+Feature-specific security lives on its page: logins and permissions in
+[Authentication & RBAC](Authentication-RBAC.md), SSH, secrets and FIPS in
+[Machine Management](Machine-Management.md), integrity in
+[Audit Log](Audit-Log.md).
 
 > [!IMPORTANT]
-> The **AI assistant** (the `/ai` page, `app/ai/` and
-> `app/tasks/ai_jobs.py`) is the highest-risk surface in this application
-> by a wide margin: it can propose arbitrary shell commands, derived from a
-> third-party model's interpretation of natural language, against real
-> machines. Its safeguards — `ai.access` gating the page while every tool
-> stays gated by the same permission the equivalent manual button needs,
-> the permission being re-checked three separate times, and above all the
-> rule that no mutating action ever runs without a CSRF-protected human
-> confirmation showing the literal command and every resolved target — are
-> documented in full, including the residual prompt-injection risk they
-> deliberately do **not** eliminate, in
-> [AI Assistant](AI-Assistant.md). Read that page before enabling the
-> feature.
+> The **AI assistant** is the highest-risk surface: it can propose shell
+> commands from a model's reading of natural language. No mutating action
+> runs without a CSRF-protected human confirmation that shows the literal
+> command and every target, and each tool needs the same permission as the
+> manual button. Read [AI Assistant](AI-Assistant.md) before enabling it.
 
-### Version metadata: baked in at build time, not read from `.git`
-
-Settings shows `APP_VERSION` (bumped by hand per release) and the exact
-git commit the image was built from, linked to GitHub. The image never
-contains `.git`, so the commit is baked in: a `GIT_COMMIT` build arg
-becomes an `ENV`, set from the `GIT_COMMIT` shell variable —
-`upgrade.sh` exports it right before building. Running locally without
-Docker, it falls back to the local `.git` checkout.
-
-### CSRF protection: a double-submit cookie, provisioned centrally
-
-A random `csrftoken` cookie (`SameSite=Strict`, `HttpOnly`) is set on GET
-requests rendering a form, echoed back as a hidden field on POST.
-Doesn't depend on login — protects the login form itself against login
-CSRF (tricking a victim into authenticating as the *attacker's* account).
-
-The middleware ensures a token exists on every request, stashed on
-`request.state.csrf_token`. `get_or_create_csrf_token` checks that
-first before minting a second, different token, so older routes stay
-consistent with whichever the middleware chose.
-
-A rejection (missing/mismatched) is recorded in the audit log —
-`verify_csrf` calls `log_event` (`auth.csrf_rejected`, `DENIED`) before
-raising the 403.
-
-### WebSockets: an Origin check on top of the session cookie
-
-The terminal, live log follow and live-update sockets never pass through
-the CSRF middleware (a WebSocket handshake carries no form token) and
-aren't covered by CORS. `SameSite=Strict` on the session cookie keeps a
-*cross-site* page out, but a page on a sibling subdomain is still
-"same-site" and would get the cookie attached. So each socket's
-hand-written auth gate (`app.auth.websocket_origin.is_same_origin`)
-refuses a handshake whose `Origin` header names a different host/port
-than its own `Host` — browsers always send `Origin` there and page
-scripts can't forge it. A handshake with no `Origin` at all isn't a
-browser and still has to present a valid session cookie. This relies on
-the reverse proxy passing `Host` through unchanged, as passkeys already
-do (every proxy recipe in this wiki does).
-
-### HTTP security headers
-
-Set unconditionally by the app itself, regardless of any reverse proxy
-in front: a strict CSP (no inline scripts/styles, no external origins),
-`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-`Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`,
-`Cross-Origin-Opener-Policy: same-origin`.
-`Strict-Transport-Security` added when `APP_ENV=production`. Bundled
-Caddy additionally sets its own HSTS and strips `Server` at the edge.
-
-### Configuration is validated at startup
-
-`Settings` refuses to construct — so the app refuses to start — if
-`SECRET_KEY`, `ENCRYPTION_KEY`, or `INFORM_TOKEN` still look like a
-`.env.example` placeholder (starts with `change-me`, or under 16
-characters). Checked once, at process startup. FastAPI's built-in
-`docs_url`/`redoc_url`/`openapi_url` are disabled unconditionally
-(`app/main.py`) — `/api` and `/openapi.json` are hand-written routes
-instead, gated by login + `api_access_enabled` (see [Authentication &
-RBAC → Interactive docs](Authentication-RBAC.md#interactive-docs-swagger-ui-at-api)).
-
-### Error pages
-
-A 403/404 on a browser `GET` from a signed-in account renders
-`error.html` inside the normal layout (`app/web/error_pages.py`);
-everything else — the REST API, htmx fragment requests, other statuses
-— keeps FastAPI's JSON `{"detail": ...}` body, which those callers
-handle themselves.
+- **CSRF** — a double-submit `csrftoken` cookie (`SameSite=Strict`) on
+  every mutating web route, including login; a rejection is audited
+  (`auth.csrf_rejected`). The REST API uses bearer tokens instead.
+- **WebSockets** (terminal, log follow, live updates) authenticate by hand
+  before `accept()` — session cookie, permission, machine scope — and
+  refuse an `Origin` that differs from `Host` (`app.auth.websocket_origin`).
+  The reverse proxy must pass `Host` through (every recipe here does).
+- **Headers**, always set by the app: strict CSP (`'self'` only),
+  `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy`, `Cross-Origin-Opener-Policy: same-origin`, and HSTS
+  when `APP_ENV=production`.
+- **Redirect targets** (`?next=`, the theme toggle) go through
+  `app.web.redirects.safe_local_path`, which accepts only a same-site path
+  (no `//host`, backslash or control characters).
+- **Startup validation** — the app refuses to start while `SECRET_KEY`,
+  `ENCRYPTION_KEY` or `INFORM_TOKEN` look like placeholders. FastAPI's
+  built-in docs routes are disabled; `/api` is gated (see Authentication).
+- **Error pages** — a browser GET that hits 403/404 gets `error.html`;
+  the API and htmx get JSON.
+- **Version metadata** — `APP_VERSION` plus the git commit baked in at
+  build time (`GIT_COMMIT` build arg; the image has no `.git`).
 
 ### Container hardening
 
-The runtime image runs as a non-root user, multi-stage Dockerfile (build
-tools never ship in the final image), Postgres/Redis ports not published
-by default. The app's own port *is* published on every interface, not
-just loopback — still plain HTTP, still meant to sit behind a
-TLS-terminating proxy. Firewall it, or bind `web.ports` to `127.0.0.1:${APP_PORT}:8080`.
+Non-root runtime user, multi-stage build (no build tools in the image),
+Postgres and Redis not published, and every app container (web, worker,
+beat, migrate) runs with **all Linux capabilities dropped** and
+`no-new-privileges`. The app port is published on all interfaces by
+default and speaks plain HTTP — put a TLS proxy in front and set
+`APP_BIND_ADDRESS=127.0.0.1` or firewall it.
 
 ### Deliberately out of scope
 
-- **Per-schedule timezones** — cron is always UTC, permanent, not a
-  stopgap. `TZ` only affects log timestamps and local-time display.
-- No scheduled "power on" to pair with scheduled shutdown — no way to power on a machine that's off.
-- Rotating the app's SSH identity, and LDAP/OIDC/syslog/SMTP config, stay web-UI-only.
-- The **AI assistant** is web-UI-only, conversations private to their
-  creator (no shared/admin view). See
-  [AI Assistant → Deliberately out of scope](AI-Assistant.md#-deliberately-out-of-scope).
+- No scheduled "power on" — a powered-off machine can't be reached.
+- SSH identity rotation and LDAP/OIDC/syslog/SMTP configuration stay
+  web-only (see the REST API section in Authentication).
+- The AI assistant is web-only and conversations are private to their
+  creator — see [AI Assistant](AI-Assistant.md#-deliberately-out-of-scope).

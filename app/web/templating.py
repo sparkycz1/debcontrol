@@ -24,6 +24,7 @@ from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
 from app.services import fleet_overview
 from app.ssh import proxmox
+from app.ssh.onboarding import SUDO_COMMAND_LIST
 from app.ssh.updates import reboot_hint_packages
 from app.web import charts
 from app.web.branding import favicon_href, logo_src
@@ -136,6 +137,7 @@ def _chart(*args: Any, **kwargs: Any) -> charts.Chart:
 
 
 templates.env.globals["chart"] = _chart
+templates.env.globals["sudo_command_list"] = SUDO_COMMAND_LIST
 templates.env.globals["level_for"] = fleet_overview.level_for
 
 
@@ -215,8 +217,10 @@ def tojson_filter(value: object) -> Markup:
     """A minimal `tojson`, since plain `jinja2.Environment` (unlike Flask's)
     doesn't ship one. Escapes the characters that would otherwise break out
     of an HTML attribute or a `<script>` block — same character set Flask's
-    own `tojson` escapes — so the result is safe to drop straight into a
-    single- or double-quoted attribute, e.g. `data-series='{{ x | tojson }}'`.
+    own `tojson` escapes — so the result is safe inside a `<script
+    type="application/json">` block or a *single*-quoted attribute, e.g.
+    `data-series='{{ x | tojson }}'`. Never a double-quoted one: JSON's own
+    `"` is left as is.
     """
     raw = json.dumps(value, default=str)
     escaped = (

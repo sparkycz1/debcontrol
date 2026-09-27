@@ -303,13 +303,20 @@ async def list_machines_api(
     tag_mode: str = "or",
     status_filter: str = Query("", alias="status"),
     group: str = "",
+    limit: int | None = Query(None, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ) -> list[dict[str, object]]:
     """Same filters as the Machines page: `tag` (repeatable, `tag_mode=and`
     to require all), `status` (online / offline / updates / security / reboot /
-    changed / unconfirmed) and `group` (a group id, or `none`)."""
+    changed / unconfirmed) and `group` (a group id, or `none`). Ordered by
+    name; `limit` (max 1000) + `offset` page through a large fleet — without
+    `limit`, every matching machine comes back at once, as before."""
     query = (await machines_visible_to(db, user)).options(selectinload(Machine.group))
     query = apply_tag_filter(query, tag, tag_mode if tag_mode == "and" else "or")
     query = apply_group_filter(apply_status_filter(query, status_filter), group)
+    query = query.order_by(Machine.name, Machine.id).offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
     result = await db.execute(query)
     return [_machine_to_dict(m) for m in result.scalars().all()]
 

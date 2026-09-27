@@ -328,7 +328,8 @@ async def test_notify_webhook_channel_posts_and_logs(db_session_factory, monkeyp
     async with db_session_factory() as db:
         log = (await db.execute(select(NotificationLog))).scalar_one()
         assert log.channel == "webhook"
-        assert log.target == "https://hooks.example.com/abc"
+        # The path is the webhook's secret — history keeps only the host.
+        assert log.target == "https://hooks.example.com/…"
         assert log.status == "sent"
         assert log.is_test is False
 
@@ -613,3 +614,28 @@ async def test_notify_is_noop_when_smtp_disabled(db_session_factory, monkeypatch
         await notify(db, NotificationEventType.MACHINE_UNREACHABLE, machine=machine)
 
     assert sent == []
+
+
+def test_webhook_url_is_redacted_for_history_and_view_only_readers():
+    from app.services.push_channels import redact_url
+
+    assert redact_url("https://discord.com/api/webhooks/1/secret") == "https://discord.com/…"
+    assert redact_url("https://ntfy.example:8443/topic?x=1") == "https://ntfy.example:8443/…"
+    assert redact_url("https://hooks.example.com") == "https://hooks.example.com"
+    assert redact_url("not a url") == "…"
+
+
+def test_portable_rule_redacts_webhook_url_unless_secrets_allowed():
+    from app.db.models.notification_rule import NotificationRule
+    from app.services.notification_rules import rule_to_portable_dict
+
+    rule = NotificationRule(
+        name="hook",
+        event_types=[],
+        delivery_channel="webhook",
+        webhook_url="https://discord.com/api/webhooks/1/secret",
+    )
+    rule.users, rule.roles, rule.machines, rule.machine_groups, rule.conditions = [], [], [], [], []
+    assert rule_to_portable_dict(rule)["webhook_url"].endswith("/secret")
+    redacted = rule_to_portable_dict(rule, include_secrets=False)["webhook_url"]
+    assert redacted == "https://discord.com/…"

@@ -34,6 +34,7 @@ from app.services.push_channels import (
     CHANNEL_NAMES,
     OPTIONAL_TOKEN_CHANNELS,
     TOKEN_CHANNELS,
+    redact_url,
 )
 
 
@@ -60,7 +61,9 @@ def build_conditions_and_event_types(
     return updated_event_types, conditions
 
 
-def rule_to_portable_dict(rule: NotificationRule) -> dict[str, Any]:
+def rule_to_portable_dict(
+    rule: NotificationRule, *, include_secrets: bool = True
+) -> dict[str, Any]:
     return {
         "name": rule.name,
         "description": rule.description,
@@ -91,7 +94,13 @@ def rule_to_portable_dict(rule: NotificationRule) -> dict[str, Any]:
             "machine_groups": [g.name for g in rule.machine_groups],
         },
         "delivery_channel": rule.delivery_channel,
-        **({"webhook_url": rule.webhook_url} if rule.webhook_url else {}),
+        # A webhook URL's path is its secret (Discord/Slack/ntfy) — only an
+        # account that could edit the rule anyway gets it back in full.
+        **(
+            {"webhook_url": rule.webhook_url if include_secrets else redact_url(rule.webhook_url)}
+            if rule.webhook_url
+            else {}
+        ),
         # Never the token itself — an import supplies `channel_token` anew
         # (or keeps the one already stored on a same-named rule).
         **({"channel_recipient": rule.channel_recipient} if rule.channel_recipient else {}),

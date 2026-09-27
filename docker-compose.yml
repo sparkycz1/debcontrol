@@ -21,6 +21,13 @@ x-app-image: &app-image
     # wiki/Architecture.md.
     TZ: ${TZ:-UTC}
   restart: unless-stopped
+  # The app runs as an unprivileged user on port 8080 and needs no Linux
+  # capability at all (ping checks use an unprivileged ICMP socket), so
+  # drop them all and forbid regaining any through a setuid binary.
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
 
 services:
   db:
@@ -85,7 +92,7 @@ services:
 
   redis:
     # Same reasoning as the Postgres image above — pinned to an exact patch.
-    image: redis:8.10.1
+    image: redis:8.10.2
     restart: unless-stopped
     environment:
       TZ: ${TZ:-UTC}

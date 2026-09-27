@@ -192,7 +192,7 @@
           {% for machine in machines %}
             <li class="machine-compact-row">
               <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
-                     aria-label="Select {{ machine.name }}">
+                     aria-label="{{ t(request, 'machines.select_machine_label', name=machine.name) }}">
               {{ render_os_badge(machine.os_id, size=18) }}
               <a href="/machines/{{ machine.id }}" class="machine-compact-name">{{ machine.name }}</a>
               {{ status_badge(machine) }}
@@ -206,7 +206,7 @@
             <div class="machine-card">
               <div class="machine-card-header">
                 <input type="checkbox" name="machine_ids" value="{{ machine.id }}"
-                       aria-label="Select {{ machine.name }}">
+                       aria-label="{{ t(request, 'machines.select_machine_label', name=machine.name) }}">
                 {{ render_os_badge(machine.os_id, size=32) }}
                 <a href="/machines/{{ machine.id }}" class="machine-card-name">{{ machine.name }}</a>
               </div>

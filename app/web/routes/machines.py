@@ -972,8 +972,7 @@ async def _get_machines_by_ids(
     Client-submitted ids are never trusted here: the checkboxes were
     rendered from a scoped list, so an id outside it can only have been
     hand-crafted. Out-of-scope ids are dropped silently rather than
-    rejected with an error naming them (see
-    `app.services.access_scope.filter_machines`)."""
+    rejected with an error naming them (see `app.services.access_scope`)."""
     return await visible_machines_by_ids(db, user, machine_ids)
 
 

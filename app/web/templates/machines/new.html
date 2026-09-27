@@ -16,12 +16,12 @@
 
     <label for="name">{{ t(request, "machines.table.name") }}</label>
     <input type="text" id="name" name="name" required maxlength="255"
-           placeholder="e.g. web1, db-primary"
+           placeholder="{{ t(request, 'machine.new.name_placeholder') }}"
            value="{{ form.name or '' }}">
 
     <label for="ip_address">{{ t(request, "machines.table.ip") }}</label>
     <input type="text" id="ip_address" name="ip_address" required maxlength="255"
-           placeholder="e.g. 192.0.2.10"
+           placeholder="{{ t(request, 'machine.new.ip_placeholder') }}"
            value="{{ form.ip_address or '' }}">
     <p class="hint">
       {{ t(request, "machine.new.hostname_hint") }}

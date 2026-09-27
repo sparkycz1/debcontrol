@@ -147,13 +147,29 @@ async def send(
     except Exception as exc:
         # Never echo a URL back into the log — Telegram's carries the token.
         message = str(exc).replace(token, "***") if token else str(exc)
+        if url:
+            message = message.replace(url, redact_url(url))
         return NotificationDeliveryStatus.FAILED, message[:2000]
 
 
+def redact_url(url: str) -> str:
+    """`https://host[:port]/…` — a webhook/ntfy/Discord URL's path (and
+    query) *is* its secret (Discord's `/api/webhooks/<id>/<token>`, Slack's
+    `/services/...`, an ntfy topic), so the delivery history, error text and
+    a view-only account keep only where it goes, never how to post there."""
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.hostname:
+        return "…"
+    host = parts.hostname + (f":{parts.port}" if parts.port else "")
+    rest = "/…" if parts.path.strip("/") or parts.query else ""
+    return f"{parts.scheme}://{host}{rest}"
+
+
 def delivery_target(channel: str, url: str | None, recipient: str | None) -> str:
-    """What the delivery history shows as a push's target — never a token."""
+    """What the delivery history shows as a push's target — never a token
+    or a secret URL path."""
     if channel == C.TELEGRAM.value:
         return f"Telegram chat {recipient}"
     if channel == C.PUSHOVER.value:
         return f"Pushover {recipient}"
-    return url or CHANNEL_NAMES.get(channel, channel)
+    return redact_url(url) if url else CHANNEL_NAMES.get(channel, channel)

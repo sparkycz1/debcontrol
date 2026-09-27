@@ -57,10 +57,13 @@ _manage = Depends(require_api_permission(Permission.NOTIFICATION_MANAGE))
 _HISTORY_MAX_LIMIT = 200
 
 
-def _rule_to_dict(rule: NotificationRule) -> dict[str, Any]:
+def _rule_to_dict(rule: NotificationRule, user: User | None = None) -> dict[str, Any]:
+    """`user` given = a read that only needs `notification.view`: a webhook
+    URL comes back redacted unless that account could edit the rule anyway."""
+    secrets = user is None or user.has_permission(Permission.NOTIFICATION_MANAGE)
     return {
         "id": str(rule.id),
-        **rule_to_portable_dict(rule),
+        **rule_to_portable_dict(rule, include_secrets=secrets),
         # Write-only: whether a push token is stored, never the token.
         "channel_token_set": bool(rule.channel_token_encrypted),
     }
@@ -118,7 +121,7 @@ async def list_rules_api(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
 ) -> list[dict[str, Any]]:
     result = await db.execute(select(NotificationRule).order_by(NotificationRule.name))
-    return [_rule_to_dict(r) for r in result.scalars().all()]
+    return [_rule_to_dict(r, user) for r in result.scalars().all()]
 
 
 @router.get("/rules/{rule_id}", dependencies=[_view])
@@ -127,7 +130,7 @@ async def get_rule_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
-    return _rule_to_dict(await _get_rule_or_404(rule_id, db))
+    return _rule_to_dict(await _get_rule_or_404(rule_id, db), user)
 
 
 @router.post("/rules", dependencies=[_manage], status_code=status.HTTP_201_CREATED)

@@ -793,3 +793,16 @@ async def test_api_actions_are_audit_logged_with_correct_actor(client, db_sessio
         entry = result.scalars().first()
         assert entry is not None
         assert entry.actor == ADMIN_USERNAME
+
+
+async def test_machine_list_is_ordered_and_pages_with_limit_offset(client):
+    headers = await _api_token(client)
+    for name in ("page-c", "page-a", "page-b"):
+        await _create_machine(client, headers, name)
+
+    everything = await client.get("/api/v1/machines", headers=headers)
+    assert [m["name"] for m in everything.json()] == ["page-a", "page-b", "page-c"]
+
+    page = await client.get("/api/v1/machines?limit=2&offset=1", headers=headers)
+    assert [m["name"] for m in page.json()] == ["page-b", "page-c"]
+    assert (await client.get("/api/v1/machines?limit=0", headers=headers)).status_code == 422
