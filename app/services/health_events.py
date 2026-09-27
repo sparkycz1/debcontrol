@@ -12,7 +12,9 @@ doesn't page anyone about problems that were already there.
 
 The comparisons are pure functions; `app.tasks.jobs` calls the `notify_*`
 wrappers from the facts refresh, the monitoring sample and the hourly
-disk forecast.
+disk forecast. Also: a Proxmox Backup Server job/task failing (reported
+as a failed backup), a Mail Gateway's queue backing up, and a Proxmox VE
+cluster losing quorum.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from app.db.models.machine import Machine
 from app.db.models.notification_rule import NotificationEventType
 from app.services.disk_forecast import soonest_full_days
 from app.services.notifications import notify
+from app.ssh import proxmox
 
 # "Disk will be full in X days" fires once a filesystem's forecast drops to
 # this many days or fewer (a condition rule on "days until a filesystem is
@@ -103,12 +106,44 @@ def disk_full_crossed(
     return "?", now_days
 
 
+def new_pbs_failures(
+    previous: dict[str, Any] | None, current: dict[str, Any] | None
+) -> list[str]:
+    """Proxmox Backup Server job/task failures not already failing at the
+    previous refresh."""
+    if previous is None or current is None:
+        return []
+    before = set(proxmox.pbs_failures(previous))
+    return [line for line in proxmox.pbs_failures(current) if line not in before]
+
+
+def mail_queue_crossed(previous: dict[str, Any] | None, current: dict[str, Any] | None) -> int:
+    """The deferred/held message count when a Mail Gateway's queue just
+    reached `proxmox.MAIL_QUEUE_WARN`; 0 otherwise."""
+    if previous is None or current is None:
+        return 0
+    now = proxmox.mail_queue_backlog(current)
+    if (
+        now < proxmox.MAIL_QUEUE_WARN
+        or proxmox.mail_queue_backlog(previous) >= proxmox.MAIL_QUEUE_WARN
+    ):
+        return 0
+    return now
+
+
+def lost_quorum(previous: dict[str, Any] | None, current: dict[str, Any] | None) -> bool:
+    return bool(previous and current and previous.get("quorate") is True
+                and current.get("quorate") is False)
+
+
 async def notify_facts_changes(
     db: AsyncSession,
     machine: Machine,
     *,
     previous_reboot_required: bool | None,
     previous_backups: dict[str, Any] | None,
+    previous_pbs: dict[str, Any] | None = None,
+    previous_pmg: dict[str, Any] | None = None,
 ) -> None:
     """After a facts refresh has stored its new values on `machine`."""
     if became_reboot_required(previous_reboot_required, machine.reboot_required):
@@ -119,13 +154,23 @@ async def notify_facts_changes(
             context={"details": f"Running kernel: {machine.kernel_version or 'unknown'}"},
         )
     failed = new_failed_backups(previous_backups, machine.pve_backups)
-    if failed:
+    pbs_lines = new_pbs_failures(previous_pbs, machine.pbs_data)
+    if failed or pbs_lines:
         lines = [f"{t.get('id') or 'backup job'}: {t.get('status')}" for t in failed]
+        lines += pbs_lines
         await notify(
             db,
             NotificationEventType.BACKUP_FAILED,
             machine=machine,
             context={"details": "\n".join(lines)},
+        )
+    backlog = mail_queue_crossed(previous_pmg, machine.pmg_data)
+    if backlog:
+        await notify(
+            db,
+            NotificationEventType.MAIL_QUEUE_BACKLOG,
+            machine=machine,
+            context={"count": str(backlog), "details": ""},
         )
 
 
@@ -137,8 +182,21 @@ async def notify_monitoring_changes(
     previous_smart_disks: list[dict[str, Any]] | None,
     current_smart_disks: list[dict[str, Any]] | None,
     previous_zfs_pools: list[dict[str, Any]] | None,
+    previous_cluster: dict[str, Any] | None = None,
 ) -> None:
     """After a monitoring sample has been stored."""
+    if lost_quorum(previous_cluster, machine.pve_cluster):
+        cluster = machine.pve_cluster or {}
+        offline = [n["name"] for n in cluster.get("nodes") or [] if not n.get("online")]
+        await notify(
+            db,
+            NotificationEventType.CLUSTER_QUORUM_LOST,
+            machine=machine,
+            context={
+                "cluster": str(cluster.get("name") or ""),
+                "details": "Offline nodes: " + (", ".join(offline) or "none reported"),
+            },
+        )
     units = newly_failed_units(previous_failed_units, machine.failed_units)
     if units:
         await notify(

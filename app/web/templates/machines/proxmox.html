@@ -2,7 +2,7 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 {% from "partials/_os_badge.html" import render as render_os_badge %}
 
-{% block title %}{{ 'Proxmox' if machine.pve_version else 'ZFS' }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block title %}{{ 'Proxmox' if machine.proxmox_product or machine.pve_guests is not none else 'ZFS' }} — {{ machine.name }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
 
 {% block content %}
@@ -15,10 +15,20 @@
   {# Every value here was reported by the managed machine itself —
      autoescaped like any other text. #}
   <div class="stat-grid">
-    {% if machine.pve_version %}
+    {% if machine.proxmox_product %}
       <div class="stat-card">
-        <span class="stat-label">Proxmox VE</span>
-        <span class="stat-value">{{ machine.pve_version }}</span>
+        <span class="stat-label">{{ machine.proxmox_product.rsplit(' ', 1)[0] }}</span>
+        <span class="stat-value">{{ machine.proxmox_product.rsplit(' ', 1)[1] }}</span>
+      </div>
+    {% endif %}
+    {% set cluster = machine.pve_cluster %}
+    {% if cluster and cluster.name %}
+      <div class="stat-card {{ 'stat-card-danger' if cluster.quorate is sameas false else '' }}">
+        <span class="stat-label">{{ t(request, "proxmox.cluster") }} {{ cluster.name }}</span>
+        <span class="stat-value">
+          {{ t(request, "proxmox.nodes_online", online=(cluster.nodes | selectattr('online') | list | length), total=(cluster.nodes | length)) }}
+          <small>{{ t(request, "proxmox.quorate") if cluster.quorate else t(request, "proxmox.not_quorate") }}</small>
+        </span>
       </div>
     {% endif %}
     {% if machine.pve_guests is not none %}
@@ -48,6 +58,11 @@
     {% endif %}
   </div>
 
+  {% set guest_notice = flash(request, 'guest_notice') %}
+  {% set guest_error = flash(request, 'guest_error') %}
+  {% if guest_notice %}<div class="alert alert-ok"><p>{{ guest_notice }}</p></div>{% endif %}
+  {% if guest_error %}<div class="alert alert-error"><p>{{ guest_error }}</p></div>{% endif %}
+
   {% if machine.pve_version and machine.pve_guests is none %}
     <div class="alert alert-warn"><p>{{ t(request, "proxmox.no_pvesh_access") }}</p></div>
   {% endif %}
@@ -73,6 +88,7 @@
                 <th data-sort="number">{{ t(request, "proxmox.uptime") }}</th>
                 <th>{{ t(request, "proxmox.node") }}</th>
                 <th>{{ t(request, "proxmox.tags") }}</th>
+                {% if can_power %}<th><span class="visually-hidden">{{ t(request, "proxmox.actions") }}</span></th>{% endif %}
               </tr>
             </thead>
             <tbody>
@@ -89,6 +105,21 @@
                   <td data-sort-value="{{ g.uptime_seconds or 0 }}">{{ g.uptime_seconds | format_uptime if g.uptime_seconds else '—' }}</td>
                   <td>{{ g.node or '—' }}</td>
                   <td>{% for tag in g.tags %}<span class="badge badge-tag">{{ tag }}</span> {% endfor %}</td>
+                  {% if can_power %}
+                    <td class="guest-actions">
+                      {% if not g.template %}
+                        {% set actions = ['start'] if g.status != 'running' else ['shutdown', 'reboot', 'stop'] %}
+                        {% for action in actions %}
+                          <form method="post" action="/machines/{{ machine.id }}/proxmox/guests/{{ g.vmid }}" class="inline-form"
+                                {% if action != 'start' %}data-confirm="{{ t(request, 'proxmox.action_confirm.' ~ action, vmid=g.vmid, name=(g.name or g.vmid)) }}"{% endif %}>
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="action" value="{{ action }}">
+                            <button type="submit" class="link-button {{ 'link-danger' if action == 'stop' else '' }}">{{ t(request, "proxmox.action." ~ action) }}</button>
+                          </form>
+                        {% endfor %}
+                      {% endif %}
+                    </td>
+                  {% endif %}
                 </tr>
               {% endfor %}
             </tbody>
@@ -244,6 +275,198 @@
         </div>
       {% else %}
         <p class="hint">{{ t(request, "proxmox.no_backup_tasks") }}</p>
+      {% endif %}
+      {% if machine.facts_updated_at %}<p class="hint">{{ t(request, "proxmox.as_of", when=(machine.facts_updated_at | local_time('%Y-%m-%d %H:%M'))) }}</p>{% endif %}
+    </section>
+  {% endif %}
+
+  {% if cluster and cluster.name and cluster.nodes | length > 1 %}
+    <section class="panel">
+      <h2>{{ t(request, "proxmox.cluster") }} {{ cluster.name }}</h2>
+      <ul class="held-packages">
+        {% for n in cluster.nodes %}
+          <li><span class="badge {{ 'badge-ok' if n.online else 'badge-error' }}">{{ n.name }}</span>{% if n.local %} <span class="hint">{{ t(request, "proxmox.this_node") }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if machine.pve_failed_tasks %}
+    <section class="panel">
+      <h2>{{ t(request, "proxmox.failed_tasks") }}</h2>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>{{ t(request, "proxmox.started") }}</th><th>{{ t(request, "proxmox.type") }}</th><th>ID</th><th>{{ t(request, "proxmox.result") }}</th></tr></thead>
+          <tbody>
+            {% for task in machine.pve_failed_tasks %}
+              <tr>
+                <td>{{ task.started_at | from_epoch | local_time('%Y-%m-%d %H:%M') }}</td>
+                <td><code>{{ task.type }}</code></td>
+                <td>{{ task.id or '—' }}</td>
+                <td><span class="badge badge-error">{{ task.status }}</span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  {# --- Proxmox Backup Server --- #}
+  {% set pbs = machine.pbs_data %}
+  {% if pbs %}
+    <section class="panel">
+      <h2>{{ t(request, "proxmox.pbs.datastores") }}</h2>
+      {% if pbs.datastores %}
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>{{ t(request, "proxmox.name") }}</th><th>{{ t(request, "proxmox.used") }}</th><th>{{ t(request, "proxmox.pbs.full_at") }}</th></tr></thead>
+            <tbody>
+              {% for d in pbs.datastores %}
+                <tr>
+                  <td><strong>{{ d.name }}</strong>{% if d.error %}<p class="hint">{{ d.error }}</p>{% endif %}</td>
+                  <td>
+                    {% if d.used_bytes is not none and d.total_bytes %}{{ d.used_bytes | bytes }} / {{ d.total_bytes | bytes }}{% else %}—{% endif %}
+                    {% if d.used_percent is not none %}<span class="badge {{ 'badge-error' if d.used_percent >= 90 else ('badge-warn' if d.used_percent >= 80 else '') }}">{{ d.used_percent }} %</span>{% endif %}
+                  </td>
+                  <td>{{ d.full_at | from_epoch | local_time('%Y-%m-%d') if d.full_at and d.full_at > 0 else '—' }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="hint">{{ t(request, "proxmox.pbs.no_access") }}</p>
+      {% endif %}
+
+      <h3>{{ t(request, "proxmox.pbs.jobs") }}</h3>
+      {% set job_rows = [] %}
+      {% for kind in ('gc', 'verify', 'sync', 'prune') %}{% for j in pbs[kind] %}{% set _ = job_rows.append((kind, j)) %}{% endfor %}{% endfor %}
+      {% if job_rows %}
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>{{ t(request, "proxmox.type") }}</th><th>{{ t(request, "proxmox.pbs.store") }}</th><th>{{ t(request, "proxmox.schedule") }}</th><th>{{ t(request, "proxmox.pbs.last_run") }}</th><th>{{ t(request, "proxmox.next_run") }}</th></tr></thead>
+            <tbody>
+              {% for kind, j in job_rows %}
+                <tr>
+                  <td>{{ t(request, "proxmox.pbs.kind." ~ kind) }}{% if j.remote %} <span class="hint">← {{ j.remote }}</span>{% endif %}</td>
+                  <td>{{ j.store or '—' }}</td>
+                  <td><code>{{ j.schedule or '—' }}</code></td>
+                  <td>
+                    {% if j.ok is none %}—
+                    {% else %}<span class="badge {{ 'badge-ok' if j.ok else 'badge-error' }}">{{ j.last_state }}</span>
+                      {% if j.last_run %}<span class="hint">{{ j.last_run | from_epoch | local_time('%Y-%m-%d %H:%M') }}</span>{% endif %}{% endif %}
+                  </td>
+                  <td>{{ j.next_run | from_epoch | local_time('%Y-%m-%d %H:%M') if j.next_run else '—' }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="hint">{{ t(request, "proxmox.pbs.no_jobs") }}</p>
+      {% endif %}
+    </section>
+
+    {% if pbs.groups %}
+      <section class="panel">
+        <div class="panel-header">
+          <h2>{{ t(request, "proxmox.pbs.groups") }}</h2>
+          <input type="search" class="chart-filter" data-table-filter="pbs-groups"
+                 placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="pbs-groups">
+            <thead><tr><th data-sort="text">{{ t(request, "proxmox.pbs.store") }}</th><th data-sort="text">{{ t(request, "proxmox.pbs.group") }}</th><th data-sort="number">{{ t(request, "proxmox.pbs.last_backup") }}</th><th data-sort="number">{{ t(request, "proxmox.pbs.snapshots") }}</th></tr></thead>
+            <tbody>
+              {% for store, groups in pbs.groups.items() %}
+                {% for g in groups %}
+                  {% set stale = g.last_backup and (now_epoch - g.last_backup) > stale_seconds %}
+                  <tr class="{{ 'row-failed' if stale else '' }}">
+                    <td>{{ store }}</td>
+                    <td><code>{{ g.type }}/{{ g.id }}</code>{% if g.comment %} <span class="hint">{{ g.comment }}</span>{% endif %}</td>
+                    <td data-sort-value="{{ g.last_backup or 0 }}">
+                      {{ g.last_backup | from_epoch | local_time('%Y-%m-%d %H:%M') if g.last_backup else '—' }}
+                      {% if stale %}<span class="badge badge-warn">{{ t(request, "proxmox.pbs.stale") }}</span>{% endif %}
+                    </td>
+                    <td data-sort-value="{{ g.count or 0 }}">{{ g.count if g.count is not none else '—' }}</td>
+                  </tr>
+                {% endfor %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+    {% if pbs.tasks %}
+      <section class="panel">
+        <h2>{{ t(request, "proxmox.pbs.tasks") }}</h2>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>{{ t(request, "proxmox.started") }}</th><th>{{ t(request, "proxmox.duration") }}</th><th>{{ t(request, "proxmox.type") }}</th><th>ID</th><th>{{ t(request, "proxmox.result") }}</th></tr></thead>
+            <tbody>
+              {% for task in pbs.tasks %}
+                <tr>
+                  <td>{{ task.started_at | from_epoch | local_time('%Y-%m-%d %H:%M') }}</td>
+                  <td>{{ (task.ended_at - task.started_at) | format_uptime if task.ended_at and task.started_at and task.ended_at > task.started_at else '—' }}</td>
+                  <td><code>{{ task.type }}</code></td>
+                  <td>{{ task.id or '—' }}</td>
+                  <td>
+                    {% if task.ok is none %}<span class="badge badge-warn">{{ t(request, "proxmox.running") }}</span>
+                    {% elif task.ok %}<span class="badge badge-ok">{{ task.status }}</span>
+                    {% else %}<span class="badge badge-error">{{ task.status }}</span>{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+
+  {# --- Proxmox Mail Gateway --- #}
+  {% set pmg = machine.pmg_data %}
+  {% if pmg %}
+    <section class="panel">
+      <h2>{{ t(request, "proxmox.pmg.mail_24h") }}</h2>
+      {% if pmg.stats %}
+        {% set st = pmg.stats %}
+        <div class="stat-grid">
+          <div class="stat-card"><span class="stat-label">{{ t(request, "proxmox.pmg.incoming") }}</span><span class="stat-value">{{ st.count_in or 0 }}</span></div>
+          <div class="stat-card"><span class="stat-label">{{ t(request, "proxmox.pmg.outgoing") }}</span><span class="stat-value">{{ st.count_out or 0 }}</span></div>
+          <div class="stat-card"><span class="stat-label">{{ t(request, "proxmox.pmg.spam") }}</span><span class="stat-value">{{ st.spamcount_in or 0 }}{% if st.count_in %} <small>{{ '%.0f' % ((st.spamcount_in or 0) / st.count_in * 100) }} %</small>{% endif %}</span></div>
+          <div class="stat-card {{ 'stat-card-danger' if st.viruscount_in or st.viruscount_out else '' }}"><span class="stat-label">{{ t(request, "proxmox.pmg.viruses") }}</span><span class="stat-value">{{ (st.viruscount_in or 0) + (st.viruscount_out or 0) }}</span></div>
+          <div class="stat-card"><span class="stat-label">{{ t(request, "proxmox.pmg.rejected") }}</span><span class="stat-value">{{ (st.rbl_rejects or 0) + (st.pregreet_rejects or 0) }} <small>RBL {{ st.rbl_rejects or 0 }} · pregreet {{ st.pregreet_rejects or 0 }}</small></span></div>
+          <div class="stat-card"><span class="stat-label">{{ t(request, "proxmox.pmg.bounces") }}</span><span class="stat-value">{{ (st.bounces_in or 0) + (st.bounces_out or 0) }}</span></div>
+        </div>
+      {% else %}
+        <p class="hint">{{ t(request, "proxmox.pmg.no_access") }}</p>
+      {% endif %}
+
+      <h3>{{ t(request, "proxmox.pmg.queue") }}</h3>
+      {% if pmg.queue is not none %}
+        {% set backlog = (pmg.queue.deferred or 0) + (pmg.queue.hold or 0) %}
+        <p>
+          {% for name in ('active', 'incoming', 'deferred', 'hold') %}
+            <span class="badge {{ 'badge-warn' if name in ('deferred', 'hold') and pmg.queue[name] else '' }}">{{ t(request, "proxmox.pmg.queue_" ~ name) }}: {{ pmg.queue[name] or 0 }}</span>
+          {% endfor %}
+        </p>
+        {% if backlog >= queue_warn %}<div class="alert alert-warn"><p>{{ t(request, "proxmox.pmg.queue_backlog", count=backlog) }}</p></div>{% endif %}
+      {% else %}
+        <p class="hint">{{ t(request, "proxmox.pmg.no_queue") }}</p>
+      {% endif %}
+
+      <h3>{{ t(request, "proxmox.pmg.clamav") }}</h3>
+      {% if pmg.clamav %}
+        <ul class="held-packages">
+          {% for db in pmg.clamav %}
+            <li><code>{{ db.type }}</code> {{ db.version }} <span class="hint">{{ db.build_time }}{% if db.signatures %} · {{ db.signatures }} {{ t(request, "proxmox.pmg.signatures") }}{% endif %}</span></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="hint">—</p>
       {% endif %}
       {% if machine.facts_updated_at %}<p class="hint">{{ t(request, "proxmox.as_of", when=(machine.facts_updated_at | local_time('%Y-%m-%d %H:%M'))) }}</p>{% endif %}
     </section>

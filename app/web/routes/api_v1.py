@@ -114,6 +114,7 @@ from app.services.machine_tags import (
 )
 from app.services.security_updates import load_security_overview
 from app.ssh import logs as ssh_logs
+from app.ssh import proxmox
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
 from app.ssh.exceptions import SSHConnectionError
@@ -350,7 +351,14 @@ async def machine_proxmox_api(
     are as of `monitoring_updated_at`, the rest as of `facts_updated_at`."""
     machine = await _get_machine_or_404(machine_id, db, user)
     return {
+        "product": machine.proxmox_product,
         "pve_version": machine.pve_version,
+        "cluster": machine.pve_cluster,
+        "failed_tasks": machine.pve_failed_tasks,
+        "pbs_version": machine.pbs_version,
+        "backup_server": machine.pbs_data,
+        "pmg_version": machine.pmg_version,
+        "mail_gateway": machine.pmg_data,
         "guests": machine.pve_guests,
         "zfs_pools": machine.zfs_pools,
         "storage": machine.pve_storage,
@@ -358,6 +366,55 @@ async def machine_proxmox_api(
         "monitoring_updated_at": _isoformat(machine.monitoring_updated_at),
         "facts_updated_at": _isoformat(machine.facts_updated_at),
     }
+
+
+@router.post(
+    "/machines/{machine_id}/proxmox/guests/{vmid}/{action}", dependencies=[_action_power]
+)
+async def proxmox_guest_action_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    vmid: int,
+    action: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Start / shutdown / reboot / stop one Proxmox VE guest (as listed in
+    `GET .../proxmox` → `guests`). Same permission as machine power
+    actions; audited as `machine.guest.<action>`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    guest = proxmox.find_guest(machine.pve_guests, vmid)
+    if action not in proxmox.GUEST_ACTIONS or guest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown guest or action."
+        )
+    app_settings = await get_or_create_app_settings(db)
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            tasks.run_proxmox_guest_action.delay(str(machine.id), vmid, action).get,
+            timeout=app_settings.ssh_connect_timeout + 90,
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The command did not finish in time."
+    except Exception as exc:
+        error = str(exc)
+    await log_event(
+        db,
+        request=request,
+        action=f"machine.guest.{action}",
+        summary=f'Guest {vmid} {action} on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"vmid": vmid, **({"error": error} if error else {})},
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    return {"vmid": vmid, "action": action, "ok": True}
 
 
 @router.get("/machines/{machine_id}/timeline", dependencies=[_view_machines])

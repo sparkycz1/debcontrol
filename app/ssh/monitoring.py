@@ -234,6 +234,7 @@ class MonitoringSample(TypedDict):
     # Latest ZFS pools / Proxmox VE guests (app.ssh.proxmox), None = none.
     zfs_pools: list[dict[str, Any]] | None
     pve_guests: list[dict[str, Any]] | None
+    pve_cluster: dict[str, Any] | None
     # Each {"iface": ..., "rx_bytes": ..., "tx_bytes": ...} — cumulative
     # counters since boot, one entry per non-loopback interface found.
     network_io: list[dict[str, Any]]
@@ -406,6 +407,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
             sections.get("ZFS_POOLS", ""), sections.get("ZFS_STATUS", "")
         ),
         pve_guests=proxmox.parse_guests(sections.get("PVE_GUESTS", "")),
+        pve_cluster=proxmox.parse_cluster(sections.get("PVE_CLUSTER", "")),
         network_io=network_io,
         disk_io=disk_io,
         filesystems=filesystems,

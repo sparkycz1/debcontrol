@@ -207,6 +207,11 @@ machines") needs root on the target and can run long:
   A script does the same with `GET /api/v1/machines/{id}/update-runs/{run_id}`
   until `status` leaves `pending`/`running`.
 
+The run page shows apt's output in a fixed-height box that keeps
+following the end while the run is live (and keeps your place once you
+scroll up), instead of a page that grows with every line
+(`static/js/run-output.js`).
+
 ### Previewing a manual update before it runs
 
 "Run update" links to a preview first — simulates the *exact* command
@@ -542,30 +547,68 @@ often a whole `user@0.service` start/stop. Now:
   "yes", so a root account no longer writes a `sudo`/PAM line per disk
   per sample. A non-root account runs the real `sudo` exactly as before.
 
-### Proxmox VE and ZFS
+### Proxmox VE, Backup Server, Mail Gateway and ZFS
 
-A **Proxmox** tab appears on a Proxmox VE host (a plain ZFS host gets it
-as **ZFS**), and the machine's Overview starts with a one-line summary
-linking to it: PVE version, guests running, pool health, last backup,
-guests without a backup job. All of it is collected inside existing round
-trips (`app.ssh.proxmox`), nothing extra connects:
+A **Proxmox** tab appears on a Proxmox VE, Proxmox Backup Server or
+Proxmox Mail Gateway host (a plain ZFS host gets it as **ZFS**), and the
+machine's Overview starts with a one-line summary linking to it — the
+product and version, then per product: guests running, cluster quorum,
+pool health, last backup, guests without a backup job (VE); the fullest
+datastore and failing jobs (Backup Server); mail, spam and viruses in the
+last 24 h and a backed-up queue (Mail Gateway). The OS reads e.g.
+"Proxmox Backup Server 3.2.7 (Debian …)" (`Machine.proxmox_product`).
+All of it is collected inside existing round trips (`app.ssh.proxmox`),
+nothing extra connects:
 
 - with every **monitoring sample**: ZFS pools (`zpool list`/`zpool
   status` — size, use, fragmentation, health, the last scrub/resilver line,
   errors, zpool's own explanation of a problem) and every VM/container with
   its state, CPU, memory, uptime, node and tags
-  (`pvesh get /cluster/resources --type vm`);
+  (`pvesh get /cluster/resources --type vm`), plus the cluster's quorum
+  and which nodes are online (`/cluster/status`);
 - with every **facts refresh**: the Proxmox VE version (`pveversion` —
   the OS then reads "Proxmox VE 9.0.6 (Debian GNU/Linux 13 …)"),
   storages with usage and state (Proxmox Backup Server ones marked),
   backup jobs with their schedule and next run, the last vzdump tasks and
-  their result, and guests no backup job covers
-  (`/cluster/backup-info/not-backed-up`).
+  their result, guests no backup job covers
+  (`/cluster/backup-info/not-backed-up`) and the recently failed tasks of
+  any kind (`/nodes/localhost/tasks --errors 1`).
 
-`pvesh` runs through `sudo -n` (a no-op for root); a non-root account
-needs a sudoers grant for `/usr/bin/pvesh` (onboarding adds it). REST:
-`GET /api/v1/machines/{id}/proxmox`; `pve_version` is in the machine's
-own JSON too.
+**Starting and stopping guests.** With `action.power` (the machine's own
+power actions' permission), each guest row has *start* (stopped guests)
+or *shut down* / *reboot* / *stop* (running ones; confirmed first —
+*stop* pulls the plug, *shut down* asks the guest OS).
+`pvesh create /nodes/<node>/<qemu|lxc>/<vmid>/status/<action>` over SSH,
+with node, type and VMID taken from the latest sample and checked against
+strict patterns (`app.ssh.proxmox.build_guest_action_command`); a fresh
+monitoring sample follows. Audited as `machine.guest.<action>`. REST:
+`POST /api/v1/machines/{id}/proxmox/guests/{vmid}/{action}`.
+
+**Proxmox Backup Server** (facts refresh, through its local API —
+`proxmox-backup-debug api get …`, root):
+
+- datastores with usage and PBS's own estimated "full" date;
+- garbage-collection, verify, sync and prune jobs with schedule, last
+  result and next run — a failed one is flagged;
+- backup groups per datastore (`vm/100`, `ct/101`, `host/nas`) with the
+  last backup and snapshot count — a group whose newest backup is older
+  than 2 days is highlighted (`STALE_BACKUP_SECONDS`);
+- the last tasks (backups, GC, verify, sync) and their result.
+
+**Proxmox Mail Gateway** (facts refresh, `pmgsh`, root):
+
+- mail in the last 24 hours — incoming, outgoing, spam (and its share),
+  viruses, RBL/pregreet rejects, bounces (`/statistics/mail`);
+- the Postfix queue per state (`postqueue -j`) — a warning at 50
+  deferred/held messages (`MAIL_QUEUE_WARN`);
+- ClamAV signature databases with version and build time.
+
+`pvesh`, `proxmox-backup-debug`, `proxmox-backup-manager`, `pmgsh` and
+`postqueue` run through `sudo -n` (a no-op for root); a non-root account
+needs sudoers grants for them (onboarding adds them). REST:
+`GET /api/v1/machines/{id}/proxmox` (`product`, `cluster`,
+`failed_tasks`, `backup_server`, `mail_gateway` next to the VE data);
+`pve_version` is in the machine's own JSON too.
 
 **Memory on a ZFS host.** The ARC is memory the kernel gets back under
 pressure, but Linux doesn't count it as "available", so a ZFS host looked

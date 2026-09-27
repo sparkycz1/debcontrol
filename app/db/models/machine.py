@@ -72,12 +72,36 @@ class Machine(Base):
     @property
     def os_display(self) -> str | None:
         """The OS as shown to people: "Proxmox VE 8.2.4 (Debian GNU/Linux
-        12 (bookworm))" on a Proxmox host — whose /etc/os-release only says
-        Debian — else the plain `os_version`."""
-        if self.pve_version:
-            base = f"Proxmox VE {self.pve_version}"
-            return f"{base} ({self.os_version})" if self.os_version else base
+        12 (bookworm))" on a Proxmox VE / Backup Server / Mail Gateway host —
+        whose /etc/os-release only says Debian — else the plain
+        `os_version`."""
+        product = self.proxmox_product
+        if product:
+            return f"{product} ({self.os_version})" if self.os_version else product
         return self.os_version
+
+    @property
+    def proxmox_product(self) -> str | None:
+        """"Proxmox VE 8.2.4" / "Proxmox Backup Server 3.2.7" / "Proxmox
+        Mail Gateway 8.1.4" — whichever this machine runs, else None."""
+        if self.pve_version:
+            return f"Proxmox VE {self.pve_version}"
+        if self.pbs_version:
+            return f"Proxmox Backup Server {self.pbs_version}"
+        if self.pmg_version:
+            return f"Proxmox Mail Gateway {self.pmg_version}"
+        return None
+
+    @property
+    def has_proxmox_tab(self) -> bool:
+        """Proxmox VE / Backup Server / Mail Gateway data, or ZFS pools."""
+        return bool(
+            self.pve_version
+            or self.pve_guests is not None
+            or self.pbs_version
+            or self.pmg_version
+            or self.zfs_pools
+        )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
@@ -175,6 +199,16 @@ class Machine(Base):
     # {"tasks": [...], "jobs": [...], "not_backed_up": [...]}
     pve_backups: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     pve_guests: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # {"name", "quorate", "nodes": [...]} (monitoring sample) and the last
+    # failed tasks of any kind (facts refresh) — Proxmox VE.
+    pve_cluster: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    pve_failed_tasks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Proxmox Backup Server / Mail Gateway (facts refresh; app.ssh.proxmox
+    # parse_pbs / parse_pmg for the shape). None on anything else.
+    pbs_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pbs_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    pmg_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pmg_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # systemd units in the failed state as of the latest monitoring sample
     # (None = unknown / no systemd) — the "service failed" notification
     # compares against it (app.services.health_events).

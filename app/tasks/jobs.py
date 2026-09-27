@@ -93,6 +93,8 @@ from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
+from app.ssh.proxmox import find_guest as proxmox_find_guest
+from app.ssh.proxmox_actions import run_guest_action
 from app.ssh.reachability import ReachabilityResult, check_reachable
 from app.ssh.readiness import DIRECT_FIX_COMMAND, missing_requirements
 from app.ssh.readiness import check_machine_readiness as run_readiness_probes
@@ -1104,6 +1106,8 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         before = config_drift.snapshot(machine)
         previous_reboot_required = machine.reboot_required
         previous_backups = machine.pve_backups
+        previous_pbs = machine.pbs_data
+        previous_pmg = machine.pmg_data
         machine.discovered_hostname = facts["hostname"]
         machine.os_version = facts["os_version"]
         machine.os_id = facts["os_id"]
@@ -1127,6 +1131,11 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.pve_version = facts.get("pve_version")
         machine.pve_storage = facts.get("pve_storage")
         machine.pve_backups = facts.get("pve_backups")
+        machine.pve_failed_tasks = facts.get("pve_failed_tasks")
+        machine.pbs_version = facts.get("pbs_version")
+        machine.pbs_data = facts.get("pbs_data")
+        machine.pmg_version = facts.get("pmg_version")
+        machine.pmg_data = facts.get("pmg_data")
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
         await config_drift.record_fact_changes(
@@ -1137,6 +1146,8 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
             machine,
             previous_reboot_required=previous_reboot_required,
             previous_backups=previous_backups,
+            previous_pbs=previous_pbs,
+            previous_pmg=previous_pmg,
         )
         await publish_machine_event(machine_id, KIND_FACTS)
 
@@ -1457,6 +1468,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         machine.docker_status = sample["docker_status"]
         machine.zfs_pools = sample.get("zfs_pools")
         machine.pve_guests = sample.get("pve_guests")
+        previous_cluster = machine.pve_cluster
+        machine.pve_cluster = sample.get("pve_cluster")
         machine.failed_units = sample.get("failed_units")
         machine.docker_containers = (
             sample["docker_containers"] if sample["docker_status"] == "ok" else None
@@ -1470,6 +1483,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             previous_smart_disks=previous_smart,
             current_smart_disks=sample["smart_disks"],
             previous_zfs_pools=previous_zfs_pools,
+            previous_cluster=previous_cluster,
         )
 
         return {"ok": True}
@@ -2456,6 +2470,38 @@ async def _check_all_machine_updates() -> None:
 @celery_app.task(name="app.tasks.jobs.check_all_machine_updates")
 def check_all_machine_updates() -> None:
     asyncio.run(_check_all_machine_updates())
+
+
+async def _run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> dict[str, Any]:
+    """Start / shut down / reboot / stop one Proxmox VE guest, then take a
+    fresh monitoring sample so the Proxmox tab shows the new state."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        guest = proxmox_find_guest(machine.pve_guests, vmid)
+        if guest is None:
+            return {"ok": False, "error": f"No guest {vmid} on {machine.name}."}
+        secret = await resolve_machine_credential(machine, session)
+        try:
+            status, output = await run_guest_action(
+                machine, secret, guest, action, app_settings.ssh_connect_timeout
+            )
+        except (SSHConnectionError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+    sample_machine_monitoring.delay(machine_id)
+    if status != 0:
+        return {"ok": False, "error": output or f"pvesh exited with status {status}."}
+    return {"ok": True, "output": output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.run_proxmox_guest_action",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> dict[str, Any]:
+    return asyncio.run(_run_proxmox_guest_action(machine_id, vmid, action))
 
 
 async def _send_machine_power_command(machine_id: str, action: str) -> dict[str, Any]:

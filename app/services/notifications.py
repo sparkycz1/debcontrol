@@ -171,8 +171,18 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
         ),
         NotificationEventType.BACKUP_FAILED: (
             "debcontrol: backup failed on {machine_name}",
-            "A Proxmox VE backup failed on {machine_name} ({machine_ip}), noticed at "
+            "A Proxmox backup job failed on {machine_name} ({machine_ip}), noticed at "
             "{timestamp}:\n\n{details}",
+        ),
+        NotificationEventType.MAIL_QUEUE_BACKLOG: (
+            "debcontrol: mail queue on {machine_name} is backing up ({count})",
+            "{count} messages are deferred or held in the mail queue of "
+            "{machine_name} ({machine_ip}) as of {timestamp}.",
+        ),
+        NotificationEventType.CLUSTER_QUORUM_LOST: (
+            "debcontrol: Proxmox cluster {cluster} lost quorum",
+            "{machine_name} ({machine_ip}) reports that cluster {cluster} is no longer "
+            "quorate at {timestamp}.\n\n{details}",
         ),
     },
     "cs": {
@@ -261,8 +271,18 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
         ),
         NotificationEventType.BACKUP_FAILED: (
             "debcontrol: na {machine_name} selhala záloha",
-            "Na {machine_name} ({machine_ip}) selhala záloha Proxmox VE, zjištěno "
-            "v {timestamp}:\n\n{details}",
+            "Na {machine_name} ({machine_ip}) selhala zálohovací úloha Proxmoxu, "
+            "zjištěno v {timestamp}:\n\n{details}",
+        ),
+        NotificationEventType.MAIL_QUEUE_BACKLOG: (
+            "debcontrol: fronta pošty na {machine_name} se hromadí ({count})",
+            "Ve frontě pošty na {machine_name} ({machine_ip}) je k {timestamp} "
+            "{count} odložených nebo pozdržených zpráv.",
+        ),
+        NotificationEventType.CLUSTER_QUORUM_LOST: (
+            "debcontrol: cluster Proxmoxu {cluster} ztratil quorum",
+            "{machine_name} ({machine_ip}) hlásí v {timestamp}, že cluster {cluster} "
+            "nemá quorum.\n\n{details}",
         ),
     },
 }

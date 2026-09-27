@@ -43,7 +43,10 @@
   {% endif %}
 
   {% if run.output %}
-    <pre>{{ run.output }}</pre>
+    {# A fixed-height box that follows the end of the output while it
+       grows (static/js/run-output.js keeps the scroll position across
+       this panel's own 3 s refresh). #}
+    <pre class="run-output" data-run-output tabindex="0">{{ run.output }}</pre>
   {% elif run.status.value in ('pending', 'running') %}
     <p class="hint">{{ t(request, "machine.update_run.waiting_for_output") }}</p>
   {% endif %}

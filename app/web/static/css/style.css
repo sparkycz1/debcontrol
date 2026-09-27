@@ -1129,6 +1129,19 @@ p { margin: 0 0 var(--space-3); }
 .usage-bar-fill-90 { width: 90%; }
 .usage-bar-fill-100 { width: 100%; }
 
+/* The hidden attribute always wins over a component's own display value
+   (a .fleet-card is display:flex — without this, filtering the Dashboard's
+   machine cards set `hidden` on them and nothing disappeared). */
+[hidden] { display: none !important; }
+
+/* Update run output: a scroll box instead of an ever-growing page. */
+.run-output {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* --- Forms --- */
 
 .form {
@@ -2237,3 +2250,8 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 .strategy-fields legend { font-weight: 600; margin-bottom: 0.25rem; }
 .strategy-fields .hint { display: block; margin: 0 0 0 1.6rem; }
 .held-packages { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+
+/* Proxmox tab: start / shut down / reboot / stop per guest. */
+.guest-actions { white-space: nowrap; }
+.guest-actions .inline-form { display: inline; margin-right: 0.35rem; }
+.link-danger { color: var(--color-danger); }

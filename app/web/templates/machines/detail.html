@@ -25,7 +25,18 @@
   {% set pve = proxmox_summary(machine) %}
   {% if pve %}
     <a class="proxmox-strip" href="/machines/{{ machine.id }}/proxmox">
-      {% if pve.version %}<span class="badge">Proxmox VE {{ pve.version }}</span>{% endif %}
+      {% if pve.product %}<span class="badge">{{ pve.product }}</span>{% endif %}
+      {% if pve.cluster_name %}
+        <span class="badge {{ 'badge-ok' if pve.quorate else 'badge-error' }}">{{ t(request, "proxmox.summary_cluster", name=pve.cluster_name) }}{% if pve.quorate is sameas false %} — {{ t(request, "proxmox.not_quorate") }}{% endif %}</span>
+      {% endif %}
+      {% if pve.pbs_fullest %}
+        <span class="badge {{ 'badge-error' if pve.pbs_fullest.used_percent >= 90 else ('badge-warn' if pve.pbs_fullest.used_percent >= 80 else 'badge-ok') }}">{{ t(request, "proxmox.summary_datastore", name=pve.pbs_fullest.name, percent=pve.pbs_fullest.used_percent) }}</span>
+      {% endif %}
+      {% if pve.pbs_failures %}<span class="badge badge-error">{{ t(request, "proxmox.summary_pbs_failures", count=pve.pbs_failures) }}</span>{% endif %}
+      {% if pve.pmg and pve.pmg_mail is not none %}
+        <span class="badge">{{ t(request, "proxmox.summary_mail", count=pve.pmg_mail, spam=pve.pmg_spam, virus=pve.pmg_virus) }}</span>
+      {% endif %}
+      {% if pve.pmg and pve.pmg_backlog >= pve.pmg_backlog_warn %}<span class="badge badge-warn">{{ t(request, "proxmox.summary_queue", count=pve.pmg_backlog) }}</span>{% endif %}
       {% if pve.has_guests %}<span class="badge badge-ok">{{ t(request, "proxmox.summary_guests", running=pve.guests_running, total=pve.guests_total) }}</span>{% endif %}
       {% if pve.unhealthy_pools %}
         <span class="badge badge-error">ZFS: {{ pve.unhealthy_pools | join(', ') }} — {{ t(request, "proxmox.pool_not_online") }}</span>
