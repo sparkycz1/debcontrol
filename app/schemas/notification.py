@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.models.notification_log import NotificationDeliveryChannel
 from app.db.models.notification_rule import NotificationEventType
 from app.services.condition_fields import CONDITION_FIELDS, operators_for
+from app.services.push_channels import CHANNEL_NAMES, RECIPIENT_CHANNELS, URL_CHANNELS
 
 
 class NotificationConditionCreate(BaseModel):
@@ -47,6 +48,9 @@ class NotificationRuleCreate(BaseModel):
     event_types: list[str] = Field(default_factory=list)
     delivery_channel: str = NotificationDeliveryChannel.EMAIL.value
     webhook_url: str | None = Field(default=None, max_length=2048)
+    # Write-only: a new token, or None/"" to keep the one already stored.
+    channel_token: str | None = Field(default=None, max_length=512)
+    channel_recipient: str | None = Field(default=None, max_length=255)
 
     @field_validator("event_types")
     @classmethod
@@ -73,11 +77,19 @@ class NotificationRuleCreate(BaseModel):
             raise ValueError(f'Unknown delivery channel "{value}".') from None
 
     def model_post_init(self, __context: object) -> None:
-        if self.delivery_channel == NotificationDeliveryChannel.WEBHOOK.value:
+        channel = self.delivery_channel
+        if channel in URL_CHANNELS:
             if not self.webhook_url:
-                raise ValueError("A webhook URL is required when delivering via webhook.")
+                if channel == NotificationDeliveryChannel.WEBHOOK.value:
+                    raise ValueError("A webhook URL is required when delivering via webhook.")
+                raise ValueError(f"{CHANNEL_NAMES[channel]} needs a URL.")
             if not self.webhook_url.startswith(("http://", "https://")):
-                raise ValueError("The webhook URL must start with http:// or https://.")
+                raise ValueError("The URL must start with http:// or https://.")
+        if channel in RECIPIENT_CHANNELS and not (self.channel_recipient or "").strip():
+            raise ValueError(
+                f"{CHANNEL_NAMES[channel]} needs a recipient "
+                "(a Telegram chat id, a Pushover user key)."
+            )
 
 
 class NotificationTemplateUpdate(BaseModel):

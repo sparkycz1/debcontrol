@@ -92,6 +92,21 @@
     </label>
     {% if source == 'journal' %}
       <label class="log-field">
+        <span>{{ t(request, "machine.logs.unit") }}</span>
+        <input type="text" name="unit" value="{{ unit }}" placeholder="nginx.service" spellcheck="false" class="log-input-short">
+      </label>
+      <label class="log-field">
+        <span>{{ t(request, "machine.logs.boot") }}</span>
+        <select name="boot">
+          <option value="" {% if not boot %}selected{% endif %}>{{ t(request, "machine.logs.boot_all") }}</option>
+          <option value="0" {% if boot == '0' %}selected{% endif %}>{{ t(request, "machine.logs.boot_current") }}</option>
+          <option value="-1" {% if boot == '-1' %}selected{% endif %}>{{ t(request, "machine.logs.boot_previous") }}</option>
+          {% for n in range(2, max_boot_offset + 1) %}
+            <option value="-{{ n }}" {% if boot == ('-' ~ n) %}selected{% endif %}>{{ t(request, "machine.logs.boot_older", count=n) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="log-field">
         <span>{{ t(request, "machine.logs.priority") }}</span>
         <select name="priority">
           <option value="" {% if not priority %}selected{% endif %}>{{ t(request, "machine.logs.priority_any") }}</option>
@@ -120,6 +135,12 @@
         {% if lines not in (100, 200, 500, 1000, 2000, 5000) %}<option value="{{ lines }}" selected>{{ lines }}</option>{% endif %}
       </select>
     </label>
+    {% if source == 'journal' %}
+      <label class="log-field log-field-check">
+        <input type="checkbox" name="hide_own" value="1" {% if hide_own %}checked{% endif %}>
+        <span>{{ t(request, "machine.logs.hide_own") }}</span>
+      </label>
+    {% endif %}
     <button type="submit" class="button log-toolbar-button">{{ t(request, "machine.logs.show") }}</button>
   </form>
 
@@ -130,6 +151,9 @@
       <input type="hidden" name="path" value="{{ path }}">
       <input type="hidden" name="container" value="{{ container }}">
       <input type="hidden" name="priority" value="{{ priority }}">
+      <input type="hidden" name="unit" value="{{ unit }}">
+      <input type="hidden" name="boot" value="{{ boot }}">
+      <input type="hidden" name="hide_own" value="{{ '1' if hide_own else '' }}">
       <input type="hidden" name="search" value="{{ search }}">
       <input type="hidden" name="since" value="{{ since }}">
       <input type="hidden" name="until" value="{{ until }}">
@@ -143,7 +167,7 @@
   {% if output is not none %}
     {% set can_follow = source == 'journal' or (source == 'file' and path) or (source == 'docker' and container) %}
     <section class="log-viewer" data-log-viewer
-      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}&amp;priority={{ priority | urlencode }}"
+      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}&amp;priority={{ priority | urlencode }}&amp;unit={{ unit | urlencode }}"
       data-search="{{ search }}"
       data-label-follow="{{ t(request, 'machine.logs.follow') }}"
       data-label-stop="{{ t(request, 'machine.logs.follow_stop') }}"
@@ -156,6 +180,7 @@
           {% elif source == 'file' %}<span class="badge">{{ t(request, "machine.logs.source_file") }}</span> <code>{{ path }}</code>
           {% else %}<span class="badge">{{ t(request, "machine.logs.source_journal") }}</span>{% endif %}
           <span class="log-viewer-count" data-log-count>{{ t(request, "machine.logs.line_count", count=(log_lines | length)) }}</span>
+          {% if hidden_count %}<span class="log-viewer-count">{{ t(request, "machine.logs.hidden_own", count=hidden_count) }}</span>{% endif %}
           <span class="log-follow-status" data-log-follow-status role="status" aria-live="polite"></span>
         </div>
         <div class="log-viewer-actions">

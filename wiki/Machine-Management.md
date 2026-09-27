@@ -167,9 +167,19 @@ required vars) — see [Ansible Onboarding](Ansible-Onboarding.md).
 
 ### System updates
 
-`apt-get update` / `dist-upgrade` or `full-upgrade` / `autoremove` /
-`autoclean` (**Machines → a machine → System updates**, or scoped to a
-group / "All machines") needs root on the target and can run long:
+`apt-get update` / the chosen strategy / `autoremove` / `autoclean`
+(**Machines → a machine → System updates**, or scoped to a group / "All
+machines") needs root on the target and can run long:
+
+- **Three strategies** (`UpgradeStrategy`): `full_upgrade` (installs new
+  dependencies and removes conflicting packages when an update needs it —
+  what Proxmox VE recommends; the default), `upgrade` (never removes or
+  newly installs a package — an update that would need that is held
+  back) and `security` (only packages with a pending update from a
+  `*-security` suite, found with a simulated `apt-get upgrade` and
+  installed with `apt-get install --only-upgrade`). `dist_upgrade` — the
+  same as `full-upgrade` under its older name — is still accepted by the
+  API, stored runs and existing scheduled tasks, just no longer offered.
 
 - **A dedicated long timeout** — `AppSettings.update_timeout_seconds`
   (Settings → Checks & retention; default 30 min), read fresh on every
@@ -238,6 +248,30 @@ A first-class row in the same history (a "rollback" badge), not an edit
 to the original. A rollback of a rollback is refused (`400`) — roll back
 to a specific earlier state by rolling back *that* run directly. The API
 mirrors the web route.
+
+### Holding a package back, reading its changelog, reboot hints
+
+- **Hold** (`apt-mark hold`) — each pending package on the Updates tab
+  has *hold*; held packages are listed under the check with *release*
+  (`apt-mark unhold`). Same permission as running updates
+  (`action.updates`), audited as `machine.package.hold` / `.unhold`, and
+  refreshed from the machine on every update check (`apt-mark showhold`,
+  `Machine.apt_held_packages`). Needs root or a sudoers grant for
+  `/usr/bin/apt-mark` (machines onboarded by 0.78.0+ get one). REST:
+  `POST`/`DELETE /api/v1/machines/{id}/packages/{name}/hold`.
+- **Changelog** — *changelog* next to a pending package opens what
+  changed since the installed version: `apt-get changelog`, fetched live
+  over SSH and cut at the installed version's own entry
+  (`app.ssh.updates.fetch_changelog`), never stored.
+  REST: `GET /api/v1/machines/{id}/packages/{name}/changelog`.
+- **Reboot hints** — pending kernel, microcode, firmware, `libc6`,
+  `systemd` or `dbus` updates show "these only take effect after a
+  reboot"; pending Proxmox VE core packages (`pve-manager`, `qemu-server`,
+  `pve-qemu-kvm`, …) say that its services restart and running VMs keep
+  the old QEMU until restarted (`app.ssh.updates.reboot_hint_packages`).
+- **"Reboot required"** now also counts Proxmox kernels
+  (`proxmox-kernel-*`, `pve-kernel-*`) and Debian's own
+  `/run/reboot-required` flag, not only `linux-image-*`.
 
 ### Checking for updates without installing them
 
@@ -433,6 +467,19 @@ Not running, or accounting off → `N/A`, not zero. The Monitoring tab's
 
 ### Monitoring tab layout
 
+- **Less noise by default** — the Network chart starts with virtual
+  interfaces (`tap*`, `veth*`, `fwbr*`/`fwln*`/`fwpr*`, Docker/libvirt/
+  Kubernetes bridges) switched off, physical NICs and `vmbr*` bridges on;
+  Temperatures starts with CPU package/die, NVMe and GPU sensors only
+  (`app.web.charts.noise_interfaces`/`secondary_sensors`). Everything is
+  one click away in the legend, or *Show all*. Fan speeds use a
+  zero-based axis — fitted to the data, a fan wobbling between 1407 and
+  1411 RPM looked dramatic.
+- **systemd services** — shows running and failed units by default
+  (failed first and highlighted), with *Failed only* / *All* in the select
+  next to the filter box; a CPU/memory column no unit has a value for
+  isn't shown at all.
+
 A two-column grid of chart cards (one column below ~1000px), modeled on
 Beszel's system page, then full-width tables. The same downsampled series
 are available as JSON at `GET /api/v1/machines/{id}/monitoring?range_key=24h`
@@ -466,6 +513,66 @@ sensor/container names come from the managed machine), legend toggling,
 the per-card series filter, and the tables' filter/sort. A configured
 condition-based notification's threshold is drawn as a dashed line on the
 chart it's about, with its value in the legend.
+
+### Keeping the journal quiet: one SSH login, not hundreds
+
+Each periodic check (monitoring, facts, packages, services, readiness,
+update and image-update checks) used to log in, run one command and log
+out — on a Proxmox host hundreds of times a day, each one an sshd
+"Accepted …", a PAM session, a logind session and `session-N.scope`, and
+often a whole `user@0.service` start/stop. Now:
+
+- **Connection reuse** (`app.ssh.pool`) — a Celery worker process keeps
+  the connection it opened to a machine and runs the next check over it
+  as another exec channel: no new login at all, like OpenSSH's
+  `ControlMaster`. The periodic collector tasks run on one event loop kept
+  for the worker process's life (`app.tasks.runner.run_in_worker_loop`)
+  instead of `asyncio.run()`'s fresh loop per task. A cached connection is
+  used only when its address, port, account, pinned host key and a hash
+  of the credential still match and a cheap `true` probe succeeds;
+  otherwise it reconnects with the usual pinned-host-key verification.
+  Idle connections are closed after **Settings → Checks & retention →
+  Keep SSH connections open** (`AppSettings.ssh_connection_reuse_minutes`,
+  default 15; 0 = log in for every check), and each process keeps at most
+  64 (least recently used closed first). Update runs, power actions, the
+  terminal, logs and one-off commands still use their own connection.
+- **No `sudo` for root** (`app.ssh.shell.ROOT_SUDO_SHIM`) — every command
+  starts with a shell function that, only when `id -u` is 0, turns
+  `sudo -n …` into a direct call and answers `sudo -n -l <path>` with
+  "yes", so a root account no longer writes a `sudo`/PAM line per disk
+  per sample. A non-root account runs the real `sudo` exactly as before.
+
+### Proxmox VE and ZFS
+
+A **Proxmox** tab appears on a Proxmox VE host (a plain ZFS host gets it
+as **ZFS**), and the machine's Overview starts with a one-line summary
+linking to it: PVE version, guests running, pool health, last backup,
+guests without a backup job. All of it is collected inside existing round
+trips (`app.ssh.proxmox`), nothing extra connects:
+
+- with every **monitoring sample**: ZFS pools (`zpool list`/`zpool
+  status` — size, use, fragmentation, health, the last scrub/resilver line,
+  errors, zpool's own explanation of a problem) and every VM/container with
+  its state, CPU, memory, uptime, node and tags
+  (`pvesh get /cluster/resources --type vm`);
+- with every **facts refresh**: the Proxmox VE version (`pveversion` —
+  the OS then reads "Proxmox VE 9.0.6 (Debian GNU/Linux 13 …)"),
+  storages with usage and state (Proxmox Backup Server ones marked),
+  backup jobs with their schedule and next run, the last vzdump tasks and
+  their result, and guests no backup job covers
+  (`/cluster/backup-info/not-backed-up`).
+
+`pvesh` runs through `sudo -n` (a no-op for root); a non-root account
+needs a sudoers grant for `/usr/bin/pvesh` (onboarding adds it). REST:
+`GET /api/v1/machines/{id}/proxmox`; `pve_version` is in the machine's
+own JSON too.
+
+**Memory on a ZFS host.** The ARC is memory the kernel gets back under
+pressure, but Linux doesn't count it as "available", so a ZFS host looked
+~90 % full all the time. `ram_used_bytes` now excludes the ARC
+(`/proc/spl/kstat/zfs/arcstats`), and the Memory chart stacks *ZFS ARC*
+and *Cache and buffers* above *Used*; alert thresholds apply to *Used*.
+Samples from before 0.78.0 on a ZFS host still read higher.
 
 ### Docker containers
 
@@ -519,7 +626,17 @@ each sample stores only the numbers the charts need
 (`MachineMonitoringSample.docker_stats`), so image names and port lists
 aren't repeated every two minutes.
 
-### Endpoint checks (TLS certificates, HTTP)
+### Endpoint checks (TLS certificates, HTTP, ping, TCP, DNS)
+
+Besides HTTP and TLS: **ping** (one ICMP echo through an unprivileged
+`SOCK_DGRAM` ICMP socket — allowed in Docker containers by default via
+`net.ipv4.ping_group_range`; where it isn't, the check says so),
+**TCP** (`host:port` accepts a connection) and **DNS** (`name`, or
+`name@192.168.1.53` to ask one specific resolver; the "must contain" text
+is an address the name must resolve to) — `app.services.network_probes`.
+The **SLA report** (`/checks/sla`, CSV, `GET /api/v1/checks/sla` →
+`machines`) also lists every machine the viewer can see, with the same
+figures from its SSH reachability samples.
 
 **Checks** (`/checks`; `machine.view` to see, `machine.manage` to add,
 edit, delete or *Run now*) are independent of machines — they run from the
@@ -731,7 +848,23 @@ could read any of it directly anyway.
 
 The journal can be narrowed to a **priority** (`journalctl -p`: *error
 and worse*, *warning and worse*, …; only journalctl's own level names are
-accepted, also for Follow live and `GET /api/v1/machines/{id}/logs?priority=`).
+accepted, also for Follow live and `GET /api/v1/machines/{id}/logs?priority=`),
+one **unit** (`-u`, e.g. `nginx.service`; validated before it reaches the
+machine) and one **boot** (`-b 0` this boot, `-b -1` the one before — "what
+happened before the crash" — up to 20 back). The journal is read as
+`journalctl -o json` (only the fields shown), so each line is **colored by
+its real priority** rather than a keyword guess. **Hide debcontrol's own
+sessions** drops the lines debcontrol's own SSH logins cause, matched on
+journald's structured fields rather than message text: sshd lines of a
+connection from debcontrol's address (as the machine sees it,
+`$SSH_CONNECTION`) and that sshd process's other lines, logind's session
+created with one of those as leader and everything about that
+`session-N.scope`, the SSH account's `user@UID.service` starting and
+stopping, and `sudo` run by a non-root SSH account
+(`app.ssh.logs.filter_own_sessions`); the count hidden is shown.
+All of it is kept in saved log views and available in the REST API
+(`unit`, `boot`, `hide_own`; the response adds `entries` with each line's
+priority and `hidden`).
 **Saved log views** keep a named set of Logs filters (source, file path,
 container, priority, search, since/until, lines) per account and offer it
 on *every* machine's Logs tab — "errors in the last hour" is useful
@@ -1157,7 +1290,29 @@ shut down — against a machine, group, or "All machines" on a cron expression.
   Advancing *before* the action runs stops a slow action re-enqueuing on the next tick.
 - **No per-run history** — a firing records a short `last_run_summary` +
   `last_run_at`; the action itself already has its own record.
-- **Always UTC, no per-schedule timezone.**
+- **A time zone per task** (`ScheduledTask.timezone`, an IANA name;
+  new tasks default to the instance's `TZ`). "0 3 * * *" stays at 03:00
+  local time across daylight-saving changes; the preview shows the next
+  runs in that zone. A task saved before 0.78.0 has none and keeps
+  running in UTC, as before. REST: `timezone` on the task,
+  `GET /api/v1/scheduling/cron-preview?expression=…&timezone=Europe/Prague`.
+- **Only the chosen action's options** are shown on the form
+  (`static/js/schedule-form.js`); without JavaScript every option stays
+  visible, each naming the action it belongs to.
+- **Unattended updates** — *System update* takes two more options:
+  *Reboot afterwards: only if the update needs it* (after a successful
+  run, `app.ssh.facts.check_reboot_required` decides; the machine is
+  rebooted and waited for until its SSH port answers again, up to 15
+  minutes — `MachineUpdateRun.reboot_outcome`) and *Machines: one at a
+  time* (`MachineUpdateRun.rollout_position`: runs go in name order, the
+  next starts only when the previous succeeded and, after a reboot, came
+  back; anything else stops the rest, each marked failed with the reason
+  — `app.tasks.jobs._finish_update_run`).
+- **Run only inside a maintenance window**
+  (`ScheduledTask.require_maintenance_window`) — each run skips every
+  targeted machine no active maintenance window covers; the run summary
+  says how many. (A window can also *pause* scheduled tasks — see
+  Notifications → Maintenance windows.)
 - **Reboot/shutdown are schedulable and not re-confirmed at fire time** —
   flagged `destructive=True`, surfaced with a ⚠ on the form.
 - **Target encoding: one `<select>`** — type + id folded into one string

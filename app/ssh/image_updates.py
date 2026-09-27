@@ -18,8 +18,9 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from app.db.models.machine import Machine
-from app.ssh.client import open_connection
 from app.ssh.logs import DOCKER_ACCESS_PROBE, DOCKER_NO_ACCESS_MARKER
+from app.ssh.pool import machine_connection
+from app.ssh.shell import with_root_shim
 
 ImageStatus = Literal["update", "current", "unknown"]
 
@@ -70,8 +71,10 @@ async def check_image_updates(
 ) -> dict[str, ImageStatus]:
     """Requires a pinned host key. One registry round trip per distinct
     running image, hence the generous timeout."""
-    async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(IMAGE_UPDATE_COMMAND, check=False, timeout=timeout_seconds + 120)
+    async with machine_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(
+            with_root_shim(IMAGE_UPDATE_COMMAND), check=False, timeout=timeout_seconds + 120
+        )
     stdout = result.stdout or ""
     return parse_image_update_output(stdout if isinstance(stdout, str) else stdout.decode())
 

@@ -55,6 +55,12 @@ class MachineMonitoringSample(Base):
     # row stays meaningful on its own even if RAM changes (or hasn't been
     # gathered by a facts refresh yet at all).
     ram_total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # The ZFS ARC and the page cache/buffers — memory the kernel hands back
+    # under pressure, charted separately. `ram_used_bytes` excludes the ARC
+    # (it didn't before 0.78.0, so older ZFS samples read higher). None on
+    # older samples / no ZFS.
+    ram_arc_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ram_cache_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Each {"iface": ..., "rx_bytes": ..., "tx_bytes": ...} — cumulative
     # counters since boot (loopback excluded), one entry per interface
     # found. The Monitoring tab's graphs compute a rate (bytes/sec) from

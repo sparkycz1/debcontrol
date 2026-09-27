@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 import mistune
 from fastapi import Request
@@ -17,11 +17,14 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
 from app.core.config import get_settings
+from app.core.timezones import zone
 from app.core.version import APP_VERSION, get_git_commit
 from app.db.models.role import Permission
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
 from app.services import fleet_overview
+from app.ssh import proxmox
+from app.ssh.updates import reboot_hint_packages
 from app.web import charts
 from app.web.branding import favicon_href, logo_src
 from app.web.flash import read_flash
@@ -36,15 +39,12 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.autoescape = True
 
 
-@lru_cache
 def _display_zone(tz_name: str) -> ZoneInfo:
-    """`lru_cache`d per zone name so a template rendering many timestamps
-    in a loop doesn't re-resolve the zone database on every one. Falls
-    back to UTC for an unset or unrecognized `TZ` — see `Settings.tz`."""
-    try:
-        return ZoneInfo(tz_name)
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo("UTC")
+    """Cached per zone name (`app.core.timezones.zone`) so a template
+    rendering many timestamps in a loop doesn't re-resolve the zone
+    database on every one. Falls back to UTC for an unset or unrecognized
+    `TZ` — see `Settings.tz`."""
+    return zone(tz_name)
 
 
 def local_time(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
@@ -103,6 +103,17 @@ def format_uptime(seconds: int | None) -> str:
 
 templates.env.filters["format_uptime"] = format_uptime
 
+
+def from_epoch(value: int | float | None) -> datetime | None:
+    """Epoch seconds (as Proxmox VE reports task times) -> an aware UTC
+    datetime for `local_time`; None stays None."""
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, UTC)
+
+
+templates.env.filters["from_epoch"] = from_epoch
+
 templates.env.filters["os_badge"] = badge_for
 
 
@@ -136,6 +147,43 @@ def _cert_days(expires_at: datetime) -> int:
 
 templates.env.globals["cert_days"] = _cert_days
 templates.env.globals["chart_palette"] = charts.PALETTE
+
+
+def strategy_label(request: Request, value: str | None) -> str:
+    """An update run's strategy the way the forms name it."""
+    key = f"updates.strategy.{value}"
+    label = t(request, key)
+    if label == key:
+        return value or ""
+    return label
+
+
+templates.env.globals["strategy_label"] = strategy_label
+templates.env.globals["reboot_hint_packages"] = reboot_hint_packages
+templates.env.globals["noise_interfaces"] = charts.noise_interfaces
+templates.env.globals["secondary_sensors"] = charts.secondary_sensors
+
+
+def proxmox_summary(machine: Any) -> dict[str, Any] | None:
+    """The Proxmox VE / ZFS headline for a machine's Overview — None when
+    it has neither (`app.ssh.proxmox`)."""
+    if not (machine.pve_version or machine.pve_guests is not None or machine.zfs_pools):
+        return None
+    running, total = proxmox.guest_counts(machine.pve_guests)
+    backups = machine.pve_backups or {}
+    return {
+        "version": machine.pve_version,
+        "has_guests": machine.pve_guests is not None,
+        "guests_running": running,
+        "guests_total": total,
+        "pools": len(machine.zfs_pools or []),
+        "unhealthy_pools": proxmox.unhealthy_pools(machine.zfs_pools),
+        "last_backup": proxmox.last_backup(machine.pve_backups),
+        "not_backed_up": len(backups.get("not_backed_up") or []),
+    }
+
+
+templates.env.globals["proxmox_summary"] = proxmox_summary
 templates.env.filters["chart_value"] = charts.format_value
 templates.env.filters["bytes"] = charts.format_bytes
 

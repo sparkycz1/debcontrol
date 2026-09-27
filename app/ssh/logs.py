@@ -22,12 +22,17 @@ that account itself; see that setting's own docstring in
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
+from dataclasses import dataclass
+from datetime import UTC, datetime, tzinfo
+from typing import Any
 
 from app.core.config import get_settings
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
+from app.ssh.shell import with_root_shim
 
 DEFAULT_LINE_LIMIT = 200
 MAX_LINE_LIMIT = 5000
@@ -87,8 +92,65 @@ def normalize_priority(priority: str) -> str:
     return value if value in JOURNAL_PRIORITIES else ""
 
 
+# A systemd unit name as `-u` accepts it (`nginx`, `nginx.service`,
+# `getty@tty1.service`, `user@0.service`, `-.mount`, a glob like `ssh*`) —
+# checked before it ever reaches the machine, on top of quoting it.
+_UNIT_RE = re.compile(r"^[A-Za-z0-9@._:*\\-]{1,200}$")
+# How many boots back the boot selector reaches (`-b 0` = this boot,
+# `-b -1` = the one before, i.e. "what happened before the crash").
+MAX_BOOT_OFFSET = 20
+
+
+def normalize_unit(unit: str) -> str:
+    """A plausible systemd unit name/glob, or "" (no unit filter)."""
+    value = unit.strip()
+    return value if _UNIT_RE.match(value) else ""
+
+
+def normalize_boot(boot: str) -> str:
+    """"0" (this boot) or "-1".."-20" (earlier boots), or "" (every boot the
+    journal still has)."""
+    value = boot.strip()
+    try:
+        offset = int(value)
+    except ValueError:
+        return ""
+    return str(offset) if -MAX_BOOT_OFFSET <= offset <= 0 else ""
+
+
+# Only the fields the Logs tab shows or the "hide debcontrol's own
+# sessions" filter needs — a full `-o json` entry is several times larger.
+JOURNAL_FIELDS = (
+    "MESSAGE",
+    "PRIORITY",
+    "SYSLOG_IDENTIFIER",
+    "_COMM",
+    "_PID",
+    "_HOSTNAME",
+    "SESSION_ID",
+    "LEADER",
+    "UNIT",
+    "USER_UNIT",
+    "_SYSTEMD_UNIT",
+    "_SYSTEMD_USER_UNIT",
+    "_UID",
+)
+# First line of a structured journal read: this account's uid and the
+# address it connected from (`$SSH_CONNECTION`'s first field), as the
+# machine itself sees them — what `filter_own_sessions` matches against.
+SELF_MARKER = "@@SELF"
+
+
 def build_journal_command(
-    *, lines: int, search: str, since: str, until: str, priority: str = ""
+    *,
+    lines: int,
+    search: str,
+    since: str,
+    until: str,
+    priority: str = "",
+    unit: str = "",
+    boot: str = "",
+    structured: bool = False,
 ) -> str:
     """`journalctl` — no root needed to read the system journal on a
     default Debian/Ubuntu install (the invoking user just needs to be in
@@ -97,17 +159,181 @@ def build_journal_command(
     filters, applied server-side rather than piping through `grep`
     ourselves — journalctl's `--since`/`--until` understand a much richer
     set of time expressions ("yesterday", "-1h", ...) than this app would
-    otherwise have to parse."""
+    otherwise have to parse. `unit` is `-u` (one service), `boot` is `-b`
+    (0 = this boot, -1 = the previous one).
+
+    `structured` asks for `-o json` (just `JOURNAL_FIELDS`) behind a
+    `SELF_MARKER` line — parsed by `parse_journal_json` — so the Logs tab
+    can color each entry by its real priority and hide debcontrol's own
+    logins."""
     parts = ["journalctl", "--no-pager", "-n", str(_clamp_lines(lines))]
     if normalize_priority(priority):
         parts += ["-p", normalize_priority(priority)]
+    if normalize_unit(unit):
+        parts += ["-u", shlex.quote(normalize_unit(unit))]
+    if normalize_boot(boot):
+        parts += ["-b", normalize_boot(boot)]
     if search.strip():
         parts += ["-g", shlex.quote(search.strip())]
     if since.strip():
         parts += ["--since", shlex.quote(since.strip())]
     if until.strip():
         parts += ["--until", shlex.quote(until.strip())]
-    return " ".join(parts)
+    if not structured:
+        return " ".join(parts)
+    parts += ["-o", "json", f"--output-fields={','.join(JOURNAL_FIELDS)}"]
+    return f'echo "{SELF_MARKER} $(id -u) ${{SSH_CONNECTION%% *}}"; ' + " ".join(parts)
+
+
+@dataclass(frozen=True)
+class JournalEntry:
+    """One journal entry, trimmed to what the Logs tab needs."""
+
+    timestamp_us: int | None
+    hostname: str
+    identifier: str
+    pid: str
+    message: str
+    # 0 (emerg) .. 7 (debug); None when the entry carries none.
+    priority: int | None
+    fields: dict[str, str]
+
+
+def _field_text(value: Any) -> str:
+    """journald's JSON: a string, a list of byte values (non-UTF-8 data) or
+    a list of those (a field repeated in one entry)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        if all(isinstance(v, int) for v in value):
+            return bytes(v & 0xFF for v in value).decode(errors="replace")
+        return " ".join(_field_text(v) for v in value)
+    return str(value)
+
+
+def parse_journal_json(raw: str) -> tuple[list[JournalEntry], str | None, str | None]:
+    """`(entries, own_uid, own_address)` from `build_journal_command(...,
+    structured=True)`'s output. A line that isn't valid JSON is skipped —
+    never fails the whole view."""
+    entries: list[JournalEntry] = []
+    own_uid: str | None = None
+    own_address: str | None = None
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith(SELF_MARKER):
+            fields = line.split()
+            own_uid = fields[1] if len(fields) > 1 else None
+            own_address = fields[2] if len(fields) > 2 else None
+            continue
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        texts = {str(key): _field_text(value) for key, value in data.items()}
+        priority_text = texts.get("PRIORITY", "")
+        timestamp_text = texts.get("__REALTIME_TIMESTAMP", "")
+        entries.append(
+            JournalEntry(
+                timestamp_us=int(timestamp_text) if timestamp_text.isdigit() else None,
+                hostname=texts.get("_HOSTNAME", ""),
+                identifier=texts.get("SYSLOG_IDENTIFIER") or texts.get("_COMM", ""),
+                pid=texts.get("_PID", ""),
+                message=texts.get("MESSAGE", ""),
+                priority=int(priority_text) if priority_text.isdigit() else None,
+                fields=texts,
+            )
+        )
+    return entries, own_uid, own_address
+
+
+_SSHD_IDENTIFIERS = frozenset({"sshd", "sshd-session"})
+
+
+def filter_own_sessions(
+    entries: list[JournalEntry],
+    *,
+    own_uid: str | None,
+    own_address: str | None,
+    username: str,
+) -> tuple[list[JournalEntry], int]:
+    """Drop the journal lines debcontrol's own SSH logins cause —
+    `(kept, hidden_count)`.
+
+    Matched on journald's own structured fields, not on message text alone:
+
+    - sshd lines of a connection *from debcontrol's own address* (as the
+      machine sees it, `$SSH_CONNECTION`), and every other line of the same
+      sshd process (its PAM "session opened/closed", the disconnect);
+    - logind's "New session N" whose session leader (`LEADER`) is one of
+      those sshd processes, then every line about that session
+      (`SESSION_ID`) — logind's "Session N logged out", systemd's
+      `session-N.scope`;
+    - the SSH account's own user manager (`user@UID.service`,
+      `user-runtime-dir@UID.service` and what runs inside it) starting and
+      stopping — debcontrol's doing whenever it was that account's only
+      session;
+    - `sudo` run *by* a non-root SSH account (its scoped grants).
+
+    Needs `own_address`; without it (no `$SSH_CONNECTION`) nothing is
+    hidden rather than guessing."""
+    if not own_address:
+        return entries, 0
+    own_pids: set[str] = set()
+    for entry in entries:
+        if entry.identifier in _SSHD_IDENTIFIERS and (
+            f"from {own_address} " in f"{entry.message} "
+            or f" {own_address} port " in entry.message
+        ):
+            own_pids.add(entry.pid)
+    own_sessions = {
+        entry.fields["SESSION_ID"]
+        for entry in entries
+        if entry.fields.get("SESSION_ID") and entry.fields.get("LEADER") in own_pids
+    }
+    scope_units = {f"session-{s}.scope" for s in own_sessions}
+    own_units = (
+        {f"user@{own_uid}.service", f"user-runtime-dir@{own_uid}.service"} if own_uid else set()
+    )
+
+    def is_own(entry: JournalEntry) -> bool:
+        fields = entry.fields
+        if entry.identifier in _SSHD_IDENTIFIERS and entry.pid in own_pids:
+            return True
+        if fields.get("SESSION_ID") and fields["SESSION_ID"] in own_sessions:
+            return True
+        units = {fields.get("UNIT", ""), fields.get("_SYSTEMD_UNIT", "")}
+        if units & scope_units or units & own_units:
+            return True
+        if own_uid and fields.get("_SYSTEMD_USER_UNIT") and fields.get("_UID") == own_uid:
+            return True
+        if entry.identifier == "sudo" and username and username != "root":
+            text = entry.message.strip()
+            return text.startswith(f"{username} :") or f" by {username}(uid=" in text
+        return False
+
+    kept = [e for e in entries if not is_own(e)]
+    return kept, len(entries) - len(kept)
+
+
+def format_journal_entry(entry: JournalEntry, zone: tzinfo) -> str:
+    """One entry the way `journalctl`'s default output prints it, with a
+    full date: `2026-09-27 10:15:02 host ident[pid]: message`."""
+    stamp = ""
+    if entry.timestamp_us is not None:
+        stamp = (
+            datetime.fromtimestamp(entry.timestamp_us / 1_000_000, UTC)
+            .astimezone(zone)
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+    source = f"{entry.identifier}[{entry.pid}]" if entry.pid else entry.identifier
+    head = " ".join(part for part in (stamp, entry.hostname, f"{source}:") if part)
+    return f"{head} {entry.message}"
 
 
 def build_list_directory_command(path: str) -> str:
@@ -157,16 +383,26 @@ async def view_journal(
     since: str = "",
     until: str = "",
     priority: str = "",
-) -> str:
+    unit: str = "",
+    boot: str = "",
+) -> tuple[list[JournalEntry], str | None, str | None]:
     """Connect to a machine and return the requested slice of its systemd
-    journal. Requires a pinned host key."""
+    journal the way `parse_journal_json` does — entries plus debcontrol's
+    own uid/address on the machine. Requires a pinned host key."""
     command = build_journal_command(
-        lines=lines, search=search, since=since, until=until, priority=priority
+        lines=lines,
+        search=search,
+        since=since,
+        until=until,
+        priority=priority,
+        unit=unit,
+        boot=boot,
+        structured=True,
     )
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(command, check=False, timeout=timeout_seconds)
+        result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
-    return stdout if isinstance(stdout, str) else stdout.decode()
+    return parse_journal_json(stdout if isinstance(stdout, str) else stdout.decode())
 
 
 async def view_file(
@@ -188,7 +424,7 @@ async def view_file(
 
     command = build_file_command(path=path, lines=lines, search=search)
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(command, check=False, timeout=timeout_seconds)
+        result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
     return stdout if isinstance(stdout, str) else stdout.decode()
 
@@ -211,7 +447,7 @@ async def list_directory(
 
     command = build_list_directory_command(path)
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(command, check=False, timeout=timeout_seconds)
+        result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
     return parse_directory_listing(stdout if isinstance(stdout, str) else stdout.decode())
 
@@ -265,7 +501,7 @@ async def view_docker_logs(
         container=container, lines=lines, search=search, since=since, until=until
     )
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(command, check=False, timeout=timeout_seconds)
+        result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
     output = stdout if isinstance(stdout, str) else stdout.decode()
     if output.strip() == DOCKER_NO_ACCESS_MARKER:
@@ -281,7 +517,13 @@ FOLLOW_INITIAL_LINES = 50
 
 
 def build_follow_command(
-    *, source: str, path: str, container: str, search: str, priority: str = ""
+    *,
+    source: str,
+    path: str,
+    container: str,
+    search: str,
+    priority: str = "",
+    unit: str = "",
 ) -> str:
     """The streaming (`-f`) variant of each Logs source, for the live-follow
     WebSocket (`app/web/routes/logs_ws.py`): `journalctl -f`, `tail -F`
@@ -296,6 +538,8 @@ def build_follow_command(
         options = f" -g {shlex.quote(term)}" if term else ""
         if normalize_priority(priority):
             options += f" -p {normalize_priority(priority)}"
+        if normalize_unit(unit):
+            options += f" -u {shlex.quote(normalize_unit(unit))}"
         return f"journalctl --no-pager -f -n {n}{options}"
     if source == "file":
         if not is_path_allowed(path, get_settings().log_file_allowed_path_list):

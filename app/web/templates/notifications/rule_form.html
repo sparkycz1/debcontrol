@@ -132,21 +132,47 @@
       {% endif %}
 
       <label for="delivery_channel">{{ t(request, "notifications.rule.send_via_label") }}</label>
+      {# Which fields each channel uses — see app.services.push_channels.
+         The other channels' fields are rendered hidden;
+         static/js/notification-delivery.js re-syncs them as the select
+         changes. #}
+      {% set url_channels = ['webhook', 'ntfy', 'gotify', 'discord'] %}
+      {% set token_channels = ['ntfy', 'gotify', 'telegram', 'pushover'] %}
+      {% set recipient_channels = ['telegram', 'pushover'] %}
       <select id="delivery_channel" name="delivery_channel" data-delivery-channel-select>
-        <option value="email" {{ 'selected' if selected_delivery_channel == 'email' else '' }}>
-          {{ t(request, "notifications.rule.send_via_email") }}
-        </option>
-        <option value="webhook" {{ 'selected' if selected_delivery_channel == 'webhook' else '' }}>
-          {{ t(request, "notifications.rule.send_via_webhook") }}
-        </option>
+        {% for channel in ['email', 'webhook', 'ntfy', 'gotify', 'telegram', 'discord', 'pushover'] %}
+          <option value="{{ channel }}" {{ 'selected' if selected_delivery_channel == channel else '' }}>
+            {{ t(request, "notifications.rule.send_via_" ~ channel) }}
+          </option>
+        {% endfor %}
       </select>
       <p class="hint">{{ t(request, "notifications.rule.send_via_hint") }}</p>
 
-      <div data-delivery-webhook-field {{ 'hidden' if selected_delivery_channel != 'webhook' else '' }}>
+      <div data-delivery-for="{{ url_channels | join(' ') }}" {{ 'hidden' if selected_delivery_channel not in url_channels else '' }}>
         <label for="webhook_url">{{ t(request, "notifications.rule.webhook_url_label") }}</label>
         <input type="text" id="webhook_url" name="webhook_url" maxlength="2048"
                placeholder="https://example.com/hooks/debcontrol" value="{{ selected_webhook_url or '' }}">
-        <p class="hint">{{ t(request, "notifications.rule.webhook_url_hint") }}</p>
+        {% for channel in url_channels %}
+          <p class="hint" data-delivery-for="{{ channel }}" {{ 'hidden' if selected_delivery_channel != channel else '' }}>{{ t(request, "notifications.rule.url_hint_" ~ channel) }}</p>
+        {% endfor %}
+      </div>
+
+      <div data-delivery-for="{{ token_channels | join(' ') }}" {{ 'hidden' if selected_delivery_channel not in token_channels else '' }}>
+        <label for="channel_token">{{ t(request, "notifications.rule.channel_token_label") }}</label>
+        <input type="password" id="channel_token" name="channel_token" maxlength="512" autocomplete="new-password"
+               placeholder="{{ t(request, 'notifications.rule.channel_token_keep') if channel_token_set else '' }}">
+        {% for channel in token_channels %}
+          <p class="hint" data-delivery-for="{{ channel }}" {{ 'hidden' if selected_delivery_channel != channel else '' }}>{{ t(request, "notifications.rule.token_hint_" ~ channel) }}</p>
+        {% endfor %}
+      </div>
+
+      <div data-delivery-for="{{ recipient_channels | join(' ') }}" {{ 'hidden' if selected_delivery_channel not in recipient_channels else '' }}>
+        <label for="channel_recipient">{{ t(request, "notifications.rule.channel_recipient_label") }}</label>
+        <input type="text" id="channel_recipient" name="channel_recipient" maxlength="255"
+               value="{{ selected_channel_recipient or '' }}">
+        {% for channel in recipient_channels %}
+          <p class="hint" data-delivery-for="{{ channel }}" {{ 'hidden' if selected_delivery_channel != channel else '' }}>{{ t(request, "notifications.rule.recipient_hint_" ~ channel) }}</p>
+        {% endfor %}
       </div>
 
       <label for="custom_template_id">{{ t(request, "notifications.rule.template_label") }}</label>

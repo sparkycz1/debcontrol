@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezones import is_valid_timezone
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
@@ -69,6 +70,8 @@ async def export_scheduling_config(db: AsyncSession) -> SchedulingConfigExport:
                 target_machine=target_machine,
                 target_group=target_group,
                 cron_expression=task.cron_expression,
+                timezone=task.timezone,
+                require_maintenance_window=task.require_maintenance_window,
                 is_enabled=task.is_enabled,
             )
         )
@@ -139,6 +142,8 @@ async def import_scheduling_config(
 
         try:
             validate_cron_expression(task_export.cron_expression)
+            if task_export.timezone and not is_valid_timezone(task_export.timezone):
+                raise ValueError(f'unknown time zone "{task_export.timezone}"')
         except ValueError as exc:
             result.skipped_tasks.append({"name": task_export.name, "reason": str(exc)})
             continue
@@ -192,9 +197,13 @@ async def import_scheduling_config(
             target_machine_id=target_machine_id,
             target_group_id=target_group_id,
             cron_expression=task_export.cron_expression,
+            timezone=task_export.timezone or None,
+            require_maintenance_window=task_export.require_maintenance_window,
             is_enabled=task_export.is_enabled,
             next_run_at=(
-                compute_next_run(task_export.cron_expression) if task_export.is_enabled else None
+                compute_next_run(task_export.cron_expression, timezone=task_export.timezone or None)
+                if task_export.is_enabled
+                else None
             ),
         )
         db.add(task)

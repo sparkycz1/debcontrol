@@ -58,7 +58,12 @@ _HISTORY_MAX_LIMIT = 200
 
 
 def _rule_to_dict(rule: NotificationRule) -> dict[str, Any]:
-    return {"id": str(rule.id), **rule_to_portable_dict(rule)}
+    return {
+        "id": str(rule.id),
+        **rule_to_portable_dict(rule),
+        # Write-only: whether a push token is stored, never the token.
+        "channel_token_set": bool(rule.channel_token_encrypted),
+    }
 
 
 def _custom_template_to_dict(template: NotificationCustomTemplate) -> dict[str, Any]:

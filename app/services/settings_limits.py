@@ -15,6 +15,7 @@ from __future__ import annotations
 # Whole numbers within (minimum, maximum), never empty.
 BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "ssh_connect_timeout": (1, 300),
+    "ssh_connection_reuse_minutes": (0, 1440),
     "update_timeout_seconds": (60, 14400),
     "reachability_check_interval_seconds": (5, 86400),
     "facts_refresh_interval_seconds": (60, 604800),
@@ -61,6 +62,7 @@ TOKEN_LIMIT_FIELDS: tuple[str, ...] = (
 # records the same one, once per form touched.
 AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "ssh_connect_timeout": "settings.background_checks.update",
+    "ssh_connection_reuse_minutes": "settings.background_checks.update",
     "update_timeout_seconds": "settings.background_checks.update",
     "reachability_check_interval_seconds": "settings.background_checks.update",
     "facts_refresh_interval_seconds": "settings.background_checks.update",

@@ -304,8 +304,9 @@
           {{ t(request, 'machines.bulk.check_updates') }}
         </button>
         <select name="strategy" class="inline-select" aria-label="{{ t(request, 'machines.bulk.strategy_aria') }}">
-          <option value="dist_upgrade">dist-upgrade</option>
-          <option value="full_upgrade">full-upgrade</option>
+          <option value="full_upgrade">{{ strategy_label(request, 'full_upgrade') }}</option>
+          <option value="upgrade">{{ strategy_label(request, 'upgrade') }}</option>
+          <option value="security">{{ strategy_label(request, 'security') }}</option>
         </select>
         <button type="submit" formaction="/machines/bulk/updates" class="button">{{ t(request, 'machines.bulk.run_update') }}</button>
         {% if request.state.user.has_permission('machine.manage') %}

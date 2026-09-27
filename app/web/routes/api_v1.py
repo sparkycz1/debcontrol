@@ -120,6 +120,7 @@ from app.ssh.exceptions import SSHConnectionError
 from app.ssh.logs import is_container_name_valid
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
+from app.ssh.security_advisories import is_safe_package_name
 from app.tasks import jobs as tasks
 from app.tasks.jobs import (
     preview_machine_update,
@@ -176,6 +177,7 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "last_ping_at": _isoformat(machine.last_ping_at),
         "host_key_fingerprint": machine.host_key_fingerprint,
         "os_version": machine.os_version,
+        "pve_version": machine.pve_version,
         "kernel_version": machine.kernel_version,
         "cpu_architecture": machine.cpu_architecture,
         "cpu_model": machine.cpu_model,
@@ -190,6 +192,7 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "flatpak_upgradable_count": machine.flatpak_upgradable_count,
         "snap_upgradable_count": machine.snap_upgradable_count,
         "apt_upgradable_packages": machine.apt_upgradable_packages,
+        "apt_held_packages": machine.apt_held_packages,
         "flatpak_upgradable_packages": machine.flatpak_upgradable_packages,
         "snap_upgradable_packages": machine.snap_upgradable_packages,
         "updates_checked_at": _isoformat(machine.updates_checked_at),
@@ -332,6 +335,29 @@ async def security_updates_api(
     pending on — see `app.services.security_updates`."""
     rows = await load_security_overview(db, await machines_visible_to(db, user))
     return [row.as_dict() for row in rows]
+
+
+@router.get("/machines/{machine_id}/proxmox", dependencies=[_view_machines])
+async def machine_proxmox_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """A machine's Proxmox tab as data: the Proxmox VE version, VMs and
+    containers with their state, ZFS pools, storages and backups (jobs,
+    recent vzdump tasks, guests no job covers). Each is null on a machine
+    without it — see `app.ssh.proxmox` for every field. Guests and pools
+    are as of `monitoring_updated_at`, the rest as of `facts_updated_at`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return {
+        "pve_version": machine.pve_version,
+        "guests": machine.pve_guests,
+        "zfs_pools": machine.zfs_pools,
+        "storage": machine.pve_storage,
+        "backups": machine.pve_backups,
+        "monitoring_updated_at": _isoformat(machine.monitoring_updated_at),
+        "facts_updated_at": _isoformat(machine.facts_updated_at),
+    }
 
 
 @router.get("/machines/{machine_id}/timeline", dependencies=[_view_machines])
@@ -1346,12 +1372,18 @@ async def machine_logs_api(
     until: str = "",
     container: str = "",
     priority: str = "",
+    unit: str = "",
+    boot: str = "",
+    hide_own: bool = False,
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """The API equivalent of `GET /machines/{id}/logs` — journal by default
     (`priority` = a journalctl level such as `err` shows that level and
-    worse), one allow-listed file when `path` is given, or one Docker
-    container's logs when `container` is given. Gated behind
+    worse, `unit` = one systemd unit, `boot` = 0 for this boot or -1, -2, …
+    for earlier ones, `hide_own=true` drops debcontrol's own SSH logins),
+    one allow-listed file when `path` is given, or one Docker container's
+    logs when `container` is given. A journal read also returns `entries`
+    (`{"text", "priority"}` per line, journald priority 0-7) and `hidden`. Gated behind
     `ACTION_TERMINAL`, same as the web route, not `MACHINE_VIEW` — see
     `app.ssh.logs`'s module docstring for why. Never stored anywhere."""
     machine = await _get_machine_or_404(machine_id, db, user)
@@ -1366,6 +1398,7 @@ async def machine_logs_api(
     clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
     output: str | None = None
     error: str | None = None
+    extra: dict[str, object] = {}
     try:
         if container.strip():
             async_result = tasks.view_machine_docker_logs.delay(
@@ -1381,9 +1414,15 @@ async def machine_logs_api(
                 str(machine.id), path=path.strip(), lines=clamped_lines, search=search
             )
         else:
-            journal_options: dict[str, str] = {}
+            journal_options: dict[str, object] = {}
             if ssh_logs.normalize_priority(priority):
                 journal_options["priority"] = ssh_logs.normalize_priority(priority)
+            if ssh_logs.normalize_unit(unit):
+                journal_options["unit"] = ssh_logs.normalize_unit(unit)
+            if ssh_logs.normalize_boot(boot):
+                journal_options["boot"] = ssh_logs.normalize_boot(boot)
+            if hide_own:
+                journal_options["hide_own"] = True
             async_result = tasks.view_machine_journal.delay(
                 str(machine.id),
                 lines=clamped_lines,
@@ -1398,6 +1437,8 @@ async def machine_logs_api(
         if isinstance(result, dict):
             if result.get("ok"):
                 output = str(result.get("output") or "")
+                if "entries" in result:
+                    extra = {"entries": result["entries"], "hidden": result.get("hidden", 0)}
             else:
                 error = str(result.get("error") or "Unknown error.")
     except CeleryTimeoutError:
@@ -1424,7 +1465,7 @@ async def machine_logs_api(
     )
     if error is not None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
-    return {"output": output or ""}
+    return {"output": output or "", **extra}
 
 
 @router.get("/machines/{machine_id}/logs/browse", dependencies=[_action_terminal])
@@ -1837,6 +1878,111 @@ async def check_machine_updates_api(
         details={"skipped": skipped},
     )
     return {"skipped": skipped}
+
+
+async def _set_hold_api(
+    request: Request, machine: Machine, package: str, *, hold: bool, db: AsyncSession
+) -> dict[str, object]:
+    if not is_safe_package_name(package):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid package name.")
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint first.",
+        )
+    app_settings = await get_or_create_app_settings(db)
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            tasks.set_machine_package_hold.delay(str(machine.id), package, hold).get,
+            timeout=app_settings.ssh_connect_timeout + 90,
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "The command did not finish in time."
+    except Exception as exc:
+        error = str(exc)
+    await log_event(
+        db,
+        request=request,
+        action="machine.package.hold" if hold else "machine.package.unhold",
+        summary=f'{"Held" if hold else "Released"} package "{package}" on "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"package": package, **({"error": error} if error else {})},
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    await db.refresh(machine)
+    return {"package": package, "held": hold, "apt_held_packages": machine.apt_held_packages}
+
+
+@router.post("/machines/{machine_id}/packages/{package}/hold", dependencies=[_action_updates])
+async def hold_package_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    package: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """`apt-mark hold` one package — no update run upgrades it until it is
+    released (`DELETE` on the same path). Same permission as running
+    updates; needs root or a sudoers grant for `apt-mark`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return await _set_hold_api(request, machine, package, hold=True, db=db)
+
+
+@router.delete("/machines/{machine_id}/packages/{package}/hold", dependencies=[_action_updates])
+async def release_package_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    package: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """`apt-mark unhold` — the reverse of `POST .../hold`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return await _set_hold_api(request, machine, package, hold=False, db=db)
+
+
+@router.get("/machines/{machine_id}/packages/{package}/changelog", dependencies=[_view_machines])
+async def package_changelog_api(
+    machine_id: uuid.UUID,
+    package: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """What changed in a pending apt update since the installed version
+    (`apt-get changelog`, fetched live, trimmed to the new entries)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not is_safe_package_name(package):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid package name.")
+    if not machine.host_key_fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm the host key fingerprint first.",
+        )
+    app_settings = await get_or_create_app_settings(db)
+    try:
+        result = await asyncio.to_thread(
+            tasks.view_package_changelog.delay(str(machine.id), package).get,
+            timeout=app_settings.ssh_connect_timeout + 60,
+        )
+    except CeleryTimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="The command did not finish in time."
+        ) from exc
+    if not isinstance(result, dict) or not result.get("ok"):
+        detail = str((result or {}).get("error") or "Unknown error.")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+    return {
+        "package": package,
+        "installed_version": result.get("installed_version"),
+        "changelog": result.get("changelog") or "",
+    }
 
 
 class _PowerAction(BaseModel):

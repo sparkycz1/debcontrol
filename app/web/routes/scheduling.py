@@ -18,7 +18,9 @@ from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
+from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
+from app.core.timezones import is_valid_timezone, timezone_names, zone
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
@@ -117,6 +119,7 @@ async def _form_context(
         "allow_all_machines": not await is_restricted(db, user),
         "form": form,
         "errors": errors,
+        "timezones": timezone_names(),
     }
 
 
@@ -335,21 +338,32 @@ async def scheduled_task_history(
 
 
 @router.get("/cron-preview")
-async def cron_preview(request: Request, cron_expression: str = "") -> Response:
+async def cron_preview(
+    request: Request, cron_expression: str = "", timezone: str = ""
+) -> Response:
     """The schedule form's live "next runs" preview (htmx, as the cron field
-    is typed in) — read-only, so plain `scheduling.view` like the form."""
+    or the time zone changes) — read-only, so plain `scheduling.view` like
+    the form. Shown in the task's own zone, and in this instance's display
+    zone too when that differs."""
     expression = cron_expression.strip()
+    zone_name = timezone.strip() if is_valid_timezone(timezone.strip()) else "UTC"
     runs: list[datetime] = []
     error: str | None = None
     if expression:
         try:
-            runs = next_runs(expression)
+            runs = next_runs(expression, timezone=zone_name)
         except ValueError:
             error = t(request, "scheduling.cron_preview.invalid")
     return templates.TemplateResponse(
         request,
         "partials/cron_preview.html",
-        {"runs": runs, "error": error, "expression": expression},
+        {
+            "runs": runs,
+            "error": error,
+            "expression": expression,
+            "zone_name": zone_name,
+            "task_zone": zone(zone_name),
+        },
     )
 
 
@@ -364,7 +378,9 @@ async def new_scheduled_task_form(
     # ends up in `form` when a checkbox was actually submitted (unchecked =
     # the key is simply absent from the POST body), so this default is only
     # applied here, not silently reapplied on a failed-validation re-render.
-    context = await _form_context(db, current_user, {"is_enabled": "on"}, [])
+    context = await _form_context(
+        db, current_user, {"is_enabled": "on", "timezone": get_settings().tz or "UTC"}, []
+    )
     context["csrf_token"] = csrf_token
     response = templates.TemplateResponse(request, "scheduling/new.html", context)
     if new_cookie:
@@ -393,6 +409,8 @@ async def create_scheduled_task(
             target_group_id=target_group_id,
             cron_expression=raw_form.get("cron_expression", ""),
             is_enabled=bool(raw_form.get("is_enabled")),
+            timezone=raw_form.get("timezone", ""),
+            require_maintenance_window=bool(raw_form.get("require_maintenance_window")),
         )
     except ValueError as exc:
         errors.append(str(exc))
@@ -442,7 +460,13 @@ async def create_scheduled_task(
         target_group_id=payload.target_group_id,
         cron_expression=payload.cron_expression,
         is_enabled=payload.is_enabled,
-        next_run_at=compute_next_run(payload.cron_expression) if payload.is_enabled else None,
+        timezone=payload.timezone,
+        require_maintenance_window=payload.require_maintenance_window,
+        next_run_at=(
+            compute_next_run(payload.cron_expression, timezone=payload.timezone)
+            if payload.is_enabled
+            else None
+        ),
     )
     db.add(task)
     await db.commit()
@@ -476,6 +500,8 @@ async def edit_scheduled_task_form(
         "target": encode_target(task.target_type, task.target_machine_id, task.target_group_id),
         "cron_expression": task.cron_expression,
         "is_enabled": "on" if task.is_enabled else "",
+        "timezone": task.timezone or "UTC",
+        "require_maintenance_window": "on" if task.require_maintenance_window else "",
         **{f"param_{k}": v for k, v in (task.action_params or {}).items()},
     }
     context = await _form_context(db, current_user, form, [], keep_action=task.action)
@@ -510,6 +536,8 @@ async def update_scheduled_task(
             target_group_id=target_group_id,
             cron_expression=raw_form.get("cron_expression", ""),
             is_enabled=bool(raw_form.get("is_enabled")),
+            timezone=raw_form.get("timezone", ""),
+            require_maintenance_window=bool(raw_form.get("require_maintenance_window")),
         )
     except ValueError as exc:
         errors.append(str(exc))
@@ -563,7 +591,13 @@ async def update_scheduled_task(
     task.target_group_id = payload.target_group_id
     task.cron_expression = payload.cron_expression
     task.is_enabled = payload.is_enabled
-    task.next_run_at = compute_next_run(payload.cron_expression) if payload.is_enabled else None
+    task.timezone = payload.timezone
+    task.require_maintenance_window = payload.require_maintenance_window
+    task.next_run_at = (
+        compute_next_run(payload.cron_expression, timezone=payload.timezone)
+        if payload.is_enabled
+        else None
+    )
 
     await db.commit()
     await log_event(
@@ -587,7 +621,9 @@ async def toggle_scheduled_task(
 ) -> Response:
     task = await _get_task_or_404(task_id, db, current_user)
     task.is_enabled = not task.is_enabled
-    task.next_run_at = compute_next_run(task.cron_expression) if task.is_enabled else None
+    task.next_run_at = (
+        compute_next_run(task.cron_expression, timezone=task.timezone) if task.is_enabled else None
+    )
     await db.commit()
     await log_event(
         db,

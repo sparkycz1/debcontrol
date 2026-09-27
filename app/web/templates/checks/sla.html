@@ -70,4 +70,36 @@
   {% else %}
     <div class="empty-state"><p>{{ t(request, "checks.empty") }}</p></div>
   {% endif %}
+
+  {% if report.machine_rows %}
+    <h2 class="stack-gap">{{ t(request, "checks.sla.machines_heading") }}</h2>
+    <p class="hint">{{ t(request, "checks.sla.machines_hint") }}</p>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "checks.sla.machine") }}</th>
+            <th>{{ t(request, "checks.sla.uptime") }}</th>
+            <th>{{ t(request, "checks.sla.downtime") }}</th>
+            <th>{{ t(request, "checks.sla.outages") }}</th>
+            <th>{{ t(request, "checks.sla.probes") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.machine_rows %}
+            <tr>
+              <td>
+                <a href="/machines/{{ row.check_id }}"><strong>{{ row.name }}</strong></a>
+                <div class="table-summary"><span class="badge">SSH</span> <code>{{ row.target }}</code></div>
+              </td>
+              <td>{% if row.uptime_percent is not none %}<strong>{{ row.uptime_percent }} %</strong>{% else %}—{% endif %}</td>
+              <td>{{ row.downtime_seconds | format_uptime if row.probes else '—' }}</td>
+              <td>{{ row.outages if row.probes else '—' }}</td>
+              <td class="table-muted">{{ row.probes }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
 {% endblock %}

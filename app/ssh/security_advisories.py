@@ -36,6 +36,8 @@ from dataclasses import dataclass
 
 import asyncssh
 
+from app.ssh.shell import with_root_shim
+
 MAX_LOOKUPS_PER_CHECK = 15
 LOOKUP_TIMEOUT_SECONDS = 20
 # Changelog lines read per package — the newest entries come first, and
@@ -176,7 +178,7 @@ async def lookup_advisories(
     if not names:
         return {}
     source_result = await conn.run(
-        build_source_map_command(names), check=False, timeout=run_timeout_seconds
+        with_root_shim(build_source_map_command(names)), check=False, timeout=run_timeout_seconds
     )
     source_raw = source_result.stdout or ""
     source_map = parse_source_map(
@@ -196,7 +198,7 @@ async def lookup_advisories(
     if not wanted:
         return {}
     changelog_result = await conn.run(
-        build_changelog_command(wanted),
+        with_root_shim(build_changelog_command(wanted)),
         check=False,
         timeout=min(run_timeout_seconds, LOOKUP_TIMEOUT_SECONDS * len(wanted) + 30),
     )

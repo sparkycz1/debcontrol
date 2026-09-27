@@ -203,7 +203,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                         "type": "string",
                         "enum": [strategy.value for strategy in UpgradeStrategy],
                         "description": (
-                            "apt upgrade strategy. Prefer dist_upgrade unless asked otherwise."
+                            "apt upgrade strategy: full_upgrade (default), upgrade (never removes "
+                            "packages), security (security updates only); dist_upgrade is the "
+                            "same as full_upgrade."
                         ),
                     },
                 },

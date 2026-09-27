@@ -48,6 +48,7 @@ from app.schemas.notification import (
 )
 from app.services.condition_fields import ALL_OPERATORS, CONDITION_FIELDS
 from app.services.notification_rules import (
+    apply_channel_settings,
     apply_portable_rule,
     build_conditions_and_event_types,
     rule_to_portable_dict,
@@ -190,6 +191,8 @@ def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object
             rule.delivery_channel if rule else NotificationDeliveryChannel.EMAIL.value
         ),
         "selected_webhook_url": rule.webhook_url if rule else "",
+        "selected_channel_recipient": (rule.channel_recipient or "") if rule else "",
+        "channel_token_set": bool(rule and rule.channel_token_encrypted),
         "condition_rows": _condition_rows_for_rule(rule),
         "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
         "condition_operator_choices": ALL_OPERATORS,
@@ -395,6 +398,8 @@ async def create_rule(
     custom_template_id: str = Form(""),
     delivery_channel: str = Form(NotificationDeliveryChannel.EMAIL.value),
     webhook_url: str = Form(""),
+    channel_token: str = Form(""),
+    channel_recipient: str = Form(""),
 ) -> Response:
     async def _rerender(
         errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
@@ -431,6 +436,7 @@ async def create_rule(
                 "selected_custom_template_id": custom_template_id,
                 "selected_delivery_channel": delivery_channel,
                 "selected_webhook_url": webhook_url,
+                "selected_channel_recipient": channel_recipient,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -475,6 +481,8 @@ async def create_rule(
             event_types=resolved_event_types,
             delivery_channel=delivery_channel,
             webhook_url=webhook_url or None,
+            channel_token=channel_token or None,
+            channel_recipient=channel_recipient or None,
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -488,8 +496,6 @@ async def create_rule(
         enabled=payload.enabled,
         event_types=payload.event_types,
         custom_template_id=await _resolve_custom_template_id(db, custom_template_id),
-        delivery_channel=payload.delivery_channel,
-        webhook_url=payload.webhook_url,
         conditions=[
             NotificationCondition(
                 field=c.field,
@@ -501,6 +507,11 @@ async def create_rule(
             for c in conditions
         ],
     )
+    try:
+        apply_channel_settings(rule, payload)
+    except ValueError as exc:
+        rows = raw_conditions + [_condition_row() for _ in range(_BLANK_CONDITION_ROWS)]
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, rows)
     await _apply_rule_recipients_and_scope(
         db,
         rule,
@@ -632,6 +643,8 @@ async def update_rule(
     custom_template_id: str = Form(""),
     delivery_channel: str = Form(NotificationDeliveryChannel.EMAIL.value),
     webhook_url: str = Form(""),
+    channel_token: str = Form(""),
+    channel_recipient: str = Form(""),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
@@ -670,6 +683,7 @@ async def update_rule(
                 "selected_custom_template_id": custom_template_id,
                 "selected_delivery_channel": delivery_channel,
                 "selected_webhook_url": webhook_url,
+                "selected_channel_recipient": channel_recipient,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -712,6 +726,8 @@ async def update_rule(
             event_types=resolved_event_types,
             delivery_channel=delivery_channel,
             webhook_url=webhook_url or None,
+            channel_token=channel_token or None,
+            channel_recipient=channel_recipient or None,
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -724,8 +740,11 @@ async def update_rule(
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
     rule.custom_template_id = await _resolve_custom_template_id(db, custom_template_id)
-    rule.delivery_channel = payload.delivery_channel
-    rule.webhook_url = payload.webhook_url
+    try:
+        apply_channel_settings(rule, payload)
+    except ValueError as exc:
+        rows = raw_conditions + [_condition_row() for _ in range(_BLANK_CONDITION_ROWS)]
+        return await _rerender([str(exc)], status.HTTP_422_UNPROCESSABLE_CONTENT, rows)
     rule.conditions = [
         NotificationCondition(
             field=c.field,

@@ -12,7 +12,10 @@ import re
 from typing import Any, TypedDict
 
 from app.db.models.machine import Machine
+from app.ssh import proxmox
 from app.ssh.client import open_connection
+from app.ssh.pool import machine_connection
+from app.ssh.shell import with_root_shim
 from app.ssh.smart import SMART_FACTS_SECTION, parse_smart_section
 
 _SECTION_MARKERS = (
@@ -36,6 +39,8 @@ _SECTION_MARKERS = (
     "LOGINS",
     "VIRT",
     "SMART",
+    "REBOOT_FLAG",
+    *proxmox.INVENTORY_MARKERS,
 )
 
 # One round trip: each section is delimited by a "===NAME===" marker so the
@@ -54,9 +59,14 @@ FACTS_COMMAND = (
     "if [ -d /etc/pve ] || command -v pveversion >/dev/null 2>&1; then echo proxmox; "
     "else (grep -m1 '^ID=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"'); fi; "
     "echo ===KERNEL===; uname -r 2>/dev/null; "
+    # Proxmox VE ships its kernels as `proxmox-kernel-<ver>-pve-signed`
+    # (older: `pve-kernel-<ver>-pve`), not `linux-image-*` — without them a
+    # pending PVE kernel never counted as "reboot required".
     "echo ===KERNEL_LATEST===; "
-    "dpkg --list 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' "
-    "| sed -E 's/^linux-image-//' | grep -E '^[0-9]' | sort -V | tail -1; "
+    "dpkg --list 'linux-image-*' 'proxmox-kernel-*' 'pve-kernel-*' 2>/dev/null "
+    "| awk '/^ii/{print $2}' "
+    "| sed -E 's/^(linux-image|proxmox-kernel|pve-kernel)-//; s/-signed$//' "
+    "| grep -E '^[0-9]' | sort -V | tail -1; "
     "echo ===ARCH===; uname -m 2>/dev/null; "
     "echo ===CPU===; nproc 2>/dev/null; "
     "echo ===CPU_MODEL===; "
@@ -122,7 +132,13 @@ FACTS_COMMAND = (
     "systemd-detect-virt 2>/dev/null || true; "
     "fi; "
     # Full per-disk S.M.A.R.T. detail — bare metal only, see app.ssh.smart.
-    f"{SMART_FACTS_SECTION}"
+    f"{SMART_FACTS_SECTION}; "
+    # Debian/Ubuntu's own "a reboot is needed" flag (written by package
+    # postinst scripts — libc, systemd, microcode, a kernel), on top of
+    # the running-vs-installed kernel comparison.
+    "echo ===REBOOT_FLAG===; [ -f /run/reboot-required ] && echo yes; "
+    # Proxmox VE version, storages and backups — app.ssh.proxmox.
+    f"{proxmox.INVENTORY_COMMAND}"
 )
 
 
@@ -159,6 +175,10 @@ class MachineFacts(TypedDict):
     # One summary per readable disk (see app.ssh.smart.parse_smart_device);
     # None = not applicable (a VM, or no smartctl), [] = ran, nothing readable.
     smart_devices: list[dict[str, Any]] | None
+    # Proxmox VE only (None elsewhere) — see app.ssh.proxmox.
+    pve_version: str | None
+    pve_storage: list[dict[str, Any]] | None
+    pve_backups: dict[str, Any] | None
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -228,6 +248,8 @@ def parse_facts_output(raw: str) -> MachineFacts:
     reboot_required: bool | None = None
     if kernel_version and kernel_latest:
         reboot_required = kernel_latest != kernel_version
+    if sections.get("REBOOT_FLAG") == "yes":
+        reboot_required = True
 
     uptime_seconds: int | None = None
     if sections.get("UPTIME", "").isdigit():
@@ -297,15 +319,50 @@ def parse_facts_output(raw: str) -> MachineFacts:
         login_users=login_users,
         is_physical=is_physical,
         smart_devices=parse_smart_section(sections.get("SMART", "")),
+        pve_version=proxmox.parse_pve_version(sections.get("PVE_VERSION", "")),
+        pve_storage=proxmox.parse_storage(sections.get("PVE_STORAGE", "")),
+        pve_backups=proxmox.parse_backups(
+            sections.get("PVE_BACKUP_TASKS", ""),
+            sections.get("PVE_BACKUP_JOBS", ""),
+            sections.get("PVE_NOT_BACKED_UP", ""),
+        ),
     )
 
 
 async def gather_facts(machine: Machine, secret: str | None, timeout_seconds: int) -> MachineFacts:
     """Connect to a machine and gather its facts. Requires a pinned host key."""
-    async with await open_connection(machine, secret, timeout_seconds) as conn:
+    async with machine_connection(machine, secret, timeout_seconds) as conn:
         # smartctl -a reads each disk's logs — allow for a few slow disks.
-        result = await conn.run(FACTS_COMMAND, check=False, timeout=timeout_seconds + 30)
+        result = await conn.run(
+            with_root_shim(FACTS_COMMAND), check=False, timeout=timeout_seconds + 30
+        )
 
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()
     return parse_facts_output(raw)
+
+
+# Just the three sections `reboot_required` is computed from — run after an
+# update, to decide whether "reboot only if needed" should reboot.
+REBOOT_CHECK_COMMAND = (
+    "echo ===KERNEL===; uname -r 2>/dev/null; "
+    "echo ===KERNEL_LATEST===; "
+    "dpkg --list 'linux-image-*' 'proxmox-kernel-*' 'pve-kernel-*' 2>/dev/null "
+    "| awk '/^ii/{print $2}' "
+    "| sed -E 's/^(linux-image|proxmox-kernel|pve-kernel)-//; s/-signed$//' "
+    "| grep -E '^[0-9]' | sort -V | tail -1; "
+    "echo ===REBOOT_FLAG===; [ -f /run/reboot-required ] && echo yes; true"
+)
+
+
+async def check_reboot_required(
+    machine: Machine, secret: str | None, timeout_seconds: int
+) -> bool | None:
+    """Whether `machine` needs a reboot right now (newer kernel installed
+    than running, or Debian's /run/reboot-required flag); None = couldn't
+    tell."""
+    async with await open_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(REBOOT_CHECK_COMMAND, check=False, timeout=timeout_seconds + 15)
+    stdout = result.stdout or ""
+    raw = stdout if isinstance(stdout, str) else stdout.decode()
+    return parse_facts_output(raw)["reboot_required"]

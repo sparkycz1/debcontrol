@@ -1,8 +1,14 @@
 """Standard 5-field cron expression handling for scheduled tasks.
 
-Schedules are interpreted in UTC, same as every other timestamp in this app —
-there's no per-schedule timezone setting (deliberately, to keep this simple;
-add one later if it turns out to matter).
+A schedule is read in its task's own time zone (`ScheduledTask.timezone`,
+an IANA name such as `Europe/Prague`) — "0 3 * * *" means 03:00 there,
+summer and winter alike. A task without one (every task saved before
+0.78.0) keeps running in UTC, exactly as before. Every computed time is
+returned in UTC, like every other timestamp this app stores.
+
+Across a daylight-saving change croniter follows the wall clock: a time
+that doesn't exist that night (02:30 when clocks jump 02:00 → 03:00) runs
+at the next valid minute, and one that happens twice runs once.
 """
 
 from __future__ import annotations
@@ -10,6 +16,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from croniter import CroniterBadCronError, croniter
+
+from app.core.timezones import zone
 
 
 def validate_cron_expression(expression: str) -> None:
@@ -19,16 +27,28 @@ def validate_cron_expression(expression: str) -> None:
         raise ValueError(
             f'"{expression}" is not a valid cron expression — expected 5 space-separated '
             "fields (minute hour day-of-month month day-of-week), e.g. \"0 3 * * *\" for "
-            "03:00 UTC every day."
+            "03:00 every day."
         )
 
 
-def compute_next_run(expression: str, after: datetime | None = None) -> datetime:
-    """The next UTC time `expression` fires, strictly after `after`
-    (defaults to now)."""
+def _iterator(expression: str, after: datetime | None, timezone: str | None) -> croniter:
     base = after or datetime.now(UTC)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=UTC)
+    return croniter(expression, base.astimezone(zone(timezone or "UTC")))
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.astimezone(UTC)
+
+
+def compute_next_run(
+    expression: str, after: datetime | None = None, timezone: str | None = None
+) -> datetime:
+    """The next time `expression` fires in `timezone` (default UTC),
+    strictly after `after` (defaults to now), as a UTC datetime."""
     try:
-        return croniter(expression, base).get_next(datetime)
+        return _as_utc(_iterator(expression, after, timezone).get_next(datetime))
     except CroniterBadCronError as exc:
         raise ValueError(str(exc)) from exc
 
@@ -38,15 +58,19 @@ PREVIEW_RUN_COUNT = 5
 
 
 def next_runs(
-    expression: str, count: int = PREVIEW_RUN_COUNT, after: datetime | None = None
+    expression: str,
+    count: int = PREVIEW_RUN_COUNT,
+    after: datetime | None = None,
+    timezone: str | None = None,
 ) -> list[datetime]:
-    """The next `count` UTC times `expression` fires, strictly after `after`
-    (defaults to now) — the schedule form's live preview and
-    `GET /api/v1/scheduling/cron-preview`. Raises `ValueError` for an
-    invalid expression, same message as `validate_cron_expression`."""
+    """The next `count` times `expression` fires in `timezone` (default
+    UTC), strictly after `after` (defaults to now), as UTC datetimes — the
+    schedule form's live preview and `GET /api/v1/scheduling/cron-preview`.
+    Raises `ValueError` for an invalid expression, same message as
+    `validate_cron_expression`."""
     validate_cron_expression(expression)
-    iterator = croniter(expression, after or datetime.now(UTC))
+    iterator = _iterator(expression, after, timezone)
     try:
-        return [iterator.get_next(datetime) for _ in range(count)]
+        return [_as_utc(iterator.get_next(datetime)) for _ in range(count)]
     except CroniterBadCronError as exc:
         raise ValueError(str(exc)) from exc

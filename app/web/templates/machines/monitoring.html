@@ -91,10 +91,26 @@
         {% set ram_footer = none %}
         {% if history.latest_ram_used_bytes is not none and history.latest_ram_total_bytes %}
           {% set ram_footer = t(request, "monitoring.memory.current_short", used=(history.latest_ram_used_bytes | bytes), total=(history.latest_ram_total_bytes | bytes), percent=('%.0f' % (history.latest_ram_used_bytes / history.latest_ram_total_bytes * 100))) %}
+          {% if history.latest_ram_arc_bytes %}{% set ram_footer = ram_footer ~ " · " ~ t(request, "monitoring.memory.arc_short", size=(history.latest_ram_arc_bytes | bytes)) %}{% endif %}
+          {% if history.latest_ram_cache_bytes is not none %}{% set ram_footer = ram_footer ~ " · " ~ t(request, "monitoring.memory.cache_short", size=(history.latest_ram_cache_bytes | bytes)) %}{% endif %}
+        {% endif %}
+        {# Used memory, then what the kernel gives back under pressure —
+           the ZFS ARC and the page cache — stacked above it, so a ZFS
+           host doesn't look full. The threshold applies to "used". #}
+        {% set ram_series = [(t(request, "monitoring.series.ram_used"), history.ram_percent)] %}
+        {% set ram_colors = [chart_palette[1]] %}
+        {% if history.ram_arc_percent | select('number') | list %}
+          {% set _ = ram_series.append((t(request, "monitoring.series.ram_arc"), history.ram_arc_percent)) %}
+          {% set _ = ram_colors.append(chart_palette[4]) %}
+        {% endif %}
+        {% if history.ram_cache_percent | select('number') | list %}
+          {% set _ = ram_series.append((t(request, "monitoring.series.ram_cache"), history.ram_cache_percent)) %}
+          {% set _ = ram_colors.append(chart_palette[5]) %}
         {% endif %}
         {{ chart_card(
              t(request, "monitoring.card.memory"), t(request, "monitoring.card.memory_hint"),
-             chart([(t(request, "monitoring.card.memory"), history.ram_percent)], ts, fmt='percent', time_format=tf, colors=(chart_palette[1],),
+             chart(ram_series, ts, fmt='percent', time_format=tf, colors=ram_colors,
+                   stacked=(ram_series | length > 1), fixed_max=(100 if ram_series | length > 1 else none),
                    threshold=ram_threshold,
                    threshold_label=(t(request, "monitoring.threshold_percent", value=(ram_threshold | round(0) | int)) if ram_threshold is not none else none)),
              footer=ram_footer, empty_text=t(request, "monitoring.no_data")) }}
@@ -143,13 +159,20 @@
                       filter=(disk_io | length > 4), empty_text=t(request, "monitoring.disk.none_found")) }}
 
         {# --- Network --- #}
+        {# Physical NICs and vmbr* bridges first; per-VM taps, veths and
+           firewall bridges start switched off (charts.noise_interfaces). #}
         {% set net = [] %}
+        {% set net_hidden = [] %}
+        {% set noisy = noise_interfaces(history.network_rx_by_iface.keys()) %}
         {% for iface, values in history.network_rx_by_iface.items() %}
-          {% set _ = net.append((t(request, "monitoring.series.received", name=iface), values)) %}
-          {% set _ = net.append((t(request, "monitoring.series.sent", name=iface), history.network_tx_by_iface.get(iface, []))) %}
+          {% set rx_label = t(request, "monitoring.series.received", name=iface) %}
+          {% set tx_label = t(request, "monitoring.series.sent", name=iface) %}
+          {% set _ = net.append((rx_label, values)) %}
+          {% set _ = net.append((tx_label, history.network_tx_by_iface.get(iface, []))) %}
+          {% if iface in noisy %}{% set _ = net_hidden.append(rx_label) %}{% set _ = net_hidden.append(tx_label) %}{% endif %}
         {% endfor %}
         {{ chart_card(t(request, "monitoring.card.network"), t(request, "monitoring.card.network_hint"),
-                      chart(net, ts, fmt='bytes_rate', time_format=tf),
+                      chart(net, ts, fmt='bytes_rate', time_format=tf, hidden=net_hidden),
                       filter=(net | length > 4), empty_text=t(request, "monitoring.network.none_found")) }}
 
         {% if has_docker %}
@@ -192,13 +215,14 @@
         {% set temp_threshold = condition_thresholds.get('monitoring.max_temperature_c') %}
         {{ chart_card(t(request, "monitoring.card.temperature"), t(request, "monitoring.card.temperature_hint"),
                       chart(temps, ts, fmt='celsius', zero_based=false, time_format=tf, threshold=temp_threshold,
+                            hidden=secondary_sensors(history.temps_by_sensor.keys()),
                             threshold_label=(t(request, "monitoring.threshold_celsius", value=(temp_threshold | round(0) | int)) if temp_threshold is not none else none)),
                       filter=(temps | length > 3), empty_text=t(request, "monitoring.hardware.none_found")) }}
 
         {% set fans = [] %}
         {% for name, values in history.fans_by_sensor.items() %}{% set _ = fans.append((name, values)) %}{% endfor %}
         {{ chart_card(t(request, "monitoring.card.fans"), t(request, "monitoring.card.fans_hint"),
-                      chart(fans, ts, fmt='rpm', zero_based=false, time_format=tf),
+                      chart(fans, ts, fmt='rpm', area=false, time_format=tf),
                       filter=(fans | length > 3), empty_text=t(request, "monitoring.hardware.none_found")) }}
 
         {{ chart_card(t(request, "monitoring.card.cpu_power"), t(request, "monitoring.card.cpu_power_hint"),
@@ -467,11 +491,28 @@
           </p>
         </div>
         {% if services %}
-          <input type="search" class="chart-filter" data-table-filter="services-table"
-                 placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+          <div class="table-tools">
+            <select class="chart-filter" data-row-state-filter="services-table" aria-label="{{ t(request, 'monitoring.services.show') }}">
+              <option value="running failed" selected>{{ t(request, "monitoring.services.show_running_failed") }}</option>
+              <option value="failed">{{ t(request, "monitoring.services.show_failed") }}</option>
+              <option value="">{{ t(request, "monitoring.services.show_all", count=(services | length)) }}</option>
+            </select>
+            <input type="search" class="chart-filter" data-table-filter="services-table"
+                   placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+          </div>
         {% endif %}
       </header>
       {% if services %}
+        {# Failed units first, then running ones, then everything else;
+           inactive/dead units start hidden (the select above), and a
+           CPU/memory column nobody has a value for isn't shown at all. #}
+        {% set failed_svcs = services | selectattr('active_state', 'eq', 'failed') | list %}
+        {% set running_svcs = services | rejectattr('active_state', 'eq', 'failed') | selectattr('sub_state', 'eq', 'running') | list %}
+        {% set other_svcs = services | rejectattr('active_state', 'eq', 'failed') | rejectattr('sub_state', 'eq', 'running') | list %}
+        {% set show_cpu = services | selectattr('cpu_percent', 'number') | list %}
+        {% set show_cpu_peak = services | selectattr('cpu_percent_peak', 'number') | list %}
+        {% set show_mem = services | selectattr('memory_bytes', 'number') | list %}
+        {% set show_mem_peak = services | selectattr('memory_peak_bytes', 'number') | list %}
         <div class="monitoring-table-wrap">
           <table class="data-table" id="services-table">
             <thead>
@@ -479,22 +520,23 @@
                 <th data-sort="text">{{ t(request, "monitoring.services.name") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.services.state") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.services.sub_state") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.services.cpu") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.services.cpu_peak") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.services.memory") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.services.memory_peak") }}</th>
+                {% if show_cpu %}<th data-sort="number">{{ t(request, "monitoring.services.cpu") }}</th>{% endif %}
+                {% if show_cpu_peak %}<th data-sort="number">{{ t(request, "monitoring.services.cpu_peak") }}</th>{% endif %}
+                {% if show_mem %}<th data-sort="number">{{ t(request, "monitoring.services.memory") }}</th>{% endif %}
+                {% if show_mem_peak %}<th data-sort="number">{{ t(request, "monitoring.services.memory_peak") }}</th>{% endif %}
               </tr>
             </thead>
             <tbody>
-              {% for svc in services %}
-                <tr>
+              {% for svc in failed_svcs + running_svcs + other_svcs %}
+                {% set row_state = 'failed' if svc.active_state == 'failed' else ('running' if svc.sub_state == 'running' else 'other') %}
+                <tr data-row-state="{{ row_state }}" class="{{ 'row-failed' if row_state == 'failed' else '' }}" {% if row_state == 'other' %}hidden{% endif %}>
                   <td title="{{ svc.description }}"><code>{{ svc.unit | replace('.service', '') }}</code></td>
                   <td><span class="badge {{ 'badge-error' if svc.active_state == 'failed' else ('badge-ok' if svc.active_state == 'active' else 'badge-warn') }}">{{ svc.active_state }}</span></td>
                   <td><span class="badge {{ 'badge-ok' if svc.sub_state == 'running' else ('badge-error' if svc.sub_state == 'failed' else '') }}">{{ svc.sub_state }}</span></td>
-                  <td data-sort-value="{{ svc.cpu_percent if svc.cpu_percent is not none else -1 }}">{{ svc.cpu_percent | chart_value('percent') if svc.cpu_percent is not none else 'N/A' }}</td>
-                  <td data-sort-value="{{ svc.cpu_percent_peak if svc.cpu_percent_peak is not none else -1 }}">{{ svc.cpu_percent_peak | chart_value('percent') if svc.cpu_percent_peak is not none else 'N/A' }}</td>
-                  <td data-sort-value="{{ svc.memory_bytes if svc.memory_bytes is not none else -1 }}">{{ svc.memory_bytes | bytes if svc.memory_bytes is not none else 'N/A' }}</td>
-                  <td data-sort-value="{{ svc.memory_peak_bytes if svc.memory_peak_bytes is not none else -1 }}">{{ svc.memory_peak_bytes | bytes if svc.memory_peak_bytes is not none else 'N/A' }}</td>
+                  {% if show_cpu %}<td data-sort-value="{{ svc.cpu_percent if svc.cpu_percent is not none else -1 }}">{{ svc.cpu_percent | chart_value('percent') if svc.cpu_percent is not none else '—' }}</td>{% endif %}
+                  {% if show_cpu_peak %}<td data-sort-value="{{ svc.cpu_percent_peak if svc.cpu_percent_peak is not none else -1 }}">{{ svc.cpu_percent_peak | chart_value('percent') if svc.cpu_percent_peak is not none else '—' }}</td>{% endif %}
+                  {% if show_mem %}<td data-sort-value="{{ svc.memory_bytes if svc.memory_bytes is not none else -1 }}">{{ svc.memory_bytes | bytes if svc.memory_bytes is not none else '—' }}</td>{% endif %}
+                  {% if show_mem_peak %}<td data-sort-value="{{ svc.memory_peak_bytes if svc.memory_peak_bytes is not none else -1 }}">{{ svc.memory_peak_bytes | bytes if svc.memory_peak_bytes is not none else '—' }}</td>{% endif %}
                 </tr>
               {% endfor %}
             </tbody>

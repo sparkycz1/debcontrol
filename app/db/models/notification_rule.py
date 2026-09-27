@@ -23,8 +23,10 @@ always will) matches every scope, since there's nothing to check it
 against.
 
 **Delivery** is email (through the SMTP relay configured in Settings →
-Integrations, `AppSettings.smtp_*`) or a webhook (`webhook_url`, plain
-JSON POST) — one or the other per rule, `delivery_channel` says which.
+Integrations, `AppSettings.smtp_*`), a webhook (`webhook_url`, plain
+JSON POST), or a push service — ntfy, Gotify, Telegram, Discord,
+Pushover (`app.services.push_channels`) — one per rule,
+`delivery_channel` says which.
 For email, a rule with no matching recipients, or an SMTP relay that
 isn't enabled, is a silent no-op; a webhook rule with SMTP disabled still
 fires (the two channels don't depend on each other). Either way, a
@@ -41,7 +43,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, Column, ForeignKey, String, Table, func
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, LargeBinary, String, Table, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -109,6 +111,21 @@ class NotificationEventType(enum.StrEnum):
     # with the CVEs they fix where known — fired from `app.tasks.jobs.
     # _check_machine_updates`.
     SECURITY_UPDATES_AVAILABLE = "machine.security_updates"
+    # Health transitions (`app.services.health_events`) — each fires once,
+    # when the state appears, never while it persists:
+    # a reboot became necessary (facts refresh),
+    REBOOT_REQUIRED = "machine.reboot_required"
+    # a disk's S.M.A.R.T. overall health turned FAILED (monitoring sample),
+    SMART_FAILED = "machine.smart_failed"
+    # a systemd unit entered the failed state (monitoring sample),
+    SERVICE_FAILED = "machine.service_failed"
+    # a filesystem is forecast to fill within DISK_FULL_WARN_DAYS (hourly
+    # disk forecast),
+    DISK_FULL_PREDICTED = "machine.disk_full_predicted"
+    # a ZFS pool left ONLINE (monitoring sample),
+    ZFS_POOL_UNHEALTHY = "machine.zfs_pool_unhealthy"
+    # a Proxmox VE backup (vzdump) task failed (facts refresh).
+    BACKUP_FAILED = "machine.backup_failed"
 
 
 notification_rule_users = Table(
@@ -201,6 +218,13 @@ class NotificationRule(Base):
     # Required (validated in app/web/routes/notifications.py) when
     # delivery_channel is "webhook"; unused/ignored for "email".
     webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # The push channels' own settings (app.services.push_channels): a token
+    # (Gotify app token, Telegram bot token, Pushover app token, optional
+    # ntfy access token) — encrypted, never shown or exported again — and a
+    # recipient (Telegram chat id, Pushover user/group key). `webhook_url`
+    # doubles as the ntfy topic URL, Gotify server URL or Discord webhook.
+    channel_token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    channel_recipient: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     @property
     def event_type_enums(self) -> list[NotificationEventType]:

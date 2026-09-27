@@ -108,6 +108,17 @@ Today:
 | `machine.condition_matched` | A rule's own **conditions** (CPU/RAM/disk/facts thresholds — see "Condition-based rules" below) all match for a machine in scope. Added to a rule's `event_types` automatically whenever it has any conditions — never checked by hand. | Yes |
 | `machine.config_changed` | A facts refresh found tracked facts different from the previous refresh — kernel, OS, hostname, CPU cores, RAM, disks, filesystems, IP addresses, listening TCP ports, admin or login accounts (Machine Management's *Configuration drift*). One notification per refresh listing every change; a fact that was unknown before is never a change. See `app.services.config_drift.record_fact_changes`. | Yes |
 | `machine.security_updates` | An update check found apt security updates that weren't pending at the previous check, with the CVEs they fix where the changelog names them. Not repeated while they stay pending; the first check after upgrading debcontrol only sets the baseline. See `app.services.config_drift.record_new_security_updates`. | Yes |
+| `machine.reboot_required` | A facts refresh found the machine newly needing a reboot (a newer kernel installed than running, or `/run/reboot-required`). | Yes |
+| `machine.smart_failed` | A monitoring sample found a disk whose S.M.A.R.T. overall health turned FAILED. | Yes |
+| `machine.service_failed` | A monitoring sample found systemd units that entered the failed state. | Yes |
+| `machine.disk_full_predicted` | The hourly disk forecast dropped to 7 days or fewer for a filesystem (a condition rule on "days until a filesystem is full" covers any other threshold). | Yes |
+| `machine.zfs_pool_unhealthy` | A monitoring sample found a ZFS pool that left ONLINE. | Yes |
+| `machine.backup_failed` | A facts refresh found a new failed Proxmox VE backup (vzdump) task. | Yes |
+
+The six health events above (`app.services.health_events`) fire once, on
+the transition, and never when the previous state is unknown — a
+machine's first refresh after upgrading debcontrol doesn't page anyone
+about problems that were already there.
 
 **Adding another event is a three-step recipe**, documented on
 `NotificationEventType`'s own docstring in code:
@@ -269,6 +280,12 @@ What `{details}` actually contains, per event:
 | `machine.condition_matched` | Also provides `{rule_name}` and `{condition_summary}` (a human-readable rendering of the matched conditions, e.g. "cpu_percent gt 90"); `{details}` is empty. |
 | `machine.config_changed` | Also `{changes}` — one line per change, e.g. `Kernel: 6.1.0-25 → 6.1.0-26`, `Listening TCP ports: +0.0.0.0:8080 -0.0.0.0:21`; `{details}` is the same text. |
 | `machine.security_updates` | Also `{package_count}`, `{packages}` (one `- name version (CVE-…)` line each) and `{cves}` (comma-separated, newest first, `—` when none are known); `{details}` is the package list. |
+| `machine.reboot_required` | `{details}`: the running kernel. |
+| `machine.smart_failed` | Also `{devices}` (comma-separated); `{details}` the same. |
+| `machine.service_failed` | Also `{units}` (comma-separated); `{details}` one unit per line. |
+| `machine.disk_full_predicted` | Also `{mount}` and `{days}`; `{details}` is empty. |
+| `machine.zfs_pool_unhealthy` | Also `{pools}`; `{details}` one `pool: HEALTH explanation` line each. |
+| `machine.backup_failed` | `{details}`: one `guest or job: status` line per failed task. |
 
 ## Templates: one subject/body pair per event, per your language
 
@@ -310,7 +327,7 @@ regardless of which event actually fired. Deleting a custom template that's
 in use just falls the referencing rule(s) back to their per-event default
 — never blocked, never leaves a rule broken.
 
-## Delivery: email (SMTP) or webhook, per rule
+## Delivery: email, webhook or a push service, per rule
 
 Each rule picks a **delivery channel** (`NotificationRule.delivery_channel`,
 its Delivery section): **email** (the default — recipients/roles below
@@ -334,6 +351,25 @@ signature/bearer-auth scheme of its own — embed a token or secret path
 segment in `webhook_url` itself (the way a Slack or Discord incoming
 webhook link already works), since that URL is admin-authored config
 requiring `notification.manage`, not untrusted input.
+
+**Push services** (`app.services.push_channels`) — ntfy, Gotify,
+Telegram, Discord and Pushover, each a single HTTPS request with the
+rendered subject and body, no extra dependency. Per channel the rule
+stores:
+
+| Channel | URL | Token (encrypted, write-only) | Recipient |
+|---|---|---|---|
+| ntfy | topic URL (`https://ntfy.sh/homelab`) — sent as JSON to the server root, so a non-ASCII title survives | access token, only for a protected topic | — |
+| Gotify | server URL (`https://gotify.lan`) | application token | — |
+| Telegram | — | bot token | chat id |
+| Discord | channel webhook URL | — | — |
+| Pushover | — | application API token | user/group key |
+
+The token (`NotificationRule.channel_token_encrypted`) is encrypted like
+every other stored secret, never shown again (leave the field empty to
+keep it), never exported to YAML (`channel_token` in an import sets it;
+the REST API reports only `channel_token_set`), and masked out of the
+delivery history's error text. The recipient is `channel_recipient`.
 
 `app.services.notifications.notify(db, event_type, *, machine=None,
 context=None)` is the one function that turns a fired event into an

@@ -19,7 +19,7 @@
       {% for run in runs %}
         <tr>
           <td><a href="/machines/{{ run.machine_id }}">{{ run.machine.name }}</a></td>
-          <td>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</td>
+          <td>{{ strategy_label(request, run.strategy.value) }}</td>
           <td>
             {% if run.status.value in ('pending', 'running') %}
               <span class="badge badge-warn">{{ run.status.value }}</span>

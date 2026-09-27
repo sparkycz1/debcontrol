@@ -15,12 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.auth.dependencies import get_api_token_user, require_api_permission
+from app.core.app_settings import get_or_create_app_settings
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.services import monitoring_history
+from app.services.access_scope import machines_visible_to
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import load_sla_report
 from app.tasks import jobs as tasks
@@ -84,13 +86,23 @@ async def sla_report_api(
     """The Checks → SLA report as data, for one calendar month in UTC
     (`month=YYYY-MM`, default the current one): per check probes, uptime %,
     estimated downtime, outage count and whether `sla_target_percent` was
-    met."""
-    report = await load_sla_report(db, month)
+    met — plus `machines`: every machine this token's user can see, with
+    the same figures from its SSH reachability samples (`kind: "ssh"`,
+    `check_id` = the machine's id)."""
+    app_settings = await get_or_create_app_settings(db)
+    machines = list((await db.execute(await machines_visible_to(db, user))).scalars().all())
+    report = await load_sla_report(
+        db,
+        month,
+        machines=[m for m in machines if m.is_active],
+        reachability_interval_seconds=app_settings.reachability_check_interval_seconds,
+    )
     return {
         "month": report.month,
         "start": report.start.isoformat(),
         "end": report.end.isoformat(),
         "checks": [row.as_dict() for row in report.rows],
+        "machines": [row.as_dict() for row in report.machine_rows],
     }
 
 

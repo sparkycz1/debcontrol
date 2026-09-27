@@ -80,6 +80,16 @@ async def machines_paused_for_scheduling(
     return {m.id for m in machines if any(covers(w, m) for w in pausing)}
 
 
+async def machines_in_active_window(
+    db: AsyncSession, machines: list[Machine], now: datetime | None = None
+) -> set[uuid.UUID]:
+    """Ids of `machines` some maintenance window covers right now — for a
+    scheduled task limited to maintenance windows
+    (`ScheduledTask.require_maintenance_window`)."""
+    windows = await active_windows(db, now)
+    return {m.id for m in machines if any(covers(w, m) for w in windows)}
+
+
 async def apply_window_data(
     db: AsyncSession, window: MaintenanceWindow, data: MaintenanceWindowSave
 ) -> None:

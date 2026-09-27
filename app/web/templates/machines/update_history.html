@@ -19,7 +19,32 @@
       {{ t(request, "machine.updates.hint") | safe }}
     </p>
 
+    {% set hold_notice = flash(request, 'hold_notice') %}
+    {% set hold_error = flash(request, 'hold_error') %}
+    {% if hold_notice %}<div class="alert alert-ok"><p>{{ hold_notice }}</p></div>{% endif %}
+    {% if hold_error %}<div class="alert alert-error"><p>{{ t(request, "updates.hold.failed", error=hold_error) }}</p></div>{% endif %}
+
     {% include "partials/update_availability.html" %}
+
+    {% if machine.apt_held_packages %}
+      <h3>{{ t(request, "updates.hold.heading") }}</h3>
+      <p class="hint">{{ t(request, "updates.hold.hint") }}</p>
+      <ul class="held-packages">
+        {% for name in machine.apt_held_packages %}
+          <li>
+            <code>{{ name }}</code>
+            {% if request.state.user.has_permission('action.updates') %}
+              <form method="post" action="/machines/{{ machine.id }}/updates/hold" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="package" value="{{ name }}">
+                <input type="hidden" name="hold" value="0">
+                <button type="submit" class="link-button">{{ t(request, "updates.hold.release") }}</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
 
     <form method="get" action="/machines/{{ machine.id }}/updates/preview" class="form">
       {% include "partials/upgrade_strategy_fields.html" %}
@@ -68,7 +93,7 @@
           <tr>
             <td>{{ run.created_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
             <td>
-              {{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}
+              {{ strategy_label(request, run.strategy.value) }}
               {% if run.rollback_of_run_id %}<span class="badge">{{ t(request, "machine.update_run.rollback_badge") }}</span>{% endif %}
             </td>
             <td>

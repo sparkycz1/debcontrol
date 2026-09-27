@@ -22,6 +22,26 @@
 
   {{ render_tabnav(tabs, active_tab) }}
 
+  {% set pve = proxmox_summary(machine) %}
+  {% if pve %}
+    <a class="proxmox-strip" href="/machines/{{ machine.id }}/proxmox">
+      {% if pve.version %}<span class="badge">Proxmox VE {{ pve.version }}</span>{% endif %}
+      {% if pve.has_guests %}<span class="badge badge-ok">{{ t(request, "proxmox.summary_guests", running=pve.guests_running, total=pve.guests_total) }}</span>{% endif %}
+      {% if pve.unhealthy_pools %}
+        <span class="badge badge-error">ZFS: {{ pve.unhealthy_pools | join(', ') }} — {{ t(request, "proxmox.pool_not_online") }}</span>
+      {% elif pve.pools %}
+        <span class="badge badge-ok">{{ t(request, "proxmox.summary_pools_ok", count=pve.pools) }}</span>
+      {% endif %}
+      {% if pve.last_backup %}
+        <span class="badge {{ 'badge-ok' if pve.last_backup.ok else 'badge-error' }}">
+          {{ t(request, "proxmox.last_backup") }}: {{ t(request, "proxmox.backup_ok") if pve.last_backup.ok else t(request, "proxmox.backup_failed") }},
+          {{ (pve.last_backup.ended_at or pve.last_backup.started_at) | from_epoch | local_time('%Y-%m-%d %H:%M') }}
+        </span>
+      {% endif %}
+      {% if pve.not_backed_up %}<span class="badge badge-warn">{{ t(request, "proxmox.summary_not_backed_up", count=pve.not_backed_up) }}</span>{% endif %}
+    </a>
+  {% endif %}
+
   {% if machine.readiness_missing %}
     <div class="alert alert-warn">
       <p>
@@ -47,7 +67,7 @@
     <dt>{{ t(request, "machine.auth_method") }}</dt>
     <dd>{{ t(request, "machine.auth_method_ssh_key") if machine.auth_method.value == 'ssh_key' else t(request, "machine.auth_method_password") }}</dd>
     <dt>{{ t(request, "machine.operating_system") }}</dt>
-    <dd>{{ machine.os_version or '—' }}</dd>
+    <dd>{{ machine.os_display or '—' }}</dd>
     <dt>{{ t(request, "machines.table.group") }}</dt>
     <dd>
       {% if machine.group %}

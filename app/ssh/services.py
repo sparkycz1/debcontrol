@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import TypedDict
 
 from app.db.models.machine import Machine
-from app.ssh.client import open_connection
+from app.ssh.pool import machine_connection
+from app.ssh.shell import with_root_shim
 
 # `--plain --no-legend --no-pager` for stable, script-friendly output (no
 # ANSI, no header/footer, no pager prompt); `--all` so stopped/inactive
@@ -126,8 +127,10 @@ async def gather_services(
 ) -> list[ServiceEntry]:
     """Connect to a machine and list its systemd service units. Requires a
     pinned host key."""
-    async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(SERVICES_COMMAND, check=False, timeout=timeout_seconds)
+    async with machine_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(
+            with_root_shim(SERVICES_COMMAND), check=False, timeout=timeout_seconds
+        )
 
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()

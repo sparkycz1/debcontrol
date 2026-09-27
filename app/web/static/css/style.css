@@ -774,6 +774,8 @@ p { margin: 0 0 var(--space-3); }
 .data-table td.cell-nowrap { white-space: nowrap; }
 /* A wide table that must never push the page itself sideways. */
 .table-scroll { overflow-x: auto; }
+.row-muted { opacity: 0.6; }
+.stat-value small { display: block; font-size: 0.75rem; font-weight: 400; color: var(--color-muted); }
 
 .data-table th {
   color: var(--color-muted);
@@ -1138,6 +1140,13 @@ p { margin: 0 0 var(--space-3); }
 
 .form.form-wide { max-width: none; }
 
+/* A .panel inside a .form stacks its label/input/textarea the same way the
+   form itself does — as a plain block they flowed inline side by side
+   (the notification rule's Basics panel: a label, then a tiny textarea
+   next to the name field). */
+.form .panel { display: flex; flex-direction: column; gap: var(--space-1); }
+.form .panel textarea { min-height: 4.5rem; }
+
 .form label { margin-top: var(--space-3); font-size: 0.88rem; color: var(--color-muted); font-weight: 500; }
 
 .form input, .form select, .form textarea {
@@ -1462,6 +1471,8 @@ pre code { background: none; padding: 0; }
 .log-field input:focus-visible,
 .log-field select:focus-visible { border-color: var(--color-accent); }
 .log-input-short { width: 7.5rem; }
+.log-field-check { flex-direction: row; align-items: center; align-self: flex-end; padding-bottom: 0.55rem; }
+.log-field-check input { padding: 0; }
 .log-toolbar .hint { margin: 0; align-self: center; }
 
 .log-viewer {
@@ -1521,6 +1532,7 @@ pre code { background: none; padding: 0; }
 .log-error { color: var(--color-danger); border-left-color: var(--color-danger); background: rgba(240, 104, 95, 0.06); }
 .log-warn { color: var(--color-warn); border-left-color: var(--color-warn); }
 .log-debug { color: var(--color-muted); }
+.log-notice { border-left-color: var(--color-accent); }
 .log-line mark {
   background: rgba(224, 171, 74, 0.35);
   color: inherit;
@@ -2185,3 +2197,43 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 .permission-option input { margin-top: 0.25rem; }
 .permission-code { font-size: 0.75rem; color: var(--color-muted); margin-left: var(--space-1); }
 .permission-hint { display: block; margin: 0; font-size: 0.8rem; }
+
+/* Machine Overview: the Proxmox VE / ZFS headline, linking to its tab. */
+.proxmox-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: inherit;
+  text-decoration: none;
+}
+.proxmox-strip:hover { border-color: var(--color-accent); }
+
+/* Monitoring tables: a state select next to the filter box; failed rows stand out. */
+.table-tools { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.data-table tr.row-failed td { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
+.data-table tr.row-failed td:first-child { box-shadow: inset 3px 0 0 var(--color-danger); }
+
+/* Updates: a pending package's changelog. */
+.changelog {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  max-height: 70vh;
+  overflow: auto;
+}
+.package-actions { display: inline-flex; gap: 0.35rem; align-items: center; margin-left: 0.35rem; }
+
+/* Update forms: the upgrade strategy, one option per line with its hint. */
+.strategy-fields { border: 0; padding: 0; margin: 0 0 0.75rem; display: grid; gap: 0.35rem; }
+.strategy-fields legend { font-weight: 600; margin-bottom: 0.25rem; }
+.strategy-fields .hint { display: block; margin: 0 0 0 1.6rem; }
+.held-packages { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }

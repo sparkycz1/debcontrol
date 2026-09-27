@@ -31,6 +31,7 @@ import asyncssh
 
 from app.db.models.machine import Machine
 from app.ssh.client import open_connection
+from app.ssh.shell import with_root_shim
 
 # The command itself returns almost immediately; this just bounds how long
 # we wait for that acknowledgement, not the actual shutdown/reboot.
@@ -61,7 +62,7 @@ async def send_power_command(
     command = build_power_command(action)
     conn = await open_connection(machine, secret, connect_timeout_seconds)
     try:
-        await conn.run(command, check=False, timeout=_COMMAND_TIMEOUT_SECONDS)
+        await conn.run(with_root_shim(command), check=False, timeout=_COMMAND_TIMEOUT_SECONDS)
     except (asyncssh.Error, OSError, TimeoutError):
         # Expected: the connection can legitimately drop mid-response once
         # the remote starts shutting down.

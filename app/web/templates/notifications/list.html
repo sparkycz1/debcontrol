@@ -42,8 +42,8 @@
               {% endfor %}
             </td>
             <td>
-              {% if rule.delivery_channel == "webhook" %}
-                <span class="badge badge-tag">{{ t(request, "notifications.rule.send_via_webhook") }}</span>
+              {% if rule.delivery_channel != "email" %}
+                <span class="badge badge-tag">{{ t(request, "notifications.rule.send_via_" ~ rule.delivery_channel) }}</span>
               {% else %}
                 {{ t(request, "notifications.users_count", count=(rule.users | length)) }}, {{ t(request, "notifications.roles_count", count=(rule.roles | length)) }}
               {% endif %}

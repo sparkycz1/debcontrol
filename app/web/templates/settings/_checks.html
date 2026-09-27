@@ -23,6 +23,11 @@
                value="{{ app_settings.ssh_connect_timeout }}">
         <p class="hint">{{ t(request, "settings.checks.ssh_connect_timeout_hint") }}</p>
 
+        <label for="ssh_connection_reuse_minutes">{{ t(request, "settings.checks.ssh_connection_reuse") }}</label>
+        <input type="number" id="ssh_connection_reuse_minutes" name="ssh_connection_reuse_minutes" min="0" max="1440" step="1"
+               value="{{ app_settings.ssh_connection_reuse_minutes }}">
+        <p class="hint">{{ t(request, "settings.checks.ssh_connection_reuse_hint") }}</p>
+
         <label for="reachability_check_interval_seconds">{{ t(request, "settings.checks.reachability_check") }}</label>
         <input type="number" id="reachability_check_interval_seconds" name="reachability_check_interval_seconds"
                min="5" max="86400" step="1" value="{{ app_settings.reachability_check_interval_seconds }}">

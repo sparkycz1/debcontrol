@@ -9,7 +9,12 @@ Every job in here follows the same two-part shape:
   Celery task that does nothing but `asyncio.run(...)` the coroutine above.
   Celery tasks are synchronous; this is the seam between the two worlds, and
   it is deliberately kept to one line so there is never any logic that only
-  exists on the sync side.
+  exists on the sync side. The periodic read-only SSH collectors (facts,
+  packages, services, monitoring, readiness, update and image-update
+  checks) use `run_in_worker_loop(...)` instead — one event loop kept for
+  the worker process's life, so `app.ssh.pool` can keep one SSH connection
+  per machine open between checks rather than logging in again each time
+  (see `app.tasks.runner`).
 
 Task names are given explicitly and are a stable contract — see
 `app.tasks.celery_app`'s module docstring.
@@ -37,6 +42,7 @@ from sqlalchemy import delete, func, select
 
 from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
+from app.core.timezones import display_zone
 from app.db import session as db_session
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
@@ -53,7 +59,7 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
-from app.services import config_drift, disk_forecast
+from app.services import config_drift, disk_forecast, health_events
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import apply_result, is_due, run_probe
 from app.services.fleet_stats import compute_fleet_stats
@@ -71,11 +77,13 @@ from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.exec import run_command
-from app.ssh.facts import gather_facts
+from app.ssh.facts import check_reboot_required, gather_facts
 from app.ssh.identity import get_or_create_identity
 from app.ssh.image_updates import ImageCheckError, check_image_updates
 from app.ssh.logs import (
     LogAccessError,
+    filter_own_sessions,
+    format_journal_entry,
     list_directory,
     view_docker_logs,
     view_file,
@@ -92,11 +100,14 @@ from app.ssh.services import ServiceEntry, gather_services
 from app.ssh.updates import (
     capture_package_snapshot,
     check_updates,
+    fetch_changelog,
     preview_update,
     run_rollback,
     run_system_update,
+    set_package_hold,
 )
 from app.tasks.celery_app import celery_app
+from app.tasks.runner import run_in_worker_loop
 
 logger = logging.getLogger(__name__)
 
@@ -226,11 +237,25 @@ def run_remote_ssh_command(machine_id: str, command: str) -> dict[str, Any]:
 
 
 async def _view_machine_journal(
-    machine_id: str, *, lines: int, search: str, since: str, until: str, priority: str = ""
+    machine_id: str,
+    *,
+    lines: int,
+    search: str,
+    since: str,
+    until: str,
+    priority: str = "",
+    unit: str = "",
+    boot: str = "",
+    hide_own: bool = False,
 ) -> dict[str, Any]:
     """The Logs tab's default view — no persistence, a fresh read-only SSH
     round trip every time (see `app.ssh.logs`'s module docstring for the
-    permission-tier reasoning)."""
+    permission-tier reasoning).
+
+    Returns `output` (the lines as text, times in the instance's `TZ`),
+    `entries` (the same lines with their journal priority, for coloring)
+    and `hidden` — how many lines `hide_own` dropped as debcontrol's own
+    SSH logins (`app.ssh.logs.filter_own_sessions`)."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
 
@@ -243,7 +268,7 @@ async def _view_machine_journal(
         secret = await resolve_machine_credential(machine, session)
 
         try:
-            output = await view_journal(
+            entries, own_uid, own_address = await view_journal(
                 machine,
                 secret,
                 app_settings.ssh_connect_timeout,
@@ -252,12 +277,29 @@ async def _view_machine_journal(
                 since=since,
                 until=until,
                 priority=priority,
+                unit=unit,
+                boot=boot,
             )
         except SSHConnectionError as exc:
             logger.warning("view_machine_journal failed for %s: %s", machine.name, exc)
             return {"ok": False, "error": str(exc)}
 
-        return {"ok": True, "output": output}
+        hidden = 0
+        if hide_own:
+            entries, hidden = filter_own_sessions(
+                entries, own_uid=own_uid, own_address=own_address, username=machine.username
+            )
+        zone = display_zone()
+        rendered = [
+            {"text": format_journal_entry(entry, zone), "priority": entry.priority}
+            for entry in entries
+        ]
+        return {
+            "ok": True,
+            "output": "\n".join(str(row["text"]) for row in rendered),
+            "entries": rendered,
+            "hidden": hidden,
+        }
 
 
 @celery_app.task(
@@ -265,11 +307,28 @@ async def _view_machine_journal(
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
 def view_machine_journal(
-    machine_id: str, *, lines: int, search: str, since: str, until: str, priority: str = ""
+    machine_id: str,
+    *,
+    lines: int,
+    search: str,
+    since: str,
+    until: str,
+    priority: str = "",
+    unit: str = "",
+    boot: str = "",
+    hide_own: bool = False,
 ) -> dict[str, Any]:
     return asyncio.run(
         _view_machine_journal(
-            machine_id, lines=lines, search=search, since=since, until=until, priority=priority
+            machine_id,
+            lines=lines,
+            search=search,
+            since=since,
+            until=until,
+            priority=priority,
+            unit=unit,
+            boot=boot,
+            hide_own=hide_own,
         )
     )
 
@@ -425,8 +484,12 @@ async def _forecast_machine_disks(machine_id: str) -> dict[str, Any]:
             .order_by(MachineMonitoringSample.sampled_at)
         )
         rows = [(_as_utc(sampled_at), filesystems) for sampled_at, filesystems in result.all()]
+        previous_forecast = machine.disk_forecast
         machine.disk_forecast = disk_forecast.forecast_filesystems(rows, now) or None
         await session.commit()
+        await health_events.notify_forecast_change(
+            session, machine, previous_forecast=previous_forecast
+        )
         return {"ok": True, "mounts": len(machine.disk_forecast or {})}
 
 
@@ -487,7 +550,7 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
 def check_machine_image_updates(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_check_machine_image_updates(machine_id))
+    return run_in_worker_loop(_check_machine_image_updates(machine_id))
 
 
 async def _check_all_machine_image_updates() -> None:
@@ -785,7 +848,7 @@ async def _check_machine_readiness(machine_id: str) -> dict[str, Any]:
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
 def check_machine_readiness(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_check_machine_readiness(machine_id))
+    return run_in_worker_loop(_check_machine_readiness(machine_id))
 
 
 async def _fix_root_readiness(machine_id: str) -> dict[str, Any]:
@@ -1039,6 +1102,8 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
             return {"ok": False, "error": str(exc)}
 
         before = config_drift.snapshot(machine)
+        previous_reboot_required = machine.reboot_required
+        previous_backups = machine.pve_backups
         machine.discovered_hostname = facts["hostname"]
         machine.os_version = facts["os_version"]
         machine.os_id = facts["os_id"]
@@ -1059,10 +1124,19 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.login_users = facts["login_users"]
         machine.is_physical = facts["is_physical"]
         machine.smart_devices = facts["smart_devices"]
+        machine.pve_version = facts.get("pve_version")
+        machine.pve_storage = facts.get("pve_storage")
+        machine.pve_backups = facts.get("pve_backups")
         machine.facts_updated_at = datetime.now(UTC)
         await session.commit()
         await config_drift.record_fact_changes(
             session, machine, config_drift.diff_snapshots(before, config_drift.snapshot(machine))
+        )
+        await health_events.notify_facts_changes(
+            session,
+            machine,
+            previous_reboot_required=previous_reboot_required,
+            previous_backups=previous_backups,
         )
         await publish_machine_event(machine_id, KIND_FACTS)
 
@@ -1071,7 +1145,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="app.tasks.jobs.refresh_machine_facts")
 def refresh_machine_facts(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_refresh_machine_facts(machine_id))
+    return run_in_worker_loop(_refresh_machine_facts(machine_id))
 
 
 async def _refresh_all_machine_facts() -> None:
@@ -1155,7 +1229,7 @@ async def _refresh_machine_packages(machine_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="app.tasks.jobs.refresh_machine_packages")
 def refresh_machine_packages(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_refresh_machine_packages(machine_id))
+    return run_in_worker_loop(_refresh_machine_packages(machine_id))
 
 
 async def _refresh_all_machine_packages() -> None:
@@ -1292,7 +1366,7 @@ async def _refresh_machine_services(machine_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="app.tasks.jobs.refresh_machine_services")
 def refresh_machine_services(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_refresh_machine_services(machine_id))
+    return run_in_worker_loop(_refresh_machine_services(machine_id))
 
 
 async def _refresh_all_machine_services() -> None:
@@ -1335,6 +1409,16 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             return {"ok": False, "error": str(exc)}
 
         now = datetime.now(UTC)
+        previous_smart = (
+            await session.execute(
+                select(MachineMonitoringSample.smart_disks)
+                .where(MachineMonitoringSample.machine_id == machine.id)
+                .order_by(MachineMonitoringSample.sampled_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        previous_failed_units = machine.failed_units
+        previous_zfs_pools = machine.zfs_pools
         session.add(
             MachineMonitoringSample(
                 machine_id=machine.id,
@@ -1345,6 +1429,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
                 load15=sample["load15"],
                 ram_used_bytes=sample["ram_used_bytes"],
                 ram_total_bytes=sample["ram_total_bytes"],
+                ram_arc_bytes=sample.get("ram_arc_bytes"),
+                ram_cache_bytes=sample.get("ram_cache_bytes"),
                 network_io=sample["network_io"],
                 disk_io=sample["disk_io"],
                 filesystems=sample["filesystems"],
@@ -1369,11 +1455,22 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             )
         )
         machine.docker_status = sample["docker_status"]
+        machine.zfs_pools = sample.get("zfs_pools")
+        machine.pve_guests = sample.get("pve_guests")
+        machine.failed_units = sample.get("failed_units")
         machine.docker_containers = (
             sample["docker_containers"] if sample["docker_status"] == "ok" else None
         )
         machine.monitoring_updated_at = now
         await session.commit()
+        await health_events.notify_monitoring_changes(
+            session,
+            machine,
+            previous_failed_units=previous_failed_units,
+            previous_smart_disks=previous_smart,
+            current_smart_disks=sample["smart_disks"],
+            previous_zfs_pools=previous_zfs_pools,
+        )
 
         return {"ok": True}
 
@@ -1385,7 +1482,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
 def sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_sample_machine_monitoring(machine_id))
+    return run_in_worker_loop(_sample_machine_monitoring(machine_id))
 
 
 async def _monitor_all_machines() -> None:
@@ -1877,6 +1974,8 @@ async def _run_machine_update(run_id: str) -> None:
 
     refresh_machine_packages.delay(str(run.machine_id))
     check_machine_updates.delay(str(run.machine_id))
+    if run.reboot_if_required or run.rollout_position is not None:
+        finish_update_run.delay(str(run.id))
 
 
 @celery_app.task(
@@ -1885,6 +1984,150 @@ async def _run_machine_update(run_id: str) -> None:
 )
 def run_machine_update(run_id: str) -> None:
     asyncio.run(_run_machine_update(run_id))
+
+
+# After "reboot only if needed": how long a machine gets to go down, then to
+# answer on its SSH port again, before a rolling update gives up on it.
+_REBOOT_DOWN_WAIT_SECONDS = 180
+_REBOOT_BACK_WAIT_SECONDS = 15 * 60
+_REBOOT_POLL_SECONDS = 10
+
+
+async def _wait_until_back(machine: Machine) -> bool:
+    """After a reboot command: wait for the machine to stop answering on its
+    SSH port (or `_REBOOT_DOWN_WAIT_SECONDS`, for one that rebooted faster
+    than a poll), then for it to answer again. True = it's back."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _REBOOT_DOWN_WAIT_SECONDS
+    while loop.time() < deadline:
+        if not (await check_reachable(machine.ip_address, machine.port)).reachable:
+            break
+        await asyncio.sleep(_REBOOT_POLL_SECONDS)
+    deadline = loop.time() + _REBOOT_BACK_WAIT_SECONDS
+    while loop.time() < deadline:
+        if (await check_reachable(machine.ip_address, machine.port)).reachable:
+            return True
+        await asyncio.sleep(_REBOOT_POLL_SECONDS)
+    return False
+
+
+async def _finish_update_run(run_id: str) -> dict[str, Any]:
+    """What happens after an update run, when it asked for more than the
+    update itself (`MachineUpdateRun.reboot_if_required` /
+    `.rollout_position`, set by a scheduled "System update"):
+
+    1. reboot only if needed — a successful run whose machine now needs a
+       reboot (`app.ssh.facts.check_reboot_required`) is rebooted, and
+       waited for until it answers again; the outcome lands on the run;
+    2. rolling batches — the next machine's run starts only after this one
+       succeeded (and came back, if it rebooted). Anything else stops the
+       rollout: every run still waiting is marked failed with the reason,
+       so nothing is left pending forever.
+    """
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
+        if run is None:
+            return {"ok": False, "error": "Update run not found."}
+        machine = await session.get(Machine, run.machine_id)
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+
+        if run.status == UpdateRunStatus.SUCCEEDED and run.reboot_if_required:
+            secret = await resolve_machine_credential(machine, session)
+            try:
+                needed = await check_reboot_required(
+                    machine, secret, app_settings.ssh_connect_timeout
+                )
+            except (SSHConnectionError, TimeoutError) as exc:
+                logger.warning("Reboot check failed for %s: %s", machine.name, exc)
+                needed = None
+            note: str
+            if needed:
+                try:
+                    await send_power_command(
+                        machine, secret, PowerAction.REBOOT, app_settings.ssh_connect_timeout
+                    )
+                except (SSHConnectionError, TimeoutError) as exc:
+                    run.reboot_outcome = "failed"
+                    note = f"Reboot needed, but the reboot command failed: {exc}"
+                else:
+                    back = await _wait_until_back(machine)
+                    run.reboot_outcome = "rebooted" if back else "not_back"
+                    note = (
+                        "Rebooted (the update needed it) and the machine is back."
+                        if back
+                        else "Rebooted (the update needed it), but the machine did not "
+                        f"answer again within {_REBOOT_BACK_WAIT_SECONDS // 60} minutes."
+                    )
+            else:
+                run.reboot_outcome = "not_needed"
+                note = (
+                    "No reboot needed."
+                    if needed is False
+                    else "Couldn't tell whether a reboot is needed — not rebooted."
+                )
+            run.output = _truncate_output(f"{run.output or ''}\n\n[debcontrol] {note}")
+            await session.commit()
+            await log_event(
+                session,
+                actor="scheduler (automatic)",
+                action="machine.update.reboot",
+                summary=f'After updating "{machine.name}": {note}',
+                outcome=(
+                    AuditOutcome.FAILURE
+                    if run.reboot_outcome in ("failed", "not_back")
+                    else AuditOutcome.SUCCESS
+                ),
+                target_type="machine",
+                target_id=machine.id,
+                target_label=machine.name,
+                details={"run_id": str(run.id), "reboot_outcome": run.reboot_outcome},
+            )
+            if run.reboot_outcome == "rebooted":
+                refresh_machine_facts.delay(str(machine.id))
+
+        if run.rollout_position is not None and run.batch_id is not None:
+            result = await session.execute(
+                select(MachineUpdateRun)
+                .where(
+                    MachineUpdateRun.batch_id == run.batch_id,
+                    MachineUpdateRun.status == UpdateRunStatus.PENDING,
+                    MachineUpdateRun.rollout_position > run.rollout_position,
+                )
+                .order_by(MachineUpdateRun.rollout_position)
+            )
+            waiting = list(result.scalars().all())
+            healthy = run.status == UpdateRunStatus.SUCCEEDED and run.reboot_outcome not in (
+                "failed",
+                "not_back",
+            )
+            if healthy and waiting:
+                run_machine_update.delay(str(waiting[0].id))
+            elif waiting:
+                now = datetime.now(UTC)
+                reason = (
+                    f'Rolling update stopped: "{machine.name}" '
+                    + (
+                        "did not come back after its reboot."
+                        if run.reboot_outcome in ("failed", "not_back")
+                        else "failed to update."
+                    )
+                )
+                for pending in waiting:
+                    pending.status = UpdateRunStatus.FAILED
+                    pending.error = reason[:1024]
+                    pending.finished_at = now
+                await session.commit()
+        return {"ok": True, "reboot_outcome": run.reboot_outcome}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.finish_update_run",
+    time_limit=_REBOOT_DOWN_WAIT_SECONDS + _REBOOT_BACK_WAIT_SECONDS + 600,
+)
+def finish_update_run(run_id: str) -> dict[str, Any]:
+    return asyncio.run(_finish_update_run(run_id))
 
 
 async def _rollback_machine_update(run_id: str) -> None:
@@ -2014,6 +2257,8 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
         machine.snap_upgradable_count = result.snap_upgradable_count
         machine.flatpak_upgradable_packages = [dict(p) for p in result.flatpak_upgradable_packages]
         machine.snap_upgradable_packages = [dict(p) for p in result.snap_upgradable_packages]
+        if result.held_packages is not None:
+            machine.apt_held_packages = result.held_packages
 
         if result.exit_status == 0:
             previous_packages = machine.apt_upgradable_packages
@@ -2050,7 +2295,92 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
     time_limit=_UPDATE_TASK_TIME_LIMIT_SECONDS,
 )
 def check_machine_updates(machine_id: str) -> dict[str, Any]:
-    return asyncio.run(_check_machine_updates(machine_id))
+    return run_in_worker_loop(_check_machine_updates(machine_id))
+
+
+async def _set_machine_package_hold(machine_id: str, package: str, hold: bool) -> dict[str, Any]:
+    """`apt-mark hold`/`unhold` one package, then keep
+    `Machine.apt_held_packages` in step with the result right away (the
+    next update check refreshes it from the machine anyway)."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+        secret = await resolve_machine_credential(machine, session)
+        try:
+            result = await set_package_hold(
+                machine,
+                secret,
+                package,
+                hold=hold,
+                connect_timeout_seconds=app_settings.ssh_connect_timeout,
+            )
+        except (SSHConnectionError, TimeoutError, ValueError) as exc:
+            logger.warning("set_machine_package_hold failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+        if result.exit_status != 0:
+            return {"ok": False, "error": result.output.strip()[-500:] or "apt-mark failed."}
+        held = set(machine.apt_held_packages or [])
+        if hold:
+            held.add(package)
+        else:
+            held.discard(package)
+        machine.apt_held_packages = sorted(held)
+        await session.commit()
+        await publish_machine_event(machine_id, KIND_UPDATES)
+        return {"ok": True, "output": result.output}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.set_machine_package_hold",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def set_machine_package_hold(machine_id: str, package: str, hold: bool) -> dict[str, Any]:
+    return asyncio.run(_set_machine_package_hold(machine_id, package, hold))
+
+
+async def _view_package_changelog(machine_id: str, package: str) -> dict[str, Any]:
+    """The changelog of one pending apt update since the installed version
+    (`app.ssh.updates.fetch_changelog`) — read-only, nothing stored."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+        installed = next(
+            (
+                str(p.get("current_version") or "") or None
+                for p in machine.apt_upgradable_packages or []
+                if p.get("name") == package
+            ),
+            None,
+        )
+        secret = await resolve_machine_credential(machine, session)
+        try:
+            text = await fetch_changelog(
+                machine,
+                secret,
+                package,
+                installed_version=installed,
+                connect_timeout_seconds=app_settings.ssh_connect_timeout,
+            )
+        except (SSHConnectionError, TimeoutError, ValueError) as exc:
+            logger.warning("view_package_changelog failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "changelog": text, "installed_version": installed}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.view_package_changelog",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def view_package_changelog(machine_id: str, package: str) -> dict[str, Any]:
+    return asyncio.run(_view_package_changelog(machine_id, package))
 
 
 async def _preview_machine_update(machine_id: str, strategy: str) -> dict[str, Any]:

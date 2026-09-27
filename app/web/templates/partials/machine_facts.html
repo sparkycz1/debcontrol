@@ -13,7 +13,7 @@
 {% else %}
   <dl class="detail-list">
     <dt>{{ t(request, "machine.facts.hostname") }}</dt><dd>{{ machine.discovered_hostname or '—' }}</dd>
-    <dt>{{ t(request, "machine.facts.os_version") }}</dt><dd>{{ machine.os_version or '—' }}</dd>
+    <dt>{{ t(request, "machine.facts.os_version") }}</dt><dd>{{ machine.os_display or '—' }}</dd>
     <dt>{{ t(request, "machine.facts.kernel") }}</dt><dd>{{ machine.kernel_version or '—' }}</dd>
     <dt>{{ t(request, "machine.facts.cpu") }}</dt><dd>{{ machine.cpu_model or '—' }}</dd>
     <dt>{{ t(request, "machine.facts.cpu_architecture") }}</dt><dd>{{ machine.cpu_architecture or '—' }}</dd>

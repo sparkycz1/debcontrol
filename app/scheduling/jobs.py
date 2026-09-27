@@ -32,7 +32,10 @@ from app.scheduling.actions import ActionRunResult, get_action
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.scheduling.cron import compute_next_run
 from app.scheduling.targets import resolve_target_machines
-from app.services.maintenance_windows import machines_paused_for_scheduling
+from app.services.maintenance_windows import (
+    machines_in_active_window,
+    machines_paused_for_scheduling,
+)
 from app.tasks.celery_app import celery_app
 
 # `actor` for every audit entry this module writes — there's no HTTP
@@ -69,7 +72,7 @@ async def _run_due_scheduled_tasks() -> None:
         for task in due:
             run_scheduled_task.delay(str(task.id))
             try:
-                task.next_run_at = compute_next_run(task.cron_expression, now)
+                task.next_run_at = compute_next_run(task.cron_expression, now, task.timezone)
             except ValueError:
                 # Shouldn't happen — expressions are validated on save — but
                 # don't let a bad stored expression wedge this task into
@@ -138,8 +141,16 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
         # tasks sit this run out (skipped, not queued for later).
         paused_ids = await machines_paused_for_scheduling(session, machines)
         machines = [m for m in machines if m.id not in paused_ids]
+        # A task limited to maintenance windows runs only on the machines
+        # one covers right now; the rest sit this run out.
+        outside_ids: set[uuid.UUID] = set()
+        if task.require_maintenance_window:
+            inside_ids = await machines_in_active_window(session, machines)
+            outside_ids = {m.id for m in machines if m.id not in inside_ids}
+            machines = [m for m in machines if m.id in inside_ids]
         result = await action.run(session, machines, task.action_params or {})
         paused = len(paused_ids)
+        outside = len(outside_ids)
 
         summary = f"Triggered for {result.attempted} machine(s)."
         if result.skipped:
@@ -149,7 +160,11 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
             )
         if paused:
             summary = f"{summary[:-1]}; {paused} paused by a maintenance window."
-        result = ActionRunResult(attempted=result.attempted, skipped=result.skipped + paused)
+        if outside:
+            summary = f"{summary[:-1]}; {outside} outside a maintenance window."
+        result = ActionRunResult(
+            attempted=result.attempted, skipped=result.skipped + paused + outside
+        )
         finished_at = datetime.now(UTC)
         task.last_run_at = finished_at
         task.last_run_summary = summary
@@ -179,6 +194,7 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
                 "attempted": result.attempted,
                 "skipped": result.skipped,
                 "paused_by_maintenance": paused,
+                "outside_maintenance_window": outside,
             },
         )
 

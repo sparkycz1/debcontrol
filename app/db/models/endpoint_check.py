@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-CHECK_KINDS = ("http", "tls")
+CHECK_KINDS = ("http", "tls", "ping", "tcp", "dns")
 
 
 class EndpointCheck(Base):
@@ -29,6 +29,9 @@ class EndpointCheck(Base):
     # "http" — a GET against `target` (a full http(s):// URL); an https URL
     # also reports its certificate's expiry. "tls" — a TLS handshake with
     # `target` as `host:port` (443 when no port), certificate expiry only.
+    # "ping" (a host), "tcp" (`host:port`), "dns" (`name` or `name@server`,
+    # `expected_body` = an address it must resolve to) — see
+    # app.services.network_probes.
     kind: Mapped[str] = mapped_column(String(8), nullable=False)
     target: Mapped[str] = mapped_column(String(500), nullable=False)
     # HTTP only: the exact status code that counts as up; None = any < 400.

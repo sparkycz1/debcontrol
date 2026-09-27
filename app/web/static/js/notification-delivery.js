@@ -1,15 +1,23 @@
-// Shows/hides the webhook URL field on the Notifications rule form
-// (app/web/templates/notifications/rule_form.html) based on the selected
-// delivery channel — progressive enhancement only: with JS disabled, the
-// field just stays visible and unused when "Email" is selected, which is
-// harmless (the server only reads it for a "webhook" rule).
-document.addEventListener("change", (event) => {
-  const select = event.target;
-  if (!(select instanceof HTMLSelectElement) || !select.matches("[data-delivery-channel-select]")) {
-    return;
+// Shows only the chosen delivery channel's fields on the Notifications
+// rule form (app/web/templates/notifications/rule_form.html): every
+// `[data-delivery-for]` lists the channels it belongs to. The server
+// already renders the other channels' fields hidden; this only re-syncs
+// them as the select changes (the server reads just the fields the chosen
+// channel uses either way).
+(function () {
+  function sync(select) {
+    const form = select.closest("form");
+    if (!form) return;
+    form.querySelectorAll("[data-delivery-for]").forEach((el) => {
+      el.hidden = !el.dataset.deliveryFor.split(" ").includes(select.value);
+    });
   }
-  const field = select.closest("form")?.querySelector("[data-delivery-webhook-field]");
-  if (field instanceof HTMLElement) {
-    field.hidden = select.value !== "webhook";
-  }
-});
+
+  document.addEventListener("change", (event) => {
+    const select = event.target;
+    if (select instanceof HTMLSelectElement && select.matches("[data-delivery-channel-select]")) {
+      sync(select);
+    }
+  });
+  document.querySelectorAll("[data-delivery-channel-select]").forEach(sync);
+})();

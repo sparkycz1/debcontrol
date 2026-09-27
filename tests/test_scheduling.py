@@ -92,7 +92,7 @@ def test_system_update_action_has_strategy_param():
     action = get_action("system_update")
     assert action is not None
     param_keys = {p.key for p in action.params}
-    assert param_keys == {"strategy"}
+    assert param_keys == {"strategy", "reboot", "rollout"}
 
 
 def test_force_facts_refresh_and_monitoring_sample_actions_are_registered():
