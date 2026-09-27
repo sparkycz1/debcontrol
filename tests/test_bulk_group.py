@@ -115,3 +115,21 @@ async def test_api_bulk_move(client, db_session_factory):
         headers=headers,
     )
     assert again.json() == {"group_id": str(prod_id), "moved": [], "unchanged_count": 1}
+
+
+async def test_web_bulk_check_updates_says_how_many_started(client, db_session_factory):
+    ids, _prod_id, _dev_id = await _seed(db_session_factory)
+    async with db_session_factory() as session:
+        for machine in (await session.execute(select(Machine))).scalars():
+            if machine.id != ids[2]:
+                machine.host_key_fingerprint = "SHA256:x"
+        await session.commit()
+    await client.get("/machines")
+    response = await client.post(
+        "/machines/bulk/check-updates",
+        data={"csrf_token": client.cookies.get("csrftoken"), "machine_ids": [str(i) for i in ids]},
+    )
+    assert response.status_code == 303
+    followed = await client.get(response.headers["location"])
+    assert "Update check started on 2 machines" in followed.text
+    assert "1 skipped (host key not confirmed)." in followed.text

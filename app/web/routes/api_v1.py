@@ -252,7 +252,12 @@ async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession, user: Use
     docstring), and that applies to visibility scoping too."""
     query = await machines_visible_to(db, user)
     result = await db.execute(
-        query.options(selectinload(Machine.group)).where(Machine.id == machine_id)
+        query.options(selectinload(Machine.group))
+        .where(Machine.id == machine_id)
+        # A route that waited for a background job reloads the machine to
+        # show what the job wrote — without this the session would hand back
+        # the object it already holds, with the values from before the job.
+        .execution_options(populate_existing=True)
     )
     machine = result.scalar_one_or_none()
     if machine is None:

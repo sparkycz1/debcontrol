@@ -127,6 +127,7 @@
 <button
   class="button button-secondary"
   hx-post="/machines/{{ machine.id }}/check-updates"
+  hx-disabled-elt="this"
   hx-vals='{"csrf_token": "{{ csrf_token }}"}'
   hx-target="#update-availability"
   hx-swap="outerHTML"

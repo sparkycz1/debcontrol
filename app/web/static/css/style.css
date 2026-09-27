@@ -1190,10 +1190,14 @@ p { margin: 0 0 var(--space-3); }
    own container's `align-items: center`. Reset both back to that row's
    own layout instead. */
 .form .page-header-actions button,
-.form .page-header-actions .button {
+.form .page-header-actions .button,
+.form .bulk-bar button,
+.form .bulk-bar .button {
   margin-top: 0;
   align-self: center;
 }
+/* Buttons and selects in the bulk bar share one height, so the row lines up. */
+.bulk-bar .button, .bulk-bar .inline-select { height: 2.5rem; box-sizing: border-box; }
 
 /* A collapsible "advanced" section inside a .form (e.g. a machine's own
    interval overrides on machines/edit.html) — plain <details>/<summary>
@@ -1986,7 +1990,11 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 .table-muted { color: var(--color-muted); }
 .table-summary { margin: 0.15rem 0 0; color: var(--color-muted); font-size: 0.85rem; }
 .cell-truncate { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.container-actions { white-space: nowrap; }
+.container-actions { white-space: nowrap; text-align: right; }
+/* Docker containers: names, numbers and status stay on one line; ports
+   and image give way first (full text on hover). */
+.containers-table th, .containers-table td { padding: 0.5rem 0.65rem; }
+.containers-table .cell-truncate { max-width: 13rem; }
 .container-actions > * + * { margin-left: var(--space-1); }
 .row-highlight td { background: var(--color-surface-raised); }
 .container-actions .inline-form + .inline-form { margin-left: var(--space-1); }

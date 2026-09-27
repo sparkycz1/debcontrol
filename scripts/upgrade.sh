@@ -62,6 +62,19 @@ else
   git pull --ff-only origin "$branch"
 fi
 
+# Options (parsed only here, below the `git pull` above: bash keeps reading
+# this file from disk while it runs, so everything up to that point must
+# stay byte-for-byte unchanged between releases, or the copy that is doing
+# the upgrade would continue at the wrong place in the newly pulled file):
+#   --no-cleanup   keep the images the stack no longer uses (see below).
+cleanup=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-cleanup) cleanup=0 ;;
+    *) echo "usage: $0 [--no-cleanup]" >&2; exit 2 ;;
+  esac
+done
+
 # A newer release can add variables to .env.example that this deployment's
 # existing .env predates (a new background-check interval, a new feature's
 # own setting, ...) — scripts/env_sync.py only ever appends what's missing,
@@ -84,12 +97,47 @@ if docker ps \
   compose_files+=(-f docker-compose.caddy.yml)
 fi
 
+# What this stack runs on *before* the upgrade. Afterwards, the previous
+# debcontrol image and any image the stack used before but no longer does
+# (e.g. `redis:8.10.1` after a bump to `redis:8.10.2`) are removed. Only
+# images this stack itself used are touched, never another project's; one
+# still in use is simply left alone.
+old_app_image="$(docker image inspect -f '{{.Id}}' debcontrol:local 2>/dev/null || true)"
+old_images="$(docker compose "${compose_files[@]}" ps -a --format '{{.Image}}' 2>/dev/null | sort -u || true)"
+
 echo "==> Building images..."
 export GIT_COMMIT="$(git rev-parse HEAD)"
 docker compose "${compose_files[@]}" build
 
 echo "==> Applying migrations and restarting services..."
 docker compose "${compose_files[@]}" up -d
+
+if [ "$cleanup" -eq 1 ]; then
+  echo "==> Removing images this stack no longer uses..."
+  new_images="$(docker compose "${compose_files[@]}" config --images 2>/dev/null | sort -u || true)"
+  removed=0
+  while IFS= read -r image; do
+    [ -z "$image" ] && continue
+    [ "$image" = "debcontrol:local" ] && continue
+    if ! grep -qxF "$image" <<<"$new_images"; then
+      # Fails (and is skipped) if anything else still uses it.
+      if docker image rm "$image" >/dev/null 2>&1; then
+        echo "    removed $image"
+        removed=$((removed + 1))
+      fi
+    fi
+  done <<<"$old_images"
+  new_app_image="$(docker image inspect -f '{{.Id}}' debcontrol:local 2>/dev/null || true)"
+  if [ -n "$old_app_image" ] && [ "$old_app_image" != "$new_app_image" ]; then
+    if docker image rm "$old_app_image" >/dev/null 2>&1; then
+      echo "    removed the previous debcontrol image"
+      removed=$((removed + 1))
+    fi
+  fi
+  # Older untagged debcontrol builds left behind by earlier upgrades.
+  docker image prune -f --filter "label=io.debcontrol.image=app" >/dev/null 2>&1 || true
+  if [ "$removed" -eq 0 ]; then echo "    nothing to remove"; fi
+fi
 
 echo "==> Status:"
 docker compose "${compose_files[@]}" ps

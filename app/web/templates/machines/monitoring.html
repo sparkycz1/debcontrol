@@ -304,14 +304,13 @@
         </header>
         {% if machine.docker_containers %}
           <div class="monitoring-table-wrap">
-            <table class="data-table" id="containers-table">
+            <table class="data-table containers-table" id="containers-table">
               <thead>
                 <tr>
                   <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
                   <th data-sort="number">{{ t(request, "monitoring.containers.cpu") }}</th>
                   <th data-sort="number">{{ t(request, "monitoring.containers.memory") }}</th>
                   <th data-sort="number">{{ t(request, "monitoring.containers.network") }}</th>
-                  <th data-sort="text">{{ t(request, "monitoring.containers.health") }}</th>
                   <th data-sort="text">{{ t(request, "monitoring.containers.ports") }}</th>
                   <th data-sort="text">{{ t(request, "monitoring.containers.image") }}</th>
                   <th data-sort="text">{{ t(request, "monitoring.containers.status") }}</th>
@@ -323,23 +322,24 @@
                   {% set net_series = history.docker_net_by_container.get(c.name) or [] %}
                   {% set net_rate = (net_series | select('number') | list | last) if net_series | select('number') | list else none %}
                   <tr>
-                    <td><strong>{{ c.name }}</strong></td>
-                    <td data-sort-value="{{ c.cpu_percent if c.cpu_percent is number else -1 }}">{{ c.cpu_percent | chart_value('percent') if c.cpu_percent is number else '—' }}</td>
-                    <td data-sort-value="{{ c.mem_bytes if c.mem_bytes is number else -1 }}">{{ c.mem_bytes | bytes if c.mem_bytes is number else '—' }}</td>
-                    <td data-sort-value="{{ net_rate if net_rate is not none else -1 }}">{{ net_rate | chart_value('bytes_rate') if net_rate is not none else '—' }}</td>
-                    <td>
-                      {% if c.health %}
-                        <span class="badge {{ 'badge-ok' if c.health == 'healthy' else ('badge-error' if c.health == 'unhealthy' else 'badge-warn') }}">{{ t(request, "monitoring.containers.health_" ~ c.health) }}</span>
-                      {% else %}<span class="table-muted">—</span>{% endif %}
-                    </td>
+                    <td class="cell-nowrap"><strong>{{ c.name }}</strong></td>
+                    <td class="cell-nowrap" data-sort-value="{{ c.cpu_percent if c.cpu_percent is number else -1 }}">{{ c.cpu_percent | chart_value('percent') if c.cpu_percent is number else '—' }}</td>
+                    <td class="cell-nowrap" data-sort-value="{{ c.mem_bytes if c.mem_bytes is number else -1 }}">{{ c.mem_bytes | bytes if c.mem_bytes is number else '—' }}</td>
+                    <td class="cell-nowrap" data-sort-value="{{ net_rate if net_rate is not none else -1 }}">{{ net_rate | chart_value('bytes_rate') if net_rate is not none else '—' }}</td>
                     <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
                     <td class="cell-truncate" title="{{ c.image }}">
                       {% set img_status = (machine.docker_image_updates or {}).get(c.image) %}
                       {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
                       {{ c.image }}
                     </td>
-                    <td>
-                      <span class="badge {{ 'badge-ok' if c.state == 'running' else ('badge-error' if c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') else '') }}">{{ c.status or c.state }}</span>
+                    <td class="cell-nowrap">
+                      {% if c.health == 'unhealthy' %}{% set state_badge = 'badge-error' %}
+                      {% elif c.health == 'starting' or c.state == 'restarting' %}{% set state_badge = 'badge-warn' %}
+                      {% elif c.state == 'running' %}{% set state_badge = 'badge-ok' %}
+                      {% elif c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') %}{% set state_badge = 'badge-error' %}
+                      {% else %}{% set state_badge = '' %}{% endif %}
+                      <span class="badge {{ state_badge }}"
+                            {% if c.health %}title="{{ t(request, 'monitoring.containers.health') }}: {{ t(request, 'monitoring.containers.health_' ~ c.health) }}"{% endif %}>{{ c.status or c.state }}</span>
                     </td>
                     {% if can_act %}
                       <td class="container-actions">

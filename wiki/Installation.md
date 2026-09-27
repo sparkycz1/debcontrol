@@ -162,7 +162,11 @@ resized.
 Refuses on uncommitted changes, fast-forwards the checkout, adds new
 `.env.example` variables to `.env` (never changes existing ones), keeps
 Caddy if it's running, rebuilds and restarts; `migrate` runs on every
-start. Safe to re-run. By hand: `git pull && docker compose up -d --build`.
+start. Afterwards it **removes the images the stack no longer uses** — the
+previous debcontrol build and any Postgres/Redis/Caddy version the new
+release replaced — never another project's image or one still in use
+(`--no-cleanup` skips this). Safe to re-run. By hand:
+`git pull && docker compose up -d --build`, then `docker image prune`.
 
 Images are pinned to exact versions (`postgres:18.6`, `redis:8.10.2`,
 `caddy:2.11.4`), so an update never bumps them silently.
