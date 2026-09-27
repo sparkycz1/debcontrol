@@ -189,9 +189,17 @@ Before considering a change finished, not just "the code works":
    scale with an index, not a full-table scan, as the fleet grows.
 8. **Tag and release.** `.github/workflows/release.yml` does this
    automatically: a push to `main` that changes `app/core/version.py` gets
-   tagged `vX.Y.Z` and a GitHub release (notes = commit subjects since the
-   previous tag, minus commits that only touch CI, tests, docs/wiki or
-   version numbers — so write user-facing commit subjects). A version bump that never becomes a tag/release is
+   tagged `vX.Y.Z` and a GitHub release (notes = each commit's subject
+   *and full body* since the previous tag, minus commits that only touch
+   CI, tests, docs/wiki or version numbers). So the version commit's
+   message **is** the release notes: a user-facing subject plus a body
+   that lists *everything* that changed — every new feature, changed
+   behavior, moved page/URL (and its redirect), fix, new API endpoint,
+   migration and upgrade note — grouped under short headings, not a
+   one-line summary. With a squash-merged PR, make sure the squash commit
+   keeps that body. If a published release's notes turn out too thin,
+   rewrite them (`gh release edit vX.Y.Z --notes-file ...`) with the full
+   list. A version bump that never becomes a tag/release is
    invisible to `scripts/upgrade.sh` and to anyone reading the Releases
    page, so check the workflow run went green. If a version was missed,
    run the workflow by hand (Actions → Release → Run workflow, `version` +

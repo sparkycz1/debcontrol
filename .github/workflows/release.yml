@@ -13,8 +13,10 @@ name: Release
 #   The commit must be on `main` and its `app/core/version.py` must say
 #   exactly that version.
 #
-# Release notes are the commit subjects since the previous `v*` tag,
-# leaving out commits that only touch CI, docs/wiki or version numbers.
+# Release notes are the commits since the previous `v*` tag — subject as a
+# heading plus the full commit body (trailers dropped) — leaving out
+# commits that only touch CI, tests, docs/wiki or version numbers. So a
+# version commit's body must itself be complete, user-facing release notes.
 # Running it by hand for a version that is already released rewrites that
 # release's notes the same way.
 # "Latest" always goes to the highest version, so backfilling an older one
@@ -106,19 +108,31 @@ jobs:
           # Notes are for people running the app: a commit that only touches
           # CI, tests, docs/wiki or the version numbers themselves isn't listed.
           internal='^(\.github/|tests/|wiki/|CLAUDE\.md$|README\.md$|app/core/version\.py$|pyproject\.toml$|uv\.lock$)'
+          # Each commit is listed newest first as its subject (a heading) plus
+          # its full body — the body is where the user-facing details live —
+          # minus trailers (Co-Authored-By, Claude-Session, Signed-off-by).
           : > changes.md
-          for commit in $(git rev-list --no-merges --reverse "$range" | tail -n 200); do
+          for commit in $(git rev-list --no-merges "$range" | head -n 200); do
             files="$(git diff-tree --no-commit-id --name-only -r "$commit")"
             if [ -n "$files" ] && ! grep -qvE "$internal" <<< "$files"; then
               continue
             fi
-            git log -1 --format='- %s' "$commit" >> changes.md
+            {
+              git log -1 --format='### %s' "$commit"
+              body="$(git log -1 --format='%b' "$commit" \
+                | grep -viE '^(co-authored-by|claude-session|signed-off-by):' || true)"
+              if [ -n "${body//[[:space:]]/}" ]; then
+                echo
+                printf '%s\n' "$body" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
+              fi
+              echo
+            } >> changes.md
           done
           {
             echo "## Changes"
             echo
             if [ -s changes.md ]; then
-              tac changes.md
+              cat changes.md
             else
               echo "- Maintenance release (no user-facing changes)."
             fi

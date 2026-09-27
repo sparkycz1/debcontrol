@@ -314,8 +314,11 @@ keys, from Python:
   `pyproject.toml` together on every round of changes: patch for small
   fixes, minor for a feature or infrastructure change. Once that lands on
   `main`, `.github/workflows/release.yml` tags it `vX.Y.Z` and publishes
-  the GitHub release by itself (notes: commit subjects since the previous
-  tag); a missed version can be released by hand from Actions → Release →
+  the GitHub release by itself (notes: each commit's subject as a heading
+  plus its full body, trailers dropped, since the previous tag — so the
+  version commit's body must be the complete, user-facing list of what
+  changed, including moved URLs, migrations and upgrade notes); a missed
+  version can be released by hand from Actions → Release →
   Run workflow (`version` + the commit on `main` carrying it). "Latest" on
   the Releases page always goes to the highest version, never to a
   backfilled older one. Notes leave out commits that only touch CI,
