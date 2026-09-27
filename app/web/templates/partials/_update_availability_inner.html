@@ -30,6 +30,26 @@
     </span>
     <span class="hint">{{ t(request, "machine.checked_at", when=(machine.updates_checked_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</span>
   </p>
+  {% set reboot_pkgs, pve_pkgs = reboot_hint_packages(machine.apt_upgradable_packages) %}
+  {% if reboot_pkgs %}
+    <div class="alert alert-warn"><p>{{ t(request, "updates.reboot_hint", packages=(reboot_pkgs | join(', '))) }}</p></div>
+  {% endif %}
+  {% if pve_pkgs %}
+    <div class="alert alert-warn"><p>{{ t(request, "updates.pve_hint", packages=(pve_pkgs | join(', '))) }}</p></div>
+  {% endif %}
+  {% macro package_actions(pkg) %}
+    <span class="package-actions">
+      <a href="/machines/{{ machine.id }}/updates/changelog?package={{ pkg.name | urlencode }}">{{ t(request, "updates.changelog.link") }}</a>
+      {% if request.state.user.has_permission('action.updates') %}
+        <form method="post" action="/machines/{{ machine.id }}/updates/hold" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="package" value="{{ pkg.name }}">
+          <input type="hidden" name="hold" value="1">
+          <button type="submit" class="link-button" title="{{ t(request, 'updates.hold.hold_title') }}">{{ t(request, "updates.hold.hold") }}</button>
+        </form>
+      {% endif %}
+    </span>
+  {% endmacro %}
   {% set security_packages = machine.apt_upgradable_packages | selectattr("security") | list if machine.apt_upgradable_packages else [] %}
   {% if security_packages %}
     {% from "partials/_cve_links.html" import render as render_cves, urgency_badge with context %}
@@ -41,6 +61,7 @@
             <code>{{ pkg.name }}</code>
             {%- if pkg.current_version and pkg.new_version %}: {{ pkg.current_version }} → {{ pkg.new_version }}{% elif pkg.new_version %}: {{ pkg.new_version }}{% endif %}
             {{ urgency_badge(pkg.urgency) }}
+            {{ package_actions(pkg) }}
             {% if pkg.cves %}<div class="table-summary">{{ render_cves(pkg.cves, machine.os_id) }}</div>
             {% elif pkg.cves is sameas none or pkg.cves is not defined %}<div class="table-summary">{{ t(request, "security.cves_unknown") }}</div>
             {% else %}<div class="table-summary">{{ t(request, "security.no_cves_listed") }}</div>{% endif %}
@@ -59,6 +80,7 @@
             {%- if pkg.current_version and pkg.new_version %}: {{ pkg.current_version }} → {{ pkg.new_version }}
             {%- elif pkg.new_version %}: {{ pkg.new_version }}{% endif %}
             {% if pkg.security %}<span class="badge badge-warn">{{ t(request, "security.badge") }}</span>{% endif %}
+            {{ package_actions(pkg) }}
           </li>
         {% endfor %}
       </ul>

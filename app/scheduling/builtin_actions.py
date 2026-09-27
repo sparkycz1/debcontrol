@@ -43,7 +43,13 @@ async def _run_system_update(
     db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
     strategy = UpgradeStrategy(params.get("strategy") or UpgradeStrategy.DIST_UPGRADE.value)
-    _batch_id, skipped = await trigger_updates(db, machines, strategy)
+    _batch_id, skipped = await trigger_updates(
+        db,
+        machines,
+        strategy,
+        reboot_if_required=params.get("reboot") == "if_required",
+        rolling=params.get("rollout") == "one_by_one",
+    )
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
@@ -101,19 +107,42 @@ def register_builtin_actions() -> None:
             key="system_update",
             label="System update",
             description=(
-                "apt-get update, then dist-upgrade or full-upgrade, then "
-                "autoremove/autoclean — same as the manual System updates panel."
+                "apt-get update, then full-upgrade, upgrade or only the security "
+                "updates, then autoremove/autoclean — same as the manual System "
+                "updates panel."
             ),
             params=[
                 ScheduledActionParam(
                     key="strategy",
                     label="Upgrade strategy",
                     choices=[
-                        (UpgradeStrategy.DIST_UPGRADE.value, "dist-upgrade"),
                         (UpgradeStrategy.FULL_UPGRADE.value, "full-upgrade"),
+                        (UpgradeStrategy.UPGRADE.value, "upgrade (safe)"),
+                        (UpgradeStrategy.SECURITY.value, "security updates only"),
+                        # Kept so a task saved with it still edits cleanly —
+                        # the same thing as full-upgrade.
+                        (UpgradeStrategy.DIST_UPGRADE.value, "dist-upgrade"),
                     ],
-                    default=UpgradeStrategy.DIST_UPGRADE.value,
-                )
+                    default=UpgradeStrategy.FULL_UPGRADE.value,
+                ),
+                ScheduledActionParam(
+                    key="reboot",
+                    label="Reboot afterwards",
+                    choices=[
+                        ("never", "Never"),
+                        ("if_required", "Only if the update needs it"),
+                    ],
+                    default="never",
+                ),
+                ScheduledActionParam(
+                    key="rollout",
+                    label="Machines",
+                    choices=[
+                        ("all_at_once", "All at once"),
+                        ("one_by_one", "One at a time, next only once the previous is back"),
+                    ],
+                    default="all_at_once",
+                ),
             ],
             run=_run_system_update,
         )

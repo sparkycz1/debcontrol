@@ -32,6 +32,12 @@ from app.db.base import Base
 class NotificationDeliveryChannel(enum.StrEnum):
     EMAIL = "email"
     WEBHOOK = "webhook"
+    # Push services homelabs actually use — see app.services.push_channels.
+    NTFY = "ntfy"
+    GOTIFY = "gotify"
+    TELEGRAM = "telegram"
+    DISCORD = "discord"
+    PUSHOVER = "pushover"
 
 
 class NotificationDeliveryStatus(enum.StrEnum):

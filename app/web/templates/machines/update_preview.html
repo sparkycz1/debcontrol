@@ -12,7 +12,7 @@
     </p>
   {% else %}
     <p class="hint">
-      {{ t(request, "machine.preview.simulated_hint", name=(machine.name | e), strategy=('dist-upgrade' if strategy.value == 'dist_upgrade' else 'full-upgrade')) | safe }}
+      {{ t(request, "machine.preview.simulated_hint", name=(machine.name | e), strategy=(strategy_label(request, strategy.value) | e)) | safe }}
     </p>
 
     <section class="panel">

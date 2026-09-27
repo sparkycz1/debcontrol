@@ -15,7 +15,7 @@ CSP would block).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -228,6 +228,10 @@ class Chart:
     data: dict[str, Any]
 
     @property
+    def hidden_count(self) -> int:
+        return len(self.data.get("h") or [])
+
+    @property
     def empty(self) -> bool:
         return not any(v is not None for s in self.series for v in s.values)
 
@@ -256,15 +260,21 @@ def build_chart(
     time_format: str = "%H:%M",
     time_label: Callable[[datetime, str], str] | None = None,
     x_tick_count: int = 6,
+    hidden: Collection[str] | None = None,
 ) -> Chart:
     """`series` is `[(label, values), ...]`, every `values` the same length
     as `timestamps` (a `None` is a gap). `fixed_max` pins the axis top
     (percent charts); `zero_based=False` fits the axis to the data instead
-    of starting at 0 (temperatures, fan speeds — a flat 1409 RPM line
-    should be readable, not pressed against the top of a 0-1500 axis).
+    of starting at 0 (temperatures). Fan speeds deliberately stay
+    zero-based: fitted to the data, a fan wobbling between 1407 and 1411
+    RPM filled the whole chart height and looked dramatic.
     `stacked` stacks areas (per-container CPU/memory); `area` defaults to
     filled for stacked charts or up to three series, plain lines above
-    that (twenty overlapping temperature fills would be mud)."""
+    that (twenty overlapping temperature fills would be mud).
+
+    `hidden` names series (by label) that start switched off (still in the
+    legend, one click away, plus a "show all" button) — the noise on a
+    busy host: `tap*`/`veth*` interfaces, the tenth temperature sensor."""
     labels_fn = time_label or (lambda dt, f: dt.strftime(f))
     palette = list(colors) if colors else list(PALETTE)
     n = len(timestamps)
@@ -374,6 +384,7 @@ def build_chart(
             "fmt": fmt,
             "stacked": stacked,
             "t": [labels_fn(ts, "%d.%m. %H:%M") for ts in timestamps],
+            "h": [i for i, s in enumerate(prepared) if hidden and s.label in hidden],
             "s": [
                 {
                     "label": s.label,
@@ -384,3 +395,64 @@ def build_chart(
             ],
         },
     )
+
+
+# Virtual interfaces a hypervisor/container host grows by the dozen — per-VM
+# taps, per-container veths, Proxmox's firewall bridges, Docker/libvirt/
+# Kubernetes bridges and overlays. Physical NICs, bonds, VLANs, WireGuard
+# and `vmbr*` bridges (a Proxmox host's real uplinks) stay visible.
+_NOISE_INTERFACE_PREFIXES = (
+    "tap",
+    "veth",
+    "fwbr",
+    "fwln",
+    "fwpr",
+    "ovs-system",
+    "docker",
+    "br-",
+    "virbr",
+    "vnet",
+    "cali",
+    "flannel",
+    "cni",
+    "vxlan",
+    "genev",
+    "kube",
+    "lxc",
+)
+
+
+def noise_interfaces(names: Iterable[str]) -> set[str]:
+    """The interfaces the Network chart starts with switched off."""
+    return {name for name in names if name.startswith(_NOISE_INTERFACE_PREFIXES)}
+
+
+# Temperature sensors worth seeing at a glance: the CPU package/die, NVMe
+# drives and GPUs. Everything else (per-core readings, chipset, ACPI zones,
+# Wi-Fi, a drive's secondary sensors) starts switched off.
+_PRIMARY_SENSOR_MARKERS = (
+    "tctl",
+    "tdie",
+    "package id",
+    "cpu",
+    "soc",
+    "nvme composite",
+    "amdgpu edge",
+    "amdgpu junction",
+    "gpu",
+    "i915",
+    "xe ",
+    "nouveau",
+)
+
+
+def secondary_sensors(names: Iterable[str]) -> set[str]:
+    """The temperature series the chart starts with switched off — none at
+    all when that would hide every one (an unfamiliar board)."""
+    all_names = list(names)
+    primary = {
+        name for name in all_names if any(m in name.lower() for m in _PRIMARY_SENSOR_MARKERS)
+    }
+    if not primary:
+        return set()
+    return {name for name in all_names if name not in primary}

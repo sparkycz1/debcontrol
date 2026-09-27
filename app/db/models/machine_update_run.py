@@ -9,7 +9,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -18,8 +18,24 @@ from app.db.pg_enum import pg_enum
 
 
 class UpgradeStrategy(enum.StrEnum):
+    """How an update run upgrades apt packages (`app.ssh.updates`):
+
+    - `upgrade` — `apt-get upgrade`: never removes a package or installs a
+      new one; an upgrade that would need either is held back.
+    - `full_upgrade` — `apt-get full-upgrade`: may install new dependencies
+      and remove conflicting packages (what Proxmox VE recommends).
+    - `dist_upgrade` — `apt-get dist-upgrade`, the older name of exactly the
+      same thing as `full-upgrade`; kept so existing scheduled tasks, API
+      calls and stored runs keep working, no longer offered in the forms.
+    - `security` — only packages with a pending update from a `*-security`
+      suite, via `apt-get install --only-upgrade`.
+    """
+
     DIST_UPGRADE = "dist_upgrade"
     FULL_UPGRADE = "full_upgrade"
+    UPGRADE = "upgrade"
+    SECURITY = "security"
+
 
 
 class UpdateRunStatus(enum.StrEnum):
@@ -60,6 +76,20 @@ class MachineUpdateRun(Base):
 
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+    # Reboot the machine afterwards — only when the update left it needing
+    # one (app.tasks.jobs._finish_update_run).
+    reboot_if_required: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    # "not_needed" / "rebooted" (and back within the wait) / "not_back"
+    # (rebooted, but never answered again) / "failed" (the reboot command
+    # itself failed). None = no reboot was asked for.
+    reboot_outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # A rolling batch runs one machine at a time in this order — the next
+    # run starts only once this one succeeded and, if it rebooted, came
+    # back. None = runs in parallel with the rest of its batch.
+    rollout_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # A JSON object of {package_name: installed_version}, captured via
     # `dpkg-query` right before the upgrade step of a real (non-rollback)

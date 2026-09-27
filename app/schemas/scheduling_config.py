@@ -30,6 +30,9 @@ class ScheduledTaskExport(BaseModel):
     target_machine: str | None = None
     target_group: str | None = None
     cron_expression: str = Field(min_length=1, max_length=100)
+    # Absent in exports from before 0.78.0 — read as UTC, as they ran.
+    timezone: str | None = Field(default=None, max_length=64)
+    require_maintenance_window: bool = False
     is_enabled: bool = True
 
     @model_validator(mode="after")

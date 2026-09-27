@@ -48,7 +48,14 @@ def _check(**fields: object) -> EndpointCheck:
         ("tls", "example.com:8443", True),
         ("tls", "https://example.com", False),
         ("tls", "example.com:99999", False),
-        ("dns", "example.com", False),
+        ("smtp", "example.com", False),
+        ("ping", "192.168.1.1", True),
+        ("ping", "https://x", False),
+        ("tcp", "nas.lan:22", True),
+        ("tcp", "nas.lan", False),
+        ("dns", "example.com", True),
+        ("dns", "nas.lan@192.168.1.53", True),
+        ("dns", "nas.lan@resolver", False),
     ],
 )
 def test_validate_target(kind, target, ok):

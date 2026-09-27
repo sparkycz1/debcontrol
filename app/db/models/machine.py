@@ -69,6 +69,16 @@ class Machine(Base):
 
     __tablename__ = "machines"
 
+    @property
+    def os_display(self) -> str | None:
+        """The OS as shown to people: "Proxmox VE 8.2.4 (Debian GNU/Linux
+        12 (bookworm))" on a Proxmox host — whose /etc/os-release only says
+        Debian — else the plain `os_version`."""
+        if self.pve_version:
+            base = f"Proxmox VE {self.pve_version}"
+            return f"{base} ({self.os_version})" if self.os_version else base
+        return self.os_version
+
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
     # Indexed: the machines list orders/searches by this, and every fleet-
@@ -156,6 +166,20 @@ class Machine(Base):
     # — a snapshot, not a history. None = not applicable (VM / no smartctl).
     smart_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # --- Proxmox VE / ZFS (app.ssh.proxmox). Version, storages and backups
+    # come with the facts refresh; guests and pools with every monitoring
+    # sample. All None on a machine without Proxmox VE / ZFS. ---
+    pve_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pve_storage: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # {"tasks": [...], "jobs": [...], "not_backed_up": [...]}
+    pve_backups: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    pve_guests: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # systemd units in the failed state as of the latest monitoring sample
+    # (None = unknown / no systemd) — the "service failed" notification
+    # compares against it (app.services.health_events).
+    failed_units: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    zfs_pools: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # {mount: {"bytes_per_day", "days_until_full", "used_bytes", "size_bytes"}}
     # — see app.services.disk_forecast; recomputed hourly.
     disk_forecast: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -238,6 +262,9 @@ class Machine(Base):
     snap_upgradable_packages: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True
     )
+    # Packages pinned with `apt-mark hold` (never upgraded until released),
+    # refreshed with every update check. None = not checked yet.
+    apt_held_packages: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     # --- Installed-package snapshot (see MachinePackage / app.ssh.packages) ---
     packages_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)

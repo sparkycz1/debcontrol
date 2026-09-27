@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -68,6 +68,14 @@ class ScheduledTask(Base):
     target_group: Mapped[MachineGroup | None] = relationship()
 
     cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
+    # IANA zone the cron expression is read in (app.scheduling.cron). None
+    # = UTC — every task saved before 0.78.0.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Run only on machines inside an active maintenance window right then;
+    # every other targeted machine sits the run out.
+    require_maintenance_window: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Denormalized so the per-minute tick (`app.scheduling.jobs.run_due_scheduled_tasks`)

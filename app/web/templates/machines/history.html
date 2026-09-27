@@ -96,7 +96,7 @@
               </p>
             {% elif e.kind == 'update_run' %}
               <p>
-                <a href="{{ e.link }}">{{ t(request, "history.update_run", strategy=('dist-upgrade' if e.data.strategy == 'dist_upgrade' else 'full-upgrade')) }}</a>
+                <a href="{{ e.link }}">{{ t(request, "history.update_run", strategy=strategy_label(request, e.data.strategy)) }}</a>
                 {% if e.data.status == 'succeeded' %}<span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
                 {% elif e.data.status == 'failed' %}<span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
                 {% elif e.data.status == 'running' %}<span class="badge badge-warn">{{ t(request, "machine.update_run.running") }}</span>

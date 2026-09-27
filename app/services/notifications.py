@@ -68,6 +68,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.user import User
 from app.i18n import DEFAULT_LOCALE_CODE
+from app.services import push_channels
 from app.services.maintenance_windows import active_window_for
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,36 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "New security updates are pending on {machine_name} ({machine_ip}) as of "
             "{timestamp}:\n\n{packages}\n\nCVEs: {cves}",
         ),
+        NotificationEventType.REBOOT_REQUIRED: (
+            "debcontrol: {machine_name} needs a reboot",
+            "{machine_name} ({machine_ip}) needs a reboot to finish applying its "
+            "updates (noticed at {timestamp}).\n\n{details}",
+        ),
+        NotificationEventType.SMART_FAILED: (
+            "debcontrol: disk failing on {machine_name}",
+            "S.M.A.R.T. reports a FAILED overall health for {devices} on "
+            "{machine_name} ({machine_ip}) at {timestamp}. Back up and replace it.",
+        ),
+        NotificationEventType.SERVICE_FAILED: (
+            "debcontrol: service failed on {machine_name}",
+            "These systemd units failed on {machine_name} ({machine_ip}) at "
+            "{timestamp}:\n\n{details}",
+        ),
+        NotificationEventType.DISK_FULL_PREDICTED: (
+            "debcontrol: {mount} on {machine_name} will be full in ~{days} days",
+            "At its current rate, {mount} on {machine_name} ({machine_ip}) fills up "
+            "in about {days} days (forecast at {timestamp}).",
+        ),
+        NotificationEventType.ZFS_POOL_UNHEALTHY: (
+            "debcontrol: ZFS pool {pools} on {machine_name} is not ONLINE",
+            "ZFS reports a problem on {machine_name} ({machine_ip}) at {timestamp}:"
+            "\n\n{details}",
+        ),
+        NotificationEventType.BACKUP_FAILED: (
+            "debcontrol: backup failed on {machine_name}",
+            "A Proxmox VE backup failed on {machine_name} ({machine_ip}), noticed at "
+            "{timestamp}:\n\n{details}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -202,6 +233,36 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: {package_count} nových bezpečnostních aktualizací pro {machine_name}",
             "Na {machine_name} ({machine_ip}) čekají od {timestamp} nové bezpečnostní "
             "aktualizace:\n\n{packages}\n\nCVE: {cves}",
+        ),
+        NotificationEventType.REBOOT_REQUIRED: (
+            "debcontrol: {machine_name} potřebuje restart",
+            "{machine_name} ({machine_ip}) potřebuje restart, aby se dokončily "
+            "aktualizace (zjištěno v {timestamp}).\n\n{details}",
+        ),
+        NotificationEventType.SMART_FAILED: (
+            "debcontrol: na {machine_name} selhává disk",
+            "S.M.A.R.T. hlásí stav FAILED pro {devices} na {machine_name} "
+            "({machine_ip}) v {timestamp}. Zazálohujte data a disk vyměňte.",
+        ),
+        NotificationEventType.SERVICE_FAILED: (
+            "debcontrol: na {machine_name} selhala služba",
+            "Na {machine_name} ({machine_ip}) selhaly v {timestamp} tyto jednotky "
+            "systemd:\n\n{details}",
+        ),
+        NotificationEventType.DISK_FULL_PREDICTED: (
+            "debcontrol: {mount} na {machine_name} bude plný zhruba za {days} dní",
+            "Při současném tempu se {mount} na {machine_name} ({machine_ip}) zaplní "
+            "zhruba za {days} dní (odhad z {timestamp}).",
+        ),
+        NotificationEventType.ZFS_POOL_UNHEALTHY: (
+            "debcontrol: ZFS pool {pools} na {machine_name} není ONLINE",
+            "ZFS hlásí na {machine_name} ({machine_ip}) v {timestamp} problém:"
+            "\n\n{details}",
+        ),
+        NotificationEventType.BACKUP_FAILED: (
+            "debcontrol: na {machine_name} selhala záloha",
+            "Na {machine_name} ({machine_ip}) selhala záloha Proxmox VE, zjištěno "
+            "v {timestamp}:\n\n{details}",
         ),
     },
 }
@@ -433,6 +494,27 @@ async def _send_webhook(
         return NotificationDeliveryStatus.FAILED, str(exc)[:2000]
 
 
+def rule_channel_token(rule: NotificationRule) -> str | None:
+    """A push rule's stored token, decrypted — only ever handed to
+    `app.services.push_channels.send`."""
+    if not rule.channel_token_encrypted:
+        return None
+    return decrypt_secret(rule.channel_token_encrypted)
+
+
+async def _send_push(
+    rule: NotificationRule, subject: str, body: str
+) -> tuple[NotificationDeliveryStatus, str | None]:
+    return await push_channels.send(
+        rule.delivery_channel,
+        url=rule.webhook_url,
+        token=rule_channel_token(rule),
+        recipient=rule.channel_recipient,
+        subject=subject,
+        body=body,
+    )
+
+
 def _delivery_log(
     *,
     rule: NotificationRule | None,
@@ -526,6 +608,32 @@ async def notify(
         logs: list[NotificationLog] = []
         for rule in rules:
             rule_template = rule.custom_template if rule.custom_template_id else default_template
+
+            if rule.delivery_channel in push_channels.PUSH_CHANNELS:
+                subject, body = render_template(event_type, rule_template, full_context)
+                status, error = await _send_push(rule, subject, body)
+                if status is NotificationDeliveryStatus.FAILED:
+                    logger.warning(
+                        "%s delivery failed for rule=%s: %s",
+                        rule.delivery_channel,
+                        rule.name,
+                        error,
+                    )
+                logs.append(
+                    _delivery_log(
+                        rule=rule,
+                        rule_name=rule.name,
+                        event_type=event_type.value,
+                        channel=NotificationDeliveryChannel(rule.delivery_channel),
+                        target=push_channels.delivery_target(
+                            rule.delivery_channel, rule.webhook_url, rule.channel_recipient
+                        ),
+                        machine=machine,
+                        status=status,
+                        error=error,
+                    )
+                )
+                continue
 
             if rule.delivery_channel == NotificationDeliveryChannel.WEBHOOK.value:
                 if not rule.webhook_url:
@@ -660,6 +768,26 @@ async def send_test_notification(
     subject, body = render_template(NotificationEventType.MACHINE_UNREACHABLE, template, context)
     if not rule.custom_template_id:
         subject = f"[TEST] {subject}" if not subject.startswith("[TEST]") else subject
+
+    if rule.delivery_channel in push_channels.PUSH_CHANNELS:
+        status, error = await _send_push(rule, subject, body)
+        db.add(
+            _delivery_log(
+                rule=rule,
+                rule_name=rule.name,
+                event_type="test",
+                channel=NotificationDeliveryChannel(rule.delivery_channel),
+                target=push_channels.delivery_target(
+                    rule.delivery_channel, rule.webhook_url, rule.channel_recipient
+                ),
+                machine=None,
+                status=status,
+                error=error,
+                is_test=True,
+            )
+        )
+        await db.commit()
+        return status is NotificationDeliveryStatus.SENT, error
 
     if rule.delivery_channel == NotificationDeliveryChannel.WEBHOOK.value:
         if not rule.webhook_url:

@@ -42,10 +42,12 @@ class EndpointCheckSave(BaseModel):
         self.json_expected = (self.json_expected or "").strip() or None
         if self.json_path is None:
             self.json_expected = None
-        if self.kind == "tls":
-            # Body/status assertions only mean something for HTTP.
+        if self.kind != "http":
+            # Body/status assertions only mean something for HTTP — except
+            # a DNS check's expected address, kept in `expected_body`.
             self.expected_status = None
-            self.expected_body = None
+            if self.kind != "dns":
+                self.expected_body = None
             self.unexpected_body = None
             self.json_path = None
             self.json_expected = None

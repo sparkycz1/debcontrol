@@ -83,12 +83,14 @@ from app.services.saved_views import (
     list_saved_views,
 )
 from app.ssh import logs as ssh_logs
+from app.ssh import proxmox
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.logs import is_container_name_valid
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
+from app.ssh.security_advisories import is_safe_package_name
 from app.ssh.updates import PendingPackage
 
 # Imported as a module, not name-by-name: this file already has a route
@@ -96,7 +98,7 @@ from app.ssh.updates import PendingPackage
 # the same name.
 from app.tasks import jobs as tasks
 from app.web.flash import read_flash, sign_flash
-from app.web.log_lines import parse_log_lines
+from app.web.log_lines import journal_log_lines, parse_log_lines
 from app.web.machine_search import (
     STATUS_FILTERS,
     apply_group_filter,
@@ -149,6 +151,14 @@ def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[
     base = f"/machines/{machine.id}"
     tabs = [
         ("overview", t(request, "machine.tab.overview"), base),
+    ]
+    # Proxmox VE guests/storage/backups and ZFS pools — only where there
+    # are any (`app.ssh.proxmox`); a plain ZFS host gets it as "ZFS".
+    if machine.pve_version or machine.pve_guests is not None:
+        tabs.append(("proxmox", "Proxmox", f"{base}/proxmox"))
+    elif machine.zfs_pools:
+        tabs.append(("proxmox", "ZFS", f"{base}/proxmox"))
+    tabs += [
         ("monitoring", t(request, "machine.tab.monitoring"), f"{base}/monitoring"),
         ("updates", t(request, "machine.tab.updates"), f"{base}/updates"),
     ]
@@ -2479,6 +2489,124 @@ async def rollback_machine_update_endpoint(
     )
 
 
+@router.post("/{machine_id}/updates/hold", dependencies=[_updates, Depends(verify_csrf)])
+async def set_package_hold_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    package: str = Form(""),
+    hold: str = Form("1"),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Hold a package at its installed version (`apt-mark hold`) so no
+    update run touches it, or release it again (`hold=0`). Same permission
+    as running updates. Audited as `machine.package.hold`/`.unhold`."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    app_settings = await get_or_create_app_settings(db)
+    package = package.strip()
+    holding = hold not in ("0", "false", "")
+    error: str | None = None
+    if not is_safe_package_name(package):
+        error = t(request, "updates.hold.invalid_package")
+    else:
+        try:
+            result = await asyncio.to_thread(
+                tasks.set_machine_package_hold.delay(str(machine.id), package, holding).get,
+                timeout=app_settings.ssh_connect_timeout + 90,
+            )
+            if isinstance(result, dict) and not result.get("ok"):
+                error = str(result.get("error") or "Unknown error.")
+        except CeleryTimeoutError:
+            error = str(LocalizedText(request, "common.error.command_timeout"))
+        except Exception as exc:
+            error = str(exc)
+        await log_event(
+            db,
+            request=request,
+            action="machine.package.hold" if holding else "machine.package.unhold",
+            summary=(
+                f'{"Held" if holding else "Released"} package "{package}" on "{machine.name}"'
+            ),
+            outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details={"package": package, **({"error": error} if error else {})},
+        )
+    if error is not None:
+        query = f"hold_error={sign_flash(error)}"
+    else:
+        notice = t(
+            request,
+            "updates.hold.held" if holding else "updates.hold.released",
+            package=package,
+        )
+        query = f"hold_notice={sign_flash(notice)}"
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/updates?{query}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/{machine_id}/updates/changelog")
+async def package_changelog_page(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    package: str = "",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """What changed in one pending apt update since the installed version —
+    `apt-get changelog`, fetched live over SSH, trimmed to the new entries
+    (`app.ssh.updates.fetch_changelog`). Read-only, never stored."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    app_settings = await get_or_create_app_settings(db)
+    package = package.strip()
+    changelog: str | None = None
+    installed: str | None = None
+    error: str | None = None
+    if not is_safe_package_name(package):
+        error = t(request, "updates.hold.invalid_package")
+    elif not machine.host_key_fingerprint:
+        error = str(LocalizedText(request, "machine.confirm_key_first_overview"))
+    else:
+        try:
+            result = await asyncio.to_thread(
+                tasks.view_package_changelog.delay(str(machine.id), package).get,
+                timeout=app_settings.ssh_connect_timeout + 60,
+            )
+            if isinstance(result, dict) and result.get("ok"):
+                changelog = str(result.get("changelog") or "")
+                installed = result.get("installed_version")
+            else:
+                error = str((result or {}).get("error") or "Unknown error.")
+        except CeleryTimeoutError:
+            error = str(LocalizedText(request, "common.error.command_timeout"))
+        except Exception as exc:
+            error = str(exc)
+    pending = next(
+        (p for p in machine.apt_upgradable_packages or [] if p.get("name") == package), None
+    )
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machines/changelog.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(request, machine, current_user),
+            "active_tab": "updates",
+            "csrf_token": csrf_token,
+            "package": package,
+            "pending": pending,
+            "installed_version": installed,
+            "changelog": changelog,
+            "error": error,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
 @router.get("/{machine_id}/updates")
 async def machine_update_history(
     request: Request,
@@ -2523,6 +2651,43 @@ async def machine_update_history(
             "status_filter": status_filter,
             "page": page,
             "has_older": has_older,
+        },
+    )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.get("/{machine_id}/proxmox")
+async def machine_proxmox(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The Proxmox tab — VMs and containers with their state, ZFS pools,
+    storages (Proxmox Backup Server included) and backups, from the latest
+    monitoring sample and facts refresh (`app.ssh.proxmox`). A machine with
+    none of that redirects to its Overview."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not (machine.pve_version or machine.pve_guests is not None or machine.zfs_pools):
+        return RedirectResponse(
+            url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER
+        )
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    running, total = proxmox.guest_counts(machine.pve_guests)
+    response = templates.TemplateResponse(
+        request,
+        "machines/proxmox.html",
+        {
+            "machine": machine,
+            "tabs": _machine_tabs(request, machine, current_user),
+            "active_tab": "proxmox",
+            "csrf_token": csrf_token,
+            "guests_running": running,
+            "guests_total": total,
+            "unhealthy_pools": proxmox.unhealthy_pools(machine.zfs_pools),
+            "last_backup": proxmox.last_backup(machine.pve_backups),
         },
     )
     if new_cookie:
@@ -2709,6 +2874,9 @@ async def machine_logs(
     source: str = "",
     container: str = "",
     priority: str = "",
+    unit: str = "",
+    boot: str = "",
+    hide_own: str = "",
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """The Logs tab — journal by default, one allowed file when `path` is
@@ -2727,6 +2895,11 @@ async def machine_logs(
     if source not in ("journal", "file", "docker"):
         source = "file" if path.strip() else "journal"
     priority = ssh_logs.normalize_priority(priority) if source == "journal" else ""
+    unit = ssh_logs.normalize_unit(unit) if source == "journal" else ""
+    boot = ssh_logs.normalize_boot(boot) if source == "journal" else ""
+    hide_own_sessions = source == "journal" and hide_own in ("1", "true", "on")
+    journal_entries: list[dict[str, object]] | None = None
+    hidden_count = 0
     docker_containers = machine.docker_containers or []
     if source == "docker" and not container and docker_containers:
         running = [c for c in docker_containers if c.get("state") == "running"]
@@ -2756,9 +2929,18 @@ async def machine_logs(
                     str(machine.id), path=path.strip(), lines=clamped_lines, search=search
                 )
             else:
-                # `priority` only when set, so a worker still running the
+                # Options only when set, so a worker still running the
                 # previous version (mid-upgrade) accepts the call.
-                journal_options = {"priority": priority} if priority else {}
+                journal_options: dict[str, object] = {
+                    key: value
+                    for key, value in (
+                        ("priority", priority),
+                        ("unit", unit),
+                        ("boot", boot),
+                        ("hide_own", hide_own_sessions),
+                    )
+                    if value
+                }
                 async_result = tasks.view_machine_journal.delay(
                     str(machine.id),
                     lines=clamped_lines,
@@ -2773,6 +2955,9 @@ async def machine_logs(
             if isinstance(result, dict):
                 if result.get("ok"):
                     output = str(result.get("output") or "")
+                    if isinstance(result.get("entries"), list):
+                        journal_entries = list(result["entries"])
+                    hidden_count = int(result.get("hidden") or 0)
                 else:
                     error = str(result.get("error") or "Unknown error.")
         except CeleryTimeoutError:
@@ -2808,7 +2993,16 @@ async def machine_logs(
             "active_tab": "logs",
             "csrf_token": csrf_token,
             "output": output,
-            "log_lines": parse_log_lines(output, search),
+            "log_lines": (
+                journal_log_lines(journal_entries, search)
+                if journal_entries is not None
+                else parse_log_lines(output, search)
+            ),
+            "unit": unit,
+            "boot": boot,
+            "hide_own": hide_own_sessions,
+            "hidden_count": hidden_count,
+            "max_boot_offset": ssh_logs.MAX_BOOT_OFFSET,
             "error": error,
             "source": source,
             "container": container,
@@ -2823,6 +3017,7 @@ async def machine_logs(
             "saved_log_views": await list_saved_log_views(db, current_user.id),
             "log_view_qs": build_log_query_string(
                 {"source": source, "path": path, "container": container, "priority": priority,
+                 "unit": unit, "boot": boot, "hide_own": "1" if hide_own_sessions else "",
                  "search": search, "since": since, "until": until,
                  "lines": str(lines) if lines != ssh_logs.DEFAULT_LINE_LIMIT else ""}
             ),

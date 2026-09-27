@@ -197,6 +197,16 @@ def refresh_machine_facts(machine_id: str) -> dict[str, Any]:
 The wrapper is exactly one line so no logic lives on the sync side; tests
 call the `_`-prefixed coroutine directly.
 
+The periodic read-only SSH collectors (monitoring, facts, packages,
+services, readiness, update and image-update checks) are the one
+exception: their wrapper is `return run_in_worker_loop(_do_thing(...))`
+(`app.tasks.runner`) — one event loop kept for the worker process's life
+instead of a fresh one per task, so `app.ssh.pool` can keep one SSH
+connection per machine open between checks rather than logging in to the
+machine every time (Machine Management → *Keeping the journal quiet*).
+The DB side is unaffected — worker children use `NullPool` (below), so no
+DB connection outlives a task either way.
+
 Every task is registered with an **explicit `name=`** rather than Celery's
 auto-derived dotted path. Beat entries, `.delay()` call sites, and messages
 already sitting in Redis all refer to a task by name — moving or renaming a

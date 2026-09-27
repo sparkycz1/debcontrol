@@ -14,6 +14,7 @@ from app.db.models.audit_log import AuditLogEntry
 from app.db.models.role import Permission
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.logs import LogAccessError, build_follow_command
+from app.ssh.shell import with_root_shim
 from app.web.routes.logs_ws import follow_logs_websocket
 from tests.test_terminal import (
     _FakeConnection,
@@ -129,7 +130,7 @@ async def test_follow_streams_lines_audits_and_tears_down(db_session_factory, mo
     frames = [json.loads(text) for text in ws.sent_text]
     assert frames[:2] == [{"t": "line", "v": "first"}, {"t": "line", "v": "second"}]
     assert frames[-1]["t"] == "end"
-    assert commands == ["journalctl --no-pager -f -n 50"]
+    assert commands == [with_root_shim("journalctl --no-pager -f -n 50")]
     assert process.terminated and conn.closed
 
     async with db_session_factory() as db:

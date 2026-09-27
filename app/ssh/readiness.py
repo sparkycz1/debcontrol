@@ -25,7 +25,8 @@ import re
 from typing import TypedDict
 
 from app.db.models.machine import Machine
-from app.ssh.client import open_connection
+from app.ssh.pool import machine_connection
+from app.ssh.shell import with_root_shim
 
 _SECTION_MARKERS = (
     "NCURSES_TERM",
@@ -135,8 +136,10 @@ async def check_machine_readiness(
 ) -> ReadinessResult:
     """Connect to a machine and run every readiness probe. Requires a
     pinned host key."""
-    async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(READINESS_COMMAND, check=False, timeout=timeout_seconds)
+    async with machine_connection(machine, secret, timeout_seconds) as conn:
+        result = await conn.run(
+            with_root_shim(READINESS_COMMAND), check=False, timeout=timeout_seconds
+        )
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()
     return parse_readiness_output(raw)

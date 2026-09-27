@@ -57,6 +57,32 @@ def _segments(line: str, search: str) -> list[tuple[str, bool]]:
     return parts or [(line, False)]
 
 
+# journald priority (0 emerg .. 7 debug) -> the Logs tab's line style.
+_PRIORITY_LEVELS = {
+    0: "error",
+    1: "error",
+    2: "error",
+    3: "error",
+    4: "warn",
+    5: "notice",
+    7: "debug",
+}
+
+
+def journal_log_lines(entries: list[dict[str, object]], search: str = "") -> list[LogLine]:
+    """The journal's own lines (`{"text", "priority"}` from
+    `app.tasks.jobs._view_machine_journal`), styled by their real priority
+    instead of the keyword guess `parse_log_lines` makes for plain text."""
+    term = search.strip()
+    lines: list[LogLine] = []
+    for entry in entries:
+        text = str(entry.get("text") or "")
+        priority = entry.get("priority")
+        level = _PRIORITY_LEVELS.get(priority) if isinstance(priority, int) else None
+        lines.append(LogLine(level=level, segments=_segments(text, term)))
+    return lines
+
+
 def parse_log_lines(output: str | None, search: str = "") -> list[LogLine]:
     if not output:
         return []

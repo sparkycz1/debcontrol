@@ -31,6 +31,7 @@ from app.ssh.client import open_connection
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.logs import LogAccessError, build_follow_command
+from app.ssh.shell import with_root_shim
 from app.web.routes.terminal_ws import _authenticate, _log_terminal_event
 
 router = APIRouter()
@@ -74,9 +75,15 @@ async def follow_logs_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> 
     container = params.get("container", "").strip()
     search = params.get("search", "")
     priority = params.get("priority", "")
+    unit = params.get("unit", "")
     try:
         command = build_follow_command(
-            source=source, path=path, container=container, search=search, priority=priority
+            source=source,
+            path=path,
+            container=container,
+            search=search,
+            priority=priority,
+            unit=unit,
         )
     except LogAccessError as exc:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc)[:120])
@@ -111,7 +118,7 @@ async def follow_logs_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> 
     )
     process: asyncssh.SSHClientProcess[str] | None = None
     try:
-        process = await conn.create_process(command, errors="replace")
+        process = await conn.create_process(with_root_shim(command), errors="replace")
         stream_task = asyncio.ensure_future(_stream(websocket, process.stdout))
         timeout_task = asyncio.ensure_future(asyncio.sleep(FOLLOW_MAX_SECONDS))
         tasks = {stream_task, timeout_task, asyncio.ensure_future(_wait_for_disconnect(websocket))}

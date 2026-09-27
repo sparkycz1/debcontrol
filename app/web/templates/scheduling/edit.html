@@ -12,3 +12,7 @@
   {% set form_action = "/scheduling/" ~ task.id ~ "/edit" %}
   {% include "partials/scheduled_task_form.html" with context %}
 {% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/schedule-form.js') }}" defer></script>
+{% endblock %}

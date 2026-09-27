@@ -252,6 +252,11 @@ class MonitoringHistory:
     bucket_timestamps: list[datetime]
     cpu_percent: list[float | None]
     ram_percent: list[float | None]
+    # The ZFS ARC and the page cache as a percent of RAM — memory the
+    # kernel reclaims under pressure, stacked on top of `ram_percent` on
+    # the Memory chart. All None when no sample in the window has them.
+    ram_arc_percent: list[float | None]
+    ram_cache_percent: list[float | None]
     load1: list[float | None]
     load5: list[float | None]
     load15: list[float | None]
@@ -270,6 +275,8 @@ class MonitoringHistory:
     latest_load15: float | None
     latest_ram_used_bytes: int | None
     latest_ram_total_bytes: int | None
+    latest_ram_arc_bytes: int | None
+    latest_ram_cache_bytes: int | None
     # {iface: {"rx_bytes": ..., "tx_bytes": ...}} — the most recent raw
     # cumulative reading per interface, for a "current" display alongside
     # the rate graph (the graph itself needs a rate, not a running total).
@@ -363,6 +370,16 @@ def build_monitoring_history(
             ram_percent_raw.append(None)
     ram_series = _bucket_average(ram_percent_raw, _TARGET_POINTS)
 
+    def _ram_share(value: int | None, total: int | None) -> float | None:
+        return value / total * 100 if value is not None and total else None
+
+    ram_arc_series = _bucket_average(
+        [_ram_share(s.ram_arc_bytes, s.ram_total_bytes) for s in samples], _TARGET_POINTS
+    )
+    ram_cache_series = _bucket_average(
+        [_ram_share(s.ram_cache_bytes, s.ram_total_bytes) for s in samples], _TARGET_POINTS
+    )
+
     net_keys, net_by_key = _cumulative_series(samples, "network_io", "iface")
     network_rate_by_iface = {
         iface: _bucket_average(
@@ -413,6 +430,8 @@ def build_monitoring_history(
         bucket_timestamps=bucket_timestamps,
         cpu_percent=cpu_series,
         ram_percent=ram_series,
+        ram_arc_percent=ram_arc_series,
+        ram_cache_percent=ram_cache_series,
         load1=load1_series,
         load5=load5_series,
         load15=load15_series,
@@ -425,6 +444,8 @@ def build_monitoring_history(
         latest_load15=latest.load15 if latest else None,
         latest_ram_used_bytes=latest.ram_used_bytes if latest else None,
         latest_ram_total_bytes=latest.ram_total_bytes if latest else None,
+        latest_ram_arc_bytes=latest.ram_arc_bytes if latest else None,
+        latest_ram_cache_bytes=latest.ram_cache_bytes if latest else None,
         latest_network_io=latest_network_io,
         latest_disk_io=latest_disk_io,
         latest_filesystems=latest_filesystems,

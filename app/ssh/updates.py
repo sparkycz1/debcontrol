@@ -54,7 +54,9 @@ import asyncssh
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.ssh.client import open_connection
-from app.ssh.security_advisories import lookup_advisories
+from app.ssh.pool import machine_connection
+from app.ssh.security_advisories import is_safe_package_name, lookup_advisories
+from app.ssh.shell import with_root_shim
 
 
 class PendingPackage(TypedDict):
@@ -91,7 +93,17 @@ _DPKG_NONINTERACTIVE_FLAGS = (
 _UPGRADE_SUBCOMMAND = {
     UpgradeStrategy.DIST_UPGRADE: "dist-upgrade",
     UpgradeStrategy.FULL_UPGRADE: "full-upgrade",
+    UpgradeStrategy.UPGRADE: "upgrade",
 }
+
+# Packages with a pending update from a `*-security` suite, as apt's own
+# simulated upgrade reports them (the `Inst` line names the suite:
+# `(1.2-3 Debian-Security:12/stable-security [amd64])`, Ubuntu's
+# `jammy-security`). Collected into `$pkgs` for `_upgrade_step`.
+_SECURITY_PACKAGES = (
+    'pkgs="$(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null '
+    "| awk '/^Inst / && tolower($0) ~ /-security/ {print $2}' | sort -u | tr '\\n' ' ')\"; "
+)
 
 
 def _apt(args: str) -> str:
@@ -107,6 +119,22 @@ _APT_REFRESH_QUIET = _with_root_fallback(
 )
 
 
+def _upgrade_step(strategy: UpgradeStrategy, *, simulate: bool = False) -> str:
+    """The upgrade itself for `strategy` — `apt-get <subcommand>`, or for
+    `security` an `install --only-upgrade` of just the security packages
+    (nothing to do → a message, exit status 0). `simulate` adds `-s`."""
+    # Simulating needs no dpkg conffile options — nothing gets configured.
+    options = "-s" if simulate else _DPKG_NONINTERACTIVE_FLAGS
+    if strategy == UpgradeStrategy.SECURITY:
+        return (
+            f"{_SECURITY_PACKAGES}"
+            'if [ -n "$pkgs" ]; then '
+            f"{_apt(f'{options} install --only-upgrade $pkgs')}; "
+            "else echo 'No pending security updates.'; fi"
+        )
+    return _apt(f"{options} {_UPGRADE_SUBCOMMAND[strategy]}")
+
+
 def build_update_command(strategy: UpgradeStrategy) -> str:
     """Build the remote shell script for one update run.
 
@@ -115,13 +143,12 @@ def build_update_command(strategy: UpgradeStrategy) -> str:
     the cleanup steps can run unconditionally while still preserving the
     upgrade step's exit status as the overall result.
     """
-    upgrade_subcommand = _UPGRADE_SUBCOMMAND[strategy]
     return (
         "{ "
         f"{_APT_REFRESH}; "
         'status=$?; '
         'if [ "$status" -eq 0 ]; then '
-        f"{_apt(f'{_DPKG_NONINTERACTIVE_FLAGS} {upgrade_subcommand}')}; "
+        f"{_upgrade_step(strategy)}; "
         'status=$?; '
         "fi; "
         f"{_apt('autoremove')}; "
@@ -167,7 +194,7 @@ async def run_system_update(
     chunks: list[str] = []
     async with (
         await open_connection(machine, secret, connect_timeout_seconds) as conn,
-        await conn.create_process(script, stderr=asyncssh.STDOUT) as process,
+        await conn.create_process(with_root_shim(script), stderr=asyncssh.STDOUT) as process,
     ):
         async with asyncio.timeout(run_timeout_seconds):
             while True:
@@ -187,7 +214,8 @@ async def run_system_update(
 _APT_MARKER = "===APT_UPGRADABLE==="
 _FLATPAK_MARKER = "===FLATPAK_UPGRADABLE==="
 _SNAP_MARKER = "===SNAP_UPGRADABLE==="
-_CHECK_SECTION_MARKERS = ("APT_UPGRADABLE", "FLATPAK_UPGRADABLE", "SNAP_UPGRADABLE")
+_HELD_MARKER = "===APT_HELD==="
+_CHECK_SECTION_MARKERS = ("APT_UPGRADABLE", "FLATPAK_UPGRADABLE", "SNAP_UPGRADABLE", "APT_HELD")
 
 # Refreshes the apt package lists (needs root, same as an actual upgrade)
 # and then lists what's upgradable across all three sources — apt doesn't
@@ -216,6 +244,9 @@ _CHECK_UPDATES_COMMAND = (
     "if command -v snap >/dev/null 2>&1; then "
     "snap refresh --list 2>/dev/null | tail -n +2 | awk '{print $1\"\\t\"$2}'; "
     "fi; "
+    # Packages pinned with `apt-mark hold` — never upgraded until released.
+    f"echo {_HELD_MARKER}; "
+    "apt-mark showhold 2>/dev/null; "
     'exit "$status"; '
     "} 2>&1"
 )
@@ -344,6 +375,8 @@ class UpdateCheckResult:
     apt_upgradable_packages: list[PendingPackage] = field(default_factory=list)
     flatpak_upgradable_packages: list[PendingPackage] = field(default_factory=list)
     snap_upgradable_packages: list[PendingPackage] = field(default_factory=list)
+    # `apt-mark showhold` — None when the section was missing entirely.
+    held_packages: list[str] | None = None
 
 
 def carry_over_advisories(
@@ -388,8 +421,10 @@ async def check_updates(
     only for the ones `machine.apt_upgradable_packages` doesn't already
     have an answer for.
     """
-    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
-        result = await conn.run(_CHECK_UPDATES_COMMAND, check=False, timeout=run_timeout_seconds)
+    async with machine_connection(machine, secret, connect_timeout_seconds) as conn:
+        result = await conn.run(
+            with_root_shim(_CHECK_UPDATES_COMMAND), check=False, timeout=run_timeout_seconds
+        )
         stdout = result.stdout or ""
         output = stdout if isinstance(stdout, str) else stdout.decode()
         exit_status = result.exit_status if result.exit_status is not None else -1
@@ -411,7 +446,9 @@ async def check_updates(
     upgradable_count, security_upgradable_count = parse_upgradable_output(output)
     flatpak_packages = parse_flatpak_upgradable_packages(output)
     snap_packages = parse_snap_upgradable_packages(output)
+    held_packages = parse_held_packages(output)
     return UpdateCheckResult(
+        held_packages=held_packages,
         exit_status=exit_status,
         upgradable_count=upgradable_count,
         security_upgradable_count=security_upgradable_count,
@@ -459,13 +496,12 @@ def build_update_preview_command(strategy: UpgradeStrategy) -> str:
     flatpak/snap have no removal-preview concept relevant here (see the
     section docstring above).
     """
-    upgrade_subcommand = _UPGRADE_SUBCOMMAND[strategy]
     return (
         "{ "
         f"{_APT_REFRESH_QUIET}; "
         'status=$?; '
         f"echo {_UPGRADE_SIM_MARKER}; "
-        f'if [ "$status" -eq 0 ]; then {_apt(f"-s {upgrade_subcommand}")}; fi; '
+        f'if [ "$status" -eq 0 ]; then {_upgrade_step(strategy, simulate=True)}; fi; '
         f"echo {_AUTOREMOVE_SIM_MARKER}; "
         f'if [ "$status" -eq 0 ]; then {_apt("-s autoremove")}; fi; '
         'exit "$status"; '
@@ -529,7 +565,7 @@ async def preview_update(
     simulate steps themselves are fast."""
     script = build_update_preview_command(strategy)
     async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
-        result = await conn.run(script, check=False, timeout=run_timeout_seconds)
+        result = await conn.run(with_root_shim(script), check=False, timeout=run_timeout_seconds)
 
     stdout = result.stdout or ""
     output = stdout if isinstance(stdout, str) else stdout.decode()
@@ -583,7 +619,9 @@ async def capture_package_snapshot(
     """Connect and list every installed apt package with its exact current
     version — the "before" picture a later rollback diffs against."""
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(_SNAPSHOT_COMMAND, check=False, timeout=timeout_seconds)
+        result = await conn.run(
+            with_root_shim(_SNAPSHOT_COMMAND), check=False, timeout=timeout_seconds
+        )
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()
     return parse_package_snapshot(raw)
@@ -621,8 +659,139 @@ async def run_rollback(
     progress."""
     script = build_rollback_command(target_versions)
     async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
-        result = await conn.run(script, check=False, timeout=run_timeout_seconds)
+        result = await conn.run(with_root_shim(script), check=False, timeout=run_timeout_seconds)
     stdout = result.stdout or ""
     output = stdout if isinstance(stdout, str) else stdout.decode()
     exit_status = result.exit_status if result.exit_status is not None else -1
     return UpdateResult(exit_status=exit_status, output=output)
+
+
+def parse_held_packages(raw: str) -> list[str] | None:
+    """`apt-mark showhold`'s names from the check's `APT_HELD` section,
+    sorted; None when the section isn't in the output at all."""
+    if _HELD_MARKER not in raw:
+        return None
+    section = _split_check_sections(raw).get("APT_HELD", "")
+    return sorted(
+        {line.strip() for line in section.splitlines() if is_safe_package_name(line.strip())}
+    )
+
+
+# --- Holding packages back (`apt-mark hold` / `unhold`) ---
+
+
+def build_hold_command(package: str, *, hold: bool) -> str:
+    """`apt-mark hold|unhold <package>` with the usual sudo-or-root
+    fallback. The name is validated (`is_safe_package_name`) before it ever
+    gets here, and quoted on top of that."""
+    verb = "hold" if hold else "unhold"
+    return f"{{ {_with_root_fallback(f'apt-mark {verb} {shlex.quote(package)}')}; }} 2>&1"
+
+
+async def set_package_hold(
+    machine: Machine,
+    secret: str | None,
+    package: str,
+    *,
+    hold: bool,
+    connect_timeout_seconds: int,
+) -> UpdateResult:
+    """Hold `package` at its installed version (or release it again).
+    Needs root or a sudoers grant for `/usr/bin/apt-mark` — machines
+    onboarded by debcontrol 0.78.0+ get one."""
+    if not is_safe_package_name(package):
+        raise ValueError(f'"{package}" is not a valid package name.')
+    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
+        result = await conn.run(
+            with_root_shim(build_hold_command(package, hold=hold)),
+            check=False,
+            timeout=connect_timeout_seconds + 60,
+        )
+    stdout = result.stdout or ""
+    output = stdout if isinstance(stdout, str) else stdout.decode()
+    exit_status = result.exit_status if result.exit_status is not None else -1
+    return UpdateResult(exit_status=exit_status, output=output)
+
+
+# --- Changelog of a pending update ---
+
+# More than enough for any release's changes since the installed version.
+MAX_CHANGELOG_LINES = 400
+
+
+def build_changelog_command(package: str) -> str:
+    """`apt-get changelog` — fetched by apt from the distribution's own
+    changelog server (no root needed), capped."""
+    return (
+        f"apt-get changelog -- {shlex.quote(package)} 2>/dev/null "
+        f"| head -n {MAX_CHANGELOG_LINES * 5}"
+    )
+
+
+_CHANGELOG_HEADER_RE = re.compile(r"^(\S+) \(([^)]+)\)")
+
+
+def changelog_since(text: str, installed_version: str | None) -> str:
+    """The changelog entries newer than `installed_version` — everything
+    above that version's own entry — capped at `MAX_CHANGELOG_LINES`. The
+    whole (capped) text when that version isn't found."""
+    lines = text.splitlines()
+    if installed_version:
+        for index, line in enumerate(lines):
+            match = _CHANGELOG_HEADER_RE.match(line)
+            if match and match.group(2) == installed_version and index > 0:
+                lines = lines[:index]
+                break
+    return "\n".join(lines[:MAX_CHANGELOG_LINES]).rstrip()
+
+
+async def fetch_changelog(
+    machine: Machine,
+    secret: str | None,
+    package: str,
+    *,
+    installed_version: str | None,
+    connect_timeout_seconds: int,
+) -> str:
+    """The changelog of `package`'s pending update, trimmed to what changed
+    since `installed_version`. "" when apt couldn't get one."""
+    if not is_safe_package_name(package):
+        raise ValueError(f'"{package}" is not a valid package name.')
+    async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
+        result = await conn.run(
+            build_changelog_command(package), check=False, timeout=connect_timeout_seconds + 45
+        )
+    stdout = result.stdout or ""
+    text = stdout if isinstance(stdout, str) else stdout.decode(errors="replace")
+    return changelog_since(text, installed_version)
+
+
+# --- "This update will need a reboot" ---
+
+# Packages whose new version only takes effect after a reboot.
+_REBOOT_PACKAGE_RE = re.compile(
+    r"^(linux-image-|linux-modules-|linux-signed|proxmox-kernel-|pve-kernel-|"
+    r"intel-microcode$|amd64-microcode$|firmware-|linux-firmware$|systemd$|libc6$|dbus$)"
+)
+# Proxmox VE's own core — the host keeps working, but its management
+# services restart and running guests keep the old QEMU until restarted.
+_PVE_CORE_RE = re.compile(
+    r"^(pve-manager|proxmox-ve|qemu-server|pve-qemu-kvm|pve-container|pve-cluster|"
+    r"pve-ha-manager|proxmox-backup-client|pve-firmware)$"
+)
+
+
+def reboot_hint_packages(
+    packages: list[dict[str, object]] | None,
+) -> tuple[list[str], list[str]]:
+    """(packages that need a reboot to take effect, Proxmox VE core
+    packages) among a machine's pending apt updates."""
+    reboot: list[str] = []
+    pve_core: list[str] = []
+    for package in packages or []:
+        name = str(package.get("name") or "")
+        if _REBOOT_PACKAGE_RE.match(name):
+            reboot.append(name)
+        if _PVE_CORE_RE.match(name):
+            pve_core.append(name)
+    return reboot, pve_core

@@ -19,6 +19,7 @@ from app.ssh.logs import (
     DOCKER_NO_ACCESS_MARKER,
     is_container_name_valid,
 )
+from app.ssh.shell import with_root_shim
 
 ContainerAction = Literal["start", "stop", "restart"]
 CONTAINER_ACTIONS: tuple[ContainerAction, ...] = ("start", "stop", "restart")
@@ -74,7 +75,7 @@ async def run_container_action(
     connect timeout."""
     command = build_container_action_command(action, container)
     async with await open_connection(machine, secret, timeout_seconds) as conn:
-        result = await conn.run(command, check=False, timeout=timeout_seconds + 60)
+        result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds + 60)
     stdout = result.stdout or ""
     return parse_container_action_output(stdout if isinstance(stdout, str) else stdout.decode())
 

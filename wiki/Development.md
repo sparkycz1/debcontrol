@@ -194,7 +194,12 @@ code path. Then:
    ```
 
    Give it its own `time_limit=` if it can legitimately outlive the
-   60-second `task_time_limit` default.
+   60-second `task_time_limit` default. A **periodic, read-only SSH
+   collector** instead returns `run_in_worker_loop(_my_task(arg))`
+   (`app.tasks.runner`) and opens its connection with
+   `app.ssh.pool.machine_connection(...)`, so it reuses the machine's open
+   SSH login rather than creating a new one each run. Any remote command
+   that may call `sudo` goes through `app.ssh.shell.with_root_shim(...)`.
 3. Enqueue it with `my_task.delay(...)`. If a route must **wait** for the
    result, use
    `await asyncio.to_thread(async_result.get, timeout=...)` and catch

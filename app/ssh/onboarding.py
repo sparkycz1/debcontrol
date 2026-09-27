@@ -74,7 +74,10 @@ def build_onboarding_command(public_key: str) -> str:
         # harmless and self-healing, same as the dmidecode grant above —
         # `sudo -n smartctl ...` just fails and that disk's health simply
         # isn't reported, never a crash.
-        "/usr/sbin/dmidecode, /usr/sbin/smartctl\n"
+        # apt-mark — holding a package back from updates (0.78.0+);
+        # pvesh — reading guests/storage/backups on Proxmox VE (the path
+        # simply doesn't exist elsewhere, which sudoers accepts).
+        "/usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh\n"
         "DEBCONTROL_SUDOERS_APT\n"
         f"chmod 440 /etc/sudoers.d/{user}; "
         f"visudo -cf /etc/sudoers.d/{user}; "

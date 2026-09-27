@@ -16,16 +16,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_current_user, require_permission
+from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.role import Permission
+from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.services import monitoring_history
+from app.services.access_scope import machines_visible_to
 from app.services.endpoint_check_history import load_check_history
-from app.services.endpoint_sla import load_sla_report, selectable_months, sla_report_csv
+from app.services.endpoint_sla import (
+    SlaReport,
+    load_sla_report,
+    selectable_months,
+    sla_report_csv,
+)
 from app.tasks import jobs as tasks
 from app.web.templating import t, templates
 
@@ -150,13 +158,28 @@ async def list_checks(request: Request, db: AsyncSession = Depends(get_db)) -> R
     )
 
 
+async def _sla_report(db: AsyncSession, month: str, user: User) -> SlaReport:
+    """The SLA report with the machines this user can see."""
+    app_settings = await get_or_create_app_settings(db)
+    machines = list((await db.execute(await machines_visible_to(db, user))).scalars().all())
+    return await load_sla_report(
+        db,
+        month,
+        machines=[m for m in machines if m.is_active],
+        reachability_interval_seconds=app_settings.reachability_check_interval_seconds,
+    )
+
+
 @router.get("/sla")
 async def sla_report(
-    request: Request, db: AsyncSession = Depends(get_db), month: str = ""
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    month: str = "",
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """Monthly availability per check against its SLA target — see
     `app.services.endpoint_sla`."""
-    report = await load_sla_report(db, month)
+    report = await _sla_report(db, month, current_user)
     return templates.TemplateResponse(
         request,
         "checks/sla.html",
@@ -165,8 +188,12 @@ async def sla_report(
 
 
 @router.get("/sla.csv")
-async def sla_report_export(db: AsyncSession = Depends(get_db), month: str = "") -> Response:
-    report = await load_sla_report(db, month)
+async def sla_report_export(
+    db: AsyncSession = Depends(get_db),
+    month: str = "",
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    report = await _sla_report(db, month, current_user)
     return PlainTextResponse(
         sla_report_csv(report),
         media_type="text/csv; charset=utf-8",

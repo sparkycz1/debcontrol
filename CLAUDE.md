@@ -79,6 +79,11 @@ history around v0.19.0/v0.19.1).
   asyncio.run(_do_thing(...))` wrapped in `@celery_app.task(name="...")`.
   Tests call the underscore-prefixed coroutine directly, never the sync
   wrapper (which can't run inside pytest-asyncio's already-running loop).
+  Periodic read-only SSH collectors use `run_in_worker_loop(...)`
+  (`app/tasks/runner.py`) instead, so `app.ssh.pool` can reuse one SSH
+  connection per machine; open SSH for such a collector with
+  `app.ssh.pool.machine_connection`, and run any command that may use
+  `sudo` through `app.ssh.shell.with_root_shim` (no `sudo` noise for root).
 - **Fork safety.** Celery workers fork; a `from app.db.session import
   AsyncSessionLocal` name captured at import time in the parent process
   keeps pointing at the parent's (now-invalid) connection pool in a forked

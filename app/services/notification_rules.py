@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import encrypt_secret
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.notification_condition import NotificationCondition
@@ -29,6 +30,11 @@ from app.db.models.notification_rule import (
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.schemas.notification import NotificationConditionCreate, NotificationRuleCreate
+from app.services.push_channels import (
+    CHANNEL_NAMES,
+    OPTIONAL_TOKEN_CHANNELS,
+    TOKEN_CHANNELS,
+)
 
 
 def build_conditions_and_event_types(
@@ -86,6 +92,9 @@ def rule_to_portable_dict(rule: NotificationRule) -> dict[str, Any]:
         },
         "delivery_channel": rule.delivery_channel,
         **({"webhook_url": rule.webhook_url} if rule.webhook_url else {}),
+        # Never the token itself — an import supplies `channel_token` anew
+        # (or keeps the one already stored on a same-named rule).
+        **({"channel_recipient": rule.channel_recipient} if rule.channel_recipient else {}),
         **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
     }
 
@@ -132,7 +141,12 @@ async def apply_portable_rule(
             event_types=resolved_event_types,
             delivery_channel=str(data.get("delivery_channel") or "email"),
             webhook_url=(str(data["webhook_url"]) if data.get("webhook_url") else None),
+            channel_token=(str(data["channel_token"]) if data.get("channel_token") else None),
+            channel_recipient=(
+                str(data["channel_recipient"]) if data.get("channel_recipient") else None
+            ),
         )
+        apply_channel_settings(rule, payload)
     except ValueError as exc:
         raise ValueError(f'Rule "{name}": {exc}') from exc
 
@@ -140,8 +154,6 @@ async def apply_portable_rule(
     rule.description = payload.description
     rule.enabled = payload.enabled
     rule.event_types = payload.event_types
-    rule.delivery_channel = payload.delivery_channel
-    rule.webhook_url = payload.webhook_url
 
     template_name = data.get("template_name")
     if template_name:
@@ -218,3 +230,20 @@ async def delete_custom_template(db: AsyncSession, template: NotificationCustomT
     )
     await db.delete(template)
     await db.commit()
+
+
+def apply_channel_settings(rule: NotificationRule, payload: NotificationRuleCreate) -> None:
+    """Delivery settings from a validated payload onto `rule`: the channel,
+    its URL and recipient, and — only when a new one was given — its token
+    (encrypted; an empty token keeps the stored one, like a password field).
+    Raises ValueError when the channel needs a token and none is stored."""
+    rule.delivery_channel = payload.delivery_channel
+    rule.webhook_url = payload.webhook_url
+    rule.channel_recipient = (payload.channel_recipient or "").strip() or None
+    token = (payload.channel_token or "").strip()
+    if token:
+        rule.channel_token_encrypted = encrypt_secret(token)
+    if payload.delivery_channel not in (TOKEN_CHANNELS | OPTIONAL_TOKEN_CHANNELS):
+        rule.channel_token_encrypted = None
+    if payload.delivery_channel in TOKEN_CHANNELS and not rule.channel_token_encrypted:
+        raise ValueError(f"{CHANNEL_NAMES[payload.delivery_channel]} needs a token.")

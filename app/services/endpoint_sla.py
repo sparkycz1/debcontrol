@@ -17,6 +17,9 @@ as the monitoring retention setting keeps it
 (`AppSettings.monitoring_history_retention_days`) — `coverage_from` says
 where a month's data actually starts, so a report for a partly purged
 month says so rather than quietly looking better than it was.
+
+Machines get the same figures from their SSH reachability samples
+(`load_machine_rows`, kind "ssh") — the check every machine already has.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, case, func, or_, select
@@ -32,6 +35,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
+from app.db.models.machine import Machine
+from app.db.models.machine_reachability_sample import MachineReachabilitySample
 
 # How many past months the month selector offers.
 SELECTABLE_MONTHS = 12
@@ -77,6 +82,9 @@ class SlaReport:
     start: datetime
     end: datetime
     rows: list[SlaRow]
+    # Machines' SSH reachability over the same month (`kind == "ssh"`,
+    # `check_id` = the machine's id) — see `load_machine_rows`.
+    machine_rows: list[SlaRow] = field(default_factory=list)
 
     @property
     def is_current_month(self) -> bool:
@@ -122,7 +130,96 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value
 
 
-async def load_sla_report(db: AsyncSession, month: str | None) -> SlaReport:
+async def load_machine_rows(
+    db: AsyncSession,
+    machines: list[Machine],
+    start: datetime,
+    end: datetime,
+    interval_seconds: int,
+) -> list[SlaRow]:
+    """The same availability figures for `machines`, from the reachability
+    check every machine gets (`MachineReachabilitySample`: was the SSH port
+    answering). Downtime is failed samples x the reachability interval —
+    the same estimate the endpoint checks use."""
+    if not machines:
+        return []
+    ids = [m.id for m in machines]
+    in_month = and_(
+        MachineReachabilitySample.checked_at >= start,
+        MachineReachabilitySample.checked_at < end,
+        MachineReachabilitySample.machine_id.in_(ids),
+    )
+    counts_result = await db.execute(
+        select(
+            MachineReachabilitySample.machine_id,
+            func.count(),
+            func.sum(case((MachineReachabilitySample.reachable, 1), else_=0)),
+            func.min(MachineReachabilitySample.checked_at),
+        )
+        .where(in_month)
+        .group_by(MachineReachabilitySample.machine_id)
+    )
+    counts = {row[0]: (int(row[1]), int(row[2] or 0), row[3]) for row in counts_result.all()}
+    previous_ok = (
+        func.lag(MachineReachabilitySample.reachable)
+        .over(
+            partition_by=MachineReachabilitySample.machine_id,
+            order_by=MachineReachabilitySample.checked_at,
+        )
+        .label("previous_ok")
+    )
+    ordered = (
+        select(
+            MachineReachabilitySample.machine_id,
+            MachineReachabilitySample.reachable,
+            previous_ok,
+        )
+        .where(in_month)
+        .subquery()
+    )
+    outages_result = await db.execute(
+        select(ordered.c.machine_id, func.count())
+        .where(
+            ordered.c.reachable.is_(False),
+            or_(ordered.c.previous_ok.is_(None), ordered.c.previous_ok.is_(True)),
+        )
+        .group_by(ordered.c.machine_id)
+    )
+    outages = {row[0]: int(row[1]) for row in outages_result.all()}
+    period_seconds = int((min(end, datetime.now(UTC)) - start).total_seconds())
+    rows = []
+    for machine in sorted(machines, key=lambda m: m.name.lower()):
+        probes, up, first = counts.get(machine.id, (0, 0, None))
+        uptime = round(up / probes * 100, 3) if probes else None
+        rows.append(
+            SlaRow(
+                check_id=machine.id,
+                name=machine.name,
+                kind="ssh",
+                target=f"{machine.ip_address}:{machine.port}",
+                probes=probes,
+                up=up,
+                uptime_percent=uptime,
+                downtime_seconds=min((probes - up) * interval_seconds, max(period_seconds, 0)),
+                outages=outages.get(machine.id, 0),
+                target_percent=None,
+                met=None,
+                coverage_from=_as_utc(first),
+            )
+        )
+    return rows
+
+
+async def load_sla_report(
+    db: AsyncSession,
+    month: str | None,
+    *,
+    machines: list[Machine] | None = None,
+    reachability_interval_seconds: int = 60,
+) -> SlaReport:
+    """Every endpoint check's row, plus `machines`' SSH reachability rows
+    (only the machines passed in — the caller scopes them to what the
+    viewer may see)."""
     key, start, end = month_bounds(month)
     in_month = and_(EndpointCheckResult.checked_at >= start, EndpointCheckResult.checked_at < end)
 
@@ -184,7 +281,10 @@ async def load_sla_report(db: AsyncSession, month: str | None) -> SlaReport:
                 coverage_from=_as_utc(first),
             )
         )
-    return SlaReport(month=key, start=start, end=end, rows=rows)
+    machine_rows = await load_machine_rows(
+        db, machines or [], start, end, reachability_interval_seconds
+    )
+    return SlaReport(month=key, start=start, end=end, rows=rows, machine_rows=machine_rows)
 
 
 def sla_report_csv(report: SlaReport) -> str:
@@ -196,7 +296,7 @@ def sla_report_csv(report: SlaReport) -> str:
             "downtime_seconds", "outages", "sla_target_percent", "met", "coverage_from",
         ]
     )
-    for row in report.rows:
+    for row in [*report.rows, *report.machine_rows]:
         writer.writerow(
             [
                 report.month,

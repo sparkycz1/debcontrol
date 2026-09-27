@@ -179,6 +179,12 @@ class AppSettings(Base):
     # every task run (app.tasks.jobs), so a change here takes effect on the
     # very next scheduled check, no restart needed.
     ssh_connect_timeout: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    # How long (minutes) a background worker keeps an idle SSH connection
+    # to a machine open for the next periodic check to reuse, instead of
+    # logging in again every time (app.ssh.pool). 0 = never reuse.
+    ssh_connection_reuse_minutes: Mapped[int] = mapped_column(
+        Integer, default=15, server_default="15", nullable=False
+    )
     # Max wall-clock time given to one apt/flatpak/snap update run (distinct
     # from ssh_connect_timeout, which only bounds establishing the
     # connection itself). Celery's own hard per-task time limit for the
@@ -190,9 +196,8 @@ class AppSettings(Base):
     update_timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800, nullable=False)
     # How often (seconds) the background worker re-checks OS/kernel/
     # hostname/CPU/RAM/disk facts, packages, services, and readiness for
-    # every machine. Beat re-reads this only at its own process start (see
-    # app.tasks.celery_app) — same "restart to pick up a change" contract
-    # this field had back when it was FACTS_REFRESH_INTERVAL_SECONDS in .env.
+    # every machine. Beat re-reads it from here about once a minute
+    # (`SettingInterval` in app.tasks.celery_app), no restart needed.
     facts_refresh_interval_seconds: Mapped[int] = mapped_column(
         Integer, default=3600, nullable=False
     )

@@ -34,22 +34,42 @@ from app.tasks.jobs import (
 
 
 async def trigger_updates(
-    db: AsyncSession, machines: list[Machine], strategy: UpgradeStrategy
+    db: AsyncSession,
+    machines: list[Machine],
+    strategy: UpgradeStrategy,
+    *,
+    reboot_if_required: bool = False,
+    rolling: bool = False,
 ) -> tuple[uuid.UUID, int]:
     """Create one `MachineUpdateRun` per eligible machine (must have a pinned
     host key) under a shared batch id, commit, then enqueue a task for each.
-    Returns (batch_id, skipped_count)."""
-    eligible = [m for m in machines if m.host_key_fingerprint]
+    Returns (batch_id, skipped_count).
+
+    `reboot_if_required` reboots each machine afterwards when the update
+    left it needing one. `rolling` updates one machine at a time, in name
+    order: only the first run is enqueued now, each next one once the
+    previous succeeded and, after a reboot, answers again — a failure stops
+    the rest (`app.tasks.jobs._finish_update_run`)."""
+    eligible = sorted(
+        (m for m in machines if m.host_key_fingerprint), key=lambda m: m.name.lower()
+    )
     batch_id = uuid.uuid4()
     runs = [
-        MachineUpdateRun(machine_id=m.id, strategy=strategy, batch_id=batch_id) for m in eligible
+        MachineUpdateRun(
+            machine_id=m.id,
+            strategy=strategy,
+            batch_id=batch_id,
+            reboot_if_required=reboot_if_required,
+            rollout_position=position if rolling else None,
+        )
+        for position, m in enumerate(eligible)
     ]
     db.add_all(runs)
     await db.commit()
 
     # Enqueue only after commit — the worker (a separate process) must be
     # able to find the row the moment it picks the task up.
-    for run in runs:
+    for run in runs[:1] if rolling else runs:
         run_machine_update.delay(str(run.id))
 
     return batch_id, len(machines) - len(eligible)

@@ -217,6 +217,7 @@ def _parse_bounded_int(
 # message names: whole numbers in a range, then "empty = forever/off" ones.
 _CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
     ("ssh_connect_timeout", "settings.checks.ssh_connect_timeout"),
+    ("ssh_connection_reuse_minutes", "settings.checks.ssh_connection_reuse"),
     ("reachability_check_interval_seconds", "settings.checks.reachability_check"),
     ("reachability_check_concurrency", "settings.checks.reachability_concurrency"),
     ("monitoring_interval_seconds", "settings.checks.monitoring_sample"),

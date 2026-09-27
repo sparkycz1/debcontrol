@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_api_token_user, require_api_permission
+from app.core.timezones import is_valid_timezone
 from app.db.models.role import Permission
 from app.db.models.scheduled_task import ScheduledTask
 from app.db.models.scheduled_task_run import ScheduledTaskRun
@@ -49,6 +50,8 @@ def _task_to_dict(task: ScheduledTask) -> dict[str, object]:
         "target_machine_id": str(task.target_machine_id) if task.target_machine_id else None,
         "target_group_id": str(task.target_group_id) if task.target_group_id else None,
         "cron_expression": task.cron_expression,
+        "timezone": task.timezone or "UTC",
+        "require_maintenance_window": task.require_maintenance_window,
         "is_enabled": task.is_enabled,
         "next_run_at": _isoformat(task.next_run_at),
         "last_run_at": _isoformat(task.last_run_at),
@@ -129,15 +132,25 @@ async def import_scheduling_config_api(
 
 
 @router.get("/cron-preview", dependencies=[_view])
-async def cron_preview_api(expression: str, count: int = 5) -> dict[str, object]:
-    """The next `count` (1-50) UTC run times of a cron expression — what the
-    schedule form previews as you type. 422 for an invalid expression."""
+async def cron_preview_api(
+    expression: str, count: int = 5, timezone: str = "UTC"
+) -> dict[str, object]:
+    """The next `count` (1-50) run times of a cron expression read in
+    `timezone` (an IANA name, default UTC), as UTC timestamps — what the
+    schedule form previews as you type. 422 for an invalid expression or
+    an unknown zone."""
     count = max(1, min(count, 50))
+    if not is_valid_timezone(timezone.strip()):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown time zone.")
     try:
-        runs = next_runs(expression.strip(), count=count)
+        runs = next_runs(expression.strip(), count=count, timezone=timezone.strip())
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return {"expression": expression.strip(), "next_runs": [run.isoformat() for run in runs]}
+    return {
+        "expression": expression.strip(),
+        "timezone": timezone.strip(),
+        "next_runs": [run.isoformat() for run in runs],
+    }
 
 
 @router.get("", dependencies=[_view])
@@ -179,7 +192,13 @@ async def create_scheduled_task_api(
         target_group_id=payload.target_group_id,
         cron_expression=payload.cron_expression,
         is_enabled=payload.is_enabled,
-        next_run_at=compute_next_run(payload.cron_expression) if payload.is_enabled else None,
+        timezone=payload.timezone,
+        require_maintenance_window=payload.require_maintenance_window,
+        next_run_at=(
+            compute_next_run(payload.cron_expression, timezone=payload.timezone)
+            if payload.is_enabled
+            else None
+        ),
     )
     db.add(task)
     await db.commit()
@@ -214,7 +233,13 @@ async def update_scheduled_task_api(
     task.target_group_id = payload.target_group_id
     task.cron_expression = payload.cron_expression
     task.is_enabled = payload.is_enabled
-    task.next_run_at = compute_next_run(payload.cron_expression) if payload.is_enabled else None
+    task.timezone = payload.timezone
+    task.require_maintenance_window = payload.require_maintenance_window
+    task.next_run_at = (
+        compute_next_run(payload.cron_expression, timezone=payload.timezone)
+        if payload.is_enabled
+        else None
+    )
     await db.commit()
     await log_event(
         db,
@@ -237,7 +262,7 @@ async def enable_scheduled_task_api(
 ) -> dict[str, object]:
     task = await _get_task_or_404(task_id, db, user)
     task.is_enabled = True
-    task.next_run_at = compute_next_run(task.cron_expression)
+    task.next_run_at = compute_next_run(task.cron_expression, timezone=task.timezone)
     await db.commit()
     await log_event(
         db,

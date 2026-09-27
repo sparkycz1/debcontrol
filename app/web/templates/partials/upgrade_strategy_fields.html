@@ -1,2 +1,11 @@
-<label><input type="radio" name="strategy" value="dist_upgrade" checked> dist-upgrade</label>
-<label><input type="radio" name="strategy" value="full_upgrade"> full-upgrade</label>
+{# The three strategies offered in the forms (`dist_upgrade` — the same as
+   full-upgrade under its older name — is still accepted, just not offered). #}
+<fieldset class="strategy-fields">
+  <legend>{{ t(request, "updates.strategy.legend") }}</legend>
+  <label><input type="radio" name="strategy" value="full_upgrade" checked> {{ strategy_label(request, 'full_upgrade') }}
+    <span class="hint">{{ t(request, "updates.strategy.full_upgrade_hint") }}</span></label>
+  <label><input type="radio" name="strategy" value="upgrade"> {{ strategy_label(request, 'upgrade') }}
+    <span class="hint">{{ t(request, "updates.strategy.upgrade_hint") }}</span></label>
+  <label><input type="radio" name="strategy" value="security"> {{ strategy_label(request, 'security') }}
+    <span class="hint">{{ t(request, "updates.strategy.security_hint") }}</span></label>
+</fieldset>

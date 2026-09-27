@@ -17,7 +17,11 @@
     {% else %}
       <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
     {% endif %}
-    {{ t(request, "machine.update_run.strategy_label") }} <code>{{ 'dist-upgrade' if run.strategy.value == 'dist_upgrade' else 'full-upgrade' }}</code>
+    {{ t(request, "machine.update_run.strategy_label") }} <code>{{ strategy_label(request, run.strategy.value) }}</code>
+    {% if run.reboot_outcome %}
+      · {{ t(request, "machine.update_run.reboot_label") }}
+      <span class="badge {{ 'badge-error' if run.reboot_outcome in ('not_back', 'failed') else ('badge-warn' if run.reboot_outcome == 'rebooted' else '') }}">{{ t(request, "machine.update_run.reboot_outcome." ~ run.reboot_outcome) }}</span>
+    {% endif %}
   </p>
 
   {% if run.rollback_of_run_id %}

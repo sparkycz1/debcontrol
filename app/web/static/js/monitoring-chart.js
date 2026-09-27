@@ -70,7 +70,9 @@
     const cursor = el.querySelector(".chart-cursor");
     const tooltip = el.querySelector(".chart-tooltip");
     if (!svg || !cursor || !tooltip) return;
-    const hidden = new Set();
+    // Series the server marked as noise start switched off (`h`).
+    const defaultHidden = new Set(data.h || []);
+    const hidden = new Set(defaultHidden);
 
     function applyVisibility() {
       el.querySelectorAll(".chart-series").forEach((g) => {
@@ -84,6 +86,16 @@
     }
 
     el.addEventListener("click", (event) => {
+      const all = event.target.closest("[data-series-show-all]");
+      if (all && el.contains(all)) {
+        const showing = all.getAttribute("aria-pressed") === "true";
+        hidden.clear();
+        if (showing) defaultHidden.forEach((i) => hidden.add(i));
+        all.setAttribute("aria-pressed", showing ? "false" : "true");
+        all.textContent = showing ? all.dataset.labelShow : all.dataset.labelHide;
+        applyVisibility();
+        return;
+      }
       const btn = event.target.closest("[data-series-toggle]");
       if (!btn || !el.contains(btn)) return;
       const idx = Number(btn.dataset.seriesToggle);
@@ -99,9 +111,13 @@
         series.forEach((s, i) => {
           if (!String(s.label).toLowerCase().includes(q)) hidden.add(i);
         });
+      } else {
+        defaultHidden.forEach((i) => hidden.add(i));
       }
       applyVisibility();
     };
+
+    applyVisibility();
 
     function indexAt(clientX) {
       const rect = svg.getBoundingClientRect();
@@ -179,16 +195,32 @@
     });
   });
 
-  // --- Tables: filter box + sortable headers ---
+  // --- Tables: filter box, row-state select, sortable headers ---
+  // A row is shown when it contains the typed text *and* its
+  // `data-row-state` is one of the select's space-separated values (an
+  // empty value = every state). Rows without a state ignore the select.
+  function filterTable(id) {
+    const table = document.getElementById(id);
+    if (!table) return;
+    const box = document.querySelector(`[data-table-filter="${id}"]`);
+    const select = document.querySelector(`[data-row-state-filter="${id}"]`);
+    const q = box ? box.value.trim().toLowerCase() : "";
+    const states = select && select.value ? select.value.split(" ") : null;
+    table.querySelectorAll("tbody tr").forEach((tr) => {
+      const textOk = q === "" || tr.textContent.toLowerCase().includes(q);
+      const state = tr.dataset.rowState;
+      const stateOk = !states || !state || states.includes(state);
+      tr.hidden = !(textOk && stateOk);
+    });
+  }
+
   document.addEventListener("input", (event) => {
     const box = event.target.closest("[data-table-filter]");
-    if (!box) return;
-    const table = document.getElementById(box.dataset.tableFilter);
-    if (!table) return;
-    const q = box.value.trim().toLowerCase();
-    table.querySelectorAll("tbody tr").forEach((tr) => {
-      tr.hidden = q !== "" && !tr.textContent.toLowerCase().includes(q);
-    });
+    if (box) filterTable(box.dataset.tableFilter);
+  });
+  document.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-row-state-filter]");
+    if (select) filterTable(select.dataset.rowStateFilter);
   });
 
   document.addEventListener("click", (event) => {

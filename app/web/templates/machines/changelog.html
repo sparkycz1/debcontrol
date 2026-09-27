@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "updates.changelog.title", package=package) }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <p><a href="/machines/{{ machine.id }}/updates">&larr; {{ t(request, "updates.changelog.back") }}</a></p>
+  <h2>{{ t(request, "updates.changelog.title", package=package) }}</h2>
+  {% if pending %}
+    <p class="hint">{{ pending.current_version or '—' }} → {{ pending.new_version or '—' }}</p>
+  {% endif %}
+
+  {% if error %}
+    <div class="alert alert-error"><p>{{ error }}</p></div>
+  {% elif changelog %}
+    {# The changelog text comes from the machine's apt — autoescaped. #}
+    <pre class="changelog">{{ changelog }}</pre>
+    {% if installed_version %}<p class="hint">{{ t(request, "updates.changelog.since", version=installed_version) }}</p>{% endif %}
+  {% else %}
+    <p class="hint">{{ t(request, "updates.changelog.none") }}</p>
+  {% endif %}
+{% endblock %}

@@ -21,11 +21,14 @@
     <select id="kind" name="kind">
       <option value="http" {% if values.kind == 'http' %}selected{% endif %}>HTTP(S) — {{ t(request, "checks.kind_http") }}</option>
       <option value="tls" {% if values.kind == 'tls' %}selected{% endif %}>TLS — {{ t(request, "checks.kind_tls") }}</option>
+      <option value="ping" {% if values.kind == 'ping' %}selected{% endif %}>Ping — {{ t(request, "checks.kind_ping") }}</option>
+      <option value="tcp" {% if values.kind == 'tcp' %}selected{% endif %}>TCP — {{ t(request, "checks.kind_tcp") }}</option>
+      <option value="dns" {% if values.kind == 'dns' %}selected{% endif %}>DNS — {{ t(request, "checks.kind_dns") }}</option>
     </select>
 
     <label for="target">{{ t(request, "checks.target") }}</label>
     <input type="text" id="target" name="target" value="{{ values.target }}" maxlength="500" required spellcheck="false"
-           placeholder="https://example.com/health  ·  example.com:443">
+           placeholder="https://example.com/health  ·  example.com:443  ·  nas.lan@192.168.1.53">
     <p class="hint">{{ t(request, "checks.target_hint") }}</p>
 
     <label for="expected_status">{{ t(request, "checks.expected_status") }}</label>

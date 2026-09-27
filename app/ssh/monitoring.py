@@ -25,7 +25,9 @@ import shlex
 from typing import Any, TypedDict
 
 from app.db.models.machine import Machine
-from app.ssh.client import open_connection
+from app.ssh import proxmox
+from app.ssh.pool import machine_connection
+from app.ssh.shell import with_root_shim
 
 _SECTION_MARKERS = (
     "CPU",
@@ -36,6 +38,8 @@ _SECTION_MARKERS = (
     "FILESYSTEMS",
     "FAILED_SERVICES",
     "DOCKER",
+    "ZFS_ARC",
+    *proxmox.LIVE_MARKERS,
 )
 
 # Appended to MONITORING_COMMAND only for a machine with `is_physical`
@@ -181,10 +185,17 @@ MONITORING_COMMAND = (
     "} 2>/dev/null; "
     "echo ===LOAD===; "
     "awk '{print $1, $2, $3}' /proc/loadavg 2>/dev/null; "
+    # total, used (total - available) and buff/cache (what `free` shows).
     "echo ===RAM_KB===; "
-    "awk '/MemTotal/ {total=$2} /MemAvailable/ {avail=$2} "
-    "END { if (total > 0) printf \"%d %d\\n\", total, total-avail }' "
+    "awk '/^MemTotal:/ {total=$2} /^MemAvailable:/ {avail=$2} /^Buffers:/ {buf=$2} "
+    "/^Cached:/ {cached=$2} /^SReclaimable:/ {srec=$2} "
+    "END { if (total > 0) printf \"%d %d %d\\n\", total, total-avail, buf+cached+srec }' "
     "/proc/meminfo 2>/dev/null; "
+    # The ZFS ARC's current size (bytes). The kernel doesn't count it as
+    # "available" memory, so on a ZFS host it would otherwise all show up
+    # as used — see parse_monitoring_output.
+    "echo ===ZFS_ARC===; "
+    "awk '$1 == \"size\" {print $3; exit}' /proc/spl/kstat/zfs/arcstats 2>/dev/null; "
     "echo ===NET===; "
     "awk 'NR>2 {gsub(\":\", \"\", $1); if ($1 != \"lo\") print $1, $2, $10}' "
     "/proc/net/dev 2>/dev/null; "
@@ -196,11 +207,14 @@ MONITORING_COMMAND = (
     "echo ===FILESYSTEMS===; "
     "df -B1 --output=target,size,used,avail,pcent "
     "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
+    # `@@OK` first — telling "systemd, nothing failed" apart from "no
+    # systemd" — then one failed unit name per line.
     "echo ===FAILED_SERVICES===; "
-    "if command -v systemctl >/dev/null 2>&1; then "
-    "systemctl --failed --plain --no-legend --no-pager 2>/dev/null | wc -l; "
+    "if command -v systemctl >/dev/null 2>&1; then echo @@OK; "
+    "systemctl --failed --plain --no-legend --no-pager 2>/dev/null | awk '{print $1}'; "
     "fi; "
-    f"{_DOCKER_COMMAND}"
+    f"{_DOCKER_COMMAND}; "
+    f"{proxmox.LIVE_COMMAND}"
 )
 
 
@@ -210,8 +224,16 @@ class MonitoringSample(TypedDict):
     load1: float | None
     load5: float | None
     load15: float | None
+    # Used by processes — total minus available, minus the ZFS ARC.
     ram_used_bytes: int | None
     ram_total_bytes: int | None
+    # ZFS ARC size (None = no ZFS) and the page cache/buffers — both give
+    # memory back under pressure, charted apart from `ram_used_bytes`.
+    ram_arc_bytes: int | None
+    ram_cache_bytes: int | None
+    # Latest ZFS pools / Proxmox VE guests (app.ssh.proxmox), None = none.
+    zfs_pools: list[dict[str, Any]] | None
+    pve_guests: list[dict[str, Any]] | None
     # Each {"iface": ..., "rx_bytes": ..., "tx_bytes": ...} — cumulative
     # counters since boot, one entry per non-loopback interface found.
     network_io: list[dict[str, Any]]
@@ -222,6 +244,8 @@ class MonitoringSample(TypedDict):
     filesystems: list[dict[str, Any]]
     # None = couldn't tell (no systemd), not "zero failed".
     failed_services_count: int | None
+    # The failed units' names (None = couldn't tell).
+    failed_units: list[str] | None
     # None = no docker CLI at all; "no_access" = present but this account
     # can't talk to the daemon; "ok" = `docker_containers` is authoritative.
     docker_status: str | None
@@ -293,11 +317,20 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
 
     ram_used_bytes: int | None = None
     ram_total_bytes: int | None = None
+    ram_cache_bytes: int | None = None
+    arc_text = sections.get("ZFS_ARC", "").strip()
+    ram_arc_bytes = int(arc_text) if arc_text.isdigit() else None
     ram_fields = sections.get("RAM_KB", "").split()
-    if len(ram_fields) == 2 and all(f.isdigit() for f in ram_fields):
+    if len(ram_fields) in (2, 3) and all(f.isdigit() for f in ram_fields):
         total_kb, used_kb = int(ram_fields[0]), int(ram_fields[1])
         ram_total_bytes = total_kb * 1024
         ram_used_bytes = used_kb * 1024
+        if ram_arc_bytes:
+            # The ARC shrinks on demand like the page cache does; counting
+            # it as "used" made a ZFS host look nearly full all the time.
+            ram_used_bytes = max(0, ram_used_bytes - ram_arc_bytes)
+        if len(ram_fields) == 3:
+            ram_cache_bytes = int(ram_fields[2]) * 1024
 
     network_io: list[dict[str, Any]] = []
     for line in sections.get("NET", "").splitlines():
@@ -337,10 +370,16 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         )
 
     failed_services_count: int | None = None
-    failed_lines = sections.get("FAILED_SERVICES", "").splitlines()
-    failed_line = failed_lines[0].strip() if failed_lines else ""
-    if failed_line.isdigit():
-        failed_services_count = int(failed_line)
+    failed_units: list[str] | None = None
+    failed_lines = [
+        line.strip() for line in sections.get("FAILED_SERVICES", "").splitlines() if line.strip()
+    ]
+    if failed_lines and failed_lines[0] == "@@OK":
+        failed_units = sorted(set(failed_lines[1:]))
+        failed_services_count = len(failed_units)
+    elif len(failed_lines) == 1 and failed_lines[0].isdigit():
+        # The older `wc -l` form.
+        failed_services_count = int(failed_lines[0])
 
     docker_status, docker_containers = _parse_docker(sections.get("DOCKER"))
 
@@ -361,10 +400,17 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         load15=load15,
         ram_used_bytes=ram_used_bytes,
         ram_total_bytes=ram_total_bytes,
+        ram_arc_bytes=ram_arc_bytes,
+        ram_cache_bytes=ram_cache_bytes,
+        zfs_pools=proxmox.parse_zfs_pools(
+            sections.get("ZFS_POOLS", ""), sections.get("ZFS_STATUS", "")
+        ),
+        pve_guests=proxmox.parse_guests(sections.get("PVE_GUESTS", "")),
         network_io=network_io,
         disk_io=disk_io,
         filesystems=filesystems,
         failed_services_count=failed_services_count,
+        failed_units=failed_units,
         docker_status=docker_status,
         docker_containers=docker_containers,
         sensor_temps=sensor_temps,
@@ -695,11 +741,11 @@ async def gather_monitoring_sample(
     (see _HARDWARE_COMMAND). Requires a pinned host key."""
     is_physical = bool(machine.is_physical)
     command = f"{MONITORING_COMMAND}; {_HARDWARE_COMMAND}" if is_physical else MONITORING_COMMAND
-    async with await open_connection(machine, secret, timeout_seconds) as conn:
+    async with machine_connection(machine, secret, timeout_seconds) as conn:
         # `docker stats --no-stream` alone takes a couple of seconds (it
         # waits for two cgroup readings), on top of the CPU probe's own
         # `sleep 1` — give the command itself more room than a bare connect.
-        result = await conn.run(command, check=False, timeout=timeout_seconds + 15)
+        result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds + 15)
 
     stdout = result.stdout or ""
     raw = stdout if isinstance(stdout, str) else stdout.decode()

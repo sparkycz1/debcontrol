@@ -14,7 +14,8 @@ Probes:
   when verification fails (expired/self-signed), via a second, unverified
   handshake, so an expired certificate still reports *when* it expired.
 
-Either kind also fails when it answered slower than `max_latency_ms`.
+Plus ICMP ping, TCP port and DNS checks (`app.services.network_probes`).
+Every kind also fails when it answered slower than `max_latency_ms`.
 
 Targets are admin-configured (`machine.manage`) and requested from the
 debcontrol host, the same trust level as a notification webhook URL.
@@ -36,6 +37,7 @@ from cryptography import x509
 
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.notification_rule import NotificationEventType
+from app.services import network_probes
 
 # A single failed probe is often a blip; announce an outage after this many
 # consecutive failures.
@@ -101,6 +103,8 @@ def validate_target(kind: str, target: str) -> str | None:
         if not host or not 0 < port < 65536:
             return "Invalid host or port."
         return None
+    if kind in ("ping", "tcp", "dns"):
+        return network_probes.validate_target(kind, value)
     return "Unknown check type."
 
 
@@ -279,8 +283,20 @@ async def run_probe(check: EndpointCheck) -> ProbeResult:
                 json_expected=check.json_expected,
             ),
         )
-    else:
+    elif check.kind == "tls":
         result = await probe_tls(check.target, check.timeout_seconds, check.verify_tls)
+    else:
+        if check.kind == "ping":
+            ok, error, latency = await network_probes.probe_ping(
+                check.target, check.timeout_seconds
+            )
+        elif check.kind == "tcp":
+            ok, error, latency = await network_probes.probe_tcp(check.target, check.timeout_seconds)
+        else:
+            ok, error, latency = await network_probes.probe_dns(
+                check.target, check.timeout_seconds, check.expected_body
+            )
+        result = ProbeResult(ok=ok, error=error, latency_ms=latency)
     return apply_latency_limit(result, check.max_latency_ms)
 
 
