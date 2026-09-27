@@ -4,23 +4,19 @@
 {% from "partials/_os_badge.html" import render as render_os_badge %}
 
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   {% from "partials/_js_i18n.html" import js_i18n with context %}
-  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.blocked", "live.notify.blocked_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
+  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ render_os_badge(machine.os_id, size=28) }} {{ machine.name }}</h1>
-    {% if request.state.user.has_permission('audit.view') %}
-      <a href="/audit?target_type=machine&target_id={{ machine.id }}" class="hint">
-        {{ t(request, "machine.view_audit_history") }}
-      </a>
-    {% endif %}
   </div>
 
   {% if maintenance_window %}
     <div class="alert alert-warn"><p>
       {{ t(request, "maintenance.in_progress", until=(maintenance_window.ends_at | local_time('%Y-%m-%d %H:%M %Z'))) }}:
-      {% if request.state.user.has_permission('notification.view') %}<a href="/notifications/maintenance">{{ maintenance_window.name }}</a>{% else %}{{ maintenance_window.name }}{% endif %}
+      {% if request.state.user.has_permission('notification.view') %}<a href="/scheduling/maintenance">{{ maintenance_window.name }}</a>{% else %}{{ maintenance_window.name }}{% endif %}
     </p></div>
   {% endif %}
 
@@ -163,27 +159,6 @@
     <div id="test-result"></div>
   </section>
 
-  {% if request.state.user.has_permission('action.power') %}
-    <section class="panel">
-      <h2>{{ t(request, "groups.all.power") }}</h2>
-      <p class="hint">
-        {{ t(request, "machine.power.hint") }}
-      </p>
-      <div class="page-header-actions">
-        <a class="button button-secondary{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
-           href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/reboot{% else %}#{% endif %}">
-          {{ t(request, "groups.power_confirm.reboot") }}
-        </a>
-        <a class="button button-danger{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
-           href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/shutdown{% else %}#{% endif %}">
-          {{ t(request, "groups.power_confirm.shutdown") }}
-        </a>
-      </div>
-      {% if not machine.host_key_fingerprint %}
-        <p class="hint">{{ t(request, "machine.edit.confirm_key_overview_first") }}</p>
-      {% endif %}
-    </section>
-  {% endif %}
 {% endblock %}
 
 {% block extra_scripts %}

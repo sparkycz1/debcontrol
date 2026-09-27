@@ -28,10 +28,11 @@ from app.db import session as db_session
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.scheduled_task import ScheduledTask
 from app.db.models.scheduled_task_run import ScheduledTaskRun, ScheduledTaskRunStatus
-from app.scheduling.actions import get_action
+from app.scheduling.actions import ActionRunResult, get_action
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.scheduling.cron import compute_next_run
 from app.scheduling.targets import resolve_target_machines
+from app.services.maintenance_windows import machines_paused_for_scheduling
 from app.tasks.celery_app import celery_app
 
 # `actor` for every audit entry this module writes — there's no HTTP
@@ -133,7 +134,12 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
             return {"ok": False, "error": task.last_run_summary}
 
         machines = await resolve_target_machines(session, task)
+        # Machines inside an active maintenance window that pauses scheduled
+        # tasks sit this run out (skipped, not queued for later).
+        paused_ids = await machines_paused_for_scheduling(session, machines)
+        machines = [m for m in machines if m.id not in paused_ids]
         result = await action.run(session, machines, task.action_params or {})
+        paused = len(paused_ids)
 
         summary = f"Triggered for {result.attempted} machine(s)."
         if result.skipped:
@@ -141,6 +147,9 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
                 f"Triggered for {result.attempted} machine(s), "
                 f"{result.skipped} skipped (no pinned host key)."
             )
+        if paused:
+            summary = f"{summary[:-1]}; {paused} paused by a maintenance window."
+        result = ActionRunResult(attempted=result.attempted, skipped=result.skipped + paused)
         finished_at = datetime.now(UTC)
         task.last_run_at = finished_at
         task.last_run_summary = summary
@@ -166,7 +175,11 @@ async def _run_scheduled_task(task_id: str) -> dict[str, Any]:
             target_type="scheduled_task",
             target_id=task.id,
             target_label=task.name,
-            details={"attempted": result.attempted, "skipped": result.skipped},
+            details={
+                "attempted": result.attempted,
+                "skipped": result.skipped,
+                "paused_by_maintenance": paused,
+            },
         )
 
         return {"ok": True, "attempted": result.attempted, "skipped": result.skipped}

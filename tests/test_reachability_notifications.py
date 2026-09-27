@@ -31,7 +31,7 @@ async def test_first_ever_check_does_not_notify(db_session_factory, monkeypatch)
     import app.services.notifications as notifications_module
 
     monkeypatch.setattr(
-        notifications_module, "_send_smtp_message", lambda *a, **k: sent.append(1)
+        notifications_module, "send_smtp_message", lambda *a, **k: sent.append(1)
     )
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 
@@ -81,7 +81,7 @@ async def test_transition_to_unreachable_notifies(db_session_factory, monkeypatc
     def _fake_send(app_settings, to_address, subject, body):
         sent.append((to_address, subject, body))
 
-    monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)
+    monkeypatch.setattr(notifications_module, "send_smtp_message", _fake_send)
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 
     async def _fake_check_reachable(*a, **k):

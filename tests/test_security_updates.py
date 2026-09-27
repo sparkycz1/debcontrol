@@ -151,7 +151,7 @@ async def test_security_page_and_api(client, db_session_factory) -> None:  # typ
         ]))
         await session.commit()
 
-    page = await client.get("/machines/security-updates")
+    page = await client.get("/security/updates")
     assert page.status_code == 200
     assert "CVE-2026-0001" in page.text
     assert "https://security-tracker.debian.org/tracker/CVE-2026-0001" in page.text
@@ -182,6 +182,6 @@ async def test_security_page_respects_group_scope(client, login_as, db_session_f
         visible_group_id = visible_group.id
 
     await login_as(client, permissions={Permission.MACHINE_VIEW}, group_ids={visible_group_id})
-    page = await client.get("/machines/security-updates")
+    page = await client.get("/security/updates")
     assert page.status_code == 200
     assert "secret-box-7" not in page.text

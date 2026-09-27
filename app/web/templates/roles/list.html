@@ -1,14 +1,13 @@
 {% extends "base.html" %}
 
 {% block title %}{{ t(request, "roles.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <h1>{{ t(request, "roles.title") }}</h1>
     <div class="page-header-actions">
       <a class="button button-secondary" href="/users">{{ t(request, "nav.users") }}</a>
-      <a class="button button-secondary" href="/roles/config/export">{{ t(request, "role.config_import.export") }}</a>
-      <a class="button button-secondary" href="/roles/config/import">{{ t(request, "role.config_import.import") }}</a>
       <a class="button" href="/roles/new">{{ t(request, "roles.add") }}</a>
     </div>
   </div>
@@ -27,7 +26,9 @@
       {% for role in roles %}
         <tr>
           <td>{{ role.name }}</td>
-          <td>{{ role.description or '—' }}</td>
+          {# The built-in role's description is stored in English by
+             scripts/create_admin.py; shown in the reader's language. #}
+          <td>{{ t(request, "roles.builtin_admin_description") if role.description == "Full access to everything, including user and role management." else (role.description or '—') }}</td>
           <td>{{ role.permission_grants | length }}</td>
           <td>{{ role.users | length }}</td>
           <td><a href="/roles/{{ role.id }}/edit">{{ t(request, "roles.edit") }}</a></td>

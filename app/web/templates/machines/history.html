@@ -2,6 +2,7 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "machine.tab.history") }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   {% set user = request.state.user %}
@@ -24,6 +25,11 @@
   {{ render_tabnav(tabs, active_tab) }}
 
   <p class="hint">{{ t(request, "history.intro") }}{% if not timeline.includes_audit %} {{ t(request, "history.no_audit_access") }}{% endif %}</p>
+  {% if timeline.includes_audit and user.has_permission('audit.view') %}
+    {# Read-only look-ups (logs viewed, ...) are left off the timeline on
+       purpose — they'd drown out the changes; the Audit page has them. #}
+    <p class="hint">{{ t(request, "history.views_excluded") }} <a href="/audit?target_type=machine&target_id={{ machine.id }}">{{ t(request, "machine.view_audit_history") }}</a>.</p>
+  {% endif %}
 
   {% if can_manage %}
     <section class="panel">

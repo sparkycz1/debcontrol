@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% from "macros/charts.html" import sparkline with context %}
+{% from "macros/charts.html" import chart_card with context %}
 
 {% block title %}{{ t(request, "dashboard.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <h1>{{ t(request, "dashboard.title") }}</h1>
@@ -9,36 +10,22 @@
   {% if machine_stats %}
   <section class="panel">
     <h2>{{ t(request, "nav.machines") }}</h2>
+    {# Each tile opens the Machines list filtered to exactly what it counts. #}
+    {% macro tile(value, label, href, level='') %}
+      <a class="stat-card stat-card-link{% if level and value %} stat-card-{{ level }}{% endif %}" href="{{ href }}">
+        <span class="stat-value">{{ value }}</span>
+        <span class="stat-label">{{ label }}</span>
+      </a>
+    {% endmacro %}
     <div class="stat-grid">
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.total }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.total") }}</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.online }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.online") }}</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.offline }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.offline") }}</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.needs_updates }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.need_updates") }}</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.needs_security_updates }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.security_updates") }}</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.needs_reboot }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.reboot_required") }}</span>
-      </div>
+      {{ tile(machine_stats.total, t(request, "dashboard.stats.total"), "/machines") }}
+      {{ tile(machine_stats.online, t(request, "dashboard.stats.online"), "/machines?status=online") }}
+      {{ tile(machine_stats.offline, t(request, "dashboard.stats.offline"), "/machines?status=offline", "danger") }}
+      {{ tile(machine_stats.needs_updates, t(request, "dashboard.stats.need_updates"), "/machines?status=updates", "warn") }}
+      {{ tile(machine_stats.needs_security_updates, t(request, "dashboard.stats.security_updates"), "/security/updates", "danger") }}
+      {{ tile(machine_stats.needs_reboot, t(request, "dashboard.stats.reboot_required"), "/machines?status=reboot", "warn") }}
       {% if machine_stats.pending_count %}
-      <div class="stat-card">
-        <span class="stat-value">{{ machine_stats.pending_count }}</span>
-        <span class="stat-label">{{ t(request, "dashboard.stats.pending_review") }}</span>
-      </div>
+        {{ tile(machine_stats.pending_count, t(request, "dashboard.stats.pending_review"), "/machines#pending", "warn") }}
       {% endif %}
     </div>
     <p class="hint">
@@ -52,7 +39,7 @@
   <section class="panel">
     <h2>{{ t(request, "dashboard.fleet_summary.heading") }}</h2>
     <p class="hint">
-      {{ t(request, "dashboard.fleet_summary.meta", frequency=(fleet_summary.frequency | capitalize), generated_at=(fleet_summary.created_at | local_time('%Y-%m-%d %H:%M %Z')), provider=fleet_summary.provider_kind, model=fleet_summary.model_id) }}
+      {{ t(request, "dashboard.fleet_summary.meta", frequency=(fleet_summary.frequency | capitalize), generated_at=(fleet_summary.created_at | local_time('%Y-%m-%d %H:%M %Z')), provider=t(request, "ai.provider." ~ fleet_summary.provider_kind), model=fleet_summary.model_id) }}
       <a href="/settings?tab=ai">{{ t(request, "dashboard.fleet_summary.configure") }}</a>.
     </p>
     <div class="fleet-summary-content">{{ fleet_summary.content }}</div>
@@ -67,10 +54,16 @@
       <a href="/settings">{{ t(request, "nav.settings") }}</a>{{ t(request, "dashboard.fleet_trends.range_tail") }}
       <code>GET /api/v1/dashboard/trends</code>.
     </p>
-    <h3>{{ t(request, "dashboard.fleet_trends.online_machines") }}</h3>
-    {{ sparkline(fleet_snapshots | map(attribute='online_machines') | list, 'ok', t(request, "dashboard.fleet_trends.online_machines")) }}
-    <h3>{{ t(request, "dashboard.fleet_trends.pending_updates") }}</h3>
-    {{ sparkline(fleet_snapshots | map(attribute='needs_updates') | list, 'warn', t(request, "dashboard.fleet_trends.pending_updates")) }}
+    {% set online_label = t(request, "dashboard.fleet_trends.online_machines") %}
+    {% set updates_label = t(request, "dashboard.fleet_trends.pending_updates") %}
+    <div class="monitoring-grid">
+      {{ chart_card(online_label, none,
+           chart([(online_label, fleet_snapshots | map(attribute='online_machines') | list)], trend_timestamps,
+                 time_format='%d.%m.', colors=(chart_palette[1],))) }}
+      {{ chart_card(updates_label, none,
+           chart([(updates_label, fleet_snapshots | map(attribute='needs_updates') | list)], trend_timestamps,
+                 time_format='%d.%m.', colors=(chart_palette[3],))) }}
+    </div>
   </section>
   {% endif %}
 
@@ -128,9 +121,25 @@
   </section>
   {% endif %}
 
+  {% if machine_stats %}
+  <section class="panel" id="fleet">
+    <div class="panel-header">
+      <h2>{{ t(request, "fleet.title") }}</h2>
+      <input type="search" class="chart-filter" data-fleet-filter
+             placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+    </div>
+    {% include "partials/fleet_grid.html" %}
+  </section>
+  {% endif %}
+
   {% if not machine_stats and upcoming_tasks is not defined and recent_audit_entries is not defined %}
   <section class="panel">
     <p class="hint">{{ t(request, "dashboard.no_access") }}</p>
   </section>
   {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/fleet.js') }}" defer></script>
+  <script src="{{ static_url('js/monitoring-chart.js') }}" defer></script>
 {% endblock %}

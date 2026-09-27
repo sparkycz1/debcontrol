@@ -41,11 +41,13 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.config import ai_chat_available
 from app.audit import client_ip
 from app.auth import session_policy
 from app.auth.sessions import SESSION_COOKIE_NAME, get_valid_session
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie
+from app.db.models.role import Permission
 from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
 from app.i18n import get_locale
@@ -233,6 +235,13 @@ async def require_auth(
                     has_webauthn_credential = await _has_webauthn_credential(
                         db, session.user.id
                     )
+                # Whether base.html shows the AI nav entry (cached, see
+                # app.ai.config.ai_chat_available).
+                request.state.ai_available = (
+                    session is not None
+                    and session.user.has_permission(Permission.AI_ACCESS)
+                    and await ai_chat_available(db)
+                )
 
         if session is None:
             if request.headers.get("accept", "").startswith("application/json"):

@@ -361,7 +361,7 @@ async def _recipients(db: AsyncSession, rules: list[NotificationRule]) -> list[U
     return [u for u in by_id.values() if u.is_active and u.email]
 
 
-def _send_smtp_message(
+def send_smtp_message(
     app_settings: AppSettings, to_address: str, subject: str, body: str
 ) -> None:
     """Synchronous SMTP send (stdlib `smtplib`) — run via `asyncio.to_thread`
@@ -573,7 +573,7 @@ async def notify(
                 )
                 try:
                     await asyncio.to_thread(
-                        _send_smtp_message, app_settings, user.email, subject, body
+                        send_smtp_message, app_settings, user.email, subject, body
                     )
                 except Exception as exc:
                     logger.warning(
@@ -689,7 +689,7 @@ async def send_test_notification(
     if not app_settings.smtp_enabled or not app_settings.smtp_host:
         return False, "SMTP isn't configured/enabled in Settings."
     try:
-        await asyncio.to_thread(_send_smtp_message, app_settings, to_email, subject, body)
+        await asyncio.to_thread(send_smtp_message, app_settings, to_email, subject, body)
     except Exception as exc:
         db.add(
             _delivery_log(

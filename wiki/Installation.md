@@ -135,13 +135,12 @@ Caddy already running? Point it at `127.0.0.1:${APP_PORT}` — see:
 > once per replica. The `worker` service, by contrast, is safe to scale.
 
 > [!NOTE]
-> `beat` reads the facts-refresh/reachability-check/monitoring intervals
-> (Settings → Checks & retention) from the database **once, at startup**
-> — same "restart to pick up a change" contract these had back when they
-> were environment variables. Restart the `beat` service after changing
-> any of the three. The SSH connect timeout, update-run timeout, and
-> reachability concurrency, by contrast, are read fresh on every check —
-> no restart needed for those.
+> `beat` re-reads the facts-refresh/reachability-check/monitoring/
+> condition-check intervals (Settings → Checks & retention) from the
+> database about once a minute (`SettingInterval` in
+> `app/tasks/celery_app.py`), so changing one needs no restart. The SSH
+> connect timeout, update-run timeout, and reachability concurrency are
+> read fresh on every check.
 
 If your reverse proxy runs in its own separate Docker Compose project, it
 needs to join this project's network instead of using the loopback

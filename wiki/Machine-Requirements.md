@@ -173,7 +173,7 @@ A held package (`apt-mark hold`) shows a "held" badge — still listed
 normally, just excluded from `dist-upgrade`/`full-upgrade` until unheld
 (worth knowing when an upgrade count looks off).
 
-**Fleet-wide search**: **Machines → Package search** checks every
+**Fleet-wide search**: **Security → Package search** checks every
 machine's latest snapshot at once — handy right after a CVE announcement.
 
 ## ⚡ System updates and power actions — require root

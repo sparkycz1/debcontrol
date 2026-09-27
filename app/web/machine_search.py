@@ -16,7 +16,7 @@ from app.db.models.machine_tag import Tag
 
 # The machine list's "Status" filter (`?status=`), shared with
 # `GET /api/v1/machines` — see `apply_status_filter`.
-STATUS_FILTERS = ("offline", "updates", "security", "reboot", "changed", "unconfirmed")
+STATUS_FILTERS = ("online", "offline", "updates", "security", "reboot", "changed", "unconfirmed")
 # "changed" = a configuration change detected within this many days.
 CHANGED_WITHIN_DAYS = 7
 
@@ -79,11 +79,13 @@ def apply_tag_filter[S: Select[Machine]](query: S, tags: list[str], tag_mode: st
 
 def apply_status_filter[S: Select[Machine]](query: S, status: str) -> S:
     """Filter by one of `STATUS_FILTERS` (anything else: unchanged) —
-    offline (the reachability check fails), updates (any pending apt/
+    online / offline (the reachability check passes / fails), updates (any pending apt/
     flatpak/snap update), security (pending apt security updates), reboot
     (a newer kernel is installed than running), changed (a configuration
     change detected in the last `CHANGED_WITHIN_DAYS` days — see
     `app.services.config_drift`), unconfirmed (no pinned host key yet)."""
+    if status == "online":
+        return query.where(Machine.is_reachable.is_(True))
     if status == "offline":
         return query.where(Machine.is_reachable.is_(False))
     if status == "updates":

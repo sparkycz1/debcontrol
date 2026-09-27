@@ -16,7 +16,7 @@
 {% block content %}
   {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
   {% from "partials/_js_i18n.html" import js_i18n with context %}
-  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.blocked", "live.notify.blocked_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
+  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
     <h1>{{ machine.name }}</h1>
   </div>
@@ -430,7 +430,7 @@
                       {% for a in d.attributes %}
                         <tr>
                           {% if has_normalized %}<td class="table-muted">{{ a.id if a.id is not none else '' }}</td>{% endif %}
-                          <td>{{ a.name }}{% if a.failing %} <span class="badge badge-error">!</span>{% endif %}</td>
+                          <td title="{{ a.name }}">{{ smart_attr_label(request, a.name) }}{% if a.failing %} <span class="badge badge-error">!</span>{% endif %}</td>
                           {% if has_normalized %}
                             <td>{{ a.value if a.value is not none else '' }}</td>
                             <td>{{ a.worst if a.worst is not none else '' }}</td>

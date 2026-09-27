@@ -7,7 +7,7 @@
 
     {% for config in ai_configs %}
       {% if not loop.first %}<hr>{% endif %}
-      <h3>{{ config.kind.value }}</h3>
+      <h3>{{ t(request, "ai.provider." ~ config.kind.value) }}</h3>
       <form method="post" action="/settings/ai/provider" class="form" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="kind" value="{{ config.kind.value }}">
@@ -58,7 +58,7 @@
         <div id="models-modal-{{ config.kind.value }}" popover class="modal">
           <div class="modal-dialog">
             <div class="modal-header">
-              <h2 class="modal-title">{{ t(request, "settings.ai.choose_models_title", kind=(config.kind.value | e)) | safe }}</h2>
+              <h2 class="modal-title">{{ t(request, "settings.ai.choose_models_title", kind=(t(request, "ai.provider." ~ config.kind.value) | e)) | safe }}</h2>
               <button
                 type="button"
                 class="modal-close"
@@ -148,7 +148,7 @@
             {% set value = provider.id ~ ':' ~ model.model_id %}
             <option value="{{ value }}"
                 {{ 'selected' if app_settings.fleet_summary_provider_id == provider.id and app_settings.fleet_summary_model_id == model.model_id else '' }}>
-              {{ provider.kind.value }} — {{ model.model_id }}
+              {{ t(request, "ai.provider." ~ provider.kind.value) }} — {{ model.model_id }}
             </option>
           {% endfor %}
         </select>

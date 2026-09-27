@@ -40,16 +40,19 @@ document.addEventListener("change", (event) => {
 
 // A bulk-action bar marked `data-bulk-bar="<checkbox name>"` gets the
 // `has-selection` class while at least one such checkbox in its form is
-// ticked — the phone layout hides the bar until then (style.css).
+// ticked (style.css shows its actions only then), and its
+// `[data-bulk-count]` element the number ticked.
 function refreshBulkBars() {
   for (const bar of document.querySelectorAll("[data-bulk-bar]")) {
     const form = bar.closest("form");
     const name = bar.getAttribute("data-bulk-bar");
     if (!form || !name) continue;
-    const any = [...document.querySelectorAll(`input[name="${name}"]`)].some(
+    const ticked = [...document.querySelectorAll(`input[name="${name}"]`)].filter(
       (checkbox) => checkbox.form === form && checkbox.checked,
-    );
-    bar.classList.toggle("has-selection", any);
+    ).length;
+    bar.classList.toggle("has-selection", ticked > 0);
+    const count = bar.querySelector("[data-bulk-count]");
+    if (count) count.textContent = String(ticked);
   }
 }
 document.addEventListener("change", refreshBulkBars);

@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Column, ForeignKey, Index, String, Table, Text, func
+from sqlalchemy import Boolean, Column, ForeignKey, Index, String, Table, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -65,6 +65,12 @@ class MaintenanceWindow(Base):
     starts_at: Mapped[datetime] = mapped_column(nullable=False)
     ends_at: Mapped[datetime] = mapped_column(nullable=False)
     all_machines: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Also hold back scheduled tasks (updates, reboots, commands...) on the
+    # covered machines while the window is active — they're skipped for
+    # that run, not queued (app.scheduling.jobs._run_scheduled_task).
+    pause_scheduled_tasks: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     # Kept as text, not a user FK: the window (and its audit meaning)
     # outlives the account that scheduled it.
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -1,9 +1,8 @@
-{% extends "base.html" %}
+{# The Dashboard's machine cards — every visible, active machine with its
+   latest readings (`app.services.fleet_overview`). Rendered inline by
+   dashboard/index.html and on its own by GET /fleet/cards, which this
+   block re-fetches every 60 s (htmx outerHTML swap of #fleet-live). #}
 {% from "partials/_os_badge.html" import render as os_badge %}
-
-{% block title %}{{ t(request, "fleet.title") }} — debcontrol{% endblock %}
-{% block main_class %}container-wide{% endblock %}
-
 {% macro meter(label, value, level, text) %}
   {% if value is number %}
     {% set clamped = [[value, 100] | min, 0] | max %}
@@ -22,23 +21,7 @@
   {% endif %}
 {% endmacro %}
 
-{% block content %}
-  <div class="page-header">
-    <h1>{{ t(request, "fleet.title") }}</h1>
-    <div class="page-header-actions">
-      <input type="search" class="chart-filter" data-fleet-filter
-             placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
-    </div>
-  </div>
-
-  <div id="fleet-live" hx-get="/fleet" hx-select="#fleet-live" hx-target="this" hx-swap="outerHTML" hx-trigger="every 60s">
-    <div class="fleet-summary">
-      <div class="fleet-stat"><span class="fleet-stat-value">{{ counts.total }}</span><span class="fleet-stat-label">{{ t(request, "fleet.total") }}</span></div>
-      <div class="fleet-stat"><span class="fleet-stat-value fleet-ok">{{ counts.online }}</span><span class="fleet-stat-label">{{ t(request, "fleet.online") }}</span></div>
-      <div class="fleet-stat"><span class="fleet-stat-value {{ 'fleet-danger' if counts.offline else '' }}">{{ counts.offline }}</span><span class="fleet-stat-label">{{ t(request, "fleet.offline") }}</span></div>
-      <div class="fleet-stat"><span class="fleet-stat-value {{ 'fleet-danger' if counts.attention else '' }}">{{ counts.attention }}</span><span class="fleet-stat-label">{{ t(request, "fleet.attention") }}</span></div>
-    </div>
-
+<div id="fleet-live" hx-get="/fleet/cards" hx-target="this" hx-swap="outerHTML" hx-trigger="every 60s">
     {% if truncated %}
       <div class="alert alert-warn"><p>{{ t(request, "fleet.truncated", limit=limit) }}</p></div>
     {% endif %}
@@ -81,9 +64,4 @@
     {% else %}
       <div class="empty-state"><p>{{ t(request, "fleet.empty") }}</p></div>
     {% endif %}
-  </div>
-{% endblock %}
-
-{% block extra_scripts %}
-  <script src="{{ static_url('js/fleet.js') }}" defer></script>
-{% endblock %}
+</div>

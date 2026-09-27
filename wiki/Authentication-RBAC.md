@@ -84,6 +84,10 @@ An admin defines named `Role`s and picks exactly which of the fixed
 `ai.access`, `scheduling.view`/`.manage`, `notification.view`/`.manage`,
 `audit.view`, `settings.view`/`.manage`, `user.manage`, `user.impersonate`
 — then assigns **one role per user**. Resource-grained, not per-object.
+The role form shows each permission with a plain-language name and what
+it allows (`permission.<code>` / `permission.<code>.hint` in the locale
+files), the code itself underneath; the built-in Administrator role's
+English description is shown translated too.
 
 A `MANAGE` permission always also grants the matching `VIEW`
 (`_MANAGE_IMPLIES_VIEW`) — otherwise `machine.manage` without
@@ -496,7 +500,8 @@ Deliberately still web-UI-only: **SSH key rotation** (a multi-step
 human-paced process so the app never locks itself out mid-rotation);
 **LDAP/OIDC config** and **AI provider credentials** (encrypted
 secrets); **syslog/SMTP/GeoIP config** and the **fleet summary schedule**;
-the **sign-in network allowlist** (the web form's "doesn't lock you out"
+the **Test** buttons for SMTP/LDAP/OIDC (like the configuration they
+check); the **sign-in network allowlist** (the web form's "doesn't lock you out"
 guard can't carry over to a script).
 `/api/v1/settings` exposes version/commit and the SSH public
 key/fingerprint read-only, and the non-secret operational settings

@@ -102,7 +102,7 @@ async def test_condition_matched_fires_once_then_not_again(db_session_factory, m
     import app.services.notifications as notifications_module
 
     monkeypatch.setattr(
-        notifications_module, "_send_smtp_message", lambda *a, **k: sent.append(a[1:])
+        notifications_module, "send_smtp_message", lambda *a, **k: sent.append(a[1:])
     )
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 
@@ -151,7 +151,7 @@ async def test_condition_not_matched_never_notifies(db_session_factory, monkeypa
     sent: list[object] = []
     import app.services.notifications as notifications_module
 
-    monkeypatch.setattr(notifications_module, "_send_smtp_message", lambda *a, **k: sent.append(1))
+    monkeypatch.setattr(notifications_module, "send_smtp_message", lambda *a, **k: sent.append(1))
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 
     async with db_session_factory() as db:
@@ -193,7 +193,7 @@ async def test_condition_re_fires_after_a_false_true_cycle(db_session_factory, m
     sent: list[object] = []
     import app.services.notifications as notifications_module
 
-    monkeypatch.setattr(notifications_module, "_send_smtp_message", lambda *a, **k: sent.append(1))
+    monkeypatch.setattr(notifications_module, "send_smtp_message", lambda *a, **k: sent.append(1))
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 
     async with db_session_factory() as db:

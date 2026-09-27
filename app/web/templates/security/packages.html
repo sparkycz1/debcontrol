@@ -1,20 +1,20 @@
 {% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
 
 {% block title %}{{ t(request, "machines.actions.package_search") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>{{ t(request, "machines.actions.package_search") }}</h1>
-    <div class="page-header-actions">
-      <a class="button button-secondary" href="/machines">{{ t(request, "machine.package_search.back") }}</a>
-    </div>
+    <h1>{{ t(request, "nav.security") }}</h1>
   </div>
+  {{ render_tabs(tabs, active_tab) }}
 
   <p class="hint">
     {{ t(request, "machine.package_search.hint") }}
   </p>
 
-  <form method="get" action="/machines/package-search" class="search-form">
+  <form method="get" action="/security/packages" class="search-form">
     <input type="search" name="q" value="{{ q }}" placeholder="{{ t(request, 'machine.package_search.placeholder') }}" autofocus>
     <select name="pkg_source">
       <option value="" {% if not pkg_source %}selected{% endif %}>{{ t(request, "machine.packages.all_sources") }}</option>

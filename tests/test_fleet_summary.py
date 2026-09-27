@@ -149,7 +149,7 @@ async def test_notify_fleet_summary_generated_recipient(db_session_factory, monk
 
     import app.services.notifications as notifications_module
 
-    monkeypatch.setattr(notifications_module, "_send_smtp_message", _fake_send)
+    monkeypatch.setattr(notifications_module, "send_smtp_message", _fake_send)
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
     fake = _FakeSummaryClient("All quiet.")
     monkeypatch.setattr(ai_jobs, "build_client", lambda config: fake)

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{{ t(request, "maintenance.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% macro scope(w) -%}
   {%- if w.all_machines -%}
@@ -33,14 +34,14 @@
           {% if can_manage %}
             <td class="container-actions">
               {% if show_actions %}
-                <a class="button button-secondary log-small-button" href="/notifications/maintenance/{{ w.id }}/edit">{{ t(request, "maintenance.edit") }}</a>
-                <form method="post" action="/notifications/maintenance/{{ w.id }}/end" class="inline-form"
+                <a class="button button-secondary log-small-button" href="/scheduling/maintenance/{{ w.id }}/edit">{{ t(request, "maintenance.edit") }}</a>
+                <form method="post" action="/scheduling/maintenance/{{ w.id }}/end" class="inline-form"
                       data-confirm="{{ t(request, 'maintenance.end_confirm', name=w.name) }}">
                   <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
                   <button type="submit" class="button button-secondary log-small-button">{{ t(request, "maintenance.end_now") }}</button>
                 </form>
               {% endif %}
-              <form method="post" action="/notifications/maintenance/{{ w.id }}/delete" class="inline-form"
+              <form method="post" action="/scheduling/maintenance/{{ w.id }}/delete" class="inline-form"
                     data-confirm="{{ t(request, 'maintenance.delete_confirm', name=w.name) }}">
                 <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
                 <button type="submit" class="button button-danger log-small-button">{{ t(request, "maintenance.delete") }}</button>
@@ -55,12 +56,12 @@
 
 {% block content %}
   {% set can_manage = request.state.user.has_permission('notification.manage') %}
-  <p class="hint"><a href="/notifications">← {{ t(request, "notifications.title") }}</a></p>
+  <p class="hint"><a href="/scheduling">← {{ t(request, "nav.scheduling") }}</a></p>
   <div class="page-header">
     <h1>{{ t(request, "maintenance.title") }}</h1>
     {% if can_manage %}
       <div class="page-header-actions">
-        <a class="button" href="/notifications/maintenance/new">{{ t(request, "maintenance.add") }}</a>
+        <a class="button" href="/scheduling/maintenance/new">{{ t(request, "maintenance.add") }}</a>
       </div>
     {% endif %}
   </div>

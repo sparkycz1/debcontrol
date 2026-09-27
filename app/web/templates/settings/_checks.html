@@ -1,10 +1,23 @@
-  <section class="panel-group">
-    <h2>{{ t(request, "settings.checks.category_reachability") }}</h2>
+  {# One form for the whole tab (POST /settings/checks) — one Save at the
+     bottom instead of one per section. The per-section endpoints still
+     exist for anything that posts to them directly. #}
+  {% if request.query_params.get('saved') %}
+    <div class="alert alert-ok"><p>{{ t(request, "settings.saved") }}</p></div>
+  {% endif %}
 
-    <div class="panel">
-      <form method="post" action="/settings/background-checks" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% macro retention_input(name, placeholder_key) %}
+    <input type="number" id="{{ name }}" name="{{ name }}" min="0" step="1"
+           placeholder="{{ t(request, placeholder_key) }}"
+           value="{{ app_settings[name] if app_settings[name] is not none else '' }}">
+  {% endmacro %}
 
+  <form method="post" action="/settings/checks" class="form form-wide" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="hint">{{ t(request, "settings.checks.background_checks_hint") }}</p>
+
+    <section class="panel-group">
+      <h2>{{ t(request, "settings.checks.category_reachability") }}</h2>
+      <div class="panel">
         <label for="ssh_connect_timeout">{{ t(request, "settings.checks.ssh_connect_timeout") }}</label>
         <input type="number" id="ssh_connect_timeout" name="ssh_connect_timeout" min="1" max="300" step="1"
                value="{{ app_settings.ssh_connect_timeout }}">
@@ -19,129 +32,53 @@
         <input type="number" id="reachability_check_concurrency" name="reachability_check_concurrency"
                min="1" max="1000" step="1" value="{{ app_settings.reachability_check_concurrency }}">
         <p class="hint">{{ t(request, "settings.checks.reachability_concurrency_hint") }}</p>
+      </div>
+    </section>
 
-        <!-- The remaining background-checks fields (update timeout, facts refresh, monitoring
-             interval) live in the Updates/Monitoring categories below but are part of this
-             same form/POST — see settings.checks.background_checks_hint. -->
-        <input type="hidden" name="update_timeout_seconds" value="{{ app_settings.update_timeout_seconds }}">
-        <input type="hidden" name="facts_refresh_interval_seconds"
-               value="{{ app_settings.facts_refresh_interval_seconds }}">
-        <input type="hidden" name="monitoring_interval_seconds" value="{{ app_settings.monitoring_interval_seconds }}">
-        <p class="hint">{{ t(request, "settings.checks.background_checks_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "settings.checks.save_background_checks") }}</button>
-      </form>
-    </div>
-  </section>
-
-  <section class="panel-group">
-    <h2>{{ t(request, "settings.checks.category_monitoring") }}</h2>
-
-    <div class="panel">
-      <form method="post" action="/settings/background-checks" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="ssh_connect_timeout" value="{{ app_settings.ssh_connect_timeout }}">
-        <input type="hidden" name="update_timeout_seconds" value="{{ app_settings.update_timeout_seconds }}">
-        <input type="hidden" name="reachability_check_interval_seconds"
-               value="{{ app_settings.reachability_check_interval_seconds }}">
-        <input type="hidden" name="facts_refresh_interval_seconds"
-               value="{{ app_settings.facts_refresh_interval_seconds }}">
-        <input type="hidden" name="reachability_check_concurrency"
-               value="{{ app_settings.reachability_check_concurrency }}">
-
+    <section class="panel-group">
+      <h2>{{ t(request, "settings.checks.category_monitoring") }}</h2>
+      <div class="panel">
         <label for="monitoring_interval_seconds">{{ t(request, "settings.checks.monitoring_sample") }}</label>
         <input type="number" id="monitoring_interval_seconds" name="monitoring_interval_seconds"
                min="10" max="86400" step="1" value="{{ app_settings.monitoring_interval_seconds }}">
         <p class="hint">{{ t(request, "settings.checks.monitoring_sample_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "settings.checks.save_background_checks") }}</button>
-      </form>
-    </div>
 
-    <div class="panel">
-      <h3>{{ t(request, "settings.checks.monitoring_history") }}</h3>
-      <p class="hint">{{ t(request, "settings.checks.monitoring_history_hint") }}</p>
-      <form method="post" action="/settings/monitoring-retention" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h3>{{ t(request, "settings.checks.monitoring_history") }}</h3>
+        <p class="hint">{{ t(request, "settings.checks.monitoring_history_hint") }}</p>
         <label for="monitoring_history_retention_days">{{ t(request, "settings.checks.keep_monitoring_days") }}</label>
-        <input type="number" id="monitoring_history_retention_days" name="retention_days" min="0" step="1"
-               placeholder="{{ t(request, 'settings.checks.forever') }}"
-               value="{{ app_settings.monitoring_history_retention_days if app_settings.monitoring_history_retention_days is not none else '' }}">
+        {{ retention_input("monitoring_history_retention_days", "settings.checks.forever") }}
         <p class="hint">{{ t(request, "settings.checks.keep_monitoring_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
-      </form>
-    </div>
 
-    <div class="panel">
-      <h3>{{ t(request, "settings.checks.monitoring_downsampling") }}</h3>
-      <p class="hint">{{ t(request, "settings.checks.monitoring_downsampling_hint") }}</p>
-      <form method="post" action="/settings/monitoring-downsampling" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h3>{{ t(request, "settings.checks.monitoring_downsampling") }}</h3>
+        <p class="hint">{{ t(request, "settings.checks.monitoring_downsampling_hint") }}</p>
         <label for="monitoring_downsample_after_days">{{ t(request, "settings.checks.downsample_after_days") }}</label>
-        <input type="number" id="monitoring_downsample_after_days" name="after_days" min="0" step="1"
-               placeholder="{{ t(request, 'settings.checks.downsample_disabled') }}"
-               value="{{ app_settings.monitoring_downsample_after_days if app_settings.monitoring_downsample_after_days is not none else '' }}">
+        {{ retention_input("monitoring_downsample_after_days", "settings.checks.downsample_disabled") }}
         <label for="monitoring_downsample_interval_minutes">{{ t(request, "settings.checks.downsample_interval_minutes") }}</label>
-        <input type="number" id="monitoring_downsample_interval_minutes" name="interval_minutes" min="1" max="1440" step="1"
-               value="{{ app_settings.monitoring_downsample_interval_minutes }}">
-        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
-      </form>
-    </div>
-  </section>
+        <input type="number" id="monitoring_downsample_interval_minutes" name="monitoring_downsample_interval_minutes"
+               min="1" max="1440" step="1" value="{{ app_settings.monitoring_downsample_interval_minutes }}">
+      </div>
+    </section>
 
-  <section class="panel-group">
-    <h2>{{ t(request, "settings.checks.category_notifications") }}</h2>
-
-    <div class="panel">
-      <form method="post" action="/settings/background-checks" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="ssh_connect_timeout" value="{{ app_settings.ssh_connect_timeout }}">
-        <input type="hidden" name="update_timeout_seconds" value="{{ app_settings.update_timeout_seconds }}">
-        <input type="hidden" name="reachability_check_interval_seconds"
-               value="{{ app_settings.reachability_check_interval_seconds }}">
-        <input type="hidden" name="facts_refresh_interval_seconds"
-               value="{{ app_settings.facts_refresh_interval_seconds }}">
-        <input type="hidden" name="monitoring_interval_seconds" value="{{ app_settings.monitoring_interval_seconds }}">
-        <input type="hidden" name="reachability_check_concurrency"
-               value="{{ app_settings.reachability_check_concurrency }}">
-
-        <label for="notification_condition_check_interval_seconds">
-          {{ t(request, "settings.checks.condition_check_interval") }}
-        </label>
+    <section class="panel-group">
+      <h2>{{ t(request, "settings.checks.category_notifications") }}</h2>
+      <div class="panel">
+        <label for="notification_condition_check_interval_seconds">{{ t(request, "settings.checks.condition_check_interval") }}</label>
         <input type="number" id="notification_condition_check_interval_seconds"
                name="notification_condition_check_interval_seconds" min="10" max="86400" step="1"
                value="{{ app_settings.notification_condition_check_interval_seconds }}">
         <p class="hint">{{ t(request, "settings.checks.condition_check_interval_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "settings.checks.save_background_checks") }}</button>
-      </form>
-    </div>
 
-    <div class="panel">
-      <h3>{{ t(request, "settings.checks.notification_log_history") }}</h3>
-      <p class="hint">{{ t(request, "settings.checks.notification_log_hint") }}</p>
-      <form method="post" action="/settings/notification-log-retention" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h3>{{ t(request, "settings.checks.notification_log_history") }}</h3>
+        <p class="hint">{{ t(request, "settings.checks.notification_log_hint") }}</p>
         <label for="notification_log_retention_days">{{ t(request, "settings.checks.keep_notification_log_days") }}</label>
-        <input type="number" id="notification_log_retention_days" name="retention_days" min="0" step="1"
-               placeholder="{{ t(request, 'settings.checks.forever') }}"
-               value="{{ app_settings.notification_log_retention_days if app_settings.notification_log_retention_days is not none else '' }}">
+        {{ retention_input("notification_log_retention_days", "settings.checks.forever") }}
         <p class="hint">{{ t(request, "settings.checks.keep_notification_log_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
-      </form>
-    </div>
-  </section>
+      </div>
+    </section>
 
-  <section class="panel-group">
-    <h2>{{ t(request, "settings.checks.category_updates") }}</h2>
-
-    <div class="panel">
-      <form method="post" action="/settings/background-checks" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="ssh_connect_timeout" value="{{ app_settings.ssh_connect_timeout }}">
-        <input type="hidden" name="reachability_check_interval_seconds"
-               value="{{ app_settings.reachability_check_interval_seconds }}">
-        <input type="hidden" name="monitoring_interval_seconds" value="{{ app_settings.monitoring_interval_seconds }}">
-        <input type="hidden" name="reachability_check_concurrency"
-               value="{{ app_settings.reachability_check_concurrency }}">
-
+    <section class="panel-group">
+      <h2>{{ t(request, "settings.checks.category_updates") }}</h2>
+      <div class="panel">
         <label for="update_timeout_seconds">{{ t(request, "settings.checks.update_timeout") }}</label>
         <input type="number" id="update_timeout_seconds" name="update_timeout_seconds" min="60" max="14400" step="1"
                value="{{ app_settings.update_timeout_seconds }}">
@@ -151,39 +88,27 @@
         <input type="number" id="facts_refresh_interval_seconds" name="facts_refresh_interval_seconds"
                min="60" max="604800" step="1" value="{{ app_settings.facts_refresh_interval_seconds }}">
         <p class="hint">{{ t(request, "settings.checks.facts_refresh_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "settings.checks.save_background_checks") }}</button>
-      </form>
-    </div>
 
-    <div class="panel">
-      <h3>{{ t(request, "settings.checks.update_run_history") }}</h3>
-      <p class="hint">{{ t(request, "settings.checks.update_run_hint") }}</p>
-      <form method="post" action="/settings/update-run-retention" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h3>{{ t(request, "settings.checks.update_run_history") }}</h3>
+        <p class="hint">{{ t(request, "settings.checks.update_run_hint") }}</p>
         <label for="machine_update_run_retention_days">{{ t(request, "settings.checks.keep_update_run_days") }}</label>
-        <input type="number" id="machine_update_run_retention_days" name="retention_days" min="0" step="1"
-               placeholder="{{ t(request, 'settings.checks.forever') }}"
-               value="{{ app_settings.machine_update_run_retention_days if app_settings.machine_update_run_retention_days is not none else '' }}">
+        {{ retention_input("machine_update_run_retention_days", "settings.checks.forever") }}
         <p class="hint">{{ t(request, "settings.checks.keep_update_run_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
-      </form>
-    </div>
-  </section>
+      </div>
+    </section>
 
-  <section class="panel-group">
-    <h2>{{ t(request, "settings.checks.category_dashboard") }}</h2>
-
-    <div class="panel">
-      <h3>{{ t(request, "settings.checks.dashboard_trends") }}</h3>
-      <p class="hint">{{ t(request, "settings.checks.dashboard_trends_hint") }}</p>
-      <form method="post" action="/settings/dashboard-trends-retention" class="form" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <section class="panel-group">
+      <h2>{{ t(request, "settings.checks.category_dashboard") }}</h2>
+      <div class="panel">
+        <h3>{{ t(request, "settings.checks.dashboard_trends") }}</h3>
+        <p class="hint">{{ t(request, "settings.checks.dashboard_trends_hint") }}</p>
         <label for="dashboard_trends_retention_days">{{ t(request, "settings.checks.keep_snapshots_days") }}</label>
-        <input type="number" id="dashboard_trends_retention_days" name="retention_days" min="0" step="1"
-               placeholder="{{ t(request, 'settings.checks.forever') }}"
-               value="{{ app_settings.dashboard_trends_retention_days if app_settings.dashboard_trends_retention_days is not none else '' }}">
+        {{ retention_input("dashboard_trends_retention_days", "settings.checks.forever") }}
         <p class="hint">{{ t(request, "settings.checks.keep_snapshots_hint") }}</p>
-        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
-      </form>
+      </div>
+    </section>
+
+    <div class="form-actions-sticky">
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </div>
-  </section>
+  </form>

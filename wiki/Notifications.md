@@ -420,7 +420,8 @@ this never affects whether the condition itself fires.
 
 ## Maintenance windows: muting notifications during planned work
 
-**Notifications → Maintenance windows** (`/notifications/maintenance`;
+**Scheduling → Maintenance windows** (`/scheduling/maintenance`; the old
+`/notifications/maintenance` URLs redirect there; still
 `notification.view` to see, `notification.manage` to schedule) — a named
 time range (at most 31 days) covering **all machines**, chosen **machine
 groups** and/or individual **machines**. While a window is active, every
@@ -439,6 +440,13 @@ into a muted group mid-window is muted too.
   that became true during the window and stays true afterwards doesn't
   re-announce itself once the window ends — it fires again only after it
   clears and trips again.
+- **Pause scheduled tasks** (`pause_scheduled_tasks`, ticked by default
+  for a new window, off for windows created before 0.77.0): while the
+  window is active, scheduled tasks skip the covered machines — skipped,
+  not queued for later. The run's summary says how many were paused
+  (`app.scheduling.jobs._run_scheduled_task` via
+  `maintenance_windows.machines_paused_for_scheduling`); manual actions
+  are never blocked.
 - **End now** finishes an active window early (or cancels an upcoming
   one), keeping it in the list as ended; **Delete** removes it.
 - A machine's Overview tab shows a banner while it's in maintenance.

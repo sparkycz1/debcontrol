@@ -8,7 +8,7 @@ import json
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import mistune
@@ -18,6 +18,7 @@ from markupsafe import Markup
 
 from app.core.config import get_settings
 from app.core.version import APP_VERSION, get_git_commit
+from app.db.models.role import Permission
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
 from app.services import fleet_overview
@@ -25,6 +26,9 @@ from app.web import charts
 from app.web.branding import favicon_href, logo_src
 from app.web.flash import read_flash
 from app.web.os_logos import badge_for
+
+if TYPE_CHECKING:
+    from app.db.models.user import User
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -229,6 +233,29 @@ def audit_text(
 
 
 templates.env.globals["audit_text"] = audit_text
+
+
+def smart_attr_label(request: Request, name: str) -> str:
+    """A S.M.A.R.T. attribute's readable name in the reader's language —
+    `smartctl` reports ATA attributes as `Reallocated_Sector_Ct` and the
+    NVMe health log as `CriticalWarning` (see `app.ssh.smart`); both
+    normalize to one `smart.attr.<lowercase letters and digits>` key. An
+    attribute without a translation keeps its original name."""
+    key = "smart.attr." + "".join(ch for ch in name.lower() if ch.isalnum())
+    label = t(request, key)
+    return name if label == key else label
+
+
+templates.env.globals["smart_attr_label"] = smart_attr_label
+
+
+def _permitted_for(permission: str, user: User) -> bool:
+    """`{{ perms | select('permitted_for', user) }}` — Jinja test form of
+    `User.has_permission`, for a nav link gated on any of several."""
+    return user.has_permission(Permission(permission))
+
+
+templates.env.tests["permitted_for"] = _permitted_for
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"

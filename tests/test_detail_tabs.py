@@ -79,18 +79,20 @@ async def test_machine_updates_tab_has_the_trigger_form_and_history(client, db_s
     assert f'hx-post="/machines/{machine_id}/check-updates"' in response.text
 
 
-async def test_machine_overview_has_reboot_and_shutdown_links(client, db_session_factory):
-    """Reboot/shut down live directly on Overview — there's no separate
-    "Power" tab any more (see `machines._machine_tabs`)."""
+async def test_machine_settings_has_reboot_and_shutdown_links(client, db_session_factory):
+    """Reboot/shut down live in the Settings tab's danger zone, next to
+    Delete — not on Overview, where they sat among read-only facts."""
     await client.get("/machines/new")
     csrf_token = client.cookies.get("csrftoken")
     machine_id = await _create_machine(client, csrf_token, name="powertab")
     await _pin_host_key(db_session_factory, machine_id)
 
-    response = await client.get(f"/machines/{machine_id}")
+    overview = await client.get(f"/machines/{machine_id}")
+    response = await client.get(f"/machines/{machine_id}/edit")
     assert response.status_code == 200
     assert f'href="/machines/{machine_id}/power/reboot"' in response.text
     assert f'href="/machines/{machine_id}/power/shutdown"' in response.text
+    assert f'href="/machines/{machine_id}/power/reboot"' not in overview.text
 
 
 async def test_machine_overview_hides_power_without_permission(

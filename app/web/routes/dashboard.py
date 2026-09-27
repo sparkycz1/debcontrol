@@ -7,6 +7,8 @@ already hides links a role can't use.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, time
+
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,7 @@ from app.db.session import get_db
 from app.scheduling.targets import task_within_scope
 from app.services.access_scope import allowed_group_ids, count_visible_groups
 from app.services.dashboard_cache import cached_fleet_stats
+from app.web.routes.fleet import fleet_grid_context
 from app.web.templating import templates
 
 router = APIRouter()
@@ -49,6 +52,8 @@ async def show_dashboard(
             await db.execute(select(func.count()).select_from(PendingMachine))
         ).scalar_one()
         context["machine_stats"] = {**stats, "pending_count": pending_count}
+        # The machine cards at the bottom of the page (formerly /fleet).
+        context.update(await fleet_grid_context(db, user))
 
         # Fleet trends (Task 4) — every retained daily snapshot, oldest
         # first, so the chart partials can draw a left-to-right timeline.
@@ -67,6 +72,11 @@ async def show_dashboard(
             snapshots = list(snapshot_result.scalars().all())
             if len(snapshots) >= _MIN_SNAPSHOTS_FOR_TREND:
                 context["fleet_snapshots"] = snapshots
+                # One point per day, drawn at midnight UTC — the same
+                # hover charts the Monitoring tab uses need datetimes.
+                context["trend_timestamps"] = [
+                    datetime.combine(s.snapshot_date, time.min, tzinfo=UTC) for s in snapshots
+                ]
 
             # Same "unrestricted accounts only" reasoning as fleet_snapshots
             # just above: this is a single fleet-wide report a background

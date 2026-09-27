@@ -103,16 +103,22 @@ directly (only `worker` does).
 - Collapsible mobile nav is a checkbox-driven CSS toggle, not JS — works
   under the strict CSP (no inline scripts), stays keyboard-operable
   (visually hidden via clip/absolute positioning, not `display: none`).
+- Page width: every list, dashboard and machine page uses the wide
+  layout (`{% block main_class %}container-wide{% endblock %}`); only
+  standalone forms (new/edit, account, settings) stay narrow.
+- Machines list bulk actions: a hint until a row is ticked, then the
+  actions with the selected count — routine ones first, Reboot/Shut down
+  set apart at the far end (`.bulk-danger-zone`).
 - Phone widths (≤ 640 px): the theme toggle, account and sign-out fold
   into that same menu; machine/group tabs become one horizontally
   scrollable row; data tables mark secondary columns `.col-optional`
   (hidden there — the Machines table keeps name, status and updates);
-  and a bulk-action bar marked `data-bulk-bar` stays hidden until a row
-  is ticked (`bulk-select.js` toggles `has-selection`).
+  and wide tables tighten their padding.
 - Active nav link computed from `request.url.path` in `base.html`. The
-  header shows the day-to-day pages (Dashboard, Fleet, Machines, Machine
-  groups, Checks, Scheduling, Notifications, AI) directly; account and
-  instance administration (Users, Roles, Audit, Settings, API docs) sits
+  header shows the day-to-day pages (Dashboard, Machines, Security,
+  Machine groups, Checks, Scheduling, Notifications, and AI once a model
+  is enabled) directly; account and instance administration (Users,
+  Roles, Audit, Settings, Backup & restore, API docs) sits
   in one "Administration" menu — a plain `<details>`, so no JS. Each link
   is still shown only with its permission.
 - **Static assets are versioned.** Templates link every CSS/JS file as

@@ -1,16 +1,15 @@
 {% extends "base.html" %}
 {% from "partials/_cve_links.html" import render as render_cves, urgency_badge with context %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
 
 {% block title %}{{ t(request, "security.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
-    <h1>{{ t(request, "security.title") }}</h1>
-    <div class="page-header-actions">
-      <a class="button button-secondary" href="/machines">{{ t(request, "machine.package_search.back") }}</a>
-    </div>
+    <h1>{{ t(request, "nav.security") }}</h1>
   </div>
+  {{ render_tabs(tabs, active_tab) }}
   <p class="hint">{{ t(request, "security.intro") }}</p>
 
   {% if undetailed %}

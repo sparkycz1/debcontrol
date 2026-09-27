@@ -310,15 +310,17 @@ async def test_creating_a_user_writes_an_audit_entry(client):
     assert "role.create" in log.text
 
 
-async def test_machine_overview_links_to_its_own_audit_history(client):
+async def test_machine_history_tab_links_to_its_own_audit_history(client):
     from tests.test_web import _create_machine
 
     await client.get("/machines/new")
     csrf_token = client.cookies.get("csrftoken")
     machine_id = await _create_machine(client, csrf_token, name="linked-machine")
 
-    detail = await client.get(f"/machines/{machine_id}")
-    assert f"/audit?target_type=machine&target_id={machine_id}" in detail.text
+    # The link sits on the History tab (which leaves read-only look-ups
+    # out), not in the Overview header any more.
+    history = await client.get(f"/machines/{machine_id}/history")
+    assert f"/audit?target_type=machine&target_id={machine_id}" in history.text
 
 
 async def test_audit_log_filters_by_exact_machine_target(client, db_session_factory):
