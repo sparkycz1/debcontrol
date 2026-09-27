@@ -30,6 +30,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --- Stage 2: minimal runtime image ------------------------------------------
 FROM python:3.14.7-slim AS runtime
 
+# Lets scripts/upgrade.sh find (and remove) old untagged debcontrol builds.
+LABEL io.debcontrol.image="app"
+
 RUN groupadd --system app && useradd --system --gid app --home-dir /app --create-home app
 
 ENV PATH="/opt/venv/bin:$PATH" \

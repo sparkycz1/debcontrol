@@ -310,7 +310,10 @@ plain `docker` (account in the `docker` group) or `sudo -n docker`
 (onboarding grants it when Docker is installed; that is root-equivalent,
 like the `apt-get` grant). Without access, the tab explains how to grant
 it. Stats come from `docker ps -a` / `docker stats`, network bytes from
-each container's own `/proc/<pid>/net/dev`.
+each container's own `/proc/<pid>/net/dev`. The **All containers** table
+shows name, CPU, memory, network rate (needs two samples, so "—" right
+after a container starts), ports, image and status — colored by the
+healthcheck (hover for it) — plus the actions.
 
 - **Actions** (`action.power`): *Start*, *Stop*, *Restart* per container,
   confirmed; name and action validated before anything runs; audited as
@@ -397,8 +400,8 @@ background (client-side only, no push service).
 
 ### Bulk actions
 
-Selected machines can be updated, checked for updates, rebooted or shut
-down through the same `machine_actions` functions as groups (power needs
+Selected machines can be updated, checked for updates (a notice says on how
+many it started), rebooted or shut down through the same `machine_actions` functions as groups (power needs
 the typed phrase `SELECTED MACHINES`). **Move to group** (`machine.manage`)
 respects the account's scope and is audited as `machines.bulk.group.assign`.
 Bulk tag add/remove is API-only (`POST /api/v1/machines/bulk/tags/{add,remove}`).

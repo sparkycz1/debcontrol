@@ -187,7 +187,12 @@ async def _get_machine_or_404(machine_id: uuid.UUID, db: AsyncSession, user: Use
     # MissingGreenlet during template rendering).
     query = await machines_visible_to(db, user)
     result = await db.execute(
-        query.options(selectinload(Machine.group)).where(Machine.id == machine_id)
+        query.options(selectinload(Machine.group))
+        .where(Machine.id == machine_id)
+        # A route that waited for a background job reloads the machine to
+        # show what the job wrote — without this the session would hand back
+        # the object it already holds, with the values from before the job.
+        .execution_options(populate_existing=True)
     )
     machine = result.scalar_one_or_none()
     if machine is None:
@@ -1001,7 +1006,13 @@ async def bulk_check_updates(
         summary=f"Checked for updates on {len(machines)} selected machine(s)",
         details={"machine_count": len(machines), "skipped": skipped},
     )
-    return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
+    started = len(machines) - skipped
+    notice = t(request, "machines.bulk.check_started", count=started)
+    if skipped:
+        notice += " " + t(request, "machines.bulk.check_skipped", count=skipped)
+    return RedirectResponse(
+        url=f"/machines?bulk_notice={sign_flash(notice)}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/bulk/updates", dependencies=[_updates, Depends(verify_csrf)])
