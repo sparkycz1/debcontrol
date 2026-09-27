@@ -165,13 +165,36 @@ templates.env.globals["secondary_sensors"] = charts.secondary_sensors
 
 
 def proxmox_summary(machine: Any) -> dict[str, Any] | None:
-    """The Proxmox VE / ZFS headline for a machine's Overview — None when
-    it has neither (`app.ssh.proxmox`)."""
-    if not (machine.pve_version or machine.pve_guests is not None or machine.zfs_pools):
+    """The Proxmox VE / Backup Server / Mail Gateway / ZFS headline for a
+    machine's Overview — None when it has none of them
+    (`app.ssh.proxmox`)."""
+    if not machine.has_proxmox_tab:
         return None
     running, total = proxmox.guest_counts(machine.pve_guests)
     backups = machine.pve_backups or {}
+    cluster = machine.pve_cluster or {}
+    pbs = machine.pbs_data or {}
+    pmg = machine.pmg_data or {}
+    stats = pmg.get("stats") or {}
+    datastores = pbs.get("datastores") or []
+    fullest = max(
+        (d for d in datastores if d.get("used_percent") is not None),
+        key=lambda d: d["used_percent"],
+        default=None,
+    )
     return {
+        "product": machine.proxmox_product,
+        "cluster_name": cluster.get("name"),
+        "quorate": cluster.get("quorate"),
+        "pbs": bool(machine.pbs_version),
+        "pbs_fullest": fullest,
+        "pbs_failures": len(proxmox.pbs_failures(machine.pbs_data)),
+        "pmg": bool(machine.pmg_version),
+        "pmg_mail": stats.get("count"),
+        "pmg_spam": (stats.get("spamcount_in") or 0) if stats else None,
+        "pmg_virus": (stats.get("viruscount_in") or 0) if stats else None,
+        "pmg_backlog": proxmox.mail_queue_backlog(machine.pmg_data),
+        "pmg_backlog_warn": proxmox.MAIL_QUEUE_WARN,
         "version": machine.pve_version,
         "has_guests": machine.pve_guests is not None,
         "guests_running": running,

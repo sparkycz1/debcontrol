@@ -179,7 +179,9 @@ machine's latest snapshot at once — handy right after a CVE announcement.
 ## ⚡ System updates and power actions — require root
 
 `apt-mark` (holding a package back) and, on Proxmox VE, `pvesh` (guests,
-storage, backups) are in the same line since 0.78.0 — a machine
+storage, backups) are in the same line since 0.78.0; the Proxmox Backup
+Server and Mail Gateway tools (`proxmox-backup-debug`,
+`proxmox-backup-manager`, `pmgsh`, `postqueue`) since 0.79.0 — a machine
 onboarded earlier simply lacks those two until the line is updated.
 An account connecting **as root** needs none of it: debcontrol never
 calls `sudo` as root.
@@ -195,7 +197,7 @@ only for the apt part — flatpak/snap listing is read-only. See
 - **(Recommended)** Non-root user, scoped passwordless sudo:
   ```
   # /etc/sudoers.d/debcontrol — install with: visudo -cf /etc/sudoers.d/debcontrol
-  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh
+  debcontrol ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh, /usr/bin/proxmox-backup-debug, /usr/sbin/proxmox-backup-debug, /usr/bin/proxmox-backup-manager, /usr/sbin/proxmox-backup-manager, /usr/bin/pmgsh, /usr/sbin/postqueue
   # Only if flatpak/snap are installed and you want them kept updated too:
   debcontrol ALL=(root) NOPASSWD: /usr/bin/flatpak, /usr/bin/snap
   ```

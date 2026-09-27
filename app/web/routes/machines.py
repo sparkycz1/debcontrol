@@ -154,10 +154,9 @@ def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[
     ]
     # Proxmox VE guests/storage/backups and ZFS pools — only where there
     # are any (`app.ssh.proxmox`); a plain ZFS host gets it as "ZFS".
-    if machine.pve_version or machine.pve_guests is not None:
-        tabs.append(("proxmox", "Proxmox", f"{base}/proxmox"))
-    elif machine.zfs_pools:
-        tabs.append(("proxmox", "ZFS", f"{base}/proxmox"))
+    if machine.has_proxmox_tab:
+        label = "Proxmox" if machine.proxmox_product or machine.pve_guests is not None else "ZFS"
+        tabs.append(("proxmox", label, f"{base}/proxmox"))
     tabs += [
         ("monitoring", t(request, "machine.tab.monitoring"), f"{base}/monitoring"),
         ("updates", t(request, "machine.tab.updates"), f"{base}/updates"),
@@ -2670,7 +2669,7 @@ async def machine_proxmox(
     monitoring sample and facts refresh (`app.ssh.proxmox`). A machine with
     none of that redirects to its Overview."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    if not (machine.pve_version or machine.pve_guests is not None or machine.zfs_pools):
+    if not machine.has_proxmox_tab:
         return RedirectResponse(
             url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER
         )
@@ -2688,11 +2687,75 @@ async def machine_proxmox(
             "guests_total": total,
             "unhealthy_pools": proxmox.unhealthy_pools(machine.zfs_pools),
             "last_backup": proxmox.last_backup(machine.pve_backups),
+            "can_power": current_user.has_permission(Permission.ACTION_POWER),
+            "now_epoch": int(datetime.now(UTC).timestamp()),
+            "stale_seconds": proxmox.STALE_BACKUP_SECONDS,
+            "queue_warn": proxmox.MAIL_QUEUE_WARN,
         },
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post(
+    "/{machine_id}/proxmox/guests/{vmid}", dependencies=[_power, Depends(verify_csrf)]
+)
+async def proxmox_guest_action(
+    request: Request,
+    machine_id: uuid.UUID,
+    vmid: int,
+    db: AsyncSession = Depends(get_db),
+    action: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Start / shut down / reboot / stop one VM or container on a Proxmox
+    VE host — same permission as the machine's own power actions, audited
+    as `machine.guest.<action>`."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    app_settings = await get_or_create_app_settings(db)
+    guest = proxmox.find_guest(machine.pve_guests, vmid)
+    error: str | None = None
+    if action not in proxmox.GUEST_ACTIONS or guest is None:
+        error = t(request, "proxmox.guest_action_invalid")
+    else:
+        try:
+            result = await asyncio.to_thread(
+                tasks.run_proxmox_guest_action.delay(str(machine.id), vmid, action).get,
+                timeout=app_settings.ssh_connect_timeout + 90,
+            )
+            if isinstance(result, dict) and not result.get("ok"):
+                error = str(result.get("error") or "Unknown error.")
+        except CeleryTimeoutError:
+            error = str(LocalizedText(request, "common.error.command_timeout"))
+        except Exception as exc:
+            error = str(exc)
+        label = f"{vmid} ({guest.get('name')})" if guest.get("name") else str(vmid)
+        await log_event(
+            db,
+            request=request,
+            action=f"machine.guest.{action}",
+            summary=f'Guest {label} {action} on "{machine.name}"',
+            outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details={"vmid": vmid, **({"error": error} if error else {})},
+        )
+    if error is not None:
+        query = f"guest_error={sign_flash(error)}"
+    else:
+        query = "guest_notice=" + sign_flash(
+            t(
+                request,
+                "proxmox.guest_action_sent",
+                vmid=vmid,
+                action=t(request, f"proxmox.action.{action}"),
+            )
+        )
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/proxmox?{query}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.get("/{machine_id}/history")

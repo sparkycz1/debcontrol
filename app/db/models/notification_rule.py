@@ -124,8 +124,14 @@ class NotificationEventType(enum.StrEnum):
     DISK_FULL_PREDICTED = "machine.disk_full_predicted"
     # a ZFS pool left ONLINE (monitoring sample),
     ZFS_POOL_UNHEALTHY = "machine.zfs_pool_unhealthy"
-    # a Proxmox VE backup (vzdump) task failed (facts refresh).
+    # a Proxmox VE backup (vzdump) task, or a Proxmox Backup Server job
+    # (GC/verify/sync/prune) or task, failed (facts refresh),
     BACKUP_FAILED = "machine.backup_failed"
+    # a Proxmox Mail Gateway's deferred/held queue reached
+    # app.ssh.proxmox.MAIL_QUEUE_WARN messages (facts refresh),
+    MAIL_QUEUE_BACKLOG = "machine.mail_queue_backlog"
+    # a Proxmox VE cluster lost quorum (monitoring sample).
+    CLUSTER_QUORUM_LOST = "machine.cluster_quorum_lost"
 
 
 notification_rule_users = Table(

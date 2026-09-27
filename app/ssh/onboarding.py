@@ -77,7 +77,12 @@ def build_onboarding_command(public_key: str) -> str:
         # apt-mark — holding a package back from updates (0.78.0+);
         # pvesh — reading guests/storage/backups on Proxmox VE (the path
         # simply doesn't exist elsewhere, which sudoers accepts).
-        "/usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh\n"
+        # Proxmox Backup Server / Mail Gateway read-outs (app.ssh.proxmox,
+        # 0.79.0+), under both bin directories since the packages differ.
+        "/usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh, "
+        "/usr/bin/proxmox-backup-debug, /usr/sbin/proxmox-backup-debug, "
+        "/usr/bin/proxmox-backup-manager, /usr/sbin/proxmox-backup-manager, "
+        "/usr/bin/pmgsh, /usr/sbin/postqueue\n"
         "DEBCONTROL_SUDOERS_APT\n"
         f"chmod 440 /etc/sudoers.d/{user}; "
         f"visudo -cf /etc/sudoers.d/{user}; "

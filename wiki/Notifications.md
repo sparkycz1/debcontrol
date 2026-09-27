@@ -113,9 +113,11 @@ Today:
 | `machine.service_failed` | A monitoring sample found systemd units that entered the failed state. | Yes |
 | `machine.disk_full_predicted` | The hourly disk forecast dropped to 7 days or fewer for a filesystem (a condition rule on "days until a filesystem is full" covers any other threshold). | Yes |
 | `machine.zfs_pool_unhealthy` | A monitoring sample found a ZFS pool that left ONLINE. | Yes |
-| `machine.backup_failed` | A facts refresh found a new failed Proxmox VE backup (vzdump) task. | Yes |
+| `machine.backup_failed` | A facts refresh found a new failed Proxmox VE backup (vzdump) task, or a Proxmox Backup Server job (GC/verify/sync/prune) or task that newly failed. | Yes |
+| `machine.mail_queue_backlog` | A Proxmox Mail Gateway's queue reached 50 deferred/held messages. | Yes |
+| `machine.cluster_quorum_lost` | A Proxmox VE cluster went from quorate to not quorate. | Yes |
 
-The six health events above (`app.services.health_events`) fire once, on
+The health events above (`app.services.health_events`) fire once, on
 the transition, and never when the previous state is unknown — a
 machine's first refresh after upgrading debcontrol doesn't page anyone
 about problems that were already there.
@@ -285,7 +287,9 @@ What `{details}` actually contains, per event:
 | `machine.service_failed` | Also `{units}` (comma-separated); `{details}` one unit per line. |
 | `machine.disk_full_predicted` | Also `{mount}` and `{days}`; `{details}` is empty. |
 | `machine.zfs_pool_unhealthy` | Also `{pools}`; `{details}` one `pool: HEALTH explanation` line each. |
-| `machine.backup_failed` | `{details}`: one `guest or job: status` line per failed task. |
+| `machine.backup_failed` | `{details}`: one `guest or job: status` line per failed task or job. |
+| `machine.mail_queue_backlog` | Also `{count}` (deferred + held); `{details}` is empty. |
+| `machine.cluster_quorum_lost` | Also `{cluster}`; `{details}` lists the offline nodes. |
 
 ## Templates: one subject/body pair per event, per your language
 

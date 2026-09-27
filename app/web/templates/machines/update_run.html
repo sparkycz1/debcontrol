@@ -12,3 +12,7 @@
     {% include "partials/update_run_status.html" %}
   </section>
 {% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/run-output.js') }}" defer></script>
+{% endblock %}

@@ -56,7 +56,9 @@ FACTS_COMMAND = (
     # there too) — its own marker is `/etc/pve` (the cluster filesystem
     # mount) or the `pveversion` command, checked first and given priority.
     "echo ===OS_ID===; "
-    "if [ -d /etc/pve ] || command -v pveversion >/dev/null 2>&1; then echo proxmox; "
+    "if [ -d /etc/pve ] || command -v pveversion >/dev/null 2>&1 "
+    "|| command -v proxmox-backup-manager >/dev/null 2>&1 "
+    "|| command -v pmgversion >/dev/null 2>&1; then echo proxmox; "
     "else (grep -m1 '^ID=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"'); fi; "
     "echo ===KERNEL===; uname -r 2>/dev/null; "
     # Proxmox VE ships its kernels as `proxmox-kernel-<ver>-pve-signed`
@@ -179,6 +181,12 @@ class MachineFacts(TypedDict):
     pve_version: str | None
     pve_storage: list[dict[str, Any]] | None
     pve_backups: dict[str, Any] | None
+    pve_failed_tasks: list[dict[str, Any]] | None
+    # Proxmox Backup Server / Mail Gateway (None elsewhere).
+    pbs_version: str | None
+    pbs_data: dict[str, Any] | None
+    pmg_version: str | None
+    pmg_data: dict[str, Any] | None
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -298,6 +306,8 @@ def parse_facts_output(raw: str) -> MachineFacts:
     if virt_raw:
         is_physical = virt_raw == "none"
 
+    pbs_version, pbs_data = proxmox.parse_pbs(sections)
+    pmg_version, pmg_data = proxmox.parse_pmg(sections)
     return MachineFacts(
         hostname=sections.get("HOSTNAME") or None,
         os_version=sections.get("OS") or None,
@@ -326,6 +336,11 @@ def parse_facts_output(raw: str) -> MachineFacts:
             sections.get("PVE_BACKUP_JOBS", ""),
             sections.get("PVE_NOT_BACKED_UP", ""),
         ),
+        pve_failed_tasks=proxmox.parse_failed_tasks(sections.get("PVE_FAILED_TASKS", "")),
+        pbs_version=pbs_version,
+        pbs_data=pbs_data,
+        pmg_version=pmg_version,
+        pmg_data=pmg_data,
     )
 
 
