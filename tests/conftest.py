@@ -30,6 +30,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.ai.config import invalidate_ai_availability
 from app.auth import session_policy
 from app.auth.security import hash_password
 from app.auth.sessions import SESSION_COOKIE_NAME, create_session
@@ -91,8 +92,10 @@ def _fresh_sign_in_policy() -> Iterator[None]:
     seconds; every test gets its own in-memory database, so a policy cached
     from the previous test's settings must never carry over."""
     session_policy.invalidate()
+    invalidate_ai_availability()
     yield
     session_policy.invalidate()
+    invalidate_ai_availability()
 
 
 @pytest.fixture(autouse=True)

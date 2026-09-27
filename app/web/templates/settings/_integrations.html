@@ -75,6 +75,14 @@
              value="{{ app_settings.smtp_from_name or '' }}">
       <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
+    {% if integration_test and integration_test.kind == 'smtp' %}
+      <div class="alert {{ 'alert-ok' if integration_test.ok else 'alert-error' }}"><p>{{ integration_test.message }}</p></div>
+    {% endif %}
+    <form method="post" action="/settings/smtp/test" class="stack-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">{{ t(request, "settings.integrations.test_smtp") }}</button>
+      <span class="hint">{{ t(request, "settings.integrations.test_uses_saved") }}</span>
+    </form>
   </section>
 
   <section class="panel">
@@ -134,6 +142,14 @@
 
       <button type="submit" class="button">{{ t(request, "common.save") }}</button>
     </form>
+    {% if integration_test and integration_test.kind == 'ldap' %}
+      <div class="alert {{ 'alert-ok' if integration_test.ok else 'alert-error' }}"><p>{{ integration_test.message }}</p></div>
+    {% endif %}
+    <form method="post" action="/settings/ldap/test" class="stack-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">{{ t(request, "settings.integrations.test_ldap") }}</button>
+      <span class="hint">{{ t(request, "settings.integrations.test_uses_saved") }}</span>
+    </form>
   </section>
 
   <section class="panel">
@@ -184,6 +200,14 @@
       <p class="hint">{{ t(request, "settings.integrations.scopes_hint") | safe }}</p>
 
       <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+    {% if integration_test and integration_test.kind == 'oidc' %}
+      <div class="alert {{ 'alert-ok' if integration_test.ok else 'alert-error' }}"><p>{{ integration_test.message }}</p></div>
+    {% endif %}
+    <form method="post" action="/settings/oidc/test" class="stack-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">{{ t(request, "settings.integrations.test_oidc") }}</button>
+      <span class="hint">{{ t(request, "settings.integrations.test_uses_saved") }}</span>
     </form>
   </section>
 

@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 
 {% block title %}{{ t(request, "nav.scheduling") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <h1>{{ t(request, "nav.scheduling") }}</h1>
     <div class="page-header-actions">
-      <a class="button button-secondary" href="/scheduling/config/export">{{ t(request, "scheduling.config_import.export") }}</a>
-      <a class="button button-secondary" href="/scheduling/config/import">{{ t(request, "scheduling.config_import.import") }}</a>
+      {% if request.state.user.has_permission('notification.view') %}
+        <a class="button button-secondary" href="/scheduling/maintenance">{{ t(request, "maintenance.title") }}</a>
+      {% endif %}
       <a class="button" href="/scheduling/new">{{ t(request, "scheduling.new") }}</a>
     </div>
   </div>

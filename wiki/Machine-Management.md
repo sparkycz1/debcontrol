@@ -284,7 +284,8 @@ retried on the next check.
 
 The Updates tab lists pending security updates first, with urgency and
 CVE links (Debian's security tracker, or Ubuntu's for an Ubuntu machine).
-**Machines → ⋯ → Security updates** (`/machines/security-updates`,
+**Security → Security updates** (`/security/updates`; the old
+`/machines/security-updates` redirects,
 `machine.view`, scoped like the machine list) groups every pending
 security update across the fleet by package and version, most urgent
 first, with the machines it's pending on — REST:
@@ -578,24 +579,28 @@ from which date the data starts. A check's detail page also has
 **Summarize with AI** (with `ai.access`): a new assistant conversation
 seeded with its status, the last 7 days' numbers and recent failures.
 
-### Fleet page
+### Machine cards on the Dashboard
 
-`/fleet` (nav: **Fleet**, `machine.view`) shows every visible, active
-machine as a compact card — status dot, CPU, RAM, the fullest filesystem,
+The bottom of the Dashboard (`machine.view`; formerly a separate `/fleet`
+page, which now redirects to `/dashboard#fleet`) shows every visible,
+active machine as a compact card — status dot, CPU, RAM, the fullest filesystem,
 the hottest sensor (bare metal), load/cores, uptime, running/total
 containers, pending updates (security ones called out), "reboot
 required" and a "disk full in ~N days" flag when the forecast is under
 30 days. The card's top border takes the worst reading's color (warn at
 75 %, danger at 90 %; temperatures at 70/85 °C; offline or an
 unhealthy/restarting container is always danger; pending security
-updates or a pending reboot are at least warn), and a summary strip
-counts online/offline/needing attention — a danger reading, pending
-security updates or a pending reboot (`FleetRow.needs_attention`). Built by
+updates or a pending reboot are at least warn). The counts above them
+are the Dashboard's own tiles, each a link to the Machines list filtered
+to exactly what it counts (`?status=online|offline|updates|reboot`; the
+security tile opens Security → Security updates).
+`FleetRow.needs_attention` (a danger reading, pending security updates or
+a pending reboot) is still part of `GET /api/v1/fleet`. Built by
 `app/services/fleet_overview.py` from each machine's latest monitoring
 sample — one batched window query for the whole page, the same one the
 Machines list's Cards view uses — plus columns already on `Machine`. The
-grid re-fetches itself every 60 s (htmx `hx-select` against the same
-page); the name filter is client-side. Capped at 500 machines (the
+grid re-fetches itself every 60 s (`GET /fleet/cards`, the
+`partials/fleet_grid.html` fragment); the name filter is client-side. Capped at 500 machines (the
 paginated Machines list covers larger fleets). REST: `GET /api/v1/fleet`.
 
 ### Disk-full forecast
@@ -849,8 +854,9 @@ auth state itself rather than leaving a real password sitting in
 
 ### Fleet-wide package search
 
-**Package search** answers "which machines have *this*, and what
-version" — one query across `MachinePackage`, no new storage. Capped at
+**Security → Package search** (`/security/packages`; the old
+`/machines/package-search` redirects, keeping the query) answers "which
+machines have *this*, and what version" — one query across `MachinePackage`, no new storage. Capped at
 500 rows with a "narrow your search" notice past that.
 
 `MachinePackage.machine` is `viewonly=True` with no `back_populates`

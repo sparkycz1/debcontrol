@@ -22,12 +22,17 @@ from app.ai.base import AiProviderError
 from app.ai.config import (
     get_or_create_ai_provider_configs,
     get_selectable_models,
+    invalidate_ai_availability,
     replace_fetched_models,
 )
 from app.ai.providers import build_client
 from app.audit import client_ip, log_event, verify_chain
 from app.auth import session_policy
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_current_user, require_permission
+from app.auth.ldap import LdapUnavailableError
+from app.auth.ldap import check_connection as ldap_check_connection
+from app.auth.oidc import OidcNotConfiguredError
+from app.auth.oidc import check_discovery as oidc_check_discovery
 from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
@@ -53,7 +58,12 @@ from app.db.models.role import Permission
 from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
-from app.services.settings_limits import BOUNDED_FIELDS, SIGN_IN_POLICY_FIELDS
+from app.services.notifications import send_smtp_message
+from app.services.settings_limits import (
+    AUDIT_ACTION_BY_FIELD,
+    BOUNDED_FIELDS,
+    SIGN_IN_POLICY_FIELDS,
+)
 from app.ssh.identity import (
     activate_pending_identity,
     discard_pending_identity,
@@ -203,6 +213,83 @@ def _parse_bounded_int(
     return value, None
 
 
+# Every field on the Checks & retention tab, with the label key its error
+# message names: whole numbers in a range, then "empty = forever/off" ones.
+_CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
+    ("ssh_connect_timeout", "settings.checks.ssh_connect_timeout"),
+    ("reachability_check_interval_seconds", "settings.checks.reachability_check"),
+    ("reachability_check_concurrency", "settings.checks.reachability_concurrency"),
+    ("monitoring_interval_seconds", "settings.checks.monitoring_sample"),
+    ("monitoring_downsample_interval_minutes", "settings.checks.downsample_interval_minutes"),
+    ("notification_condition_check_interval_seconds", "settings.checks.condition_check_interval"),
+    ("update_timeout_seconds", "settings.checks.update_timeout"),
+    ("facts_refresh_interval_seconds", "settings.checks.facts_refresh"),
+)
+_CHECKS_TAB_RETENTION: tuple[str, ...] = (
+    "monitoring_history_retention_days",
+    "monitoring_downsample_after_days",
+    "notification_log_retention_days",
+    "machine_update_run_retention_days",
+    "dashboard_trends_retention_days",
+)
+
+
+@router.post("/checks", dependencies=[_manage, Depends(verify_csrf)])
+async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    """The whole Checks & retention tab in one save — the same ranges as
+    the per-section endpoints below (`app.services.settings_limits`), all
+    or nothing, and one audit entry per section changed under that
+    section's own action code, exactly like `PATCH /api/v1/settings`. A
+    field the form doesn't send keeps its value."""
+    form = await request.form()
+    app_settings = await get_or_create_app_settings(db)
+    errors: list[str] = []
+    values: dict[str, int | None] = {}
+    for name, label_key in _CHECKS_TAB_BOUNDED:
+        raw = form.get(name)
+        if raw is None:
+            continue
+        minimum, maximum = BOUNDED_FIELDS[name]
+        value, error = _parse_bounded_int(
+            request, str(raw), label=t(request, label_key), minimum=minimum, maximum=maximum
+        )
+        if error:
+            errors.append(error)
+        else:
+            values[name] = value
+    for name in _CHECKS_TAB_RETENTION:
+        raw = form.get(name)
+        if raw is None:
+            continue
+        value, error = _parse_retention_days(request, str(raw))
+        if error:
+            errors.append(error)
+        else:
+            values[name] = value
+    if errors:
+        return await _render_settings(request, db, errors, tab="checks")
+
+    changed = {f: v for f, v in values.items() if getattr(app_settings, f) != v}
+    for field, value in changed.items():
+        setattr(app_settings, field, value)
+    await db.commit()
+
+    by_action: dict[str, dict[str, int | None]] = {}
+    for field, value in changed.items():
+        by_action.setdefault(AUDIT_ACTION_BY_FIELD[field], {})[field] = value
+    for action, details in by_action.items():
+        await log_event(
+            db,
+            request=request,
+            action=action,
+            summary=f"Updated {', '.join(details)}",
+            details=details,
+        )
+    return RedirectResponse(
+        url="/settings?tab=checks&saved=1", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
 @router.post("/background-checks", dependencies=[_manage, Depends(verify_csrf)])
 async def update_background_checks(
     request: Request,
@@ -223,10 +310,9 @@ async def update_background_checks(
     The two timeouts and the concurrency cap are read fresh from the
     database by every task that uses them (see `app/tasks/jobs.py`), so a
     change here takes effect on the very next check — no restart needed.
-    The three intervals are only read by Celery Beat at its own process
-    start (`app.tasks.celery_app`), so a change to one of those needs a
-    restart of the worker/beat services, same as when they were `.env`
-    values — see `settings.checks.background_checks_hint` in the template.
+    The intervals are re-read by Celery Beat about once a minute
+    (`app.tasks.celery_app.SettingInterval`), so those apply within a
+    minute, also without a restart.
 
     Bounds below exist for two reasons: a sane range for the setting
     itself, and — for the two timeouts specifically — staying safely under
@@ -835,6 +921,81 @@ async def push_ssh_key(request: Request, db: AsyncSession = Depends(get_db)) -> 
     )
 
 
+# --- "Test" buttons (Integrations tab) — read-only checks of the *saved*
+# configuration; they change nothing, so nothing is audited. Web-only, like
+# the SMTP/LDAP/OIDC configuration itself (see api_v1_settings.py). ---
+
+
+async def _integration_test_result(
+    request: Request, db: AsyncSession, kind: str, ok: bool, message: str
+) -> Response:
+    return await _render_settings(
+        request,
+        db,
+        [],
+        tab="integrations",
+        integration_test={"kind": kind, "ok": ok, "message": message},
+    )
+
+
+@router.post("/smtp/test", dependencies=[_manage, Depends(verify_csrf)])
+async def run_smtp_test(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Send one plain test e-mail to the signed-in account's own address
+    through the saved relay."""
+    app_settings = await get_or_create_app_settings(db)
+    if not current_user.email:
+        return await _integration_test_result(
+            request, db, "smtp", False, t(request, "settings.integrations.test_no_email")
+        )
+    if not app_settings.smtp_enabled or not app_settings.smtp_host:
+        return await _integration_test_result(
+            request, db, "smtp", False, t(request, "settings.integrations.test_smtp_disabled")
+        )
+    try:
+        await asyncio.to_thread(
+            send_smtp_message,
+            app_settings,
+            current_user.email,
+            "debcontrol: test e-mail",
+            "This is a test e-mail from debcontrol's Settings page. The SMTP relay works.",
+        )
+    except Exception as exc:  # smtplib/ssl/socket errors — all "didn't send"
+        return await _integration_test_result(request, db, "smtp", False, str(exc))
+    return await _integration_test_result(
+        request,
+        db,
+        "smtp",
+        True,
+        t(request, "settings.integrations.test_smtp_sent", email=current_user.email),
+    )
+
+
+@router.post("/ldap/test", dependencies=[_manage, Depends(verify_csrf)])
+async def run_ldap_test(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    try:
+        await ldap_check_connection(await get_or_create_app_settings(db))
+    except LdapUnavailableError as exc:
+        return await _integration_test_result(request, db, "ldap", False, str(exc))
+    return await _integration_test_result(
+        request, db, "ldap", True, t(request, "settings.integrations.test_ldap_ok")
+    )
+
+
+@router.post("/oidc/test", dependencies=[_manage, Depends(verify_csrf)])
+async def run_oidc_test(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    try:
+        issuer = await oidc_check_discovery(await get_or_create_app_settings(db))
+    except (OidcNotConfiguredError, ValueError) as exc:
+        return await _integration_test_result(request, db, "oidc", False, str(exc))
+    return await _integration_test_result(
+        request, db, "oidc", True, t(request, "settings.integrations.test_oidc_ok", issuer=issuer)
+    )
+
+
 @router.post("/ldap", dependencies=[_manage, Depends(verify_csrf)])
 async def update_ldap_settings(
     request: Request,
@@ -1122,6 +1283,7 @@ async def update_ai_provider(
         config.base_url = url or None
     await db.commit()
 
+    invalidate_ai_availability()
     await log_event(
         db,
         request=request,
@@ -1205,6 +1367,7 @@ async def update_ai_models(
         model.enabled = model.model_id in selected
     await db.commit()
 
+    invalidate_ai_availability()
     await log_event(
         db,
         request=request,

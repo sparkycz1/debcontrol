@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{{ t(request, "notifications.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -8,11 +9,6 @@
     <div>
       <a class="button button-secondary" href="/notifications/templates">{{ t(request, "notifications.templates_link") }}</a>
       <a class="button button-secondary" href="/notifications/history">{{ t(request, "notifications.history_link") }}</a>
-      <a class="button button-secondary" href="/notifications/maintenance">{{ t(request, "maintenance.title") }}</a>
-      {% if rules %}
-        <a class="button button-secondary" href="/notifications/rules/export">{{ t(request, "notifications.rule.export_all_yaml") }}</a>
-      {% endif %}
-      <a class="button button-secondary" href="/notifications/rules/import">{{ t(request, "notifications.rule.import_yaml") }}</a>
       <a class="button" href="/notifications/rules/new">{{ t(request, "notifications.add_rule") }}</a>
     </div>
   </div>

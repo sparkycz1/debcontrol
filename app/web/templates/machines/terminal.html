@@ -2,6 +2,7 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "machine.terminal.title") }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet" href="{{ static_url('css/xterm.css') }}">

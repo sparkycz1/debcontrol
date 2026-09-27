@@ -20,6 +20,7 @@ class MaintenanceWindowSave(BaseModel):
     starts_at: datetime
     ends_at: datetime
     all_machines: bool = False
+    pause_scheduled_tasks: bool = False
     machine_group_ids: list[uuid.UUID] = Field(default_factory=list)
     machine_ids: list[uuid.UUID] = Field(default_factory=list)
 

@@ -72,12 +72,12 @@ async def test_fleet_page_counts_and_shows_pending_updates(client, db_session_fa
         machine.security_upgradable_count = 1
         await db.commit()
 
-    response = await client.get("/fleet")
+    response = await client.get("/dashboard")
 
     assert response.status_code == 200
     assert "Updates</span> 3 (1 sec)" in response.text
-    # The "needs attention" tile counts it.
-    assert '<span class="fleet-stat-value fleet-danger">1</span>' in response.text
+    # The security tile links to the Security section.
+    assert 'href="/security/updates"' in response.text
 
 
 # --- Security updates page -------------------------------------------------
@@ -108,7 +108,7 @@ async def test_security_page_lists_machines_without_package_details(client, db_s
         machine.apt_upgradable_packages = [{"name": "libc6", "new_version": "2"}]
         await db.commit()
 
-    response = await client.get("/machines/security-updates")
+    response = await client.get("/security/updates")
 
     assert response.status_code == 200
     assert f'href="/machines/{machine_id}/updates"' in response.text

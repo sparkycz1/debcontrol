@@ -82,7 +82,6 @@ from app.services.saved_views import (
     delete_saved_view,
     list_saved_views,
 )
-from app.services.security_updates import load_security_overview_with_gaps
 from app.ssh import logs as ssh_logs
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
@@ -943,68 +942,17 @@ async def import_machine_config_submit(
     )
 
 
-_PACKAGE_SEARCH_LIMIT = 500
-
-
 @router.get("/security-updates")
-async def security_updates(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Response:
-    """Every pending apt security update across the visible fleet, grouped
-    by package and version, with the CVEs it fixes and the machines it's
-    pending on — see `app.services.security_updates`."""
-    rows, undetailed = await load_security_overview_with_gaps(
-        db, await machines_visible_to(db, current_user)
-    )
-    return templates.TemplateResponse(
-        request, "machines/security_updates.html", {"rows": rows, "undetailed": undetailed}
-    )
+async def security_updates_moved(request: Request) -> Response:
+    """Moved to Security → Security updates (`app.web.routes.security`)."""
+    return RedirectResponse(url="/security/updates", status_code=308)
 
 
 @router.get("/package-search")
-async def package_search(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    q: str = "",
-    pkg_source: str = "",
-) -> Response:
-    """Fleet-wide "who has package X installed, and what version" — the
-    other direction from the per-machine Installed packages panel. Useful
-    after a CVE announcement: search the name, see every machine and
-    version at once instead of checking machines one by one."""
-    results: list[MachinePackage] = []
-    truncated = False
-    if q.strip():
-        # Scoped by joining the machine each row belongs to — a restricted
-        # user searching fleet-wide must not learn which packages sit on a
-        # machine they can't otherwise see.
-        visible_ids = (await machines_visible_to(db, current_user)).with_only_columns(
-            Machine.id
-        )
-        query = (
-            select(MachinePackage)
-            .options(selectinload(MachinePackage.machine))
-            .where(
-                MachinePackage.name.ilike(f"%{q.strip()}%"),
-                MachinePackage.machine_id.in_(visible_ids),
-            )
-        )
-        if pkg_source in {source.value for source in PackageSource}:
-            query = query.where(MachinePackage.source == PackageSource(pkg_source))
-        query = query.order_by(MachinePackage.name).limit(_PACKAGE_SEARCH_LIMIT + 1)
-        result = await db.execute(query)
-        results = list(result.scalars().all())
-        truncated = len(results) > _PACKAGE_SEARCH_LIMIT
-        results = results[:_PACKAGE_SEARCH_LIMIT]
-
-    return templates.TemplateResponse(
-        request,
-        "machines/package_search.html",
-        {"q": q, "pkg_source": pkg_source, "results": results, "truncated": truncated},
-    )
+async def package_search_moved(request: Request) -> Response:
+    """Moved to Security → Package search — the query string is kept."""
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=f"/security/packages{query}", status_code=308)
 
 
 async def _get_machines_by_ids(

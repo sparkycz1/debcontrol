@@ -43,7 +43,8 @@ async def test_settings_patch_validates_saves_and_audits(client, db_session_fact
         headers=headers,
     )
     assert ok.status_code == 200, ok.text
-    assert ok.json()["needs_restart"] == ["monitoring_interval_seconds"]
+    # Beat follows interval changes live now — nothing needs a restart.
+    assert ok.json()["needs_restart"] == []
 
     read = (await client.get("/api/v1/settings", headers=headers)).json()
     assert read["ssh_connect_timeout"] == 20

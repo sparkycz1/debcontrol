@@ -201,7 +201,7 @@ async def test_restricted_package_search_never_reaches_other_groups(
         await db.commit()
 
     await login_as(client, permissions=_ALL_PERMISSIONS, group_ids={seeded.group_a})
-    page = await client.get("/machines/package-search?q=scopetest-pkg")
+    page = await client.get("/security/packages?q=scopetest-pkg")
     assert page.status_code == 200
     assert "machine-a" in page.text
     assert "machine-b" not in page.text

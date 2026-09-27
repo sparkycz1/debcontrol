@@ -301,7 +301,7 @@ async def list_machines_api(
     group: str = "",
 ) -> list[dict[str, object]]:
     """Same filters as the Machines page: `tag` (repeatable, `tag_mode=and`
-    to require all), `status` (offline / updates / security / reboot /
+    to require all), `status` (online / offline / updates / security / reboot /
     changed / unconfirmed) and `group` (a group id, or `none`)."""
     query = (await machines_visible_to(db, user)).options(selectinload(Machine.group))
     query = apply_tag_filter(query, tag, tag_mode if tag_mode == "and" else "or")

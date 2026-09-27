@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{{ t(request, "nav.ai") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -22,7 +23,7 @@
         <select id="provider_model" name="provider_model">
           {% for provider, model in selectable_models %}
             <option value="{{ provider.id }}:{{ model.model_id }}">
-              {{ provider.kind.value }} — {{ model.model_id }}
+              {{ t(request, "ai.provider." ~ provider.kind.value) }} — {{ model.model_id }}
             </option>
           {% endfor %}
         </select>

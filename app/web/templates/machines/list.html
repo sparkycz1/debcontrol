@@ -54,14 +54,10 @@
       <details class="actions-menu">
         <summary class="button button-secondary">{{ t(request, 'machines.actions.more') }}</summary>
         <div class="actions-menu-list">
-          <a href="/machines/package-search">{{ t(request, 'machines.actions.package_search') }}</a>
-          <a href="/machines/security-updates">{{ t(request, 'security.title') }}</a>
           {# Keeps the current search/tag filter (a stray `page` is ignored). #}
           <a href="/machines/inventory.csv{% if request.url.query %}?{{ request.url.query }}{% endif %}">{{ t(request, 'machines.actions.export_inventory') }}</a>
           <a href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
-          <a href="/machines/config/export?format=json">{{ t(request, 'machines.actions.export_json') }}</a>
-          <a href="/machines/config/export?format=csv">{{ t(request, 'machines.actions.export_csv') }}</a>
-          <a href="/machines/config/import">{{ t(request, 'machines.actions.import_config') }}</a>
+          <a href="/backup">{{ t(request, 'backup.title') }}</a>
         </div>
       </details>
       <a class="button" href="/machines/new">{{ t(request, 'machines.actions.add') }}</a>
@@ -298,8 +294,12 @@
         </table>
       {% endif %}
 
-      <div class="page-header-actions" id="bulk-actions-bar" data-bulk-bar="machine_ids">
-        <span class="hint">{{ t(request, 'machines.bulk.with_selected') }}</span>
+      {# Routine actions first; the power actions sit apart at the far end.
+         Until a row is ticked only the hint shows (bulk-select.js). #}
+      <div class="bulk-bar" id="bulk-actions-bar" data-bulk-bar="machine_ids">
+        <p class="hint bulk-when-empty">{{ t(request, 'machines.bulk.select_hint') }}</p>
+        <div class="bulk-when-selected">
+        <span class="hint">{{ t(request, 'machines.bulk.with_selected') }} <strong data-bulk-count>0</strong></span>
         <button type="submit" formaction="/machines/bulk/check-updates" class="button button-secondary">
           {{ t(request, 'machines.bulk.check_updates') }}
         </button>
@@ -308,12 +308,6 @@
           <option value="full_upgrade">full-upgrade</option>
         </select>
         <button type="submit" formaction="/machines/bulk/updates" class="button">{{ t(request, 'machines.bulk.run_update') }}</button>
-        <button type="submit" formaction="/machines/bulk/power-confirm/reboot" class="button button-secondary">
-          {{ t(request, 'machines.bulk.reboot') }}
-        </button>
-        <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
-          {{ t(request, 'machines.bulk.shutdown') }}
-        </button>
         {% if request.state.user.has_permission('machine.manage') %}
           <select name="group_id" class="inline-select" aria-label="{{ t(request, 'machines.bulk.group_aria') }}">
             <option value="" selected disabled>{{ t(request, 'machines.bulk.pick_group') }}</option>
@@ -326,6 +320,15 @@
             {{ t(request, 'machines.bulk.move_to_group') }}
           </button>
         {% endif %}
+        <span class="bulk-danger-zone">
+          <button type="submit" formaction="/machines/bulk/power-confirm/reboot" class="button button-secondary">
+            {{ t(request, 'machines.bulk.reboot') }}
+          </button>
+          <button type="submit" formaction="/machines/bulk/power-confirm/shutdown" class="button button-danger">
+            {{ t(request, 'machines.bulk.shutdown') }}
+          </button>
+        </span>
+        </div>
       </div>
     </form>
 

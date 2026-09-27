@@ -152,6 +152,10 @@
 
   function buildToggle() {
     if (!("Notification" in window)) return; // unsupported browser — nothing to offer
+    // Blocked in this browser's site settings: nothing the page can do
+    // about it, so offer no control rather than a disabled "blocked" badge
+    // on every machine page.
+    if (Notification.permission === "denied") return;
 
     const button = document.createElement("button");
     button.type = "button";
@@ -159,9 +163,7 @@
 
     function render() {
       if (Notification.permission === "denied") {
-        button.textContent = "🔕 " + tr("notify.blocked", "Notifications blocked");
-        button.disabled = true;
-        button.title = tr("notify.blocked_title", "Blocked in this browser's site settings.");
+        button.remove(); // just refused in the browser's own prompt
         return;
       }
       if (Notification.permission === "granted" && notificationsWanted()) {

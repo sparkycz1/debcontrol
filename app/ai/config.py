@@ -3,6 +3,7 @@ for them."""
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -84,3 +85,26 @@ async def get_selectable_models(db: AsyncSession) -> list[tuple[AiProviderConfig
         .order_by(AiProviderConfig.kind, AiModel.model_id)
     )
     return [(config, model) for config, model in result.all()]
+
+
+# The header shows the AI nav entry only when a conversation could actually
+# be started — checked on every page render for accounts with `ai.access`,
+# so cached in process for a few seconds; the Settings AI routes invalidate
+# it on save.
+_AVAILABILITY_TTL_SECONDS = 30.0
+_availability_cache: tuple[float, bool] | None = None
+
+
+async def ai_chat_available(db: AsyncSession) -> bool:
+    global _availability_cache
+    now = time.monotonic()
+    if _availability_cache is not None and now - _availability_cache[0] < _AVAILABILITY_TTL_SECONDS:
+        return _availability_cache[1]
+    available = bool(await get_selectable_models(db))
+    _availability_cache = (now, available)
+    return available
+
+
+def invalidate_ai_availability() -> None:
+    global _availability_cache
+    _availability_cache = None

@@ -2,6 +2,7 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "machines.table.updates") }} — {{ group.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">

@@ -83,13 +83,8 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "login_lockout_minutes": "settings.sign_in_policy.update",
 }
 
-# Read only by Celery Beat at its own start, so a change needs a
-# worker/beat restart — reported back by the API, same note the form shows.
-NEEDS_RESTART_FIELDS: frozenset[str] = frozenset(
-    {
-        "reachability_check_interval_seconds",
-        "facts_refresh_interval_seconds",
-        "monitoring_interval_seconds",
-        "notification_condition_check_interval_seconds",
-    }
-)
+# Fields whose change needs a worker/beat restart — none any more: Beat
+# re-reads its intervals about once a minute (`app.tasks.celery_app.
+# SettingInterval`). Kept (empty) so `PATCH /api/v1/settings` still returns
+# its `needs_restart` list for scripts that read it.
+NEEDS_RESTART_FIELDS: frozenset[str] = frozenset()

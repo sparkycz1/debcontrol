@@ -28,8 +28,8 @@
        Each entry is (href, key, permission or none, active prefix). #}
     {% set main_links = [
       ('/dashboard', 'nav.dashboard', none, '/dashboard'),
-      ('/fleet', 'nav.fleet', 'machine.view', '/fleet'),
       ('/machines', 'nav.machines', 'machine.view', '/machines'),
+      ('/security/updates', 'nav.security', 'machine.view', '/security'),
       ('/machine-groups', 'nav.machine_groups', 'group.view', '/machine-groups'),
       ('/checks', 'nav.checks', 'machine.view', '/checks'),
       ('/scheduling', 'nav.scheduling', 'scheduling.view', '/scheduling'),
@@ -41,6 +41,7 @@
       ('/roles', 'nav.roles', 'user.manage', '/roles'),
       ('/audit', 'nav.audit', 'audit.view', '/audit'),
       ('/settings', 'nav.settings', 'settings.view', '/settings'),
+      ('/backup', 'nav.backup', ('machine.view', 'scheduling.view', 'user.manage', 'notification.view'), '/backup'),
       ('/api', 'nav.api_docs', none, '/api'),
     ] %}
     {% macro nav_link(href, key, prefix) %}
@@ -48,11 +49,14 @@
       <a href="{{ href }}" {% if is_active %}class="active" aria-current="page"{% endif %}>{{ t(request, key) }}</a>
     {% endmacro %}
     <nav>
-      {% for href, key, perm, prefix in main_links if perm is none or current_user.has_permission(perm) %}
+      {# AI only once a model is enabled (request.state.ai_available) —
+         before that the page could only say "configure it in Settings". #}
+      {% for href, key, perm, prefix in main_links if (perm is none or current_user.has_permission(perm)) and (href != '/ai' or request.state.ai_available or current_path.startswith('/ai')) %}
         {{ nav_link(href, key, prefix) }}
       {% endfor %}
       {% set visible_admin = [] %}
-      {% for link in admin_links if link[2] is none or current_user.has_permission(link[2]) %}
+      {# A link's permission may be a tuple: shown when any one is held. #}
+      {% for link in admin_links if link[2] is none or (link[2] is string and current_user.has_permission(link[2])) or (link[2] is not string and link[2] | select('permitted_for', current_user) | list) %}
         {% set _ = visible_admin.append(link) %}
       {% endfor %}
       {% set ns = namespace(admin_active=false) %}

@@ -501,6 +501,7 @@ def _window_to_dict(window: MaintenanceWindow) -> dict[str, Any]:
         "ends_at": window.ends_at.isoformat(),
         "state": window_state(window),
         "all_machines": window.all_machines,
+        "pause_scheduled_tasks": window.pause_scheduled_tasks,
         "machine_group_ids": [str(g.id) for g in window.machine_groups],
         "machine_ids": [str(m.id) for m in window.machines],
         "created_by": window.created_by,

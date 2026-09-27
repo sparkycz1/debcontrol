@@ -7,6 +7,7 @@ the REST API.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -67,6 +68,18 @@ async def active_window_for(
     return None
 
 
+async def machines_paused_for_scheduling(
+    db: AsyncSession, machines: list[Machine], now: datetime | None = None
+) -> set[uuid.UUID]:
+    """Ids of those `machines` inside an active window that also pauses
+    scheduled tasks — one query for the active windows, then in-memory
+    matching (a handful of windows at most)."""
+    pausing = [w for w in await active_windows(db, now) if w.pause_scheduled_tasks]
+    if not pausing:
+        return set()
+    return {m.id for m in machines if any(covers(w, m) for w in pausing)}
+
+
 async def apply_window_data(
     db: AsyncSession, window: MaintenanceWindow, data: MaintenanceWindowSave
 ) -> None:
@@ -78,6 +91,7 @@ async def apply_window_data(
     window.starts_at = data.starts_at
     window.ends_at = data.ends_at
     window.all_machines = data.all_machines
+    window.pause_scheduled_tasks = data.pause_scheduled_tasks
     groups: list[MachineGroup] = []
     machines: list[Machine] = []
     if not data.all_machines:

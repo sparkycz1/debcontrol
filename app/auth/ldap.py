@@ -130,3 +130,57 @@ async def authenticate(app_settings: AppSettings, username: str, password: str) 
         timeout=app_settings.ldap_connect_timeout_seconds,
         tls_verify=app_settings.ldap_tls_verify,
     )
+
+
+def _test_connection_sync(
+    *,
+    server_uri: str,
+    use_starttls: bool,
+    bind_dn: str,
+    bind_password: str,
+    search_base: str,
+    timeout: int,
+    tls_verify: bool,
+) -> None:
+    use_ssl = server_uri.lower().startswith("ldaps://")
+    tls = ldap3.Tls(validate=ssl.CERT_REQUIRED if tls_verify else ssl.CERT_NONE)
+    server = ldap3.Server(server_uri, use_ssl=use_ssl, tls=tls, connect_timeout=timeout)
+    try:
+        with ldap3.Connection(
+            server, user=bind_dn, password=bind_password, receive_timeout=timeout
+        ) as conn:
+            if use_starttls:
+                conn.start_tls()
+            if not conn.bind():
+                raise LdapUnavailableError(f"Could not bind the service account: {conn.result}")
+            if not conn.search(search_base, "(objectClass=*)", search_scope=ldap3.BASE):
+                raise LdapUnavailableError(f"The search base was not found: {conn.result}")
+    except LDAPException as exc:
+        raise LdapUnavailableError(str(exc)) from exc
+
+
+async def check_connection(app_settings: AppSettings) -> None:
+    """Settings → Integrations → LDAP "Test connection": bind as the
+    service account and read the search base — the two things every login
+    needs before it ever looks at a user. Raises `LdapUnavailableError`
+    with the reason when either fails; returns quietly when both work.
+    Uses the *saved* settings, so save first."""
+    if not app_settings.ldap_server_uri or not app_settings.ldap_user_search_base:
+        raise LdapUnavailableError(
+            "LDAP is not fully configured — set the server, bind DN, and search base in Settings."
+        )
+    bind_password = (
+        decrypt_secret(app_settings.ldap_bind_password_encrypted)
+        if app_settings.ldap_bind_password_encrypted
+        else ""
+    )
+    await asyncio.to_thread(
+        _test_connection_sync,
+        server_uri=app_settings.ldap_server_uri,
+        use_starttls=app_settings.ldap_use_starttls,
+        bind_dn=app_settings.ldap_bind_dn or "",
+        bind_password=bind_password,
+        search_base=app_settings.ldap_user_search_base,
+        timeout=app_settings.ldap_connect_timeout_seconds,
+        tls_verify=app_settings.ldap_tls_verify,
+    )

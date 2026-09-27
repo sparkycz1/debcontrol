@@ -133,8 +133,9 @@ async def update_settings_api(
     docstring); fields left out are untouched, and `null` means "keep
     forever"/"unlimited" for a retention or token-limit field. All or
     nothing: any unknown field or out-of-range value is a 422 and nothing
-    is saved. `needs_restart` lists changed intervals that Celery Beat only
-    reads at startup (restart the worker/beat services to apply them)."""
+    is saved. `needs_restart` is always empty now — Beat re-reads its
+    intervals about once a minute — and kept only so scripts reading it
+    don't break."""
     unknown = sorted(set(changes) - set(_WRITABLE_FIELDS))
     if unknown:
         raise HTTPException(

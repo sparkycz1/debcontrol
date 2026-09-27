@@ -101,7 +101,7 @@ async def test_dashboard_shows_trend_chart_with_two_or_more_snapshots(client, db
     assert response.status_code == 200
     assert "Fleet trends" in response.text
     assert "<svg" in response.text
-    assert "<polyline" in response.text
+    assert "data-chart" in response.text  # the Monitoring tab's hover chart
     # No inline style attributes/blocks anywhere in the chart markup — this
     # app's CSP forbids both (style-src 'self', no 'unsafe-inline').
     assert "style=" not in response.text

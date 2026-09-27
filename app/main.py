@@ -38,6 +38,7 @@ from app.web.routes import (
     api_v1_users,
     audit,
     auth,
+    backup,
     branding,
     checks,
     dashboard,
@@ -52,6 +53,7 @@ from app.web.routes import (
     notifications,
     roles,
     scheduling,
+    security,
     terminal_ws,
     theme,
     users,
@@ -264,8 +266,14 @@ def create_app() -> FastAPI:
     app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
+    app.include_router(security.router)
+    # Before `scheduling.router`: its `/scheduling/{task_id}` would
+    # otherwise swallow `/scheduling/maintenance`.
+    app.include_router(maintenance.router)
+    app.include_router(maintenance.legacy_router)
     app.include_router(scheduling.router)
     app.include_router(audit.router)
+    app.include_router(backup.router)
     app.include_router(ai.router)
     app.include_router(inform.router)
     app.include_router(api_v1.router)
@@ -281,7 +289,6 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)
-    app.include_router(maintenance.router)
     app.include_router(notifications.router)
     app.include_router(settings_routes.router)
     app.include_router(theme.router)

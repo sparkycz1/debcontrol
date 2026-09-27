@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Request
 
@@ -80,3 +81,26 @@ async def handle_callback(request: Request, app_settings: AppSettings) -> dict[s
     if userinfo is None:
         userinfo = await client.userinfo(token=token)
     return dict(userinfo)
+
+
+async def check_discovery(app_settings: AppSettings) -> str:
+    """Settings → Integrations → OIDC "Test": fetch the provider's discovery
+    document and check it is one — the step every login starts with.
+    Returns the issuer it reports; raises `OidcNotConfiguredError` (not
+    configured) or `ValueError` (unreachable or not a discovery document)
+    with the reason. Uses the *saved* settings, so save first."""
+    if not app_settings.oidc_issuer_url or not app_settings.oidc_client_id:
+        raise OidcNotConfiguredError(
+            "OIDC is not fully configured — set the issuer URL and client ID in Settings."
+        )
+    url = f"{app_settings.oidc_issuer_url.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            document = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ValueError(f"Could not read {url}: {exc}") from exc
+    if not isinstance(document, dict) or not document.get("authorization_endpoint"):
+        raise ValueError(f"{url} is not an OpenID Connect discovery document.")
+    return str(document.get("issuer") or url)

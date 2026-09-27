@@ -428,7 +428,7 @@ p { margin: 0 0 var(--space-3); }
 
 .permission-grid label {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   margin-top: 0;
   color: var(--color-text);
@@ -1289,6 +1289,21 @@ p { margin: 0 0 var(--space-3); }
   transition: border-color var(--transition-fast);
 }
 .stat-card:hover { border-color: var(--color-border-strong); }
+a.stat-card-link { color: var(--color-text); text-decoration: none; }
+a.stat-card-link:hover { border-color: var(--color-accent); }
+a.stat-card-link:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.stat-card-warn .stat-value { color: var(--color-warn); }
+.stat-card-danger .stat-value { color: var(--color-danger); }
+
+/* A panel heading with a control (filter box, button) on the right. */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.panel-header h2 { margin: 0; }
 
 .stat-value { font-size: 1.85rem; font-weight: 700; line-height: 1.2; }
 .stat-label { color: var(--color-muted); font-size: 0.82rem; margin-top: var(--space-1); }
@@ -2075,13 +2090,6 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
   .htmx-settling { animation: none; }
 }
 
-/* Dashboard fleet-trend sparklines (macros/charts.html) — colored through
-   the theme variables so the light theme recolors them too. */
-.sparkline-ok polyline { stroke: var(--color-ok); }
-.sparkline-ok circle { fill: var(--color-ok); }
-.sparkline-warn polyline { stroke: var(--color-warn); }
-.sparkline-warn circle { fill: var(--color-warn); }
-
 /* Schedule form: live "next runs" preview under the cron field. */
 .cron-preview { min-height: 1.2rem; margin-bottom: var(--space-3); }
 .cron-preview-list { margin: 0 0 var(--space-2); padding-left: 1.2rem; font-size: 0.88rem; }
@@ -2138,6 +2146,42 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
   /* Repeated here: the phone-width padding near the top of this file is
      declared before the base `.data-table td` rule and so never won. */
   .data-table th, .data-table td { padding: 0.5rem 0.6rem; }
-  [data-bulk-bar]:not(.has-selection) { display: none; }
-  [data-bulk-bar] .button-danger { margin-left: auto; }
 }
+
+/* Bulk-action bar (Machines list): a hint until a row is ticked, then
+   the actions — routine ones first, power actions set apart at the far
+   end behind a divider. bulk-select.js toggles `has-selection`. */
+.bulk-bar { margin-top: var(--space-3); }
+.bulk-bar .bulk-when-selected { display: none; }
+.bulk-bar.has-selection .bulk-when-empty { display: none; }
+.bulk-bar.has-selection .bulk-when-selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.bulk-danger-zone {
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-left: auto;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--color-border);
+}
+
+/* Irreversible or disruptive actions (power, delete) on a settings page. */
+.panel-danger { border-color: var(--color-danger); }
+.panel-danger h2 { color: var(--color-danger); }
+
+/* A long settings form's one Save button, kept in view while scrolling. */
+.form-actions-sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: var(--space-3) 0;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+}
+
+.permission-option input { margin-top: 0.25rem; }
+.permission-code { font-size: 0.75rem; color: var(--color-muted); margin-left: var(--space-1); }
+.permission-hint { display: block; margin: 0; font-size: 0.8rem; }

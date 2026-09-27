@@ -68,7 +68,7 @@ async def test_notify_is_suppressed_inside_an_active_window(db_session_factory, 
     import app.services.notifications as notifications_module
 
     monkeypatch.setattr(
-        notifications_module, "_send_smtp_message", lambda s, to, subj, body: sent.append(to)
+        notifications_module, "send_smtp_message", lambda s, to, subj, body: sent.append(to)
     )
     async with db_session_factory() as db:
         db.add(_smtp_ready_settings())
@@ -108,23 +108,23 @@ async def test_web_create_end_and_delete(client, db_session_factory):
         await db.commit()
         group_id = (await db.execute(select(MachineGroup.id))).scalar_one()
 
-    page = await client.get("/notifications/maintenance/new")
+    page = await client.get("/scheduling/maintenance/new")
     assert page.status_code == 200
     csrf = client.cookies.get("csrftoken")
     start = (NOW - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M")
     end = (NOW + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
 
-    bad = await client.post("/notifications/maintenance", data={
+    bad = await client.post("/scheduling/maintenance", data={
         "csrf_token": csrf, "name": "x", "starts_at": end, "ends_at": start,
         "machine_group_ids": str(group_id)})
     assert bad.status_code == 422
     assert "must end after it starts" in bad.text
 
-    ok = await client.post("/notifications/maintenance", data={
+    ok = await client.post("/scheduling/maintenance", data={
         "csrf_token": csrf, "name": "Patch prod", "starts_at": start, "ends_at": end,
         "machine_group_ids": str(group_id)})
     assert ok.status_code == 303
-    listing = await client.get("/notifications/maintenance")
+    listing = await client.get("/scheduling/maintenance")
     assert "Patch prod" in listing.text
 
     async with db_session_factory() as db:
@@ -132,13 +132,13 @@ async def test_web_create_end_and_delete(client, db_session_factory):
         assert window_state(window) == "active"
         window_id = window.id
 
-    ended = await client.post(f"/notifications/maintenance/{window_id}/end",
+    ended = await client.post(f"/scheduling/maintenance/{window_id}/end",
                               data={"csrf_token": csrf})
     assert ended.status_code == 303
     async with db_session_factory() as db:
         assert window_state(await db.get(MaintenanceWindow, window_id)) == "ended"
 
-    deleted = await client.post(f"/notifications/maintenance/{window_id}/delete",
+    deleted = await client.post(f"/scheduling/maintenance/{window_id}/delete",
                                 data={"csrf_token": csrf})
     assert deleted.status_code == 303
     async with db_session_factory() as db:
@@ -192,8 +192,8 @@ async def test_api_crud(client):
 @pytest.mark.parametrize("perm", [Permission.NOTIFICATION_VIEW])
 async def test_view_only_cannot_schedule(client, login_as, perm):
     await login_as(client, permissions={perm})
-    assert (await client.get("/notifications/maintenance")).status_code == 200
+    assert (await client.get("/scheduling/maintenance")).status_code == 200
     await client.get("/notifications")
     csrf = client.cookies.get("csrftoken")
-    response = await client.post("/notifications/maintenance", data={"csrf_token": csrf})
+    response = await client.post("/scheduling/maintenance", data={"csrf_token": csrf})
     assert response.status_code == 403

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "backup.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "backup.title") }}</h1>
+  </div>
+  <p class="hint">{{ t(request, "backup.intro") }}</p>
+
+  {% for section in sections %}
+    <section class="panel">
+      <h2>{{ t(request, "backup.section." ~ section.key) }}</h2>
+      <p class="hint">{{ t(request, "backup.section." ~ section.key ~ "_hint") }}</p>
+      <div class="page-header-actions">
+        {% for label_key, href in section.exports %}
+          <a class="button button-secondary" href="{{ href }}">{{ t(request, label_key) }}</a>
+        {% endfor %}
+        {% if request.state.user.has_permission(section.manage_permission) %}
+          <a class="button" href="{{ section.import_href }}">{{ t(request, "backup.import") }}</a>
+        {% endif %}
+      </div>
+    </section>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "backup.nothing") }}</p></div>
+  {% endfor %}
+{% endblock %}

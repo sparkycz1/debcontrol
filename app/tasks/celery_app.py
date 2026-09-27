@@ -57,11 +57,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import timedelta
+import time
+from datetime import datetime, timedelta
 from typing import Any
 
 from celery import Celery
-from celery.schedules import crontab
+from celery.schedules import crontab, schedstate, schedule
 from celery.signals import worker_process_init
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -88,13 +89,10 @@ _INTERVAL_SETTING_DEFAULTS: dict[str, int] = {
 
 
 def _bootstrap_interval_settings() -> dict[str, int]:
-    """One-time, synchronous-from-the-caller's-perspective read of the three
-    Beat-schedule intervals from `AppSettings`, for the `beat_schedule`
-    dict literal below — a Celery schedule has to be a plain value computed
-    once at import time, not something re-read from the database on every
-    tick, so this is the one place those settings are still read "once at
-    process start, restart to pick up a change," same as when they were
-    environment variables.
+    """A synchronous-from-the-caller's-perspective read of the four
+    Beat-schedule intervals from `AppSettings` — called by
+    `current_interval_seconds` at start and then about once a minute, so
+    `SettingInterval` schedules follow the Settings page without a restart.
 
     This module is imported identically by the web app, every Celery
     worker, and Celery Beat (see `app.tasks.jobs`'s import of `celery_app`)
@@ -161,12 +159,63 @@ def _bootstrap_interval_settings() -> dict[str, int]:
         return asyncio.run(_fetch())
     except Exception:
         logger.warning(
-            "Could not read background-check intervals from the database at startup "
-            "(using the built-in defaults until the next restart) — is the database "
+            "Could not read background-check intervals from the database "
+            "(using the built-in defaults for now) — is the database "
             "reachable and migrated yet?",
             exc_info=True,
         )
         return dict(_INTERVAL_SETTING_DEFAULTS)
+
+
+# How often Beat re-reads the four intervals above from `AppSettings` while
+# it runs — a change on the Settings page (or `PATCH /api/v1/settings`)
+# reaches the schedule within this long, no restart needed.
+_INTERVAL_REFRESH_SECONDS = 60.0
+_interval_cache: dict[str, Any] = {"values": None, "read_at": 0.0}
+
+
+def current_interval_seconds(setting: str) -> int:
+    """`setting`'s current value — re-read from the database at most every
+    `_INTERVAL_REFRESH_SECONDS` inside the Beat process, the built-in
+    default everywhere else (see `_bootstrap_interval_settings`)."""
+    now = time.monotonic()
+    values = _interval_cache["values"]
+    if values is None or now - _interval_cache["read_at"] >= _INTERVAL_REFRESH_SECONDS:
+        values = _bootstrap_interval_settings()
+        _interval_cache.update(values=values, read_at=now)
+    return int(values[setting])
+
+
+class SettingInterval(schedule):  # type: ignore[misc]  # celery ships untyped
+    """A `timedelta` Beat schedule whose length is an `AppSettings` field,
+    re-read while Beat runs (`current_interval_seconds`) instead of fixed
+    at process start. Beat asks `is_due`/`remaining_estimate` on every tick,
+    so refreshing `run_every` there is enough; a shortened interval applies
+    from the next tick, a lengthened one delays the next run accordingly."""
+
+    def __init__(self, setting: str) -> None:
+        self.setting = setting
+        super().__init__(timedelta(seconds=current_interval_seconds(setting)))
+
+    def _refresh(self) -> None:
+        self.run_every = timedelta(seconds=current_interval_seconds(self.setting))
+
+    def is_due(self, last_run_at: datetime) -> schedstate:
+        self._refresh()
+        return super().is_due(last_run_at)
+
+    def remaining_estimate(self, last_run_at: datetime) -> timedelta:
+        self._refresh()
+        estimate: timedelta = super().remaining_estimate(last_run_at)
+        return estimate
+
+    def __reduce__(self) -> tuple[type[SettingInterval], tuple[str]]:
+        # Beat's persistent scheduler pickles entries — rebuild from the
+        # setting name, not a frozen interval.
+        return (self.__class__, (self.setting,))
+
+    def __repr__(self) -> str:
+        return f"<SettingInterval {self.setting}: {self.run_every}>"
 
 celery_app = Celery(
     "debcontrol",
@@ -229,17 +278,15 @@ celery_app.conf.update(
 # variables), which is why they are `timedelta(...)` schedules rather than
 # crontabs.
 #
-# NOTE: these intervals are read once, here, at process start (worker or
-# beat) — the same "restart to pick up a change" contract they had back when
-# they were environment variables, just now sourced from the database
-# instead of `.env`. See `_bootstrap_interval_settings` below for how that
-# one-off read happens and what it falls back to if the database isn't
-# reachable yet.
+# These intervals are `SettingInterval` schedules: Beat re-reads them from
+# the database about once a minute (`current_interval_seconds`), so a change
+# on the Settings page takes effect without restarting anything. See
+# `_bootstrap_interval_settings` for how each read happens and what it
+# falls back to if the database isn't reachable yet.
 #
 # Beat has no persisted "last run" on a fresh start, so each entry fires once
 # shortly after startup on its own — which is exactly the behaviour the old
 # queue needed a hand-written "kick off the first sweep" hook to get.
-_interval_settings = _bootstrap_interval_settings()
 celery_app.conf.beat_schedule = {
     "run-due-endpoint-checks": {
         "task": "app.tasks.jobs.run_due_endpoint_checks",
@@ -255,23 +302,23 @@ celery_app.conf.beat_schedule = {
     },
     "ping-all-machines": {
         "task": "app.tasks.jobs.ping_all_machines",
-        "schedule": timedelta(seconds=_interval_settings["reachability_check_interval_seconds"]),
+        "schedule": SettingInterval("reachability_check_interval_seconds"),
     },
     "refresh-all-machine-facts": {
         "task": "app.tasks.jobs.refresh_all_machine_facts",
-        "schedule": timedelta(seconds=_interval_settings["facts_refresh_interval_seconds"]),
+        "schedule": SettingInterval("facts_refresh_interval_seconds"),
     },
     "refresh-all-machine-packages": {
         "task": "app.tasks.jobs.refresh_all_machine_packages",
-        "schedule": timedelta(seconds=_interval_settings["facts_refresh_interval_seconds"]),
+        "schedule": SettingInterval("facts_refresh_interval_seconds"),
     },
     "check-all-machine-updates": {
         "task": "app.tasks.jobs.check_all_machine_updates",
-        "schedule": timedelta(seconds=_interval_settings["facts_refresh_interval_seconds"]),
+        "schedule": SettingInterval("facts_refresh_interval_seconds"),
     },
     "refresh-all-machine-services": {
         "task": "app.tasks.jobs.refresh_all_machine_services",
-        "schedule": timedelta(seconds=_interval_settings["facts_refresh_interval_seconds"]),
+        "schedule": SettingInterval("facts_refresh_interval_seconds"),
     },
     # Was on-demand only (right after a host key was first trusted, or an
     # explicit "Re-check"/"Run initial setup" click) — a requirement that
@@ -280,11 +327,11 @@ celery_app.conf.beat_schedule = {
     # the other fleet sweeps above; see app.tasks.jobs._refresh_all_machine_readiness.
     "refresh-all-machine-readiness": {
         "task": "app.tasks.jobs.refresh_all_machine_readiness",
-        "schedule": timedelta(seconds=_interval_settings["facts_refresh_interval_seconds"]),
+        "schedule": SettingInterval("facts_refresh_interval_seconds"),
     },
     "monitor-all-machines": {
         "task": "app.tasks.jobs.monitor_all_machines",
-        "schedule": timedelta(seconds=_interval_settings["monitoring_interval_seconds"]),
+        "schedule": SettingInterval("monitoring_interval_seconds"),
     },
     # Re-evaluates every condition-based notification rule (CPU/RAM/disk/
     # facts thresholds — see app.db.models.notification_condition) against
@@ -293,9 +340,7 @@ celery_app.conf.beat_schedule = {
     # triggering new SSH work of its own.
     "evaluate-notification-conditions": {
         "task": "app.tasks.jobs.evaluate_notification_conditions",
-        "schedule": timedelta(
-            seconds=_interval_settings["notification_condition_check_interval_seconds"]
-        ),
+        "schedule": SettingInterval("notification_condition_check_interval_seconds"),
     },
     # Cron expressions are minute-grained anyway, so a fixed per-minute tick
     # (rather than a configurable interval) is the natural fit for the

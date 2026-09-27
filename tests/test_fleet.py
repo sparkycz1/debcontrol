@@ -75,18 +75,23 @@ async def test_fleet_page_lists_machines_with_readings(client, db_session_factor
     machine_id = await _make_machine(db_session_factory)
     await _add_monitoring_sample(db_session_factory, machine_id)
 
-    response = await client.get("/fleet")
+    response = await client.get("/dashboard")
+    cards = await client.get("/fleet/cards")
+    moved = await client.get("/fleet", follow_redirects=False)
 
     assert response.status_code == 200
+    assert 'id="fleet"' in response.text
     assert f'href="/machines/{machine_id}/monitoring"' in response.text
     assert "12.5%" in response.text  # the sample's CPU
-    assert 'href="/fleet"' in response.text  # nav entry
+    assert f'href="/machines/{machine_id}/monitoring"' in cards.text  # the 60 s refresh
+    assert moved.status_code == 308
+    assert moved.headers["location"] == "/dashboard#fleet"
 
 
 async def test_fleet_page_requires_machine_view(client, login_as):
     await login_as(client, permissions={Permission.AUDIT_VIEW})
 
-    response = await client.get("/fleet")
+    response = await client.get("/fleet/cards")
 
     assert response.status_code == 403
 

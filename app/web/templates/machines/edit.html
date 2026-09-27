@@ -2,6 +2,7 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "nav.settings") }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -216,7 +217,28 @@ visudo -cf /etc/sudoers.d/{{ machine.username }}</code></pre>
     </section>
   {% endif %}
 
-  <section class="panel">
+  {% if request.state.user.has_permission('action.power') %}
+    <section class="panel panel-danger">
+      <h2>{{ t(request, "groups.all.power") }}</h2>
+      <p class="hint">
+        {{ t(request, "machine.power.hint") }}
+      </p>
+      <div class="page-header-actions">
+        <a class="button button-secondary{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
+           href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/reboot{% else %}#{% endif %}">
+          {{ t(request, "groups.power_confirm.reboot") }}
+        </a>
+        <a class="button button-danger{% if not machine.host_key_fingerprint %} button-disabled{% endif %}"
+           href="{% if machine.host_key_fingerprint %}/machines/{{ machine.id }}/power/shutdown{% else %}#{% endif %}">
+          {{ t(request, "groups.power_confirm.shutdown") }}
+        </a>
+      </div>
+      {% if not machine.host_key_fingerprint %}
+        <p class="hint">{{ t(request, "machine.edit.confirm_key_overview_first") }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+  <section class="panel panel-danger">
     <h2>{{ t(request, "machine.edit.delete_heading") }}</h2>
     <p class="hint">{{ t(request, "machine.edit.cannot_be_undone") }}</p>
     <form method="post" action="/machines/{{ machine.id }}/delete"

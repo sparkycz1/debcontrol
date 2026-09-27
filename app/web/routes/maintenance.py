@@ -1,9 +1,12 @@
-"""Maintenance windows (`/notifications/maintenance`) — scheduled time
+"""Maintenance windows (`/scheduling/maintenance`, formerly under
+`/notifications/maintenance`, which redirects here) — scheduled time
 ranges during which notifications about the chosen machines/groups are
-muted. See `app.db.models.maintenance_window` for the semantics and
+muted and, when the window says so, scheduled tasks skip them. See
+`app.db.models.maintenance_window` for the semantics and
 `app.services.maintenance_windows` for the matching; the REST twin is in
-`app/web/routes/api_v1_notifications.py`. Part of Notifications, with its
-permissions: `notification.view` to see, `notification.manage` to change.
+`app/web/routes/api_v1_notifications.py`. Linked from Scheduling, but
+still gated by the Notifications permissions it always had:
+`notification.view` to see, `notification.manage` to change.
 """
 
 from __future__ import annotations
@@ -32,10 +35,19 @@ from app.services.maintenance_windows import apply_window_data, window_state
 from app.web.templating import parse_local_input, t, templates, to_local_input
 
 router = APIRouter(
-    prefix="/notifications/maintenance",
+    prefix="/scheduling/maintenance",
     dependencies=[Depends(require_permission(Permission.NOTIFICATION_VIEW))],
 )
 _manage = Depends(require_permission(Permission.NOTIFICATION_MANAGE))
+
+# The pages' old home; kept so bookmarks and scripts posting to it still work.
+legacy_router = APIRouter(prefix="/notifications/maintenance")
+
+
+@legacy_router.api_route("{rest:path}", methods=["GET", "POST"], include_in_schema=False)
+async def moved_to_scheduling(request: Request, rest: str) -> Response:
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=f"/scheduling/maintenance{rest}{query}", status_code=308)
 
 # How many ended windows the list keeps showing.
 _PAST_WINDOWS_SHOWN = 20
@@ -69,7 +81,7 @@ async def _form_page(
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
-        "notifications/maintenance_form.html",
+        "scheduling/maintenance_form.html",
         {
             "window": window,
             "form": form,
@@ -96,6 +108,7 @@ def _form_of(window: MaintenanceWindow) -> dict[str, Any]:
         "starts_at": to_local_input(window.starts_at),
         "ends_at": to_local_input(window.ends_at),
         "all_machines": window.all_machines,
+        "pause_scheduled_tasks": window.pause_scheduled_tasks,
         "machine_group_ids": [str(g.id) for g in window.machine_groups],
         "machine_ids": [str(m.id) for m in window.machines],
     }
@@ -109,6 +122,7 @@ async def _parse_form(request: Request) -> tuple[dict[str, Any], MaintenanceWind
         "starts_at": str(raw.get("starts_at", "")),
         "ends_at": str(raw.get("ends_at", "")),
         "all_machines": bool(raw.get("all_machines")),
+        "pause_scheduled_tasks": bool(raw.get("pause_scheduled_tasks")),
         "machine_group_ids": [str(v) for v in raw.getlist("machine_group_ids")],
         "machine_ids": [str(v) for v in raw.getlist("machine_ids")],
     }
@@ -134,6 +148,7 @@ async def _parse_form(request: Request) -> tuple[dict[str, Any], MaintenanceWind
             starts_at=starts_at,
             ends_at=ends_at,
             all_machines=form["all_machines"],
+            pause_scheduled_tasks=form["pause_scheduled_tasks"],
             machine_group_ids=form["machine_group_ids"],
             machine_ids=form["machine_ids"],
         )
@@ -156,7 +171,7 @@ async def list_windows(request: Request, db: AsyncSession = Depends(get_db)) -> 
     ended = [w for w in windows if window_state(w, now) == "ended"][-_PAST_WINDOWS_SHOWN:][::-1]
     return templates.TemplateResponse(
         request,
-        "notifications/maintenance.html",
+        "scheduling/maintenance.html",
         {
             "active": active,
             "upcoming": upcoming,
@@ -173,7 +188,12 @@ async def new_window_form(request: Request, db: AsyncSession = Depends(get_db)) 
         request,
         db,
         window=None,
-        form={"starts_at": to_local_input(now), "machine_group_ids": [], "machine_ids": []},
+        form={
+            "starts_at": to_local_input(now),
+            "pause_scheduled_tasks": True,
+            "machine_group_ids": [],
+            "machine_ids": [],
+        },
         errors=[],
     )
 
@@ -209,7 +229,7 @@ async def create_window(
         },
     )
     return RedirectResponse(
-        url="/notifications/maintenance", status_code=status.HTTP_303_SEE_OTHER
+        url="/scheduling/maintenance", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -249,7 +269,7 @@ async def update_window(
         },
     )
     return RedirectResponse(
-        url="/notifications/maintenance", status_code=status.HTTP_303_SEE_OTHER
+        url="/scheduling/maintenance", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -277,7 +297,7 @@ async def end_window_now(
             target_label=window.name,
         )
     return RedirectResponse(
-        url="/notifications/maintenance", status_code=status.HTTP_303_SEE_OTHER
+        url="/scheduling/maintenance", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -299,5 +319,5 @@ async def delete_window(
         target_label=name,
     )
     return RedirectResponse(
-        url="/notifications/maintenance", status_code=status.HTTP_303_SEE_OTHER
+        url="/scheduling/maintenance", status_code=status.HTTP_303_SEE_OTHER
     )
