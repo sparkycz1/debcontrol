@@ -1,1363 +1,465 @@
 # 🖥️ Machine Management
 
-*Everything about a managed machine once it's added: SSH host key pinning,
-secrets, updates (run/preview/rollback/check), facts/packages/services,
-monitoring, logs, live updates, readiness, tags, saved views, bulk
-actions, power, the interactive terminal, and scheduling. Split out of
-[Architecture](Architecture.md) so this one topic is easier to search —
-start there for the rest (auth/RBAC, audit log, notifications, HTTP
-hardening).*
+*Everything about a managed machine once it's added: host keys, secrets,
+updates, facts, monitoring, Proxmox, Docker, checks, logs, live updates,
+tags, bulk actions, power, the terminal and scheduling. See
+[Architecture](Architecture.md) for the rest (auth/RBAC, audit log,
+notifications, HTTP hardening).*
+
+## Access and trust
 
 ### 🔑 SSH host key pinning
 
-Covered in depth in
-[SSH Host Key Verification](SSH-Host-Key-Verification.md). Summary: no
-connection is ever made to a machine whose host key fingerprint hasn't
-been explicitly confirmed by a human, and any later mismatch hard-fails
-the connection instead of silently reconnecting.
-
-### Inventory export: the machine list as a spreadsheet
-
-*More actions → Export inventory* on `/machines` downloads
-`GET /machines/inventory.csv` — every machine matching the list's current
-search/tag filter (all pages, not only the visible one), scoped like the
-list, with status, OS/kernel, CPU/RAM, pending (security) updates, reboot
-flag, uptime, host-key state and the facts/update-check timestamps.
-Formula-looking cells are neutralized the same way as the audit export,
-and each download is audited (`machine.inventory_export`). It's a
-read-only report, not the structural round-trip below; scripts get the
-same data as JSON from `GET /api/v1/machines`.
-
-### Machine/group configuration export & import: structural, not a credentials backup
-
-`app.services.machine_config` (used by both `app/web/routes/machines.py`
-and `app/web/routes/api_v1.py`) exports every machine's and group's
-*structural* configuration for re-import elsewhere. It never touches
-`Machine.secret_encrypted` or `Machine.host_key_fingerprint`:
-
-- A `ssh_key`-auth machine imports cleanly.
-- A `password`-auth machine can't be re-created with that method (there's
-  no secret to import); it comes back as `ssh_key`, and its name is
-  surfaced in the result so an operator knows to revisit its credentials.
-- Every imported machine starts with no pinned host key — the normal
-  "Discover key fingerprint" + outside-the-app confirmation flow applies
-  before anything connects to it.
-
-Conflict handling: an existing machine name is **skipped**, not
-overwritten; an existing group name is **reused** for membership. Import
-creates directly into `Machine`/`MachineGroup` — unlike CSV bulk-import
-(`POST /machines/import`) and self-registration, which land in the
-`PendingMachine` review queue because those inputs describe genuinely
-unknown hosts.
-
-The same config-as-code convenience — JSON export/import, one service
-function behind both web+API — extends to two more resources:
-
-- **Roles** (`app.services.role_config`): lossless round-trip of every
-  `Role` and its exact permissions — no credentials involved. Existing
-  name **skipped**; an unrecognized permission (a newer-version export)
-  is dropped and called out, not a failed import.
-- **Scheduling** (`app.services.scheduling_config`): every
-  `ScheduledTask`, target resolved to a **name**, portable across
-  deployments. Import re-resolves it and **skips** the task (never
-  partially) if the name or action isn't found here. Task names aren't
-  unique, so always create-only — re-importing twice creates two
-  schedules. Every task also checked against the importer's own
-  machine-group scope and any `extra_permission` the action needs — same
-  as the manual "New scheduled task" form, so import can't plant
-  something outside what that account could create by hand.
+See [SSH Host Key Verification](SSH-Host-Key-Verification.md). Nothing
+connects to a machine whose host-key fingerprint a human hasn't
+confirmed, and a later mismatch hard-fails instead of reconnecting.
 
 ### Secrets at rest
 
-Machine passwords, the app's own SSH private key, TOTP secrets, and every
-third-party API key stored for the [AI assistant](AI-Assistant.md) or
-LDAP/OIDC login are encrypted in Postgres with **AES-256-GCM**
-(`app.core.security`) — a fresh random nonce per value, keyed by the full
-32 raw bytes behind `ENCRYPTION_KEY`. The encryption key lives only in
-that environment variable — never in the database or the repo. This does
-**not** replace user authentication; it protects these secrets from a
-database-only compromise (a leaked backup, a misconfigured read replica).
-See "FIPS alignment" below for why AES-256-GCM specifically, and for what
-happens to a value still stored in the older Fernet/AES-128 format.
+Machine passwords, the app's SSH private key, TOTP secrets and every
+third-party credential (AI providers, LDAP/OIDC, SMTP, push tokens) are
+encrypted in Postgres with **AES-256-GCM** (`app.core.security`), keyed by
+`ENCRYPTION_KEY`, which lives only in the environment. This protects
+against a database-only leak (a backup, a replica); it doesn't replace
+authentication.
 
 ### FIPS alignment
 
-debcontrol does not claim FIPS 140-2/140-3 **certification** — that means
-running against a NIST-validated cryptographic module (a CMVP
-certificate), which is a build/deployment decision (which OpenSSL build,
-which base image) no amount of application code can grant on its own. The
-stock `python:3.14-slim` base image, the `cryptography` package's own
-vendored (Rust-built) OpenSSL, and Caddy's Go `crypto/tls` are all
-**not** FIPS-validated modules as shipped.
+debcontrol isn't FIPS-*certified* — that needs a NIST-validated crypto
+module, a build/deployment choice (base image, OpenSSL build). It only
+uses FIPS-approved algorithms, so certification is a module swap:
 
-What the app *can* control — and does — is never relying on an algorithm
-FIPS wouldn't approve, so a deployment needing real certification only
-swaps the underlying crypto module (RHEL UBI + validated OpenSSL, or a
-FIPS-mode load balancer in front of Caddy), nothing here:
+- secrets: AES-256-GCM (legacy Fernet values still decrypt;
+  `scripts/reencrypt_secrets.py` upgrades them);
+- signed tickets (pending TOTP, WebAuthn challenge): HMAC-SHA-256;
+- session tokens and host-key fingerprints: SHA-256;
+- SSH to machines: NIST-curve ECDH or ≥2048-bit DH with SHA-2,
+  AES-GCM/CTR, HMAC-SHA-2 — not applied to host-key discovery or the
+  accepted host-key algorithm (the key is pinned by fingerprint);
+- TOTP and WebAuthn use approved algorithms already.
 
-- **Secrets at rest**: AES-256-GCM, not Fernet's AES-128 — both
-  FIPS-approved, this is "prefer the stronger modern default," not a
-  fixed weakness. `decrypt_secret` still reads the legacy Fernet format
-  transparently; `scripts/reencrypt_secrets.py` upgrades the rest in one optional pass.
-- **Signed tickets** (pending-TOTP, WebAuthn challenge) — explicit
-  `digest_method=hashlib.sha256` over `itsdangerous`'s own HMAC-SHA1
-  default. HMAC-SHA1 is itself still FIPS-approved for a MAC — again not
-  a fix, just one non-approved-*looking* default removed.
-- **Session tokens and the SSH host-key fingerprint** already used
-  SHA-256 from the start — nothing to change.
-- **SSH connections to managed machines** restrict key exchange/
-  encryption/MAC to an approved subset — NIST-curve ECDH (P-256/384/521)
-  or ≥2048-bit DH with SHA-2, AES-GCM/AES-CTR, HMAC-SHA-2 — excluding
-  AsyncSSH's broader defaults (curve25519/448, chacha20-poly1305, legacy
-  ciphers, SHA-1/MD5 MACs). **Not** applied to host-key discovery (must
-  stay unrestricted to learn whatever type a machine has) or the
-  accepted host-key algorithm (this app pins by exact fingerprint, not
-  algorithm — narrowing it could lock out a machine already pinned on an
-  Ed25519 key).
-- **TOTP** (HMAC-SHA1 per RFC 6238) and **WebAuthn/passkeys**
-  (ECDSA P-256/RSA) already only use approved algorithms.
-
-**The one deliberate exception: Argon2id for password hashing.**
-FIPS/SP 800-132 only approves PBKDF2 — Argon2id isn't on the list at
-all. Kept anyway: memory-hard, meaningfully more GPU/ASIC-resistant than
-PBKDF2, exactly what protects an account if the password hash table ever
-leaks. Swapping it would trade a real security property for a checkbox —
-a considered trade-off, not an oversight: stronger than FIPS where that's
-a genuine improvement, not the letter of the standard at a real cost.
+**One deliberate exception: Argon2id** for password hashing. SP 800-132
+only approves PBKDF2, but Argon2id is memory-hard and far more
+GPU-resistant — a real security gain kept over the checkbox.
 
 ### One shared SSH identity, not one key per machine
 
-debcontrol generates a single ed25519 keypair on first use and reuses it
-everywhere "SSH key" is the chosen auth method. The private half never
-touches disk in plaintext — decrypted in memory only for a connection's
-duration. Public half shown on **Settings**; appending it to
-`~/.ssh/authorized_keys` is a manual step. Per-machine passwords remain
-a fallback, marked not-recommended in the UI.
+debcontrol generates one ed25519 keypair and uses it wherever "SSH key" is
+the auth method; the private half is only decrypted in memory. The public
+half is on **Settings**. Per-machine passwords remain a fallback.
 
-Rotation ("Generate replacement key") generates a *second* keypair into
-`pending_*` columns rather than replacing the active one — switching
-immediately would lock the app out of everything at once. The pending
-key needs to reach every machine's `authorized_keys` first, by hand or
-via **"Push pending key to all machines"**: connects to every
-`AuthMethod.SSH_KEY` machine with a pinned host key using its *current*
-credential, appends the pending key, idempotently. Password-auth
-machines untouched. Once every machine has the new line, "Activate" swaps it in
-(`activate_pending_identity`). Before activating, a pending key can also be
-thrown away with **"Discard pending key"** (`discard_pending_identity`) —
-useful if the push didn't reach every machine and you'd rather start over
-than half-activate.
+**Rotation** is staged so the app is never locked out: *Generate
+replacement key* creates a pending key; *Push pending key to all machines*
+appends it to every pinned SSH-key machine's `authorized_keys` using the
+current key; *Activate* swaps it in; *Discard pending key* throws it away.
+Web-only on purpose.
 
 ### Self-registration is not the same as trust
 
-`POST /api/inform` lets a machine announce itself (IP, hostname, basic
-facts it can read locally) using a shared bearer token (`INFORM_TOKEN`) —
-meant for a first-boot/cloud-init script, see
-[Machine Requirements](Machine-Requirements.md). It only
-ever creates a `PendingMachine` row for a human to look at; it grants no
-access and establishes no trust. Turning a pending entry into a real
-`Machine` still goes through the ordinary add-machine form and the
-mandatory host-key discovery/confirmation flow.
-
-`ansible/debcontrol-onboard.yml` automates everything a machine needs
-*before* that POST — the account, its SSH key, the scoped sudoers files —
-then makes the same call. It's a single flat playbook meant to be copied
-into or `import_playbook`'d from an existing provisioning pipeline. No
-secret has a default baked in (public key, URL, and bearer token are all
-required vars) — see [Ansible Onboarding](Ansible-Onboarding.md).
-
-### System updates
-
-`apt-get update` / the chosen strategy / `autoremove` / `autoclean`
-(**Machines → a machine → System updates**, or scoped to a group / "All
-machines") needs root on the target and can run long:
-
-- **Three strategies** (`UpgradeStrategy`): `full_upgrade` (installs new
-  dependencies and removes conflicting packages when an update needs it —
-  what Proxmox VE recommends; the default), `upgrade` (never removes or
-  newly installs a package — an update that would need that is held
-  back) and `security` (only packages with a pending update from a
-  `*-security` suite, found with a simulated `apt-get upgrade` and
-  installed with `apt-get install --only-upgrade`). `dist_upgrade` — the
-  same as `full-upgrade` under its older name — is still accepted by the
-  API, stored runs and existing scheduled tasks, just no longer offered.
-
-- **A dedicated long timeout** — `AppSettings.update_timeout_seconds`
-  (Settings → Checks & retention; default 30 min), read fresh on every
-  run, distinct from the 60s default every other job uses. Celery's own
-  hard per-task kill switch is a separate, generous, fixed constant
-  (`app.tasks.jobs._UPDATE_TASK_TIME_LIMIT_SECONDS`) sized to comfortably
-  exceed the maximum this setting can be configured to — not itself
-  configurable, since a Celery task decorator argument can't read the
-  database.
-- **Cleanup always runs, chained by `;` not `&&`** — a failed upgrade
-  still runs `autoremove`/`autoclean`; the upgrade step's own exit
-  status decides succeeded/failed.
-- **`sudo -n` throughout**, never bare `apt-get` — non-interactive, so
-  missing passwordless sudo fails fast and clearly instead of hanging on a password prompt.
-- **Every run is a row** — `MachineUpdateRun` persists status/output/
-  error/timestamps in Postgres (Celery's own result backend has a TTL).
-  `batch_id` (a shared UUID, not an FK) links one group/"All machines" trigger's runs.
-- **Fan out, don't await** — a group/"all" trigger creates every row and
-  enqueues every job in one commit, then returns.
-- **Full history** — the Updates tab shows the trigger form and full
-  paginated, filterable run history together, same pagination convention as `/audit`.
-- **Live output** — `run_system_update` reads stdout incrementally
-  instead of buffering it all, writing to the run row every ~2s — what
-  makes the page's own 3s poll show progress instead of a static spinner.
-  A script does the same with `GET /api/v1/machines/{id}/update-runs/{run_id}`
-  until `status` leaves `pending`/`running`.
-
-The run page shows apt's output in a fixed-height box that keeps
-following the end while the run is live (and keeps your place once you
-scroll up), instead of a page that grows with every line
-(`static/js/run-output.js`).
-
-### Previewing a manual update before it runs
-
-"Run update" links to a preview first — simulates the *exact* command
-sequence via apt's dry-run (`apt-get -s`), shows what would be
-installed/upgraded/*removed*. Only the preview's "Confirm" button
-triggers the real thing (same permission, fingerprint check, audit code).
-
-- **Scoped to this one entry point** — scheduled and group/bulk updates unchanged.
-- **A plain confirm button, not typed-name** — removals called out prominently as a warning.
-- **A GET, not a POST** — persists nothing, no CSRF needed.
-- **An empty plan still lets you confirm** — clicking still runs the full sequence.
-- **The API keeps a direct trigger** — the preview is offered alongside, not forced.
-- **Reuses `check_updates`'s parsing conventions** — same marker-delimited
-  sections, `parse_apt_simulated_changes` a pure sibling of
-  `parse_apt_upgradable_packages`.
-
-### Rolling back an update
-
-Every real update run captures a "before" picture (`dpkg-query -W`)
-right before the upgrade step, stored as
-`MachineUpdateRun.package_snapshot`. A capture failure is logged and
-never fails the update run itself — it just means rollback isn't
-offered for that run, same as any run from before this feature existed.
-
-`POST /machines/{id}/updates/{run_id}/rollback` (same `action.updates`
-permission — undoing isn't higher trust) creates a **new**
-`MachineUpdateRun` with `rollback_of_run_id` pointing at the source, then:
-
-1. Captures a **fresh** snapshot — not a blind replay of the old one.
-2. Diffs it against the stored snapshot, keeping only packages that
-   actually changed since. Something touched by an unrelated run/manual
-   `apt` command is left alone — this only ever undoes what *this* run
-   changed, and re-running it is a fast no-op the second time.
-3. If anything's left, re-installs those exact `package=version` specs
-   via `--allow-downgrades` — needs the old `.deb` still resolvable from
-   a configured apt source, or apt fails with its own clear error.
-
-A first-class row in the same history (a "rollback" badge), not an edit
-to the original. A rollback of a rollback is refused (`400`) — roll back
-to a specific earlier state by rolling back *that* run directly. The API
-mirrors the web route.
-
-### Holding a package back, reading its changelog, reboot hints
-
-- **Hold** (`apt-mark hold`) — each pending package on the Updates tab
-  has *hold*; held packages are listed under the check with *release*
-  (`apt-mark unhold`). Same permission as running updates
-  (`action.updates`), audited as `machine.package.hold` / `.unhold`, and
-  refreshed from the machine on every update check (`apt-mark showhold`,
-  `Machine.apt_held_packages`). Needs root or a sudoers grant for
-  `/usr/bin/apt-mark` (machines onboarded by 0.78.0+ get one). REST:
-  `POST`/`DELETE /api/v1/machines/{id}/packages/{name}/hold`.
-- **Changelog** — *changelog* next to a pending package opens what
-  changed since the installed version: `apt-get changelog`, fetched live
-  over SSH and cut at the installed version's own entry
-  (`app.ssh.updates.fetch_changelog`), never stored.
-  REST: `GET /api/v1/machines/{id}/packages/{name}/changelog`.
-- **Reboot hints** — pending kernel, microcode, firmware, `libc6`,
-  `systemd` or `dbus` updates show "these only take effect after a
-  reboot"; pending Proxmox VE core packages (`pve-manager`, `qemu-server`,
-  `pve-qemu-kvm`, …) say that its services restart and running VMs keep
-  the old QEMU until restarted (`app.ssh.updates.reboot_hint_packages`).
-- **"Reboot required"** now also counts Proxmox kernels
-  (`proxmox-kernel-*`, `pve-kernel-*`) and Debian's own
-  `/run/reboot-required` flag, not only `linux-image-*`.
-
-### Checking for updates without installing them
-
-"Check for updates now" needs root for the apt cache refresh
-(`apt-get update`); the enumeration after it (`apt list --upgradable`)
-doesn't. Shares `run_system_update`'s long timeout; its periodic sweep
-runs on the same cadence as facts refresh. A failed check (usually: sudo
-not configured yet) resets counts to "unknown" rather than a stale number.
-
-Reboot-required needs no privileges (`uname -r` vs. the newest installed
-`linux-image-*` via `dpkg`), so it rides along in the facts command.
-
-### Which packages, not just how many
-
-`check_updates` returns both counts and the actual list — name, current
-version, new version — as `PendingPackage`, stored as a JSON column per
-source on `Machine`, same pattern as `disks`. No history table: "what a
-check most recently found," overwritten on every
-run. A manual click, the periodic sweep, and a **user-created scheduled
-task** using the `check_updates` action all write the same columns.
-apt's entry gets a real version diff (`apt list --upgradable`'s
-`[upgradable from: X]` suffix, parsed with a regex); flatpak/snap only
-surface the available version.
-
-### Security updates and the CVEs they fix
-
-Each apt entry also carries `security` — the package comes from a
-`*-security` suite — and, for those, the **CVE ids the update fixes** and
-its changelog **urgency** (`app/ssh/security_advisories.py`). Every
-Debian/Ubuntu security upload names its CVEs in the changelog, and
-`apt-get changelog <package>` prints the changelog of the version apt
-would install, newest entry first: everything above the entry for the
-installed version is what the update brings. So the lookup runs *on the
-machine*, over the update check's own SSH connection — no CVE database,
-no API key, nothing sent from the debcontrol server — and only the parsed
-ids and urgency are stored in `apt_upgradable_packages`. It is kept cheap:
-only security packages, only a (package, new version) not already looked
-up by a previous check, one changelog per *source* package (`dpkg-query
-${source:Package}`), at most 15 per check with a 20 s timeout each, and
-the loop stops at the first empty answer (a machine without a route to
-its distribution's changelog server costs one timeout per check, not
-fifteen). A lookup that didn't happen stays "not looked up yet" and is
-retried on the next check.
-
-The Updates tab lists pending security updates first, with urgency and
-CVE links (Debian's security tracker, or Ubuntu's for an Ubuntu machine).
-**Security → Security updates** (`/security/updates`; the old
-`/machines/security-updates` redirects,
-`machine.view`, scoped like the machine list) groups every pending
-security update across the fleet by package and version, most urgent
-first, with the machines it's pending on — REST:
-`GET /api/v1/machines/security-updates`. Security updates that weren't
-pending at the previous check fire the `machine.security_updates`
-notification (package list and CVEs as placeholders) and appear on the
-machine's History tab; the first check after upgrading debcontrol only
-sets the baseline. A machine whose stored package list predates
-per-package security flags (saved before 0.75.0) still reports its
-security *count*; the page lists such machines above the table, linking
-to their Updates tab, until their next update check fills in the
-details.
-
-### Facts gathered
-
-All in one `FACTS_COMMAND` round trip (`app/ssh/facts.py`), using the same
-`echo ===MARKER===`-per-section convention — no extra SSH connection, no
-privilege requirement, and chosen for portability over a minimal image.
-Besides the periodic sweep (`FACTS_REFRESH_INTERVAL_SECONDS`), Overview's
-**Refresh now** button (`POST /machines/{id}/refresh-facts`, `machine.manage`)
-runs the same job synchronously and waits for the result inline
-(`asyncio.to_thread(async_result.get, timeout=...)`) instead of returning
-immediately and relying on the next poll — the packages and services
-snapshots below each have their own equivalent button:
-
-- **CPU architecture**: `uname -m`.
-- **CPU model**: `lscpu`'s own `Model name:` line, tolerant of the
-  leading whitespace modern `util-linux` nests it under in its tree-style
-  output. Falls back to `/proc/cpuinfo`'s `model name` field only if
-  `lscpu` itself is missing — that field alone is x86-only and reads back
-  empty on any ARM machine (a Raspberry Pi, an ARM cloud instance), which
-  `lscpu` doesn't have that gap on.
-- **Uptime**: `/proc/uptime`'s first field via `awk`, floored to whole
-  seconds — no `uptime`/`procps` binary needed.
-- **Process count**: `ls -d /proc/[0-9]*/ | wc -l` rather than
-  `ps -e | wc -l`, since `procps` isn't in Debian's minimal base system.
-- **Filesystem usage**: `df -B1 --output=target,size,used,avail,pcent`,
-  excluding `tmpfs`/`devtmpfs`/`squashfs`/`overlay`; `-B1` forces byte
-  units. Parsed by taking the *last four* whitespace-separated fields as
-  size/used/avail/pcent and joining everything before that as the mount
-  point — a mount point containing a space is an accepted, documented edge
-  case that breaks this.
-- **Network interfaces**: `ip -4 -o addr show scope global`, filtered to
-  global-scope (not loopback/link-local) IPv4 addresses. `iproute2` is
-  standard on any non-minimal Debian/Ubuntu install; missing entirely just
-  yields an empty list, same graceful degradation as every other fact.
-- **Listening TCP ports** (`Machine.listening_ports`): `ss -Htln`'s
-  local `address:port` column (iproute2, no root — only the owning
-  process would need it, and that isn't asked for).
-- **Admin and login accounts** (`admin_users`, `login_users`): members of
-  the `sudo`/`wheel`/`admin` groups plus every uid-0 account, and local
-  accounts with uid 1000–65533 — read from `/etc/group` / `/etc/passwd`
-  directly, never `getent`, so a machine joined to LDAP/AD doesn't
-  enumerate its whole directory on every refresh.
-- **Physical vs. virtual** (`Machine.is_physical`): `systemd-detect-virt`
-  — prints `none` and exits non-zero on bare metal, or the hypervisor name
-  and exits 0 inside a VM/container. `None` (unknown) if the binary itself
-  is missing. Gates the hardware-monitoring probe below — self-healing on
-  every facts refresh, so a machine physically migrated between bare metal
-  and a VM (or vice versa) picks up the right behavior on its own next
-  sweep, no manual toggle.
-
-### Configuration drift: what changed since the last refresh
-
-Each facts refresh compares a snapshot of the tracked facts before and
-after (`app/services/config_drift.py`): hostname, OS, kernel, CPU cores,
-RAM (whole GiB — MemTotal moves by a few MB between kernels), disks,
-mounted filesystems, IP addresses, listening TCP ports, admin accounts
-and login accounts. Every difference becomes a `MachineChange` row
-(before/after, or removed/added for the set-valued ones) shown on the
-machine's **History** tab, and one `machine.config_changed` notification
-lists them all (`{changes}`). A value that was unknown before (never
-refreshed, or a fact this version started collecting) or can't be told
-now is not a change — so upgrading debcontrol doesn't flood anyone. It's
-the unattended sweep's output, so it is *not* audit-logged (the audit
-trail stays what people and schedules did). Rows are purged after a year
-by the daily monitoring-history purge. **Machines → Status → Configuration
-changed (7 days)** filters the list to machines with a recent change.
-
-### flatpak and snap: optional, guarded, never blocking apt
-
-Updates and the availability check cover apt, flatpak, and snap, but
-neither flatpak nor snap is assumed installed — every step is wrapped in
-`command -v`, so a machine without one just skips that part, never a failure.
-
-The check-side commands are genuine, side-effect-free dry runs:
-**flatpak** has no `--dry-run` for `update`, so `flatpak remote-ls
---updates <remote>` is the read-only equivalent, de-duplicated by app id
-(an app tracked from two remotes shouldn't double-count); **snap**:
-`snap refresh --list`, snapd's own dry-run listing, no root needed.
-
-Applying updates is different: `flatpak update`/`snap refresh` both run
-via `sudo -n` like apt — opt-in (the sudoers example marks those two
-lines optional), and without them only those two steps fail (visible in
-output); apt is unaffected since the three are `;`-chained.
-
-Counts from all three appear everywhere apt's already did — machine
-list, detail page, dashboard tally, REST API — as separate fields
-(`flatpak_upgradable_count`, `snap_upgradable_count`), not merged into
-`upgradable_count` (which also carries a `security_upgradable_count`
-breakdown neither has an equivalent for).
-
-### Installed packages: a snapshot table, not a JSON blob
-
-**Installed packages** stores a `MachinePackage` row per package (not a
-JSON column, the pattern `disks` uses), so the list is filterable/
-countable with an ordinary SQL query.
-
-One SSH round trip for `dpkg-query`, then flatpak/snap if present — none
-need root. A refresh replaces the whole set in one transaction
-(delete-then-bulk-insert) — a snapshot, not a history. Same cadence as
-facts, plus one extra trigger: a finished update run enqueues both a
-package refresh and a fresh update-availability check regardless of outcome.
-
-`held` (`apt-mark showhold`) is a per-row boolean, not a separate list. flatpak/snap always `held=False`.
-
-### Systemd service snapshot
-
-`MachineService`, one row per `systemctl list-units --type=service --all`
-unit, same snapshot/replace pattern and cadence as packages — a full unit
-listing doesn't need to be fresher than facts. No root needed — listing
-unit state is allowed under systemd's default polkit policy. Shown as the
-**systemd services** table at the bottom of the Monitoring tab (filter
-box, sortable columns), and at `GET /api/v1/machines/{id}/services`.
-
-Each *running* unit also carries its own cgroup accounting, read in the
-same round trip with `systemctl show -p Id,CPUUsageNSec,MemoryCurrent,
-MemoryPeak,ActiveEnterTimestampMonotonic` (`app/ssh/services.py`):
-
-- **CPU (avg)** — the unit's CPU-time delta since the *previous* snapshot
-  divided by the wall-clock time between the two, as a share of the whole
-  machine (all cores = 100%) — so on the default cadence, a 10-minute
-  average. Computed in `app.tasks.jobs._service_usage` from the previous
-  row before the snapshot is replaced; only when both rows belong to the
-  same run of the unit (`ActiveEnterTimestampMonotonic` unchanged —
-  otherwise the counter reset with the restart).
-- **Peak CPU** — the highest of those averages since the unit last
-  started.
-- **Memory** / **Peak memory** — `MemoryCurrent`, and systemd's own
-  `MemoryPeak` (systemd 255+), falling back to the highest `MemoryCurrent`
-  seen since the unit last started on older systemd.
-
-Not running, or accounting off → `N/A`, not zero. The Monitoring tab's
-**Refresh now** refreshes this snapshot too.
-
-### Monitoring tab layout
-
-- **Less noise by default** — the Network chart starts with virtual
-  interfaces (`tap*`, `veth*`, `fwbr*`/`fwln*`/`fwpr*`, Docker/libvirt/
-  Kubernetes bridges) switched off, physical NICs and `vmbr*` bridges on;
-  Temperatures starts with CPU package/die, NVMe and GPU sensors only
-  (`app.web.charts.noise_interfaces`/`secondary_sensors`). Everything is
-  one click away in the legend, or *Show all*. Fan speeds use a
-  zero-based axis — fitted to the data, a fan wobbling between 1407 and
-  1411 RPM looked dramatic.
-- **systemd services** — shows running and failed units by default
-  (failed first and highlighted), with *Failed only* / *All* in the select
-  next to the filter box; a CPU/memory column no unit has a value for
-  isn't shown at all.
-
-A two-column grid of chart cards (one column below ~1000px), modeled on
-Beszel's system page, then full-width tables. The same downsampled series
-are available as JSON at `GET /api/v1/machines/{id}/monitoring?range_key=24h`
-(one shared `bucket_timestamps` X axis; `range_key` is `1h`/`24h`/`7d`/
-`30d`/`90d`), and "Refresh now" at `POST /api/v1/machines/{id}/monitoring/refresh`
-— both through `app.services.monitoring_history.load_machine_history`,
-the same query the tab runs.
-
-- **CPU usage**, **Memory usage**, **Disk usage** (per mount), **Disk I/O**
-  and **Network** (read/write and received/sent as separate series per
-  device/interface), **Load average**, **Availability** and **Connect
-  latency** (the reachability history — see below).
-- **Docker** (any machine with a `docker` CLI): stacked per-container
-  **CPU**, **memory** and **network** charts plus an **All containers**
-  table (CPU, memory, network rate, health, ports, image, status).
-- **Hardware** (bare metal only — see below): **Temperature**, **Fans**,
-  **CPU power**, **GPU power**, and per GPU a **utilization** and **VRAM**
-  chart named after the card.
-- **S.M.A.R.T.** table (bare metal): device, model, capacity, status,
-  type, power-on time, power cycles, temperature — clicking a device opens
-  a side panel with every attribute smartctl reported.
-- **systemd services** table (above).
-
-Charts are drawn server-side by `app/web/charts.py` (smooth monotone
-curves, filled or stacked areas, round-number Y ticks, evenly spaced time
-labels) into a stretched, text-free SVG; axis labels are HTML laid out by
-flexbox, so nothing needs an inline style under the CSP.
-`static/js/monitoring-chart.js` adds the hover tooltip (every visible
-series at that point, highest first — built with `textContent`, since
-sensor/container names come from the managed machine), legend toggling,
-the per-card series filter, and the tables' filter/sort. A configured
-condition-based notification's threshold is drawn as a dashed line on the
-chart it's about, with its value in the legend.
-
-### Keeping the journal quiet: one SSH login, not hundreds
-
-Each periodic check (monitoring, facts, packages, services, readiness,
-update and image-update checks) used to log in, run one command and log
-out — on a Proxmox host hundreds of times a day, each one an sshd
-"Accepted …", a PAM session, a logind session and `session-N.scope`, and
-often a whole `user@0.service` start/stop. Now:
-
-- **Connection reuse** (`app.ssh.pool`) — a Celery worker process keeps
-  the connection it opened to a machine and runs the next check over it
-  as another exec channel: no new login at all, like OpenSSH's
-  `ControlMaster`. The periodic collector tasks run on one event loop kept
-  for the worker process's life (`app.tasks.runner.run_in_worker_loop`)
-  instead of `asyncio.run()`'s fresh loop per task. A cached connection is
-  used only when its address, port, account, pinned host key and a hash
-  of the credential still match and a cheap `true` probe succeeds;
-  otherwise it reconnects with the usual pinned-host-key verification.
-  Idle connections are closed after **Settings → Checks & retention →
-  Keep SSH connections open** (`AppSettings.ssh_connection_reuse_minutes`,
-  default 15; 0 = log in for every check), and each process keeps at most
-  64 (least recently used closed first). Update runs, power actions, the
-  terminal, logs and one-off commands still use their own connection.
-- **No `sudo` for root** (`app.ssh.shell.ROOT_SUDO_SHIM`) — every command
-  starts with a shell function that, only when `id -u` is 0, turns
-  `sudo -n …` into a direct call and answers `sudo -n -l <path>` with
-  "yes", so a root account no longer writes a `sudo`/PAM line per disk
-  per sample. A non-root account runs the real `sudo` exactly as before.
-
-### Proxmox VE, Backup Server, Mail Gateway and ZFS
-
-A **Proxmox** tab appears on a Proxmox VE, Proxmox Backup Server or
-Proxmox Mail Gateway host (a plain ZFS host gets it as **ZFS**), and the
-machine's Overview starts with a one-line summary linking to it — the
-product and version, then per product: guests running, cluster quorum,
-pool health, last backup, guests without a backup job (VE); the fullest
-datastore and failing jobs (Backup Server); mail, spam and viruses in the
-last 24 h and a backed-up queue (Mail Gateway). The OS reads e.g.
-"Proxmox Backup Server 3.2.7 (Debian …)" (`Machine.proxmox_product`).
-All of it is collected inside existing round trips (`app.ssh.proxmox`),
-nothing extra connects:
-
-- with every **monitoring sample**: ZFS pools (`zpool list`/`zpool
-  status` — size, use, fragmentation, health, the last scrub/resilver line,
-  errors, zpool's own explanation of a problem) and every VM/container with
-  its state, CPU, memory, uptime, node and tags
-  (`pvesh get /cluster/resources --type vm`), plus the cluster's quorum
-  and which nodes are online (`/cluster/status`);
-- with every **facts refresh**: the Proxmox VE version (`pveversion` —
-  the OS then reads "Proxmox VE 9.0.6 (Debian GNU/Linux 13 …)"),
-  storages with usage and state (Proxmox Backup Server ones marked),
-  backup jobs with their schedule and next run, the last vzdump tasks and
-  their result, guests no backup job covers
-  (`/cluster/backup-info/not-backed-up`) and the recently failed tasks of
-  any kind (`/nodes/localhost/tasks --errors 1`).
-
-**Starting and stopping guests.** With `action.power` (the machine's own
-power actions' permission), each guest row has *start* (stopped guests)
-or *shut down* / *reboot* / *stop* (running ones; confirmed first —
-*stop* pulls the plug, *shut down* asks the guest OS).
-`pvesh create /nodes/<node>/<qemu|lxc>/<vmid>/status/<action>` over SSH,
-with node, type and VMID taken from the latest sample and checked against
-strict patterns (`app.ssh.proxmox.build_guest_action_command`); a fresh
-monitoring sample follows. Audited as `machine.guest.<action>`. REST:
-`POST /api/v1/machines/{id}/proxmox/guests/{vmid}/{action}`.
-
-**Proxmox Backup Server** (facts refresh, through its local API —
-`proxmox-backup-debug api get …`, root):
-
-- datastores with usage and PBS's own estimated "full" date;
-- garbage-collection, verify, sync and prune jobs with schedule, last
-  result and next run — a failed one is flagged;
-- backup groups per datastore (`vm/100`, `ct/101`, `host/nas`) with the
-  last backup and snapshot count — a group whose newest backup is older
-  than 2 days is highlighted (`STALE_BACKUP_SECONDS`);
-- the last tasks (backups, GC, verify, sync) and their result.
-
-**Proxmox Mail Gateway** (facts refresh, `pmgsh`, root):
-
-- mail in the last 24 hours — incoming, outgoing, spam (and its share),
-  viruses, RBL/pregreet rejects, bounces (`/statistics/mail`);
-- the Postfix queue per state (`postqueue -j`) — a warning at 50
-  deferred/held messages (`MAIL_QUEUE_WARN`);
-- ClamAV signature databases with version and build time.
-
-`pvesh`, `proxmox-backup-debug`, `proxmox-backup-manager`, `pmgsh` and
-`postqueue` run through `sudo -n` (a no-op for root); a non-root account
-needs sudoers grants for them (onboarding adds them). REST:
-`GET /api/v1/machines/{id}/proxmox` (`product`, `cluster`,
-`failed_tasks`, `backup_server`, `mail_gateway` next to the VE data);
-`pve_version` is in the machine's own JSON too.
-
-**Memory on a ZFS host.** The ARC is memory the kernel gets back under
-pressure, but Linux doesn't count it as "available", so a ZFS host looked
-~90 % full all the time. `ram_used_bytes` now excludes the ARC
-(`/proc/spl/kstat/zfs/arcstats`), and the Memory chart stacks *ZFS ARC*
-and *Cache and buffers* above *Used*; alert thresholds apply to *Used*.
-Samples from before 0.78.0 on a ZFS host still read higher.
-
-### Docker containers
-
-`MONITORING_COMMAND` ends with a `DOCKER` section on every machine that
-has a `docker` CLI (VMs included — this isn't hardware): plain `docker`
-first (the account is in the `docker` group), else `sudo -n docker` when a
-sudoers rule allows exactly that binary (`sudo -n -l <path>` checks
-without prompting). Neither → `Machine.docker_status = "no_access"` and
-the tab explains how to grant it. Onboarding grants it when Docker is
-installed at onboarding time: a separate `/etc/sudoers.d/debcontrol-docker`
-for whatever path that machine's `docker` resolves to (same pattern as the
-flatpak/snap file). That's root-equivalent — anyone who can start a
-container can mount the host filesystem — but no more than the `apt-get`
-grant the account already has. A machine onboarded before this, or that
-got Docker afterwards, picks it up by re-running onboarding. `docker ps -a` gives the table; `docker stats
---no-stream` the CPU/memory; network bytes come from each container's own
-namespace (`/proc/<pid>/net/dev`, exact counters) and only fall back to
-`docker stats`' rounded NetIO when that file isn't readable.
-Host-network containers are skipped there (their namespace is the host's).
-
-**Container actions.** With `action.power` (the same permission as
-reboot/shutdown — stopping a service's container is the same kind of
-disruptive action), each row of the container table has **Restart** and
-**Stop** (running containers) or **Start** (stopped ones), each behind a
-confirmation dialog. `POST /machines/{id}/containers/{name}/{action}`
-(`app/ssh/containers.py`) validates the name against Docker's naming rule
-and the action against `start`/`stop`/`restart` before anything reaches
-the machine, runs it through the same Docker access probe, waits for
-docker's answer (its own exit status, echoed back — not the SSH channel's),
-audit-logs `machine.container.<action>`, enqueues a fresh monitoring sample
-so the table catches up, and redirects back with the outcome. REST:
-`POST /api/v1/machines/{id}/containers/{name}/{action}`.
-
-**Image updates.** Once a day (04:30, `check_all_machine_image_updates`,
-one task per machine where Docker is readable) and on demand (*Check
-image updates* on the container table, `machine.manage`, or
-`POST /api/v1/machines/{id}/docker/check-images`),
-`app/ssh/image_updates.py` compares each running image's local repo
-digest(s) with the registry's current digest for the same tag, read via
-`docker buildx imagetools inspect` — manifest only, nothing is pulled.
-A differing digest marks the image **update available** in the table
-(`Machine.docker_image_updates`), and `docker.image_updates_count` can
-drive a notification. Digest-pinned references, locally built images, and
-registries this machine can't reach are "unknown". It's detection only —
-updating is still `docker compose pull && up -d` (or your own tooling);
-one registry request per distinct image per day keeps it well inside
-Docker Hub's anonymous rate limit.
-
-The latest full container list is kept once on `Machine.docker_containers`;
-each sample stores only the numbers the charts need
-(`MachineMonitoringSample.docker_stats`), so image names and port lists
-aren't repeated every two minutes.
-
-### Endpoint checks (TLS certificates, HTTP, ping, TCP, DNS)
-
-Besides HTTP and TLS: **ping** (one ICMP echo through an unprivileged
-`SOCK_DGRAM` ICMP socket — allowed in Docker containers by default via
-`net.ipv4.ping_group_range`; where it isn't, the check says so),
-**TCP** (`host:port` accepts a connection) and **DNS** (`name`, or
-`name@192.168.1.53` to ask one specific resolver; the "must contain" text
-is an address the name must resolve to) — `app.services.network_probes`.
-The **SLA report** (`/checks/sla`, CSV, `GET /api/v1/checks/sla` →
-`machines`) also lists every machine the viewer can see, with the same
-figures from its SSH reachability samples.
-
-**Checks** (`/checks`; `machine.view` to see, `machine.manage` to add,
-edit, delete or *Run now*) are independent of machines — they run from the
-debcontrol server's Celery worker, so they test reachability *from
-outside*, the way users see a service:
-
-- **HTTP** — a GET against a full URL, redirects followed; up when the
-  status equals the configured one (or is below 400 when none is set) and
-  every body assertion that's filled in holds, all checked against the
-  first 1 MB of the body (case-sensitive; streamed, never loaded whole):
-  *Response must contain* (so a 200 maintenance page still counts as
-  down), *Response must not contain* ("Internal Server Error", a stack
-  trace marker), and a **JSON path** (`status`, `checks.db.ok`,
-  `items.0.state`) whose value must equal *Expected JSON value* — strings
-  bare, everything else as JSON (`true`, `42`); with no expected value the
-  path only has to exist and not be null/false
-  (`app.services.endpoint_checks.evaluate_json_path`). An https URL also
-  reports its certificate's expiry.
-- **TLS** — a handshake with `host[:port]` (443 by default), certificate
-  expiry only. With *Verify* on (the default), an invalid chain/hostname
-  counts as down; the expiry date is still read (a second, unverified
-  handshake), so an expired certificate says *when* it expired.
-
-Either kind can also have a **maximum response time**: slower than that
-counts as a failure ("up, but unusably slow").
-
-`run_due_endpoint_checks` (Beat, every minute) enqueues each enabled check
-whose own interval (30 s–1 day) has passed. The latest result sits on the
-check itself (`EndpointCheck.last_*`, `cert_expires_at`) for the list
-page, and every probe is also kept as an `EndpointCheckResult` row: a
-check's name links to its **detail page** (`/checks/{id}`) with uptime %,
-average and 95th-percentile response time, availability and response-time
-charts over the same 1h–90d ranges as a machine's Monitoring tab, and the
-latest failures (`app.services.endpoint_check_history`; REST:
-`GET /api/v1/checks/{id}/history?range_key=`). The history is purged with
-the fleet-wide monitoring history retention (Settings → Checks &
-retention) by the same daily job. Notifications: an
-outage is announced after **2 consecutive failures** (`endpoint.down`),
-recovery only after an announced outage (`endpoint.recovered`), and a
-certificate inside its warn window once per certificate
-(`endpoint.cert_expiring`) — see `app/services/endpoint_checks.py`'s
-`apply_result`. Targets are fetched by the server, so only
-`machine.manage` accounts can add them (the same trust level as a
-notification webhook URL). REST: `GET/POST /api/v1/checks`,
-`PUT/DELETE /api/v1/checks/{id}`, `POST /api/v1/checks/{id}/run`.
-
-**SLA report** (`/checks/sla`, CSV at `/checks/sla.csv`, REST
-`GET /api/v1/checks/sla?month=YYYY-MM`): per check, for one calendar month
-in UTC — probes, availability %, an *estimated* downtime (failed probes ×
-the check interval — probes are samples, so that's the resolution there
-is), the number of separate outages (a failed probe after an up one, via
-a `LAG()` window, never by loading every row) and whether the check's
-optional **SLA target** (e.g. 99.9 %) was met
-(`app/services/endpoint_sla.py`). It reads the stored history, so a month
-older than the retention setting is only partly covered — the report says
-from which date the data starts. A check's detail page also has
-**Summarize with AI** (with `ai.access`): a new assistant conversation
-seeded with its status, the last 7 days' numbers and recent failures.
-
-### Machine cards on the Dashboard
-
-The bottom of the Dashboard (`machine.view`; formerly a separate `/fleet`
-page, which now redirects to `/dashboard#fleet`) shows every visible,
-active machine as a compact card — status dot, CPU, RAM, the fullest filesystem,
-the hottest sensor (bare metal), load/cores, uptime, running/total
-containers, pending updates (security ones called out), "reboot
-required" and a "disk full in ~N days" flag when the forecast is under
-30 days. The card's top border takes the worst reading's color (warn at
-75 %, danger at 90 %; temperatures at 70/85 °C; offline or an
-unhealthy/restarting container is always danger; pending security
-updates or a pending reboot are at least warn). The counts above them
-are the Dashboard's own tiles, each a link to the Machines list filtered
-to exactly what it counts (`?status=online|offline|updates|reboot`; the
-security tile opens Security → Security updates).
-`FleetRow.needs_attention` (a danger reading, pending security updates or
-a pending reboot) is still part of `GET /api/v1/fleet`. Built by
-`app/services/fleet_overview.py` from each machine's latest monitoring
-sample — one batched window query for the whole page, the same one the
-Machines list's Cards view uses — plus columns already on `Machine`. The
-grid re-fetches itself every 60 s (`GET /fleet/cards`, the
-`partials/fleet_grid.html` fragment); the name filter is client-side. Capped at 500 machines (the
-paginated Machines list covers larger fleets). REST: `GET /api/v1/fleet`.
-
-### Disk-full forecast
-
-Every hour (`forecast_all_machine_disks`, one job per machine, database
-only, no SSH), `app/services/disk_forecast.py` fits a least-squares line
-through each mount's used bytes over the last 7 days of monitoring
-samples and extrapolates it to the mount's size. The result lives on
-`Machine.disk_forecast` (`{mount: {bytes_per_day, days_until_full, ...}}`),
-shown on the Monitoring tab's Disk usage card ("full in ~23 days,
-+1.2 GB/day"), exposed on `GET /api/v1/machines/{id}/hardware`, and usable
-as the `monitoring.disk_full_days` notification condition (the soonest
-mount). It needs at least 6 samples spanning 6 hours; a mount that isn't
-growing (or wouldn't fill within ~10 years) has no estimate. It's a
-trend, not a promise — a cleanup or log rotation changes the slope and
-the next hourly run picks that up.
-
-### Hardware monitoring: physical machines only, self-healing
-
-The hardware cards appear only when `Machine.is_physical` is true (see
-Facts gathered, above) — a VM's `sensors`/S.M.A.R.T./RAPL/GPU readings
-would be either absent or actively misleading (a virtual disk has no real
-S.M.A.R.T. attributes), so the probe is skipped entirely rather than shown
-empty.
-
-When `is_physical`, the same monitoring SSH round trip appends a second
-`_HARDWARE_COMMAND` (`app/ssh/monitoring.py`):
-
-- **Temperature sensors** and **fan speeds**: `sensors -j` (lm-sensors),
-  parsed from its own JSON — each chip → feature → `*_input` reading,
-  bucketed into temps vs. fans by whether the feature name starts with
-  `temp`/`fan`, and named `<driver> <feature>` (`k10temp Tctl`, `nvme
-  Composite`) so identical feature names on different chips stay
-  distinct (a second identical name gets a ` (2)` suffix). Missing
-  `sensors` or malformed JSON degrade to an empty list, never an error.
-- **S.M.A.R.T. health**: `smartctl -H` per whole disk, the PASSED/FAILED
-  bit kept per sample. The full detail (model, serial, capacity, hours,
-  cycles, temperature, every attribute) is gathered with *facts* instead —
-  see below. Needs root: the onboarding sudoers line includes
-  `/usr/sbin/smartctl` for newly onboarded machines; an already-onboarded
-  one gets it after re-onboarding (until then: `unknown`, not a crash).
-- **CPU power** (Intel and AMD): RAPL's
-  `/sys/class/powercap/*-rapl:*/energy_uj` (`intel-rapl:*` and
-  `amd-rapl:*`, AMD Zen 2+ on kernel 5.8+), summed over the `package-*`
-  domains (sub-domains are already part of a package's total). A
-  cumulative microjoule counter, world-readable; stored raw per sample
-  (`cpu_energy_uj`) and turned into watts from consecutive samples, the
-  same downstream-rate pattern network/disk I/O use. A CPU with neither
-  RAPL variant reports nothing.
-- **GPUs** (NVIDIA, AMD, Intel), one entry per card
-  (`MachineMonitoringSample.gpus`): NVIDIA via `nvidia-smi` (utilization,
-  VRAM used/total, power); AMD/Intel via the DRM driver's sysfs —
-  `gpu_busy_percent` and `mem_info_vram_*` (amdgpu; i915/xe don't expose
-  these) and the hwmon `power1_average`/`power1_input` reading when the
-  driver registers one. The card's name comes from its `product_name`
-  file, else `lspci -mm` for its PCI slot (the bracketed marketing name,
-  vendor-prefixed — "AMD Radeon RX 550"), else the card id. Emulated
-  adapters (QEMU, VMware) and cards reporting no metric at all are skipped.
-  `gpu_power_watts` is the sum across cards, falling back to an
-  `amdgpu`/`i915`/`xe` chip's power reading in the `sensors -j` dump.
-
-Every one of these self-heals: sensors, fans, disks or GPUs appearing or
-disappearing between sweeps is reflected on the next sample with no
-reconciliation step, since each sample stores its own full snapshot. On
-the charts, a series simply starts (or stops) where the device did.
-
-### S.M.A.R.T. detail (facts cadence)
-
-`FACTS_COMMAND` ends with a `SMART` section (`app/ssh/smart.py`): on bare
-metal only (checked in-shell with `systemd-detect-virt`) and only when
-`smartctl` exists, one `smartctl -a -j` per whole disk, stored as
-`Machine.smart_devices` — a snapshot replaced on every facts refresh
-(10 minutes by default), since none of it moves on a minutes scale and
-the full dump is far bigger than the health bit the 2-minute sample keeps.
-`sudo -n -l` checks for the sudoers grant *before* running, so smartctl
-runs once per disk — its exit status is a bitmask that's non-zero even on
-a readable disk with logged errors, so `sudo ... || plain ...` would have
-run it twice. ATA disks keep the classic id/value/worst/threshold/raw
-table (a currently-failing attribute is flagged); NVMe disks their flat
-health-log fields. Also at `GET /api/v1/machines/{id}/hardware`, with the
-Docker list and the latest sensor/GPU readings.
-
-Unlike every table earlier, `MachineMonitoringSample` genuinely is a
-history: one row appended per `MONITORING_INTERVAL_SECONDS` tick, purged
-against `monitoring_history_retention_days` (or a per-machine override).
-Each sample carries CPU/load/RAM, cumulative interface/device counters
-(diffed into a rate by `app/services/monitoring_history.py`), and
-filesystem usage (same shape the facts snapshot uses, just historized on
-this table's shorter cadence — a small addition to an existing round
-trip, not a new connection). Graphs downsample raw rows to a target
-point count in Python — positional bucket-averaging, since neither
-Postgres nor the SQLite test backend has a time-series extension —
-rendered as an interactive, dependency-free inline SVG
-(`trend_chart`): hover/drag scrubs a cursor showing the exact value and
-timestamp, unlike the Dashboard's plain, non-interactive sparklines.
-
-### Availability: historized from the existing reachability sweep, not ICMP
-
-The per-minute reachability sweep already updated `Machine.is_reachable`/
-`last_ping_at` every tick; it now *also* appends a
-`MachineReachabilitySample` — the exact same check, just kept instead of
-only overwriting those two columns. No new connection, no new probe,
-still a plain TCP connect to the SSH port rather than ICMP (a host that
-blocks ICMP but serves SSH should still read as reachable, and vice versa).
-
-A genuinely separate table from `MachineMonitoringSample`, not a column
-on it — different failure semantics: a reachability sample is written
-whether the check succeeded *or failed* (the whole point is capturing an
-outage), while a monitoring sample is never even attempted when SSH
-can't connect. Shares the monitoring retention setting rather than
-getting its own — one "how long does history stick around" knob, not
-two. `build_availability_history` turns raw samples into an
-uptime-percent series (average of 100/0 per check) and a latency series
-(successful checks only — a failed check has no connect time to average).
-
-### Logs: no storage, gated behind `action.terminal`
-
-**Logs** is a live SSH round trip on every view, from one of three
-sources picked at the top of the tab: the **system journal**
-(`journalctl`, the default), **one file** under a configurable path
-allowlist (typed, or picked with *Browse*), or **one Docker container**
-(`docker logs --timestamps`, stdout and stderr merged). Nothing stored:
-only that a view happened is audit-logged, never the content. Gated behind
-`action.terminal`, not the plain `machine.view` every read-only tab
-above uses — reading logs is a materially different trust level than a
-fact, even without root, and an admin who can already open the terminal
-could read any of it directly anyway.
-
-The journal can be narrowed to a **priority** (`journalctl -p`: *error
-and worse*, *warning and worse*, …; only journalctl's own level names are
-accepted, also for Follow live and `GET /api/v1/machines/{id}/logs?priority=`),
-one **unit** (`-u`, e.g. `nginx.service`; validated before it reaches the
-machine) and one **boot** (`-b 0` this boot, `-b -1` the one before — "what
-happened before the crash" — up to 20 back). The journal is read as
-`journalctl -o json` (only the fields shown), so each line is **colored by
-its real priority** rather than a keyword guess. **Hide debcontrol's own
-sessions** drops the lines debcontrol's own SSH logins cause, matched on
-journald's structured fields rather than message text: sshd lines of a
-connection from debcontrol's address (as the machine sees it,
-`$SSH_CONNECTION`) and that sshd process's other lines, logind's session
-created with one of those as leader and everything about that
-`session-N.scope`, the SSH account's `user@UID.service` starting and
-stopping, and `sudo` run by a non-root SSH account
-(`app.ssh.logs.filter_own_sessions`); the count hidden is shown.
-All of it is kept in saved log views and available in the REST API
-(`unit`, `boot`, `hide_own`; the response adds `entries` with each line's
-priority and `hidden`).
-**Saved log views** keep a named set of Logs filters (source, file path,
-container, priority, search, since/until, lines) per account and offer it
-on *every* machine's Logs tab — "errors in the last hour" is useful
-everywhere. Like the machine list's saved views, the stored query string
-is rebuilt from the known parameters only (`app/services/saved_log_views.py`);
-REST: `GET/POST /api/v1/account/saved-log-views`,
-`DELETE /api/v1/account/saved-log-views/{id}`.
-
-The Docker picker lists the containers from the latest monitoring sample
-(`Machine.docker_containers`, see *Docker containers* above) — no extra
-round trip just to fill a dropdown — and defaults to the first running
-one. The chosen name is validated against Docker's own naming rule
-(`[a-zA-Z0-9][a-zA-Z0-9_.-]*`) before it's ever sent, then shell-quoted
-like every other argument; Docker access uses the same `docker` group /
-`sudo -n docker` probe as monitoring. Searching filters the *whole* log
-(`grep -F`) and keeps the last N matches, like the file mode. Also on the
-REST API: `GET /api/v1/machines/{id}/logs?container=<name>`.
-
-The viewer numbers lines, colors ones that look like errors/warnings
-(`app/web/log_lines.py` — a word-boundary match on error/fail/fatal/…,
-warn/deprecated), highlights the search term exactly as the machine-side
-filter matched it, and starts scrolled to the newest line; *Wrap lines*
-and *Jump to end* are `static/js/log-viewer.js`. Log content is plain
-autoescaped text throughout — it comes from the managed machine.
-
-**Follow live** streams new lines as they're written, over a WebSocket
-(`app/web/routes/logs_ws.py`, `/machines/{id}/logs/follow/ws`) rather than
-a page refresh: `journalctl -f`, `tail -F` (keeps following across log
-rotation) or `docker logs -f`, each starting from the last 50 lines and
-filtered by the same search term (`grep --line-buffered` so matches arrive
-immediately) — built by `app.ssh.logs.build_follow_command` with the same
-path allowlist and container-name validation as the one-shot view. The
-socket authenticates exactly like the terminal's (session cookie,
-`action.terminal`, machine scope, pinned host key — all before `accept()`),
-is capped at one hour, and tears down the SSH process on disconnect. Start
-and stop are audit-logged (`machine.logs.follow` / `.follow_end`, with the
-duration), never the content. The browser builds each streamed line with
-text nodes only, applies the same error/warn coloring, keeps the newest
-5 000 lines, and only auto-scrolls while you're already at the bottom.
-Web-only, like the terminal: a never-ending stream has no useful REST shape
-(`GET /api/v1/machines/{id}/logs` covers the snapshot).
-
-### Live updates: a WebSocket doorbell, not a data feed
-
-The Overview, Monitoring, and Updates tabs' status/facts/packages/
-services/update-availability panels used to be pure htmx polling —
-`hx-trigger="every 20s"` (or 30s), meaning up to that long a wait after a
-background job finished before an open tab showed it. Each of those panels
-now also carries `live-<kind> from:body` in its `hx-trigger` (e.g.
-`live-facts from:body`), and the polling interval itself was stretched to
-60s, now just a fallback for a missed push:
-
-- **`app/services/live_updates.py`** — `publish_machine_event(machine_id,
-  kind)` publishes `{"kind": "..."}` to a per-machine Redis pub/sub channel
-  (`debcontrol:live:machine:<id>`). Called from `app/tasks/jobs.py` right
-  after the commit that makes a change visible — reachability sweeps
-  (`status`), facts/package/service refreshes (`facts`/`packages`/
-  `services`), and update-availability checks (`updates`). Best-effort:
-  a publish failure is logged and swallowed, never allowed to fail the job
-  itself — a missed push just means that panel's fallback poll catches up
-  a little later.
-- **`app/web/routes/live_ws.py`** — `GET /machines/{id}/live/ws` (WebSocket),
-  one per machine, subscribes to that machine's channel and relays every
-  message to the browser verbatim. Pure relay: no DB or SSH access happens
-  in this handler at all, so a slow/unreachable machine can never block it.
-  Auth follows the same hand-rolled session-cookie + permission pattern
-  `terminal_ws.py` uses (`app.auth.middleware` never runs for WebSocket
-  requests) — gated behind `MACHINE_VIEW`, not `MACHINE_MANAGE`, since the
-  message it relays is only ever a `kind` string naming which
-  already-permission-checked htmx panel to re-fetch, never machine data
-  itself.
-- **`app/web/static/js/live-updates.js`** — opens that socket on any page
-  with a `[data-live-machine-id]` element, and turns each `{"kind": "..."}`
-  message into a plain `live-<kind>` event dispatched on `document.body`,
-  which is what the panels' `hx-trigger` listens for. Reconnects with
-  exponential backoff (capped at 30s) on any drop.
-
-This is deliberately a doorbell, not a data channel: the push carries no
-machine data, so there's nothing for a stale/duplicate message to get
-wrong, and every actual fetch still goes through the exact same
-permission/scope-checked htmx endpoint its poll always used.
-
-**Browser notifications** are a pure client-side layer on the same
-`live-<kind>` events, in `live-updates.js` itself, not new server
-infrastructure: backgrounded tab + opted-in (a "🔔 Enable notifications"
-toggle the script injects) → a received event also becomes a
-[Notification API](https://developer.mozilla.org/en-US/docs/Web/API/Notification)
-popup, click focuses the tab. Deliberately Notification, not Push — no
-service worker, no VAPID keys, no server subscription storage, nothing
-that fires once the tab/browser is fully closed. Opt-in kept in
-`localStorage` (per-browser), and the machine anchor carries
-`data-live-machine-name` so the title needs no extra request.
+`POST /api/inform` (bearer `INFORM_TOKEN`, for a first-boot/cloud-init
+script — see [Machine Requirements](Machine-Requirements.md)) only
+creates a `PendingMachine` for a human to review. Turning it into a
+`Machine` still goes through the add form and host-key confirmation.
+`ansible/debcontrol-onboard.yml` prepares the account, key and sudoers
+first and makes the same call — see [Ansible Onboarding](Ansible-Onboarding.md).
 
 ### Post-onboarding readiness check
 
-**Settings** shows a banner if `app.ssh.readiness`'s probes (ncurses-term;
-scoped `sudo -n` for apt/shutdown/dmidecode/flatpak+snap) found something
-missing — re-run after host-key confirmation, after "Run initial setup",
-on demand, **and periodically** for every pinned machine, same cadence
-as facts. That periodic sweep is what catches a requirement *un-set*
-after onboarding (`ncurses-term` autoremoved, a sudoers grant hand-edited
-away), not just a gap at onboarding time. Lives on Settings, not
-Overview — a one-time-per-gap config concern, not day-to-day status.
+**Settings** shows a banner when `app.ssh.readiness` finds something
+missing (ncurses-term, scoped `sudo -n` for apt/shutdown/dmidecode,
+flatpak/snap). It runs after host-key confirmation, after onboarding, on
+demand and on the facts cadence, so a grant removed later is caught too.
+A `root` account never lacks sudo; only ncurses-term can be missing, and
+*Install now* fixes it. For a non-root machine the banner shows the exact
+sudoers line (the same `app.ssh.onboarding.SUDO_COMMANDS` list onboarding
+writes), and *Fix it* can apply it with a one-time root login that is
+never stored.
 
-**A `root` connection never has a sudo grant to miss** — every probe
-tries `sudo -n` first, falls back to running directly once `id -u` is 0,
-so those four always read `ok` for root. Only `ncurses-term` itself can
-be missing, and "Install now" installs it with the credential already on
-file — no fresh login, no sudoers file, nothing to escalate.
+## Updates
 
-For a **non-root** machine already on the app's own key (no root
-credential left to fix a sudo gap with), the banner shows the exact
-sudoers line to add by hand — often the only option, since password SSH
-to a privileged account is commonly policy-disabled. A "Fix it" form
-still offers to do it: collects a one-time root/sudo login, temporarily
-puts the machine back in a never-onboarded shape, reuses
-`run_machine_onboarding` unchanged — on failure, restores the previous
-auth state itself rather than leaving a real password sitting in
-`secret_encrypted` (the success-path revert never runs when the script fails).
+### System updates
 
-### Fleet-wide package search
+`apt-get update` → the chosen strategy → `autoremove` → `autoclean`, plus
+flatpak/snap when installed (**Machines → a machine → Updates**, a group,
+or *All machines*; `action.updates`).
 
-**Security → Package search** (`/security/packages`; the old
-`/machines/package-search` redirects, keeping the query) answers "which
-machines have *this*, and what version" — one query across `MachinePackage`, no new storage. Capped at
-500 rows with a "narrow your search" notice past that.
+- **Strategies**: `full_upgrade` (default, what Proxmox recommends),
+  `upgrade` (never removes/installs — such updates are held back),
+  `security` (only packages from a `*-security` suite). `dist_upgrade` is
+  still accepted as an alias.
+- **Timeout**: `AppSettings.update_timeout_seconds` (Settings → Checks &
+  retention, default 30 min).
+- Cleanup always runs (`;`-chained); the upgrade's exit status decides
+  success. Everything runs through `sudo -n`, so a missing grant fails
+  fast instead of hanging.
+- Every run is a `MachineUpdateRun` row (status, output, timestamps);
+  runs triggered together share a `batch_id`. Group/fleet triggers create
+  every row and enqueue one task per machine, then return.
+- Output is written every ~2 s and shown in a fixed-height box that
+  follows the end while live and keeps your place when you scroll up
+  (`static/js/run-output.js`). Scripts poll
+  `GET /api/v1/machines/{id}/update-runs/{run_id}`.
 
-`MachinePackage.machine` is `viewonly=True` with no `back_populates`
-(`Machine` has no `packages` collection, to avoid the eager-loading
-cost) so results can show which machine each hit belongs to with no per-row round trip.
+**Preview.** *Run update* first shows a dry run (`apt-get -s`): what would
+be installed, upgraded and **removed**. Only *Confirm* runs it. The REST
+API keeps a direct trigger.
 
-### Machine runbook: Markdown notes, rendered server-side
+**Rollback.** Each run stores a `dpkg-query` snapshot before upgrading.
+`POST /machines/{id}/updates/{run_id}/rollback` (`action.updates`)
+creates a new run that re-installs only the packages that changed since
+that snapshot, at their old versions (`--allow-downgrades`; the old
+`.deb` must still be available). Rolling back a rollback is refused.
 
-A **Runbook** field (multi-line, up to 20,000 chars) separate from the
-short, single-line `description` used in the list/search — meant to run
-longer: how to deal with this server, who owns it, escalation contact —
-rendered as real HTML on Overview, not plain text.
+**Hold, changelog, reboot hints.**
 
-The `markdown` Jinja filter renders it via
-[mistune](https://mistune.lepture.com/), a small pure-Python parser, no
-transitive deps. Built with **`escape=True` explicitly**
-(`mistune.create_markdown(escape=True)`, not the module-level
-`mistune.html` convenience, which defaults `escape=False` — raw HTML
-passed through unescaped, the opposite of safe here). A `<script>` in
-the source renders as inert text; mistune's default link-safety check
-neutralizes `javascript:` links. Admin-authored (`machine.manage` only)
-but no reason to trust it with markup injection just because of that.
+- *hold* / *release* per package (`apt-mark`), audited as
+  `machine.package.hold` / `.unhold`; REST `POST`/`DELETE
+  /api/v1/machines/{id}/packages/{name}/hold`.
+- *changelog* shows what changed since the installed version, fetched live
+  (`GET /api/v1/machines/{id}/packages/{name}/changelog`).
+- Kernel, microcode, firmware, `libc6`, `systemd`, `dbus` and Proxmox core
+  packages carry a reboot/restart hint. "Reboot required" also counts
+  Proxmox kernels and `/run/reboot-required`.
 
-Included in config export/import and the REST API payload, same as
-`description`/`tags` — structural, not a credential. Left out of CSV
-specifically: its flat-row shape doesn't suit a multi-paragraph field, and JSON already round-trips it in full.
+### Checking for updates
 
-### History tab: one time line per machine
+*Check for updates now* (and the periodic sweep, on the facts cadence)
+runs `apt-get update` + `apt list --upgradable`, plus `flatpak remote-ls
+--updates` and `snap refresh --list` when present. The result is stored
+per machine as the package list with current and new versions; a failed
+check shows "unknown", not a stale number. flatpak/snap counts are
+separate fields (`flatpak_upgradable_count`, `snap_upgradable_count`).
 
-**History** (`/machines/{id}/history`, `machine.view`) merges what
-debcontrol already records about the machine into one list, newest first
-(`app/services/machine_timeline.py`): **notes** people added, detected
-**changes** (configuration drift and newly pending security updates, see
-above), **update runs** with their outcome, **reachability** outages (the
-up→down and down→up transitions in the reachability samples, found with a
-`LAG()` window), and **audited actions** on the machine — the last only
-for a viewer with `audit.view`, since the audit trail keeps its own
-permission; read-only `*.view` entries are left out. 24 h to 1 year, one
-event type at a time if wanted, capped at 300 events per view.
+### Security updates and the CVEs they fix
 
-A **note** is a dated, attributed entry ("replaced the PSU", "don't
-reboot before Friday") — the runbook above stays the place for standing
-instructions. Adding or deleting one needs `machine.manage` and is
-audit-logged (`machine.note.add` / `.delete`). **Summarize with AI**
-(with `ai.access`) starts an assistant conversation seeded with the
-visible time line (same permission filtering) and the machine's current
-state, asking what happened, what likely caused it and what to do next.
-REST: `GET /api/v1/machines/{id}/timeline?days=&kind=`,
-`POST /api/v1/machines/{id}/notes`, `DELETE /api/v1/machines/{id}/notes/{note_id}`.
+Packages from a `*-security` suite are flagged, and for each the **CVE
+ids and urgency** are read from `apt-get changelog` *on the machine* — no
+CVE database, nothing sent from the server (`app/ssh/security_advisories.py`;
+at most 15 new lookups per check, 20 s each).
 
-### Machine tags: cross-cutting, independent of the group tree
+The Updates tab lists them first with CVE links. **Security → Security
+updates** (`/security/updates`, `machine.view`) groups every pending
+security update across the visible fleet, most urgent first — REST
+`GET /api/v1/machines/security-updates`. Newly pending security updates
+fire `machine.security_updates` and appear on the History tab.
 
-A free-form **Tags** field (comma-separated) alongside — not instead of —
-the single-group membership: `Machine.group_id` stays a strict
-one-group-or-none tree, while `Machine.tags` is a plain many-to-many for
-labels that don't fit that tree — `prod`, `web`, `praha-dc1`, whatever
-— any number per machine. The machine list, "All machines", and each
-group's member list gained a **tag** filter (`?tag=...`), and the REST
-API accepts the same.
+## Inventory
 
-**The machine list's free-text search also matches a tag name** —
-typing a tag into the existing search box finds machines carrying it, no
-separate picker needed. The old `<select multiple>` tag picker + AND/OR
-dropdown are gone in favor of that field doing double duty, but
-everything they drove still works by URL: tag badges still link to an
-exact `?tag=name`, saved views still capture `tag`/`tag_mode`, the REST
-API is unchanged. "All machines"/group pages keep their own single-tag
-`<select>` — a much shorter per-group list where a dropdown still pulls its weight.
+### Facts gathered
 
-The table view's own **Tags** column shows every tag as its own badge,
-between Group and Status — tags used to render wrapped under a machine's
-name, cramped alongside its OS badge and link.
+One unprivileged SSH round trip (`app/ssh/facts.py`) on the facts cadence,
+or on demand with Overview's **Refresh now** (`POST
+/machines/{id}/refresh-facts`, `machine.manage`): OS and kernel, CPU
+architecture and model, uptime, process count, filesystems (`df`), IPv4
+addresses, listening TCP ports (`ss -Htln`), admin and login accounts
+(from `/etc/group` and `/etc/passwd`, never `getent`), and physical vs.
+virtual (`systemd-detect-virt` → `Machine.is_physical`, which gates the
+hardware probes).
 
-**The machine list specifically** can filter by *several* tags at once —
-`?tag=prod&tag=web&tag_mode=and|or` — shared with the REST API. `or` is
-one `.any(Tag.name.in_(...))` clause; `and` is one independent
-`.any(Tag.name == ...)` clause **per tag**, chained as separate
-`.where()`s (SQLAlchemy ANDs them together) rather than combined — each
-needs its own correlated `EXISTS`, since a machine must match each tag
-separately, not just carry *some* tag from the set. Saved views capture
-`tag`/`tag_mode` the same way they capture `q` (dropping `tag_mode` from
-the query string whenever it wouldn't change anything — its own `or`
-default, or fewer than two tags to have a mode between — so a plain single-tag
-view's link looks exactly like it did before `tag_mode` existed). The
-REST API's saved-view creation endpoint accepts `tag` as either a single
-string or an array, for backward compatibility with a caller built
-against the pre-multi-tag shape.
+### Configuration drift
 
-Bulk tag add/remove for an ad-hoc checkbox selection
-(`app.services.machine_tags.add_tags_to_machines`/
-`remove_tags_from_machines`) is additive/subtractive, unlike the
-create/edit form's `set_machine_tags` (which *replaces* one machine's
-whole tag set): adding leaves a machine's other tags untouched and
-creates any tag that doesn't exist yet; removing leaves other tags
-untouched, is a silent no-op for a machine that never had the tag, and
-still deletes a tag left with zero machines afterward, same as
-`set_machine_tags`. **REST API only** (`POST /api/v1/machines/bulk/
-tags/{add,remove}`) — the machine list's own bulk-actions bar
-deliberately doesn't surface this, to keep that row to selection-wide
-actions (update/reboot/shutdown) and not blur into per-machine tag
-editing, which already has its own place (the create/edit form).
+Each facts refresh diffs hostname, OS, kernel, CPU cores, RAM, disks,
+mounts, IPs, listening ports and accounts (`app/services/config_drift.py`).
+Each difference becomes a `MachineChange` on the **History** tab and one
+`machine.config_changed` notification lists them. A previously unknown
+value isn't a change, so upgrades don't flood anyone. Not audited (it's a
+sweep). **Machines → Status → Configuration changed (7 days)** filters
+for it.
 
-Cards view (see the display-modes note below) shows each visible
-machine's *latest* monitoring sample as a small CPU/RAM bar — one batched
-window-function query (`_get_latest_monitoring_by_machine`, `row_number()
-OVER (PARTITION BY machine_id ...)`) for the whole page of machines, not
-one query per machine, and skipped entirely for Table/List. Deliberately
-just the latest reading, not a historical sparkline — an actual trend
-line would mean fetching a whole time window's samples for up to a page's
-worth of machines at once, which doesn't scale the way a single indexed
-"give me each machine's newest row" query does; a real trend chart is one
-click away on that machine's own Monitoring tab. The bar's fill width
-avoids an inline `style` (CSP has no `'unsafe-inline'` for `style-src`) by
-picking one of 11 fixed `.usage-bar-fill-N0` CSS classes (rounded to the
-nearest 10) instead of setting a percentage directly.
+### Installed packages and services
 
-### Machine list display modes: Table / List / Cards
+- **Packages**: one `MachinePackage` row per package (dpkg, flatpak,
+  snap), replaced as a whole on each refresh and after every update run.
+  **Security → Package search** (`/security/packages`) finds a package
+  across the fleet (up to 500 rows).
+- **systemd services**: one `MachineService` row per unit, on the same
+  cadence, shown on the Monitoring tab (running and failed by default)
+  and at `GET /api/v1/machines/{id}/services`. Running units also carry
+  CPU (average since the previous snapshot, and peak) and memory (current
+  and peak) from their cgroup accounting; `N/A` when unavailable.
 
-A per-browser cookie (same pattern the light/dark toggle uses), not
-per-account — a display-density preference, not worth a DB column or
-cross-device sync. List is a dense name+status row; Cards is a grid with
-OS logo + CPU/RAM indicator. All three share the same bulk-select checkboxes.
+### Export and import
 
-`app.services.machine_tags` is the only place `Tag`/`machine_tags` rows are written:
+- **Inventory CSV** — *More actions → Export inventory*
+  (`GET /machines/inventory.csv`): every machine matching the list's
+  filter with status, OS, hardware, updates and timestamps. Audited as
+  `machine.inventory_export`. JSON: `GET /api/v1/machines`.
+- **Machine/group config** (`app.services.machine_config`, web and API):
+  structural only — never secrets or host keys. Password-auth machines
+  come back as `ssh_key` and are listed so credentials can be revisited;
+  every imported machine starts unpinned. Existing names are skipped,
+  existing groups reused.
+- **Roles** and **scheduled tasks** export/import the same way (skipping
+  existing names; a scheduled task whose target or action doesn't resolve
+  is skipped, and import obeys the importer's scope and permissions).
 
-- **Normalized on the way in** (lowercased, trimmed, capped at 64 chars,
-  de-duped) — same "normalize once" choice `User.username` makes, so
-  `Tag.name` needs only a plain unique index.
-- **Created on first use, deleted once nothing references it** — no
-  separate "manage tags" page to keep in sync; renaming is remove-old/add-new.
-- **Works at the association-table row level**, not the ORM relationship
-  attribute — `Machine.tags` is `lazy="selectin"` for reads, but touching
-  an *unloaded* relationship on an `AsyncSession` object raises
-  `MissingGreenlet` regardless, so writes go directly through
-  `select`/`insert`/`delete`, then `db.refresh(..., attribute_names=["tags"])`.
+### Runbook, notes and History
 
-Included in config export/import — structural like `description`, no special exclusion.
+- **Runbook** — a Markdown field (up to 20 000 chars) rendered on
+  Overview with `mistune` and `escape=True` (raw HTML becomes text,
+  `javascript:` links are dropped). Part of config export and the API.
+- **History** (`/machines/{id}/history`, `machine.view`) merges notes,
+  detected changes, update runs, reachability outages and — for
+  `audit.view` accounts — audited actions, newest first (24 h to 1 year,
+  up to 300 events). **Notes** need `machine.manage` and are audited
+  (`machine.note.add` / `.delete`). *Summarize with AI* (`ai.access`)
+  starts an assistant conversation from the visible time line. REST:
+  `GET /api/v1/machines/{id}/timeline`, `POST/DELETE
+  /api/v1/machines/{id}/notes`.
 
-### Saved machine-list views: a personal bookmark, not shared config
+## Monitoring
 
-Besides search and tags, the list filters by **Status** (offline, updates
-pending, security updates pending, needs reboot, configuration changed in
-the last 7 days, host key not confirmed) and **Group** (or "no group") —
-`app.web.machine_search.apply_status_filter` / `apply_group_filter`, the
-same on `GET /api/v1/machines?status=&group=` and the CSV inventory.
+### Samples, charts and history
 
-"Save this view" (shown once any filter is set) names the current filter
-for replay later, no retyping. Per-account, not fleet-wide — needs
-nothing beyond `machine.view`, and one account never sees or deletes
-another's.
+A monitoring sample every `MONITORING_INTERVAL_SECONDS` stores CPU, load,
+RAM, disk and network counters and filesystem usage
+(`MachineMonitoringSample`, purged by the monitoring retention setting or
+a per-machine override). The **Monitoring** tab shows two columns of
+charts: CPU, memory, disk usage and I/O, network, load, availability and
+connect latency, then Docker, hardware, S.M.A.R.T. and systemd services.
 
-`query_string` is never accepted verbatim — `build_query_string` only
-encodes the fixed, known parameter set (`q`, `tag`, `tag_mode`, `status`,
-`group`) a client actually
-submitted, so a saved view can't capture an arbitrary querystring, and
-identical filters always produce the identical stored string. A `UNIQUE
-(user_id, name)` constraint is the actual duplicate guard.
+- Charts are server-rendered SVG (`app/web/charts.py`, CSP-safe);
+  `static/js/monitoring-chart.js` adds tooltips, legend toggles and table
+  filter/sort. A condition-based notification's threshold is drawn as a
+  dashed line.
+- Virtual network interfaces and secondary sensors start hidden (one click
+  away in the legend).
+- JSON: `GET /api/v1/machines/{id}/monitoring?range_key=1h|24h|7d|30d|90d`;
+  *Refresh now*: `POST /api/v1/machines/{id}/monitoring/refresh`.
 
-Also reachable via the REST API, same self-service convention as the
-per-user locale endpoints next to it.
+**Availability** comes from the per-minute reachability sweep (a TCP
+connect to the SSH port, not ICMP), historized as
+`MachineReachabilitySample` — written on success *and* failure, so
+outages are visible.
 
-### Bulk actions from the machine list
+**Disk-full forecast.** Hourly, a least-squares line through each mount's
+last 7 days (`app/services/disk_forecast.py`) gives "full in ~N days",
+shown on the Disk usage card, in the API (`/hardware`) and usable as the
+`monitoring.disk_full_days` notification condition.
 
-Checkboxes (update, check-updates, reboot/shutdown) call the exact same
-`machine_actions.py` functions the group and "All machines" buttons use
-— only the `list[Machine]` source differs. Bulk update reuses the
-*group* batch-results page, since `batch_id` only ever meant "triggered together."
+### Hardware (bare metal only)
 
-Power still needs a typed confirmation phrase; an ad-hoc selection has
-no name, so it uses the fixed phrase `SELECTED MACHINES` (mirroring "All
-machines"'s `ALL MACHINES`), IDs carried forward as hidden fields.
+When `is_physical`, each sample also reads: temperatures and fans
+(`sensors -j`), S.M.A.R.T. health (`smartctl -H`, needs a sudoers grant),
+CPU power (Intel/AMD RAPL counters) and GPUs (NVIDIA via `nvidia-smi`,
+AMD/Intel via sysfs — utilization, VRAM, power). Devices appearing or
+disappearing are simply reflected in the next sample. Full S.M.A.R.T.
+detail (`smartctl -a -j` per disk) is refreshed with facts
+(`Machine.smart_devices`). REST: `GET /api/v1/machines/{id}/hardware`.
 
-**Move to group** (needs `machine.manage`, the permission a single
-machine's Group field needs) files every selected machine into one group,
-or out of any group (`app.services.machine_grouping`). The picker starts on a
-placeholder and "no group" is its own explicit choice, so a stray click
-can't ungroup a selection. Same scope rule as
-editing one machine: a group-restricted account can only pick a group it
-sees and never "no group" (the option isn't offered, and the server
-refuses it). Audited once as `machines.bulk.group.assign`, naming only
-the machines that actually moved. REST: `POST /api/v1/machines/bulk/group`
-with `{"machine_ids": [...], "group_id": "<uuid>" | null}`.
+**Memory on a ZFS host**: the ARC is excluded from *Used* (it's reclaimable)
+and stacked separately on the chart; alert thresholds apply to *Used*.
 
-### Supported distributions
+### Keeping the journal quiet
 
-"Debian and its derivatives (e.g. Ubuntu), for as long as each is
-supported upstream" — a policy, not a version list. Every command
-debcontrol runs is stock or standard optional tooling; nothing branches on distro.
+- **Connection reuse** (`app.ssh.pool`): periodic collectors run over one
+  cached SSH connection per machine per worker process instead of a new
+  login each time. A cached connection is used only if address, account,
+  host key and credential still match. Idle ones close after **Settings →
+  Checks & retention → Keep SSH connections open** (default 15 min; 0 =
+  always log in). Updates, power, the terminal and logs use their own
+  connection.
+- **No `sudo` for root** (`app.ssh.shell.with_root_shim`): as root,
+  `sudo -n …` runs directly, so no sudo/PAM lines per sample.
 
-### Power actions: fire-and-forget, double-confirmed, untracked
+### Machine cards on the Dashboard
 
-Reboot and shutdown:
+The Dashboard's bottom section (`/fleet` redirects to `/dashboard#fleet`)
+shows every visible, active machine as a card: CPU, RAM, fullest
+filesystem, hottest sensor, load, uptime, containers, pending (security)
+updates, reboot and disk-full flags. The border takes the worst reading's
+color (warn 75 %, danger 90 %; temperature 70/85 °C). The tiles above link
+to the Machines list filtered by the same status. Refreshed every 60 s,
+up to 500 machines. REST: `GET /api/v1/fleet`.
 
-- **No persistent history**, unlike `MachineUpdateRun`. `shutdown -r/-h
-  now` returns almost immediately, but the connection can legitimately
-  tear down mid-response — expected, not an error. The reachability
-  check already shows the machine going offline and back.
-- **Confirmed twice**, not stacked JS `confirm()` dialogs — a dedicated
-  page, then typing the exact name, checked server-side (not just
-  disabled-until-typed in the browser). "All machines" uses `ALL MACHINES`.
-- **Same eligibility rule as updates**: silently skips any machine
-  without a pinned fingerprint (surfaced as a skipped count).
+## Proxmox VE, Backup Server, Mail Gateway and ZFS
 
-### 🖥️ Interactive SSH terminal: the most powerful capability in the app
+A **Proxmox** tab appears on a Proxmox VE, Backup Server or Mail Gateway
+host (a plain ZFS host gets it as **ZFS**); Overview starts with a
+one-line summary linking to it, and the OS reads e.g. "Proxmox Backup
+Server 3.2.7 (Debian …)". Everything rides on existing round trips
+(`app.ssh.proxmox`).
 
-**Terminal** opens a real interactive shell in the browser — arbitrary
-command execution as whatever the machine's account can do:
+- **VE — every monitoring sample**: ZFS pools (health, use, last scrub,
+  errors), every VM/container (state, CPU, memory, uptime, node, tags) and
+  cluster quorum with online nodes.
+- **VE — every facts refresh**: version, storages, backup jobs, recent
+  vzdump results, guests no backup job covers, recently failed tasks.
+- **Guest actions** (`action.power`): *start*, or *shut down* / *reboot* /
+  *stop* (confirmed) via `pvesh create
+  /nodes/<node>/<qemu|lxc>/<vmid>/status/<action>`, with node, type and
+  VMID from the latest sample, strictly validated. Audited as
+  `machine.guest.<action>`; REST `POST
+  /api/v1/machines/{id}/proxmox/guests/{vmid}/{action}`.
+- **Backup Server** (facts, `proxmox-backup-debug api get`): datastores
+  with usage and estimated full date; GC/verify/sync/prune jobs (failures
+  flagged); backup groups with last backup (older than 2 days highlighted);
+  recent tasks.
+- **Mail Gateway** (facts, `pmgsh`): mail in the last 24 h (in, out, spam,
+  viruses, rejects, bounces), the Postfix queue (warning at 50
+  deferred/held) and ClamAV signatures.
 
-- **Its own dedicated permission**, `ACTION_TERMINAL` — not folded into
-  `ACTION_UPDATES` or `MACHINE_MANAGE`, must be granted explicitly.
-- **Same pinned-fingerprint requirement as every SSH action** —
-  unconfirmed, no terminal.
-- **Session start/end are audited, not keystrokes.** `machine.terminal.open`
-  logs when the shell starts, `.close` logs the duration however it
-  ends. What was typed/displayed is deliberately *not* recorded — a
-  transcript of a potentially root shell would itself be sensitive.
-- **A WebSocket, authenticated by hand.** Starlette never invokes
-  `http`-scoped middleware for a WebSocket — no auth for free.
-  `terminal_ws.py` re-implements the session-cookie lookup and
-  permission check itself, closing the socket (code `1008`) before
-  accepting or touching SSH on failure — never accept-then-fail. The
-  page shell is separately gated by the ordinary permission/fingerprint checks.
-- **A hard 2-hour session cap**, closed server-side regardless of
-  activity. Connection and remote process torn down in a `finally` on
-  every exit path.
-- **AsyncSSH's own PTY support, not a new dependency.**
-  `open_shell_session` calls `open_connection`, then
-  `conn.create_process(term_type=..., term_size=..., encoding=None)`;
-  `change_terminal_size` handles resize. `encoding=None` keeps the byte
-  stream raw, since a terminal relays arbitrary bytes (partial UTF-8, ANSI
-  escapes).
-- **A simple binary/text WebSocket protocol.** Binary frames carry raw
-  terminal bytes in both directions; text frames carry small JSON control
-  messages — a client-sent `resize` (cols/rows) and a server-sent `error`
-  for a failure before there's a PTY.
-- **xterm.js 6, vendored locally** (MIT-licensed; `@xterm/xterm` 6.0.0,
-  `@xterm/addon-fit` 0.11.0, `@xterm/addon-webgl` 0.19.0) —
-  `app/web/static/js/xterm.min.js` / `xterm-addon-fit.min.js` /
-  `xterm-addon-webgl.min.js`, `app/web/static/css/xterm.css` plus this
-  app's own `xterm-csp.css`; never a CDN. Upgrading: replace the three
-  `lib/*.js` files and `css/xterm.css` from the npm tarballs (drop the
-  trailing `sourceMappingURL` line), then check the terminal in a real
-  browser for CSP violations — see below.
-  `app/web/static/js/terminal.js` is this app's own CSP-safe wiring script
-  (external file, no inline `<script>`).
-  **The renderer choice is a CSP fix, not just a performance nicety**:
-  xterm.js's default DOM renderer draws every ANSI color by injecting a
-  `<style>` element with the whole palette as CSS rules —
-  `style-src 'self'` (no `unsafe-inline`) silently blocks that, so
-  `ls --color`, a colored prompt, `htop`, etc. all rendered as plain
-  foreground-only text, with nothing visible anywhere except a CSP
-  violation in the browser console — a CSP violation is silent at the
-  Python layer (route returns 200, tests pass), exactly the class of bug
-  CLAUDE.md's "verify anything CSP-adjacent in a real browser, not just by
-  reading the code" rule exists for. The **WebGL addon** draws glyphs and
-  colors on a `<canvas>`, which CSP's `style-src` has no say over (xterm.js
-  6 removed the canvas addon that did this before v0.71.0) — loaded right
-  after `term.open()`, wrapped in try/catch, and disposed on WebGL context
-  loss. Either way xterm then falls back to the DOM renderer, which
-  **`xterm-csp.css`** keeps usable: it ships, as a same-origin stylesheet,
-  the rules xterm would otherwise inject (row font, span layout, cursor,
-  selection, the full 256-color palette, the scrollbar slider that xterm 6
-  also styles via an injected `<style>`) — only 24-bit truecolor is lost
-  in that fallback (xterm sets it via `style` attributes, also blocked).
-  Its colors mirror `terminal.js`'s theme; change both together.
-- **CSP: `connect-src 'self'`**, spelled out explicitly (it previously fell
-  back to `default-src 'self'`); a same-origin `ws`/`wss` upgrade is
-  covered by `'self'`.
-- **Not exposed over the REST API.**
+The tools run through `sudo -n` (a no-op for root); onboarding grants
+them. REST: `GET /api/v1/machines/{id}/proxmox` (`product`, `cluster`,
+`failed_tasks`, `backup_server`, `mail_gateway`, and the VE data).
 
-### 🕒 Scheduling: reusing actions, not reimplementing them
+## Docker containers
 
-**Scheduling** runs an existing action — update, update check, reboot,
-shut down — against a machine, group, or "All machines" on a cron expression.
+Any machine with a `docker` CLI gets a Docker section in each sample —
+plain `docker` (account in the `docker` group) or `sudo -n docker`
+(onboarding grants it when Docker is installed; that is root-equivalent,
+like the `apt-get` grant). Without access, the tab explains how to grant
+it. Stats come from `docker ps -a` / `docker stats`, network bytes from
+each container's own `/proc/<pid>/net/dev`.
 
-- **An action registry, not a hardcoded list.** `register_action()`
-  registers every action that exists today (`system_update`,
-  `check_updates`, `force_facts_refresh`/`force_monitoring_sample` — the
-  last two force a fleet-wide sweep on demand for debugging —
-  `reboot`, `shutdown`, `run_command`), wrapping the same functions the
-  manual buttons use. A new one needs one more call. Idempotent, called
-  from `app.main`, `app.scheduling.jobs` at import time, and each forked worker child.
-- **One shared implementation for "trigger this against N machines"** —
-  `trigger_updates`/`trigger_check_updates`/`trigger_facts_refresh`/
-  `trigger_monitoring_sample`/`send_power_to_machines` in
-  `machine_actions`, no `Request`, no queue handle. A scheduled run and a
-  human click take the exact same path, including skip-unpinned behavior.
-- **Live "next runs" preview** — as the cron field is typed in, the
-  form shows the next 5 run times (UTC, plus local time when `TZ`
-  differs) via htmx (`GET /scheduling/cron-preview`), or a hint if the
-  expression isn't valid yet; same computation as `next_run_at`
-  (`app.scheduling.cron.next_runs`). REST:
-  `GET /api/v1/scheduling/cron-preview?expression=...&count=N`.
-- **A fixed one-minute tick** — cron is minute-grained, so
-  `run_due_scheduled_tasks` is a plain `crontab()` Beat entry. Each task
-  keeps a denormalized `next_run_at` (computed on create/edit/enable,
-  advanced immediately when it fires) so the tick is one indexed query.
-  Advancing *before* the action runs stops a slow action re-enqueuing on the next tick.
-- **No per-run history** — a firing records a short `last_run_summary` +
-  `last_run_at`; the action itself already has its own record.
-- **A time zone per task** (`ScheduledTask.timezone`, an IANA name;
-  new tasks default to the instance's `TZ`). "0 3 * * *" stays at 03:00
-  local time across daylight-saving changes; the preview shows the next
-  runs in that zone. A task saved before 0.78.0 has none and keeps
-  running in UTC, as before. REST: `timezone` on the task,
-  `GET /api/v1/scheduling/cron-preview?expression=…&timezone=Europe/Prague`.
-- **Only the chosen action's options** are shown on the form
-  (`static/js/schedule-form.js`); without JavaScript every option stays
-  visible, each naming the action it belongs to.
-- **Unattended updates** — *System update* takes two more options:
-  *Reboot afterwards: only if the update needs it* (after a successful
-  run, `app.ssh.facts.check_reboot_required` decides; the machine is
-  rebooted and waited for until its SSH port answers again, up to 15
-  minutes — `MachineUpdateRun.reboot_outcome`) and *Machines: one at a
-  time* (`MachineUpdateRun.rollout_position`: runs go in name order, the
-  next starts only when the previous succeeded and, after a reboot, came
-  back; anything else stops the rest, each marked failed with the reason
-  — `app.tasks.jobs._finish_update_run`).
-- **Run only inside a maintenance window**
-  (`ScheduledTask.require_maintenance_window`) — each run skips every
-  targeted machine no active maintenance window covers; the run summary
-  says how many. (A window can also *pause* scheduled tasks — see
-  Notifications → Maintenance windows.)
-- **Reboot/shutdown are schedulable and not re-confirmed at fire time** —
-  flagged `destructive=True`, surfaced with a ⚠ on the form.
-- **Target encoding: one `<select>`** — type + id folded into one string
-  (`"all"`, `"machine:<uuid>"`, `"group:<uuid>"`), no client-side JS needed.
+- **Actions** (`action.power`): *Start*, *Stop*, *Restart* per container,
+  confirmed; name and action validated before anything runs; audited as
+  `machine.container.<action>`. REST
+  `POST /api/v1/machines/{id}/containers/{name}/{action}`.
+- **Image updates**: daily at 04:30 and on demand (*Check image updates*,
+  `machine.manage`), each running image's digest is compared with the
+  registry's (`docker buildx imagetools inspect`, nothing pulled). Detection
+  only; `docker.image_updates_count` can drive a notification.
 
+## Endpoint checks
+
+**Checks** (`/checks`; `machine.view` to see, `machine.manage` to change or
+*Run now*) run from the debcontrol server, independent of machines:
+
+- **HTTP** — GET with redirects; up when the status matches (or < 400) and
+  the optional *must contain* / *must not contain* / JSON path assertions
+  hold (first 1 MB of the body). https also reports certificate expiry.
+- **TLS** — handshake and certificate expiry (verification optional).
+- **Ping** (unprivileged ICMP socket), **TCP** (`host:port`), **DNS**
+  (`name` or `name@resolver`, optionally an expected address).
+- Optional **maximum response time**.
+
+Beat enqueues due checks every minute (interval 30 s–1 day). Each probe is
+stored; a check's page shows uptime, average/p95 latency and charts
+(`GET /api/v1/checks/{id}/history`). Notifications: `endpoint.down` after 2
+consecutive failures, `endpoint.recovered`, `endpoint.cert_expiring`.
+
+**SLA report** (`/checks/sla`, CSV, `GET /api/v1/checks/sla?month=YYYY-MM`):
+per check and per visible machine — availability %, estimated downtime,
+outages and whether the optional SLA target was met.
+
+REST: `GET/POST /api/v1/checks`, `PUT/DELETE /api/v1/checks/{id}`,
+`POST /api/v1/checks/{id}/run`.
+
+## Logs
+
+**Logs** (`action.terminal`, not `machine.view` — reading logs is a higher
+trust level) is a live SSH read on every view; nothing is stored, only
+that a view happened is audited. Sources: the **journal**, **one file**
+under the `LOG_FILE_ALLOWED_PATHS` allowlist (typed or browsed), or **one
+Docker container**.
+
+- Journal filters: **priority** (`-p`), **unit** (`-u`), **boot** (`-b 0`
+  … `-20`), search, since/until. Lines are colored by their real priority
+  (`journalctl -o json`).
+- **Hide debcontrol's own sessions** drops the sshd/logind/sudo lines
+  debcontrol's own logins cause, matched on journald fields.
+- **Saved log views** (per account, offered on every machine); REST
+  `GET/POST /api/v1/account/saved-log-views`.
+- **Follow live** streams over a WebSocket (`journalctl -f`, `tail -F`,
+  `docker logs -f`), authenticated like the terminal, capped at one hour,
+  audited as `machine.logs.follow` / `.follow_end`. Web-only.
+- REST snapshot: `GET /api/v1/machines/{id}/logs`.
+
+## Live updates: a WebSocket doorbell
+
+Background jobs publish `{"kind": "facts" | "packages" | "services" |
+"updates" | "status"}` to a per-machine Redis channel after committing
+(`app/services/live_updates.py`); `/machines/{id}/live/ws` relays it
+(`machine.view`, same hand-rolled auth as the terminal); `live-updates.js`
+turns it into a `live-<kind>` event the htmx panels listen for, and they
+re-fetch through their normal permission-checked endpoint. No machine
+data is pushed. Panels still poll every 60 s as a fallback. Opt-in
+**browser notifications** fire for these events while the tab is in the
+background (client-side only, no push service).
+
+## Machine list
+
+### Tags, filters and saved views
+
+- **Tags**: any number per machine, independent of the single group;
+  normalized (lowercase, trimmed, ≤ 64 chars), created on first use and
+  deleted when unused (`app.services.machine_tags`). The search box also
+  matches tags; `?tag=a&tag=b&tag_mode=and|or` filters by several.
+- **Filters**: status (offline, updates, security, reboot, configuration
+  changed, host key unconfirmed) and group — the same on
+  `GET /api/v1/machines?status=&group=` (ordered by name; `limit`/`offset`
+  page through a large fleet) and the CSV inventory.
+- **Saved views**: per account, only known parameters are stored
+  (`build_query_string`). REST `GET/POST /api/v1/account/saved-views`.
+- **Display modes**: Table / List / Cards (a per-browser cookie). Cards
+  show each machine's latest CPU/RAM from one batched query.
+
+### Bulk actions
+
+Selected machines can be updated, checked for updates, rebooted or shut
+down through the same `machine_actions` functions as groups (power needs
+the typed phrase `SELECTED MACHINES`). **Move to group** (`machine.manage`)
+respects the account's scope and is audited as `machines.bulk.group.assign`.
+Bulk tag add/remove is API-only (`POST /api/v1/machines/bulk/tags/{add,remove}`).
+Client-submitted ids outside the account's scope are silently dropped.
+
+## Power actions
+
+Reboot and shutdown (`action.power`) are fire-and-forget (the connection
+may drop mid-command — expected), have no run history (reachability shows
+the machine going down and back), need a dedicated confirmation page with
+the machine's typed name (`ALL MACHINES` for the fleet), and skip machines
+without a pinned host key.
+
+## Supported distributions
+
+Debian and its derivatives, plus Proxmox VE/Backup Server/Mail Gateway,
+for as long as each is supported upstream. Commands use stock or standard
+optional tooling; missing tools degrade to "unknown", never an error.
+
+## 🖥️ Interactive SSH terminal
+
+**Terminal** opens a real shell in the browser — the most powerful
+capability in the app:
+
+- its own permission, `action.terminal`, and a pinned host key;
+- start and end are audited (`machine.terminal.open` / `.close` with
+  duration), keystrokes and output are not;
+- a WebSocket authenticated by hand (session cookie, permission, scope,
+  same-origin check) before `accept()`; hard 2-hour cap;
+- AsyncSSH PTY with raw bytes; binary frames for terminal data, JSON text
+  frames for `resize` / `error`;
+- **xterm.js 6, vendored** (`@xterm/xterm` 6.0.0, `addon-fit` 0.11.0,
+  `addon-webgl` 0.19.0). The WebGL renderer keeps ANSI colors working
+  under `style-src 'self'` (xterm's DOM renderer injects `<style>`, which
+  CSP blocks); if WebGL is unavailable, `xterm-csp.css` supplies those
+  rules (only 24-bit color is lost). To upgrade, replace the vendored files
+  from the npm tarballs and check the terminal in a real browser for CSP
+  errors.
+- Not in the REST API.
+
+## 🕒 Scheduling
+
+**Scheduling** runs an existing action — system update, update check,
+facts refresh, monitoring sample, reboot, shutdown, run command — against
+a machine, a group or all machines on a cron expression.
+
+- Actions come from a registry (`register_action()`) wrapping the same
+  `machine_actions` functions the buttons use, so a scheduled run and a
+  click behave identically.
+- A Beat tick every minute runs due tasks with one indexed query on
+  `next_run_at`, advanced before the action runs.
+- **Time zone per task** (IANA name, default the instance `TZ`); tasks
+  from before 0.78.0 stay on UTC. The form previews the next 5 runs
+  (`GET /api/v1/scheduling/cron-preview?expression=…&timezone=…`).
+- **Unattended updates**: *reboot afterwards only if needed* (waits up to
+  15 min for SSH to return) and *one machine at a time* (stops at the
+  first failure).
+- **Maintenance windows**: a task can be limited to machines inside an
+  active window, and a window can pause scheduled tasks.
+- Reboot/shutdown are schedulable and not re-confirmed when they fire
+  (marked ⚠ on the form). No per-run history beyond `last_run_summary` —
+  each action keeps its own record.
+- A restricted account can't target "All machines" and can only schedule
+  within its scope.

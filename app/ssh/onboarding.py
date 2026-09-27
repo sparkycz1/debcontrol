@@ -9,7 +9,7 @@ Ansible from their own machine, run here instead directly over SSH (see
    `authorized_keys` (idempotent — `grep -qxF` first, same convention as
    `app.tasks.jobs._push_pending_ssh_key`).
 3. Grant it passwordless sudo, scoped to exactly what debcontrol needs
-   (`apt-get`, `shutdown`, and `flatpak`/`snap` if either is present) —
+   (`SUDO_COMMANDS`, plus `flatpak`/`snap`/`docker` if present) —
    the exact sudoers line documented in
    wiki/Machine-Requirements.md.
 4. Best-effort install `ncurses-term`, so the web Terminal tab gets colors
@@ -38,6 +38,33 @@ import shlex
 # `debcontrol_user` in ansible/debcontrol-onboard.yml.
 ONBOARD_USERNAME = "debcontrol"
 
+# Everything the `debcontrol` account may run as root — the one list both
+# this script's sudoers file and the machine edit page's manual snippet use.
+# smartctl (smartmontools) — S.M.A.R.T. health for physical disks, part of
+# the hardware-monitoring round trip (app.ssh.monitoring, gated on
+# Machine.is_physical); `sensors` and the RAPL powercap files need no root.
+# apt-mark — holding a package back (0.78.0+); pvesh — guests/storage/
+# backups on Proxmox VE; the Proxmox Backup Server / Mail Gateway read-outs
+# (app.ssh.proxmox, 0.79.0+), under both bin directories since the packages
+# differ. A path that doesn't exist on a machine is simply unused (sudoers
+# accepts it), and a grant missing on a machine onboarded before it existed
+# is harmless — `sudo -n ...` just fails and that one reading is skipped.
+SUDO_COMMANDS: tuple[str, ...] = (
+    "/usr/bin/apt-get",
+    "/usr/sbin/shutdown",
+    "/usr/sbin/dmidecode",
+    "/usr/sbin/smartctl",
+    "/usr/bin/apt-mark",
+    "/usr/bin/pvesh",
+    "/usr/bin/proxmox-backup-debug",
+    "/usr/sbin/proxmox-backup-debug",
+    "/usr/bin/proxmox-backup-manager",
+    "/usr/sbin/proxmox-backup-manager",
+    "/usr/bin/pmgsh",
+    "/usr/sbin/postqueue",
+)
+SUDO_COMMAND_LIST = ", ".join(SUDO_COMMANDS)
+
 # Printed as the script's last line on success, so a caller can tell "ran
 # to completion" apart from "produced some output but got cut off partway"
 # without relying on exit status alone.
@@ -64,25 +91,7 @@ def build_onboarding_command(public_key: str) -> str:
         f'chmod 600 "$home/.ssh/authorized_keys"; '
         f'chown {user}:{user} "$home/.ssh/authorized_keys"; '
         f"cat > /etc/sudoers.d/{user} <<'DEBCONTROL_SUDOERS_APT'\n"
-        f"{user} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, "
-        # smartctl (smartmontools) — S.M.A.R.T. health status for physical
-        # disks, part of the hardware-monitoring round trip
-        # (app.ssh.monitoring), gated on Machine.is_physical. `sensors`
-        # (lm-sensors) and the RAPL powercap sysfs files it also reads
-        # need no root at all, unlike this one. Missing entirely on an
-        # already-onboarded machine from before this grant existed is
-        # harmless and self-healing, same as the dmidecode grant above —
-        # `sudo -n smartctl ...` just fails and that disk's health simply
-        # isn't reported, never a crash.
-        # apt-mark — holding a package back from updates (0.78.0+);
-        # pvesh — reading guests/storage/backups on Proxmox VE (the path
-        # simply doesn't exist elsewhere, which sudoers accepts).
-        # Proxmox Backup Server / Mail Gateway read-outs (app.ssh.proxmox,
-        # 0.79.0+), under both bin directories since the packages differ.
-        "/usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh, "
-        "/usr/bin/proxmox-backup-debug, /usr/sbin/proxmox-backup-debug, "
-        "/usr/bin/proxmox-backup-manager, /usr/sbin/proxmox-backup-manager, "
-        "/usr/bin/pmgsh, /usr/sbin/postqueue\n"
+        f"{user} ALL=(root) NOPASSWD: {SUDO_COMMAND_LIST}\n"
         "DEBCONTROL_SUDOERS_APT\n"
         f"chmod 440 /etc/sudoers.d/{user}; "
         f"visudo -cf /etc/sudoers.d/{user}; "

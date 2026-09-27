@@ -1,223 +1,104 @@
 # 🔔 Notifications
 
-*Rule-based alerts (email or webhook): which events to fire on, who to
-notify, which machines to limit a rule to, and the templates/delivery
-history behind it. Split out of [Architecture](Architecture.md) so this
-one topic is easier to search — start there for the rest (auth/RBAC,
-machine management, audit log, HTTP hardening).*
+*Rules that send an email, webhook or push message when something happens
+on the fleet: events, conditions, recipients, scope, templates, delivery
+history and maintenance windows. See [Architecture](Architecture.md) for
+the rest.*
 
-## What this is
+`/notifications` (`notification.view` to see, `notification.manage` to
+change — separate from settings and user management) holds the **rules**,
+`/notifications/templates` the wording, `/notifications/history` every
+delivery attempt. Everything is also in the REST API (bottom).
 
-`/notifications` (`app/web/routes/notifications.py`) lets an admin define
-**rules**: "when event X happens, email these people, but only if it's
-about one of these machines." A rule needs no code change — everything
-here is data an admin manages from the UI. Gated by two permissions,
-`notification.view` and `notification.manage`, deliberately separate from
-`settings.manage` and `user.manage` — "who gets emailed about what" is a
-narrower trust level than either of those.
+## Rules
 
-Two sub-pages, one router:
+A `NotificationRule` has a unique `name`, `description`, `enabled`, the
+**events** that fire it, optional **conditions**, **recipients**,
+**scope** and a **delivery channel**.
 
-- **`/notifications`** — the rules list, create/edit/delete a rule.
-- **`/notifications/templates`** — one editable subject/body pair per
-  event type (see "Templates" below).
+- **Recipients** (email only): listed users plus every active account
+  holding one of the listed **roles**, re-evaluated at each firing and
+  deduplicated. Accounts that are disabled or have no email
+  (`User.email`, set on **My account** or by an admin; not used for
+  login) are skipped.
+- **Scope**: machines and/or machine groups. Empty = every machine. Events
+  that aren't about a machine (fleet summary, endpoint checks) always
+  match.
+- The pickers on the form filter as you type (`checklist-filter.js`).
 
-Web-UI-only for now — see "REST API" at the bottom.
+## Events
 
-## Rules: event, recipients, scope
+A fixed, code-defined set (`NotificationEventType`). Every event provides
+`{event}`, `{timestamp}` (UTC ISO-8601) and `{details}`; machine events
+also `{machine_name}` and `{machine_ip}`.
 
-A `NotificationRule` (`app.db.models.notification_rule`) has:
+| Event | Fires when | Extra placeholders / `{details}` |
+|---|---|---|
+| `machine.unreachable` | a known-reachable machine stops answering | — |
+| `machine.reachable_again` | it answers again | — |
+| `machine.update_run.failed` | an update run fails | `{details}`: the run's error |
+| `machine.update_run.succeeded` | an update run succeeds | `{details}`: its output |
+| `machine.onboarded` | onboarding finishes | — |
+| `machine.condition_matched` | all of a rule's conditions match (added automatically to rules with conditions) | `{rule_name}`, `{condition_summary}` |
+| `machine.config_changed` | a facts refresh found tracked facts changed | `{changes}`, one line per change |
+| `machine.security_updates` | new security updates are pending | `{package_count}`, `{packages}`, `{cves}` |
+| `machine.reboot_required` | the machine newly needs a reboot | `{details}`: running kernel |
+| `machine.smart_failed` | a disk's S.M.A.R.T. health turned FAILED | `{devices}` |
+| `machine.service_failed` | systemd units entered the failed state | `{units}` |
+| `machine.disk_full_predicted` | a filesystem is forecast full within 7 days | `{mount}`, `{days}` |
+| `machine.zfs_pool_unhealthy` | a ZFS pool left ONLINE | `{pools}` |
+| `machine.backup_failed` | a Proxmox VE backup, or a Backup Server job/task, newly failed | `{details}`: one line per failure |
+| `machine.mail_queue_backlog` | a Mail Gateway queue reached 50 deferred/held | `{count}` |
+| `machine.cluster_quorum_lost` | a Proxmox VE cluster lost quorum | `{cluster}`; `{details}`: offline nodes |
+| `fleet_summary.generated` | the AI's scheduled fleet summary is ready | `{details}`: the report |
+| `endpoint.down` | an endpoint check failed twice in a row | `{endpoint_name}`, `{endpoint_target}` |
+| `endpoint.recovered` | it succeeds again after an announced outage | same |
+| `endpoint.cert_expiring` | a certificate enters its warning window | also `{days}`, `{expires_at}` |
 
-| Field | Meaning |
+Health events (`app.services.health_events`) fire once on the transition
+and never when the previous state is unknown, so upgrading debcontrol
+doesn't page anyone about old problems.
+
+**Adding an event**: add a member to the enum (no migration — stored as
+JSON), call `app.services.notifications.notify(db, event, machine=…,
+context=…)` right after the commit that makes it true, and add default
+templates to `_DEFAULT_TEMPLATES` for **every** shipped locale.
+
+## Conditions: thresholds instead of a fixed event
+
+A rule can carry conditions such as "CPU over 90 %" or "/var over 85 %",
+evaluated by a Beat sweep (Settings → Checks & retention → Notifications,
+default 60 s). Fields come from a fixed registry
+(`app.services.condition_fields.CONDITION_FIELDS`):
+
+| Field | Type |
 |---|---|
-| `name` / `description` | Admin-facing label, unique name. |
-| `enabled` | A disabled rule is skipped entirely — kept, not deleted, so it's easy to switch back on. |
-| `event_types` | Which events (see below) fire this rule — a rule can list more than one. |
-| `users` | Directly-listed recipients. |
-| `roles` | Every active account holding one of these `Role`s is also a recipient (see "Recipients by role" below) — no separate notification-only grouping concept. |
-| `machines` / `machine_groups` | **Scope** — see below. |
+| `machine.os_id`, `.os_version`, `.kernel_version`, `.cpu_architecture` | string |
+| `machine.cpu_cores`, `.uptime_seconds`, `.upgradable_count`, `.security_upgradable_count` | number |
+| `machine.reboot_required`, `.is_reachable` | bool |
+| `monitoring.cpu_percent`, `.load1/5/15`, `.ram_percent`, `.failed_services_count` | number |
+| `monitoring.filesystem_use_percent` (needs a mount point) | number |
+| `monitoring.max_temperature_c`, `.smart_failed_count` (bare metal) | number |
+| `monitoring.disk_full_days` | number |
+| `docker.unhealthy_count`, `.restarting_count`, `.image_updates_count`, `.exited_error_count` | number |
 
-**Recipients** are the union of `users` and every active user holding one
-of the rule's `roles`, deduplicated by account. A recipient is silently
-skipped (never an error, never blocks the others) if their account is
-disabled or has no email address set (see "Who can receive an email"
-below) — a rule with zero *reachable* recipients is simply a no-op for
-that firing.
+Operators: `gt gte lt lte eq ne` for numbers/booleans, plus `contains
+not_contains in not_in` for strings. All conditions must match (AND; use
+two rules for OR). A rule notifies on the false→true transition per
+machine (`NotificationConditionState`), optionally only after the match
+held for `sustained_seconds`. `monitoring.*` fields use the latest sample;
+no sample = no match.
 
-Both the user picker and the machine/machine-group pickers on the rule
-form are filterable — a text box above each checkbox grid narrows it down
-by name as you type (`checklist-filter.js`), so a fleet with hundreds of
-machines or accounts stays usable rather than becoming a giant scroll.
+Thresholds (`gt`/`gte`) are drawn as dashed lines on the machine's
+Monitoring charts.
 
-**Scope** narrows *which machines* a rule cares about:
+### Rules as YAML
 
-- **Empty `machines` and empty `machine_groups`** — the rule matches
-  **every machine**, the same "no scope = everything" convention
-  `MachineGroup`'s own "All machines" virtual group already uses.
-- **Either list populated** — the rule fires only when the triggering
-  event's machine is directly listed, or belongs to one of the listed
-  machine groups.
-- **An event with no machine at all** (today, only
-  `FLEET_SUMMARY_GENERATED` — see below) always matches every rule's
-  scope, since there's nothing to check it against.
-
-## Who can receive an email
-
-Any `User` with `email` set (**My account** → the user can set/change
-their own; an admin can also set it from **Users** → edit) and whose
-account is active. `User.email` is validated (`name@example.com` shape),
-normalized lowercase, and unique — it is *not* used for login, only as
-the notification address. An account with no email simply can't receive
-a notification; nothing in the UI forces one to be set.
-
-## Recipients by role
-
-A rule can target a `Role` (`app.db.models.role`, the same one that
-governs permissions — see [Authentication & RBAC](Authentication-RBAC.md))
-directly, instead of only listing individual accounts: pick "Operators"
-once and every account currently holding that role is a recipient, with
-no separate list to keep in sync as people join, leave, or change job.
-This deliberately reuses `Role` rather than a second, parallel
-notification-only grouping concept — an earlier round of this feature had
-exactly that (a standalone `UserGroup`), and it was folded into `Role`
-once it became clear "who should hear about what" almost always tracks
-"what job does this account do," which a role already answers.
-
-A rule's actual recipient set is re-evaluated every time it fires, not
-snapshotted when the rule was saved — promote someone into a targeted
-role and they start receiving that rule's notifications on the very next
-matching event, no rule edit needed.
-
-## Events: what can trigger a rule
-
-`NotificationEventType` (`app.db.models.notification_rule`) is a small,
-fixed, code-defined set — **not** an open-ended "any audit action" hook.
-Today:
-
-| Event | Fires when | Machine-scoped? |
-|---|---|---|
-| `machine.unreachable` | A machine's reachability check finds it unreachable, **having previously been known reachable** — never on the very first check ever run for a machine (no prior state to transition *from*), and never on a tick that just confirms it's still unreachable. See `app.tasks.jobs._ping_all_machines` / `_check_machine_reachability_now`. | Yes |
-| `machine.reachable_again` | The mirror image — a machine goes from known-unreachable back to reachable. | Yes |
-| `machine.update_run.failed` | A triggered system-update run (`MachineUpdateRun`) finishes with `status=FAILED` — apt/flatpak/snap exited non-zero, or the machine couldn't be reached at all. See `app.tasks.jobs._run_machine_update`. | Yes |
-| `machine.update_run.succeeded` | The same run finishes with `status=SUCCEEDED` instead — its own event type so a rule can opt into just failures, just successes, or both. | Yes |
-| `machine.onboarded` | A machine finishes onboarding successfully (switches over to debcontrol's own SSH identity) — see `app.tasks.jobs._run_machine_onboarding`. | Yes |
-| `fleet_summary.generated` | The AI assistant's scheduled fleet summary (Settings → AI Assistant → Scheduled fleet summary) finishes generating a new report. Frequency/provider/model stay configured there — only "who hears about it" lives here. See `app.tasks.ai_jobs._generate_fleet_summary`. | **No** — matches every rule regardless of machine/machine-group scope, since there's no single machine to check it against. |
-| `endpoint.down` | A TLS/HTTP endpoint check (**Checks**, `/checks`) failed twice in a row — announced once per outage. See Machine Management's *Endpoint checks*. | **No** — endpoints aren't machines. |
-| `endpoint.recovered` | An endpoint check succeeds again after an announced outage. | **No** |
-| `endpoint.cert_expiring` | A checked certificate is within the check's "warn N days before" window (or already expired) — once per certificate; a renewed certificate warns again when *it* gets close. | **No** |
-| `machine.condition_matched` | A rule's own **conditions** (CPU/RAM/disk/facts thresholds — see "Condition-based rules" below) all match for a machine in scope. Added to a rule's `event_types` automatically whenever it has any conditions — never checked by hand. | Yes |
-| `machine.config_changed` | A facts refresh found tracked facts different from the previous refresh — kernel, OS, hostname, CPU cores, RAM, disks, filesystems, IP addresses, listening TCP ports, admin or login accounts (Machine Management's *Configuration drift*). One notification per refresh listing every change; a fact that was unknown before is never a change. See `app.services.config_drift.record_fact_changes`. | Yes |
-| `machine.security_updates` | An update check found apt security updates that weren't pending at the previous check, with the CVEs they fix where the changelog names them. Not repeated while they stay pending; the first check after upgrading debcontrol only sets the baseline. See `app.services.config_drift.record_new_security_updates`. | Yes |
-| `machine.reboot_required` | A facts refresh found the machine newly needing a reboot (a newer kernel installed than running, or `/run/reboot-required`). | Yes |
-| `machine.smart_failed` | A monitoring sample found a disk whose S.M.A.R.T. overall health turned FAILED. | Yes |
-| `machine.service_failed` | A monitoring sample found systemd units that entered the failed state. | Yes |
-| `machine.disk_full_predicted` | The hourly disk forecast dropped to 7 days or fewer for a filesystem (a condition rule on "days until a filesystem is full" covers any other threshold). | Yes |
-| `machine.zfs_pool_unhealthy` | A monitoring sample found a ZFS pool that left ONLINE. | Yes |
-| `machine.backup_failed` | A facts refresh found a new failed Proxmox VE backup (vzdump) task, or a Proxmox Backup Server job (GC/verify/sync/prune) or task that newly failed. | Yes |
-| `machine.mail_queue_backlog` | A Proxmox Mail Gateway's queue reached 50 deferred/held messages. | Yes |
-| `machine.cluster_quorum_lost` | A Proxmox VE cluster went from quorate to not quorate. | Yes |
-
-The health events above (`app.services.health_events`) fire once, on
-the transition, and never when the previous state is unknown — a
-machine's first refresh after upgrading debcontrol doesn't page anyone
-about problems that were already there.
-
-**Adding another event is a three-step recipe**, documented on
-`NotificationEventType`'s own docstring in code:
-
-1. Add a member to the `NotificationEventType` enum
-   (`app/db/models/notification_rule.py`) — no migration needed, since
-   a rule's `event_types` is stored as a plain JSON array of these
-   string values, not a database enum type.
-2. Call `app.services.notifications.notify(db, event_type, machine=...,
-   context=...)` at the exact point the event happens, right after
-   whatever it's reporting on is committed — see the call sites above for
-   the pattern (only the ones that already fired an audit-log-style
-   consequence, or that stand alone as a genuinely new fact, need this;
-   don't call it from a routine polling tick that finds nothing changed).
-3. Add its built-in default subject/body to `_DEFAULT_TEMPLATES` in
-   `app/services/notifications.py` — **for every shipped locale** (see
-   "Templates and locale" below), the same i18n-parity expectation the
-   rest of the app has for user-facing strings.
-
-## Condition-based rules: thresholds instead of a fixed event
-
-Beyond the fixed lifecycle events above, a rule can carry one or more
-**conditions** — "notify when CPU usage is over 90%," "notify when the
-Debian version is X," "notify when /var is over 85% full." Evaluated by a
-periodic Celery Beat sweep (`app.tasks.jobs.evaluate_notification_conditions`,
-interval set in Settings → Checks & retention → Notifications, default 60s
-— see [Development](Development.md)'s background-job recipe), not inline
-with the events above.
-
-**Field registry, not an arbitrary expression language.** A condition
-references a field from a curated, code-defined set
-(`app.services.condition_fields.CONDITION_FIELDS`) — everything the app
-already tracks per machine, either from its latest facts snapshot
-(`Machine`) or its latest monitoring sample (`MachineMonitoringSample`):
-
-| Field key | Meaning | Value type |
-|---|---|---|
-| `machine.os_id` | Distro id (`debian`, `ubuntu`, ...) | string |
-| `machine.os_version` | Full OS version string | string |
-| `machine.kernel_version` | Kernel version | string |
-| `machine.cpu_architecture` | e.g. `x86_64` | string |
-| `machine.cpu_cores` | Core count | number |
-| `machine.uptime_seconds` | Seconds since boot | number |
-| `machine.reboot_required` | Pending-reboot flag | bool |
-| `machine.upgradable_count` / `machine.security_upgradable_count` | Pending package updates | number |
-| `machine.is_reachable` | Current reachability state | bool |
-| `monitoring.cpu_percent` | Latest CPU sample | number |
-| `monitoring.load1` / `.load5` / `.load15` | Latest load averages | number |
-| `monitoring.ram_percent` | Computed from the latest sample's `ram_used_bytes`/`ram_total_bytes` | number |
-| `monitoring.filesystem_use_percent` | One filesystem's usage — needs a **mount point** (e.g. `/var`) to disambiguate | number |
-| `monitoring.failed_services_count` | Latest sample's failed-service count | number |
-| `monitoring.max_temperature_c` | Hottest sensor in the latest sample (bare metal only) | number |
-| `monitoring.smart_failed_count` | Disks whose S.M.A.R.T. overall health says FAILED (bare metal only; unknown without S.M.A.R.T. data) | number |
-| `monitoring.disk_full_days` | Days until the soonest-filling mount is full at its 7-day growth rate (unknown when nothing is growing) — see Machine Management's *Disk-full forecast* | number |
-| `docker.unhealthy_count` | Containers whose healthcheck reports unhealthy | number |
-| `docker.restarting_count` | Containers currently in the `restarting` state (a restart loop) | number |
-| `docker.image_updates_count` | Running images whose registry has a newer digest for the same tag (daily check; unknown until the first check) | number |
-| `docker.exited_error_count` | Stopped containers whose exit code wasn't 0 | number |
-
-A `monitoring.*` field reads the machine's **latest**
-`MachineMonitoringSample`; a machine with no sample yet simply never
-matches (not an error). Operators: `gt`/`gte`/`lt`/`lte`/`eq`/`ne` for
-numbers and booleans, plus `eq`/`ne`/`contains`/`not_contains`/`in`/
-`not_in` for strings.
-
-**Every condition in a rule must match — AND only.** For "or," create a
-second rule; this keeps a rule's own meaning unambiguous and keeps the
-YAML shape (below) simple enough to hand-edit, rather than building a
-general boolean-expression parser for one feature.
-
-**Debounce**: a rule notifies once on the true transition into "all
-conditions match" for a given machine, and again after a false→true
-cycle — never every sweep tick that just confirms "still matching," the
-same spirit as `machine.unreachable`/`machine.reachable_again` above but
-persisted (`NotificationConditionState`, one row per rule×machine) since
-evaluation runs on its own sweep rather than inline with whatever wrote
-the sample. A condition can optionally require the match to hold
-continuously for `sustained_seconds` before it fires, to ignore a brief
-spike.
-
-**Configuring conditions — form or YAML, on the same rule.** The rule
-form's **Trigger** section holds both the fixed-event checkboxes and
-conditions together — a rule fires on either, so they live in one place
-rather than two. A new rule starts with **no** condition rows; click
-"+ Add condition" (`app/web/static/js/notification-conditions.js` clones a
-blank row client-side — progressive enhancement only, nothing here is
-required to submit the form) to add as many as needed, or use the "…or as
-YAML" textarea below the rows to paste several at once — whichever is
-filled in wins. Beyond that, a **whole rule** (name, description, events,
-conditions, recipients-by-email/role-name, scope-by-machine-name/group-name,
-template-by-name — see "Custom templates" below) can be exported and
-re-imported as YAML — `GET /notifications/rules/{id}/export` (one) or
-`GET /notifications/rules/export` (all), and `GET`/`POST
-/notifications/rules/import` to paste one back in. Import **upserts by
-`name`** (the same unique key the form already enforces) — re-importing
-an unmodified export is a no-op, editing the YAML and re-importing updates
-that rule in place. Example:
+Conditions can be added row by row or pasted as YAML. A whole rule
+exports and imports as YAML (`/notifications/rules/{id}/export`,
+`/notifications/rules/export`, `/notifications/rules/import`), with
+recipients, scope and template referenced by email/name. Import upserts
+by `name`; YAML aliases are refused.
 
 ```yaml
 name: High CPU on web servers
@@ -235,302 +116,100 @@ scope:
 template_name: High CPU alert
 ```
 
-`template_name` is optional — omit it to use the per-event default/override
-(see "Custom templates" below); when present, it must match an existing
-`NotificationCustomTemplate.name` or the import fails with a clear error
-rather than silently dropping it.
+## Templates
 
-The REST API reads and writes rules in exactly this shape — see "REST API" below.
+Templates are plain text with `{placeholder}`s substituted by
+`str.format_map` — no logic, no code; an unknown placeholder stays as
+literal text.
 
-## Placeholders: variables usable in a template
+- **Per event**: `/notifications/templates` shows each event's subject and
+  body. The **built-in defaults are localized** — each recipient gets
+  them in their own `User.locale` (English and Czech ship). An edited
+  **override** is one text for everyone; *Reset to default* deletes it.
+- **Custom templates**: named subject/body pairs a rule can pick in its
+  Delivery section instead of the per-event text. Deleting one in use
+  falls the rule back to the default.
 
-A template's subject and body are plain text with `{placeholder}`
-markers, substituted via Python's `str.format_map` — **not** a template
-engine (no loops, no conditionals, no code execution of any kind), so an
-admin-edited body can never do anything beyond producing text. A
-placeholder the current event doesn't provide, or a typo in one, is left
-as **literal text** in the output (e.g. `{no_such_var}` prints exactly
-that) rather than raising an error and losing the whole email.
+## Delivery
 
-Every event provides:
+Each rule picks one channel:
 
-| Placeholder | Value |
-|---|---|
-| `{event}` | The event's code, e.g. `machine.unreachable` — same string as `NotificationEventType.value`. |
-| `{timestamp}` | UTC time the event fired, ISO-8601 (e.g. `2026-09-11T21:00:00+00:00`). |
-| `{details}` | Free-form, event-specific text — see the table below for what each event puts here. |
-
-Machine-scoped events (everything except `fleet_summary.generated`)
-additionally provide:
-
-| Placeholder | Value |
-|---|---|
-| `{machine_name}` | The machine's display name. |
-| `{machine_ip}` | The machine's configured IP address/hostname. |
-
-What `{details}` actually contains, per event:
-
-| Event | `{details}` |
-|---|---|
-| `machine.unreachable` / `machine.reachable_again` | Empty — the subject/body wording alone already says what happened. |
-| `machine.update_run.failed` | The run's recorded error message (apt's exit status, or the connection failure) — `MachineUpdateRun.error`. |
-| `machine.update_run.succeeded` | The run's captured output. |
-| `machine.onboarded` | Empty — the subject/body wording alone already says what happened. |
-| `fleet_summary.generated` | The full generated report text (the same content shown on the Dashboard). |
-| `endpoint.down` / `endpoint.recovered` | `{endpoint_name}`, `{endpoint_target}`; `{details}` is the last error (down only). No machine placeholders. |
-| `endpoint.cert_expiring` | Also `{days}` (days left, 0 once expired) and `{expires_at}` (UTC). |
-| `machine.condition_matched` | Also provides `{rule_name}` and `{condition_summary}` (a human-readable rendering of the matched conditions, e.g. "cpu_percent gt 90"); `{details}` is empty. |
-| `machine.config_changed` | Also `{changes}` — one line per change, e.g. `Kernel: 6.1.0-25 → 6.1.0-26`, `Listening TCP ports: +0.0.0.0:8080 -0.0.0.0:21`; `{details}` is the same text. |
-| `machine.security_updates` | Also `{package_count}`, `{packages}` (one `- name version (CVE-…)` line each) and `{cves}` (comma-separated, newest first, `—` when none are known); `{details}` is the package list. |
-| `machine.reboot_required` | `{details}`: the running kernel. |
-| `machine.smart_failed` | Also `{devices}` (comma-separated); `{details}` the same. |
-| `machine.service_failed` | Also `{units}` (comma-separated); `{details}` one unit per line. |
-| `machine.disk_full_predicted` | Also `{mount}` and `{days}`; `{details}` is empty. |
-| `machine.zfs_pool_unhealthy` | Also `{pools}`; `{details}` one `pool: HEALTH explanation` line each. |
-| `machine.backup_failed` | `{details}`: one `guest or job: status` line per failed task or job. |
-| `machine.mail_queue_backlog` | Also `{count}` (deferred + held); `{details}` is empty. |
-| `machine.cluster_quorum_lost` | Also `{cluster}`; `{details}` lists the offline nodes. |
-
-## Templates: one subject/body pair per event, per your language
-
-`/notifications/templates` lists every `NotificationEventType` with its
-current subject (and whether it's the built-in default or a customized
-override) and a link to edit it. Editing writes a `NotificationTemplate`
-row (`event_type` unique, `subject`, `body`); deleting it via **Reset to
-default** removes the row — there's no separate "undo," the absence of a
-row *is* "use the built-in default."
-
-**An override is a single value, not per-language** — if you customize
-`machine.unreachable`'s wording, every recipient gets that exact text
-regardless of their own UI language. The **built-in defaults**, by
-contrast, *are* localized: each recipient's email is rendered using
-**their own** `User.locale` (the same per-account language setting used
-everywhere else in the app — see [Authentication & RBAC → Per-user UI
-language](Authentication-RBAC.md#per-user-ui-language-i18n)), falling
-back to English for a locale with no translation. This is also why the
-Templates page itself shows the default text in *your own* UI language
-when you're looking at (not yet overriding) an event's template — it's
-previewing exactly what an English- or Czech-language recipient would
-actually receive.
-
-Shipped locales for the built-in defaults today: English and Czech
-(`app.services.notifications._DEFAULT_TEMPLATES`) — the same two locales
-`app/i18n/locales/` ships for the rest of the UI.
-
-### Custom templates: a named template any rule can pick
-
-Beyond the one-per-event default/override above, `/notifications/templates`
-also lists **custom templates** (`NotificationCustomTemplate`: `name`
-unique, `subject`, `body` — same plain-text `{placeholder}` substitution,
-no localization of its own since it's one admin-written value regardless
-of recipient) — "Add template" there creates one. A rule's **Delivery**
-section has an "Email template" picker: leave it on "— default for event —"
-to keep using the per-event default/override exactly as before, or pick a
-custom template to use its subject/body instead, for that rule alone,
-regardless of which event actually fired. Deleting a custom template that's
-in use just falls the referencing rule(s) back to their per-event default
-— never blocked, never leaves a rule broken.
-
-## Delivery: email, webhook or a push service, per rule
-
-Each rule picks a **delivery channel** (`NotificationRule.delivery_channel`,
-its Delivery section): **email** (the default — recipients/roles below
-apply) or **webhook** (`webhook_url` — a plain JSON POST, recipients/roles
-are ignored entirely, only scope still narrows which machines fire it).
-
-**Email.** Settings → Integrations has the SMTP relay section
-(`AppSettings.smtp_*` — host/port/encryption/username/password/from
-address/from name), same encrypted-secret convention as LDAP/OIDC next to
-it. Switching the **Encryption** dropdown there fills in the conventional
-port for that choice (25 for none, 587 for STARTTLS, 465 for SSL/TLS) —
-still a plain, editable number field, so a nonstandard port stays
-possible. `smtp_enabled` gates only the email channel: with it off, or no
-host set, an email rule's dispatch is a complete, silent no-op — a webhook
-rule on the same event still fires.
-
-**Webhook.** One JSON POST per matching rule (not per recipient — a
-webhook has no concept of "recipients"): `{"event", "rule_name",
-"subject", "body", "machine_name", "machine_ip", "timestamp"}`. No
-signature/bearer-auth scheme of its own — embed a token or secret path
-segment in `webhook_url` itself (the way a Slack or Discord incoming
-webhook link already works), since that URL is admin-authored config
-requiring `notification.manage`, not untrusted input.
-
-**Push services** (`app.services.push_channels`) — ntfy, Gotify,
-Telegram, Discord and Pushover, each a single HTTPS request with the
-rendered subject and body, no extra dependency. Per channel the rule
-stores:
+- **Email** — SMTP relay in Settings → Integrations (password encrypted;
+  choosing the encryption fills in the usual port). One email per
+  recipient, rendered in their language. With SMTP off, email rules are a
+  silent no-op.
+- **Webhook** — one JSON POST per rule: `{"event", "rule_name",
+  "subject", "body", "machine_name", "machine_ip", "timestamp"}`. Put any
+  secret in the URL itself (as Slack/Discord do). Only
+  `notification.manage` accounts see the full URL; everywhere else —
+  view-only accounts, the delivery history and error messages — it is
+  shortened to `https://host/…` (`push_channels.redact_url`).
+- **Push** (`app.services.push_channels`): one HTTPS request each.
 
 | Channel | URL | Token (encrypted, write-only) | Recipient |
 |---|---|---|---|
-| ntfy | topic URL (`https://ntfy.sh/homelab`) — sent as JSON to the server root, so a non-ASCII title survives | access token, only for a protected topic | — |
-| Gotify | server URL (`https://gotify.lan`) | application token | — |
+| ntfy | topic URL | access token, for protected topics | — |
+| Gotify | server URL | application token | — |
 | Telegram | — | bot token | chat id |
-| Discord | channel webhook URL | — | — |
-| Pushover | — | application API token | user/group key |
+| Discord | webhook URL | — | — |
+| Pushover | — | application token | user/group key |
 
-The token (`NotificationRule.channel_token_encrypted`) is encrypted like
-every other stored secret, never shown again (leave the field empty to
-keep it), never exported to YAML (`channel_token` in an import sets it;
-the REST API reports only `channel_token_set`), and masked out of the
-delivery history's error text. The recipient is `channel_recipient`.
+Tokens are never shown again, never exported (an import may supply
+`channel_token`; the API only reports `channel_token_set`) and masked out
+of error text.
 
-`app.services.notifications.notify(db, event_type, *, machine=None,
-context=None)` is the one function that turns a fired event into an
-actual send:
-
-1. Find every **enabled** rule listing this event type whose scope
-   includes `machine` (or has no scope at all).
-2. For **each matching rule** (not once for the union of every rule's
-   recipients — see below):
-   - **Webhook rule**: POST once to its `webhook_url`, using its own
-     `custom_template` (or the per-event default) for the `subject`/`body`
-     fields in the payload.
-   - **Email rule**: skip it if SMTP isn't enabled/configured; otherwise
-     resolve its own recipients (deduplicated, email-having, active
-     accounts only) and, for each, render the subject/body — its own
-     `custom_template` if set, else the per-event admin override, else the
-     built-in default in *that recipient's* locale — and send one
-     individual email via stdlib `smtplib`, run through `asyncio.to_thread`
-     (the same sync-library/async-caller seam every Celery task in
-     `app.tasks.jobs` already crosses).
-
-**Rendered per rule, not deduplicated across every matching rule.** Since a
-rule can select its own template, two rules that both match the same
-event for the same person are two legitimately different emails to send,
-not one to collapse — so a recipient targeted by more than one rule for
-the same event now gets one email per rule, each in that rule's own
-wording. A fleet with the common "one rule per event" setup sees no change
-at all; this only affects a deliberately overlapping setup.
-
-**Every failure here is caught and logged, never raised** — no SMTP
-configured, no matching rule, no recipient with an email, the SMTP server
-or webhook endpoint itself refusing the connection, a single recipient's
-send failing while others succeed. A notification that fails to send must
-never be able to break the background job that triggered it, the same
-"best-effort, never load-bearing" spirit `app.audit_syslog.forward_to_syslog`
-already has for the audit log's own external mirror. There is no retry
-and no delivery queue — a failed send is logged and recorded (see
-"Delivery history" below) and moved past.
-
-One connection is opened per recipient rather than one shared connection
-for a multi-recipient email send — simple and correct at the small
-recipient counts a notification rule realistically has; reusing a
-connection is a possible future optimization, not a correctness concern
-today.
+`notify()` finds every enabled rule for the event whose scope matches and
+sends per rule (two rules matching the same person send two messages).
+Failures are logged and recorded, never raised — a notification can't
+break the job that triggered it. No retries.
 
 ## Delivery history and testing
 
-Every send *attempt* — real or "Send test" — is recorded to
-`NotificationLog` (`app.db.models.notification_log`): rule, event, channel,
-target (recipient email or webhook URL), status (`sent`/`failed`, with the
-error for a failure), and whether it was a test. `/notifications/history`
-lists the last 200, newest first — for "did that alert actually go out"
-troubleshooting that the audit log (which only records rule
-create/edit/delete, not individual sends) doesn't cover. Add `?rule_id=`
-(a "View delivery history for this rule" link on that rule's own edit page)
-to narrow it to one rule's attempts — `NotificationLog.rule_id` carries its
-own index specifically for this filter. Purged on its own schedule
-(`AppSettings.notification_log_retention_days`, Settings → Checks &
-retention → Notifications, default 90 days — `app.tasks.jobs.
-purge_old_notification_logs`).
+Every attempt is a `NotificationLog` row (rule, event, channel, target,
+`sent`/`failed`/`suppressed`, error, test flag). `/notifications/history`
+shows the latest 200 (`?rule_id=` for one rule). Kept for
+`notification_log_retention_days` (default 90).
 
-**"Send test"** on a rule's edit page (`app.services.notifications.
-send_test_notification`) fires one synthetic notification through that
-rule's own configured channel/template, bypassing its real
-recipients/scope entirely: email goes only to the admin clicking the
-button (never the rule's actual audience), a webhook rule still POSTs to
-its real `webhook_url`. Lets an admin verify SMTP/webhook config and
-template wording actually work without waiting for a real alert. Logged
-with `is_test=True` so it's clearly distinguishable in the history list.
+**Send test** on a rule fires a sample through its channel and template —
+email only to the admin clicking it, a webhook/push to its real target —
+logged as a test.
 
-## Condition thresholds on the Monitoring tab
+## Maintenance windows
 
-A machine's Monitoring tab charts (CPU, RAM, per-filesystem-mount usage —
-`machines/monitoring.html`) draw a dashed reference line at the lowest
-matching `gt`/`gte` condition threshold configured for that machine
-(`app.services.notifications.condition_thresholds_for_machine`), so "where
-would this actually alert" is visible directly on the trend, not just as a
-number on the Notifications page. The RAM chart's line additionally shows
-the absolute value (e.g. "Alert ≥ 90% (3.6 GB)") using that machine's
-latest known total RAM, since a bare percentage doesn't say what the
-actual ceiling is. Best-effort and visual only — `lt`/`lte`/`eq`/other
-operators aren't representable as a ceiling line and are simply not drawn;
-this never affects whether the condition itself fires.
+**Scheduling → Maintenance windows** (`/scheduling/maintenance`; old
+`/notifications/maintenance` URLs redirect; `notification.view` /
+`.manage`): a named time range (≤ 31 days) covering all machines, groups
+and/or machines.
 
-## Maintenance windows: muting notifications during planned work
-
-**Scheduling → Maintenance windows** (`/scheduling/maintenance`; the old
-`/notifications/maintenance` URLs redirect there; still
-`notification.view` to see, `notification.manage` to schedule) — a named
-time range (at most 31 days) covering **all machines**, chosen **machine
-groups** and/or individual **machines**. While a window is active, every
-notification *about a covered machine* is withheld: unreachable/reachable
-again, update run failed/succeeded, onboarding, condition rules. Group
-membership is evaluated when the notification fires, so a machine moved
-into a muted group mid-window is muted too.
-
-- **Nothing is lost silently** — each rule that would have fired gets a
-  delivery-history row with status **suppressed** and the window's name
-  as its target (`notify()` in `app.services.notifications`, via
-  `app.services.maintenance_windows.active_window_for`).
-- **Not muted**: events that aren't about a machine — endpoint checks
-  (down/recovered/certificate expiring) and the scheduled fleet summary.
-- **Condition rules** are edge-triggered (fire on false→true): a condition
-  that became true during the window and stays true afterwards doesn't
-  re-announce itself once the window ends — it fires again only after it
-  clears and trips again.
-- **Pause scheduled tasks** (`pause_scheduled_tasks`, ticked by default
-  for a new window, off for windows created before 0.77.0): while the
-  window is active, scheduled tasks skip the covered machines — skipped,
-  not queued for later. The run's summary says how many were paused
-  (`app.scheduling.jobs._run_scheduled_task` via
-  `maintenance_windows.machines_paused_for_scheduling`); manual actions
-  are never blocked.
-- **End now** finishes an active window early (or cancels an upcoming
-  one), keeping it in the list as ended; **Delete** removes it.
-- A machine's Overview tab shows a banner while it's in maintenance.
+- While active, notifications **about covered machines** are withheld and
+  recorded as **suppressed** with the window's name. Endpoint checks and
+  the fleet summary are not muted.
+- Condition rules that became true during the window don't re-announce
+  afterwards; they fire again only after clearing and tripping again.
+- **Pause scheduled tasks** (default on for new windows): scheduled tasks
+  skip covered machines; manual actions are never blocked.
+- *End now* ends it early; *Delete* removes it. Overview shows a banner.
 - Audited as `maintenance_window.create`/`.update`/`.end`/`.delete`.
-- REST: `GET/POST /api/v1/notifications/maintenance-windows`,
-  `PUT/DELETE .../{id}`, `POST .../{id}/end` — e.g. a deploy pipeline
-  opening a window right before it reboots machines.
 
 ## Audit logging
 
-Rule/template create-edit-delete are all audit-logged
-(`notification_rule.create`/`.update`/`.delete`/`.import`/`.test`,
-`notification_template.update`/`.reset`,
-`notification_custom_template.create`/`.update`/`.delete`) — the same
-"every mutation gets an entry" convention every other admin-config page
-follows. **Actually sending a notification is not itself audit-logged**
-— it's a downstream *consequence* of an event that (where relevant)
-already has its own audit entry, not a new auditable action of its own;
-logging every individual send here would flood the trail with what's
-really the same fact repeated per recipient. That per-send record lives
-in `NotificationLog` instead — see "Delivery history" above, a
-troubleshooting log, not an audit trail.
+Rule and template changes are audited (`notification_rule.create`/
+`.update`/`.delete`/`.import`/`.test`, `notification_template.update`/
+`.reset`, `notification_custom_template.create`/`.update`/`.delete`).
+Individual sends are not — they're in the delivery history.
 
 ## REST API
 
-`/api/v1/notifications/...` (`app/web/routes/api_v1_notifications.py`)
-mirrors this page with the same permissions (`notification.view` to read,
-`notification.manage` to change) and audit action codes. Rule validation
-and saving is shared with the web form and YAML import
-(`app.services.notification_rules`), so the two can't drift.
+`/api/v1/notifications/…` uses the same permissions, audit codes and
+validation (`app.services.notification_rules`) as the web pages.
 
 | Method & path | What it does |
 |---|---|
-| `GET /rules`, `GET /rules/{id}` | Rules in the portable YAML-export shape above, plus `id` |
-| `POST /rules` | Create one (409 if the name exists) |
-| `PUT /rules/{id}` | Replace one — every field, like the form; a different `name` renames it |
-| `DELETE /rules/{id}` | Delete |
-| `POST /rules/import` | The YAML import as a JSON list: upsert by name, all or nothing |
-| `POST /rules/{id}/test` | "Send test" — email goes only to the token owner |
-| `GET /history?rule_id=&limit=&offset=` | Delivery history, newest first |
-| `GET /templates` | Every event's effective subject/body, `is_override` |
-| `PUT /templates/{event_type}`, `DELETE /templates/{event_type}` | Override / reset to default |
-| `GET/POST /custom-templates`, `PUT/DELETE /custom-templates/{id}` | Named custom templates |
-
-A fetched rule can be edited and `PUT` straight back, or `POST`ed to
-another instance — recipients, scope and template are referenced by
-email/name, never by database id.
+| `GET /rules`, `GET /rules/{id}` | Rules in the YAML-export shape plus `id` (webhook URL shortened for view-only tokens) |
+| `POST /rules` · `PUT /rules/{id}` · `DELETE /rules/{id}` | Create (409 on duplicate name) · replace · delete |
+| `POST /rules/import` | Import a list, upsert by name, all or nothing |
+| `POST /rules/{id}/test` | Send test (email to the token owner) |
+| `GET /history?rule_id=&limit=&offset=` | Delivery history |
+| `GET /templates` · `PUT/DELETE /templates/{event_type}` | Per-event templates · override · reset |
+| `GET/POST /custom-templates` · `PUT/DELETE /custom-templates/{id}` | Custom templates |
+| `GET/POST /maintenance-windows` · `PUT/DELETE /maintenance-windows/{id}` · `POST …/{id}/end` | Maintenance windows |

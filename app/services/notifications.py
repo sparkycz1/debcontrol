@@ -511,7 +511,9 @@ async def _send_webhook(
             return NotificationDeliveryStatus.FAILED, f"HTTP {response.status_code}"
         return NotificationDeliveryStatus.SENT, None
     except Exception as exc:
-        return NotificationDeliveryStatus.FAILED, str(exc)[:2000]
+        # The URL's path is its secret — never echo it into the history.
+        message = str(exc).replace(url, push_channels.redact_url(url))
+        return NotificationDeliveryStatus.FAILED, message[:2000]
 
 
 def rule_channel_token(rule: NotificationRule) -> str | None:
@@ -672,7 +674,7 @@ async def notify(
                         rule_name=rule.name,
                         event_type=event_type.value,
                         channel=NotificationDeliveryChannel.WEBHOOK,
-                        target=rule.webhook_url,
+                        target=push_channels.redact_url(rule.webhook_url),
                         machine=machine,
                         status=status,
                         error=error,
@@ -821,7 +823,7 @@ async def send_test_notification(
                 rule_name=rule.name,
                 event_type="test",
                 channel=NotificationDeliveryChannel.WEBHOOK,
-                target=rule.webhook_url,
+                target=push_channels.redact_url(rule.webhook_url),
                 machine=None,
                 status=status,
                 error=error,

@@ -57,6 +57,7 @@ from app.services.notification_rules import (
     delete_custom_template as delete_custom_template_row,
 )
 from app.services.notifications import default_template, send_test_notification
+from app.services.push_channels import redact_url
 from app.web.flash import read_flash, sign_flash
 from app.web.templating import t, templates
 
@@ -74,6 +75,13 @@ router = APIRouter(
     dependencies=[Depends(require_permission(Permission.NOTIFICATION_VIEW))],
 )
 _manage = Depends(require_permission(Permission.NOTIFICATION_MANAGE))
+
+
+def _can_manage(request: Request) -> bool:
+    """Only an account that could edit a rule sees its webhook URL in full —
+    the URL's path is the webhook's secret (see `push_channels.redact_url`)."""
+    user = getattr(request.state, "user", None)
+    return bool(user and user.has_permission(Permission.NOTIFICATION_MANAGE))
 
 
 async def _smtp_configured(db: AsyncSession) -> bool:
@@ -171,7 +179,9 @@ def _condition_rows_for_rule(rule: NotificationRule | None) -> list[dict[str, An
     return rows
 
 
-def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object]:
+def _rule_form_context(
+    rule: NotificationRule | None = None, *, can_manage: bool = True
+) -> dict[str, object]:
     return {
         # CONDITION_MATCHED is managed automatically (added whenever a rule
         # has conditions — see `_build_conditions_and_event_types` below),
@@ -190,7 +200,11 @@ def _rule_form_context(rule: NotificationRule | None = None) -> dict[str, object
         "selected_delivery_channel": (
             rule.delivery_channel if rule else NotificationDeliveryChannel.EMAIL.value
         ),
-        "selected_webhook_url": rule.webhook_url if rule else "",
+        "selected_webhook_url": (
+            (rule.webhook_url if can_manage else redact_url(rule.webhook_url))
+            if rule and rule.webhook_url
+            else ""
+        ),
         "selected_channel_recipient": (rule.channel_recipient or "") if rule else "",
         "channel_token_set": bool(rule and rule.channel_token_encrypted),
         "condition_rows": _condition_rows_for_rule(rule),
@@ -233,6 +247,21 @@ def _parse_condition_rows(
     return rows
 
 
+class _NoAliasLoader(yaml.SafeLoader):
+    """`SafeLoader` minus anchors/aliases — a rule export never uses them,
+    and refusing them rules out a "billion laughs" document whose shared
+    references blow up once the import walks them."""
+
+    def compose_node(self, parent: Any, index: Any) -> Any:
+        if self.check_event(yaml.AliasEvent):
+            raise yaml.YAMLError("YAML aliases (*name) aren't supported here.")
+        return super().compose_node(parent, index)
+
+
+def _load_yaml(text: str) -> Any:
+    return yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
+
+
 def _parse_conditions_yaml_block(text: str) -> list[dict[str, Any]]:
     """The rule form's "Conditions as YAML" textarea — a YAML list of
     condition dicts only (not a whole rule; see `_rule_to_yaml_dict` below
@@ -241,7 +270,7 @@ def _parse_conditions_yaml_block(text: str) -> list[dict[str, Any]]:
     if not text.strip():
         return []
     try:
-        parsed = yaml.safe_load(text)
+        parsed = _load_yaml(text)
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid YAML: {exc}") from exc
     if not isinstance(parsed, list):
@@ -571,7 +600,7 @@ async def edit_rule_form(
             "csrf_token": csrf_token,
             "test_sent": request.query_params.get("test_sent") is not None,
             "test_error": read_flash(request, "test_error"),
-            **_rule_form_context(rule),
+            **_rule_form_context(rule, can_manage=_can_manage(request)),
         },
     )
     if new_cookie:
@@ -826,7 +855,11 @@ async def export_rule(
     request: Request, rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
-    text = yaml.safe_dump(rule_to_portable_dict(rule), sort_keys=False, allow_unicode=True)
+    text = yaml.safe_dump(
+        rule_to_portable_dict(rule, include_secrets=_can_manage(request)),
+        sort_keys=False,
+        allow_unicode=True,
+    )
     return Response(content=text, media_type="application/yaml")
 
 
@@ -844,7 +877,9 @@ async def export_all_rules(request: Request, db: AsyncSession = Depends(get_db))
     )
     rules = result.scalars().all()
     text = yaml.safe_dump(
-        [rule_to_portable_dict(r) for r in rules], sort_keys=False, allow_unicode=True
+        [rule_to_portable_dict(r, include_secrets=_can_manage(request)) for r in rules],
+        sort_keys=False,
+        allow_unicode=True,
     )
     return Response(content=text, media_type="application/yaml")
 
@@ -884,7 +919,7 @@ async def import_rules(
         return response
 
     try:
-        parsed = yaml.safe_load(yaml_text)
+        parsed = _load_yaml(yaml_text)
     except yaml.YAMLError as exc:
         return await _rerender([f"Invalid YAML: {exc}"], status.HTTP_422_UNPROCESSABLE_CONTENT)
 

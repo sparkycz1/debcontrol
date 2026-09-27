@@ -236,9 +236,6 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
 }
 
-MUTATING_TOOLS = frozenset(name for name, spec in TOOL_SPECS.items() if spec.mutating)
-READ_ONLY_TOOLS = frozenset(name for name, spec in TOOL_SPECS.items() if not spec.mutating)
-
 
 SYSTEM_PROMPT = """\
 You are the assistant built into debcontrol, a web application for managing \

@@ -187,10 +187,6 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
 }
 
 
-class UnknownOperatorError(ValueError):
-    pass
-
-
 _NUMERIC_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     "gt": op.gt,
     "gte": op.ge,

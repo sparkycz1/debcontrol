@@ -67,27 +67,21 @@ terminator in front of it, always. Pick your fighter:
 
 ## ✨ What's in the box
 
-| Tab | The highlights (not the whole story — see [Architecture](Architecture.md)) |
+| Page | Highlights |
 |---|---|
-| 📊 **Dashboard** | Fleet counts as tiles that open the matching filtered machine list, trend charts (hover for values), upcoming schedules, recent audit activity, an optional **AI fleet summary** ("what changed, what needs your attention") and, at the bottom, every machine as one card — online/offline, CPU, RAM, fullest disk, hottest sensor, load, uptime, containers, pending updates, reboot required, disk-full forecast — colored by the worst reading, refreshing itself every minute (`GET /api/v1/fleet`) |
-| 🔐 **Checks** | TLS certificate expiry, HTTP endpoint, ICMP ping, TCP port and DNS checks run from the debcontrol server — status code, "must / must not contain" text, a JSON-path assertion, a response-time limit — with down/recovered/certificate-expiring notifications, uptime/latency history, a **monthly SLA report** that includes every machine's SSH reachability (CSV too) and a "Summarize with AI" button (`/checks`, `/checks/sla`, `/api/v1/checks`) |
-| 🖥️ **Machines** | Facts, packages (apt/flatpak/snap), live monitoring (CPU/RAM/disk/network, Docker containers, systemd services with per-service CPU/RAM, and on bare metal temperatures/fans/power/GPUs/S.M.A.R.T.), a browser SSH terminal, log browsing (journal unit/boot/priority filters, colors by priority, "hide debcontrol's own sessions", saved log views), tags, status/group filters & saved views, bulk actions, JSON/CSV config export and a filtered CSV inventory report — and **update rollback** if an upgrade goes sideways. Updates offer `full-upgrade`, a safe `upgrade` or security updates only, warn when a kernel/Proxmox update needs a reboot, link each package's changelog and can hold a package back (`apt-mark hold`). A **Proxmox** tab covers Proxmox VE (VMs/containers with their state and start/shut down/reboot/stop buttons, cluster quorum, ZFS pools, storages, backup jobs and results, guests no backup covers, failed tasks), Proxmox Backup Server (datastores and when they fill up, GC/verify/sync/prune jobs, backup groups with their last backup, recent tasks) and Proxmox Mail Gateway (mail, spam and viruses in the last 24 h, the mail queue, ClamAV signatures); the memory chart keeps the ZFS ARC apart from used RAM. Background checks keep one SSH connection per machine open instead of logging in every time, and skip `sudo` for root, so the machine's journal stays readable. A **History** tab puts notes, detected configuration changes (kernel, OS, listening ports, admin/login accounts, disks, IPs), update runs, outages and audited actions on one time line, with an AI summary of what happened. Power actions sit in a machine's Settings tab, next to Delete |
-| 🛡️ **Security** | **Security updates** — every pending apt security update fleet-wide with the CVEs it fixes (read from the package changelog) — and **Package search** — which machines have a package, and what version (`/security`) |
-| 🗂️ **Groups** | Named groups for bulk updates/power actions; the built-in "All machines" catch-all |
-| ⏱️ **Scheduling** | Cron any action against a machine/group/fleet in its own time zone — updates (optionally rebooting only when needed, one machine at a time with a health check, or only inside a maintenance window), power, custom commands, even debug "force a sweep now" buttons — plus **maintenance windows** that mute a machine's alerts and can pause scheduled tasks on it during planned work |
-| 🧠 **AI assistant** | Chat with your fleet (Anthropic, OpenAI, Gemini, OpenRouter, or Ollama / LM Studio / any OpenAI-compatible endpoint) — it can *propose* actions, never run one without you literally confirming the command first. Shown in the header once a model is enabled |
-| 📝 **Audit log** | Hash-chained, tamper-evident, exportable, optionally forwarded to your SIEM, with optional GeoIP country/city enrichment |
-| 👤 **Users & Roles** | Full RBAC matrix with a plain-language description of every permission, temporary permission grants, bulk actions, SSO |
-| 💾 **Backup & restore** | Every configuration export/import in one place — machines and groups (JSON/CSV), scheduled tasks, roles, notification rules (YAML) (`/backup`) |
-| 🔔 **Notifications** | Rules — event and/or conditions (CPU/RAM/disk/facts thresholds, shown as a reference line on the Monitoring charts too), who (users/roles), which machines/groups — email, webhook, ntfy, Gotify, Telegram, Discord or Pushover you when something happens, configurable via form or YAML. Editable per-event or named custom templates, a "Send test" button and a delivery history log. Events include configuration drift, newly pending security updates (with CVEs), a reboot becoming necessary, a failing disk (S.M.A.R.T.), a failed systemd service, a disk about to fill up, a degraded ZFS pool, a failed Proxmox backup or Backup Server job, a backed-up mail queue and a Proxmox cluster losing quorum |
-| 📚 **API docs** (`/api`) | Live Swagger UI over the full read/write REST API — everything the web UI can do, an API can too |
-| ⚙️ **Settings** | SSH key rotation, check intervals and retention policies (one Save, applied without a restart), sign-in policy (session lifetime, lockout, allowed networks, accounts without 2FA), LDAP/OIDC/syslog/SMTP integrations with **Test** buttons, AI provider config |
+| 📊 **Dashboard** | Fleet tiles linking to filtered lists, trend charts, upcoming schedules, recent activity, an optional AI fleet summary, and every machine as a card colored by its worst reading |
+| 🖥️ **Machines** | Facts, packages, services, monitoring (CPU/RAM/disk/network, Docker, bare-metal sensors, GPUs, S.M.A.R.T.), updates with preview, rollback, holds, changelogs and CVEs, a browser terminal, logs, History time line, tags, filters, saved views, bulk actions, export/import |
+| 🟧 **Proxmox tab** | Proxmox VE (guests with start/stop, cluster quorum, ZFS, storage, backups, failed tasks), Backup Server (datastores, jobs, backup groups) and Mail Gateway (mail stats, queue, ClamAV) |
+| 🛡️ **Security** | Pending security updates fleet-wide with their CVEs; package search across the fleet |
+| 🔐 **Checks** | HTTP, TLS, ping, TCP and DNS checks from the server, with history, notifications and a monthly SLA report |
+| 🗂️ **Groups** | Groups for bulk updates and power actions, plus "All machines" |
+| ⏱️ **Scheduling** | Cron any action per time zone — updates (reboot only if needed, one machine at a time, only in a maintenance window), power, commands — and maintenance windows |
+| 🔔 **Notifications** | Event or threshold rules by email, webhook, ntfy, Gotify, Telegram, Discord or Pushover, with templates, YAML import/export, test sends and delivery history |
+| 🧠 **AI assistant** | Chat with your fleet via Anthropic, OpenAI, Gemini, OpenRouter or any OpenAI-compatible endpoint — it only *proposes*; you confirm every command |
+| 📝 **Audit log** | Hash-chained, exportable, optionally forwarded to a SIEM, optional GeoIP |
+| 👤 **Users & Roles** | Custom roles, temporary grants, machine-group scoping, LDAP/OIDC, TOTP/passkeys, impersonation |
+| 💾 **Backup & restore** | All configuration exports/imports in one place |
+| 📚 **API docs** (`/api`) | Swagger UI over the read/write REST API that mirrors the web UI |
+| ⚙️ **Settings** | SSH key rotation, check intervals and retention (no restart), sign-in policy, integrations with **Test** buttons, AI providers |
 
-Want the granular, paragraph-by-paragraph feature list this table used to
-be? That level of detail now lives where it belongs — next to the *why*,
-split across [Architecture](Architecture.md) and its
-[Authentication & RBAC](Authentication-RBAC.md),
-[Machine Management](Machine-Management.md),
-[Audit Log](Audit-Log.md), and [Notifications](Notifications.md)
-companion pages — so this page stays something you can actually read in
-one sitting. 🎉
+Details live on the pages linked above.

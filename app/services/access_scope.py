@@ -13,11 +13,13 @@ Two shapes are offered, because call sites come in two shapes:
   already scope-filtered and still fully composable (`.where(...)`,
   `.order_by(...)`, `.options(...)`, pagination) — for the many places that
   build a listing query themselves.
-- `can_see_machine` / `can_see_group` / `filter_machines` answer the same
-  question about rows already loaded — for detail routes (which then raise
-  the usual 404, never a 403: see `app/web/routes/ai.py`'s
-  `_get_conversation` for the same reasoning) and for bulk endpoints, which
-  must never trust a client-submitted list of machine ids.
+- `can_see_machine` / `can_see_group_id` / `visible_machines_by_ids`
+  answer the same question about one row or a client-submitted id list —
+  for detail routes (which then raise the usual 404, never a 403: see
+  `app/web/routes/ai.py`'s `_get_conversation` for the same reasoning) and
+  for bulk endpoints, which must never trust a client-submitted list of
+  machine ids: out-of-scope ids are dropped silently rather than rejected
+  with an error naming them (that would confirm they exist).
 
 What is deliberately **not** scoped: the audit log. `audit.view` stays a
 single global permission with no group filtering — the audit trail is a
@@ -120,13 +122,8 @@ async def can_see_machine(db: AsyncSession, user: User, machine: Machine) -> boo
     return machine.group_id is not None and machine.group_id in group_ids
 
 
-async def can_see_group(db: AsyncSession, user: User, group: MachineGroup) -> bool:
-    group_ids = await allowed_group_ids(db, user)
-    return group_ids is None or group.id in group_ids
-
-
 async def can_see_group_id(db: AsyncSession, user: User, group_id: uuid.UUID | None) -> bool:
-    """`can_see_group` for a bare id — for validating a submitted
+    """Whether `user` may see the group `group_id` — for validating a submitted
     `group_id` (a scheduled task's target, a machine's group) without first
     loading the row. A restricted user may never pick "no group": an
     ungrouped machine would be invisible to its own creator."""
@@ -134,22 +131,6 @@ async def can_see_group_id(db: AsyncSession, user: User, group_id: uuid.UUID | N
     if group_ids is None:
         return True
     return group_id is not None and group_id in group_ids
-
-
-async def filter_machines(
-    db: AsyncSession, user: User, machines: Iterable[Machine]
-) -> list[Machine]:
-    """Drop the machines `user` may not see from an already-loaded list.
-
-    Used by every endpoint that acts on an ad-hoc, client-submitted
-    selection of machine ids: out-of-scope ids are dropped silently rather
-    than rejected loudly, for the same reason detail routes 404 instead of
-    403 — an error naming an id the caller can't see would confirm it
-    exists."""
-    group_ids = await allowed_group_ids(db, user)
-    if group_ids is None:
-        return list(machines)
-    return [m for m in machines if m.group_id is not None and m.group_id in group_ids]
 
 
 async def visible_machines_by_ids(
