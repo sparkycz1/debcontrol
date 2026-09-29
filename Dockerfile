@@ -53,7 +53,7 @@ COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app alembic.ini ./alembic.ini
 # create_admin.py / reset_account.py are meant to be run inside the
 # container (docker compose exec web python scripts/...), per
-# wiki/Installation.md — generate_secrets.py and upgrade.sh are host-only
+# wiki/Installation — generate_secrets.py and upgrade.sh are host-only
 # tools but harmless to have here too, and copying the whole directory is
 # simpler than picking files apart.
 COPY --chown=app:app scripts ./scripts

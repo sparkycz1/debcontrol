@@ -1,7 +1,7 @@
 """One AI assistant chat thread, owned by exactly one user.
 
 A conversation is **private to the user who created it** — there is no
-shared or admin-visible view, deliberately (see `wiki/AI-Assistant.md`'s
+shared or admin-visible view, deliberately (see `wiki/AI-Assistant`'s
 "Deliberately out of scope"). Every route in `app.web.routes.ai` filters on
 `user_id` rather than only on the conversation id, so another account
 (including an admin) gets a 404, not someone else's thread. What actually

@@ -5,16 +5,16 @@ name: CodeQL
 # `security` job in ci.yml, which only scans *dependencies* (pip-audit)
 # for known CVEs, not this app's own code. Results show up under the
 # repo's Security -> Code scanning tab.
-#
-# NOT wired to push/pull_request yet: debcontrol is a private repo and
-# code scanning's SARIF upload requires GitHub Advanced Security (a paid
-# feature) on a private repo — without it, `codeql-action/analyze` fails
-# outright, turning every push/PR red for no actionable reason. Kept as a
-# ready-to-go workflow_dispatch until GHAS is enabled here (see
-# honeypot-shelf's own codeql.yml — a public repo, where this runs on
-# every push/PR/weekly schedule for free) — at that point, restore the
-# `push`/`pull_request`/`schedule` triggers below.
+
 on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Catches a new query/rule CodeQL itself ships, against code that
+    # hasn't changed — a plain push/PR trigger alone would never re-scan
+    # unchanged code once merged.
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:

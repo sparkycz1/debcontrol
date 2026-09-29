@@ -492,7 +492,7 @@ async def _send_webhook(
     admin-authored config requiring `Permission.NOTIFICATION_MANAGE`, the
     same trust level `AppSettings`' other outbound integrations (SMTP
     relay, syslog forwarding) already have, not untrusted input — see
-    wiki/Notifications.md. Returns `(status, error)` rather than raising;
+    wiki/Notifications. Returns `(status, error)` rather than raising;
     the caller logs and never lets a bad webhook break the triggering
     job."""
     payload = {

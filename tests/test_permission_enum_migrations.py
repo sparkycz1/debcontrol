@@ -1,5 +1,5 @@
 """Every `Permission` enum member needs a matching Postgres enum-type label
-somewhere in the migration history — see wiki/Development.md's "Adding a
+somewhere in the migration history — see wiki/Development's "Adding a
 new permission", step 3. SQLite (what the rest of this suite runs against)
 derives its `CHECK` constraint from the live Python enum every time, so it
 can never catch a missing migration — a role gaining a permission Postgres
@@ -44,6 +44,6 @@ def test_every_permission_enum_member_has_a_migration() -> None:
         f"Permission(s) {sorted(missing)} exist in app/db/models/role.py but have no "
         "'ALTER TYPE permission ADD VALUE' migration (or entry in the original "
         "_PERMISSIONS seed) — granting one of these to a role 500s on real Postgres "
-        "even though SQLite tests can't see it. See wiki/Development.md's "
+        "even though SQLite tests can't see it. See wiki/Development's "
         '"Adding a new permission".'
     )

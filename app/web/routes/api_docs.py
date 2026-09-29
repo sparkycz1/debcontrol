@@ -8,7 +8,7 @@ app's CSP (`script-src 'self'`, `style-src 'self'`, no CDN, no inline
 scripts) — under a real browser enforcing that policy, the page would load
 with an empty `<div id="swagger-ui">` and nothing else, exactly the class
 of silent breakage this app's CSP has bitten before (see the terminal
-page's fixed inline-`style` bug in `wiki/Architecture.md`).
+page's fixed inline-`style` bug in `wiki/Architecture`).
 
 Instead: `swagger-ui-dist` is vendored locally (same convention as htmx and
 xterm.js — see `app/web/static/js/swagger-ui-bundle.js`,

@@ -259,7 +259,7 @@ def clear_session_cookie(response: Response) -> None:
 
 def _pending_totp_serializer() -> URLSafeTimedSerializer:
     # digest_method=sha256, not itsdangerous's own default (HMAC-SHA1) — see
-    # wiki/Architecture.md's "FIPS alignment" section. HMAC-SHA1 is itself
+    # wiki/Architecture's "FIPS alignment" section. HMAC-SHA1 is itself
     # still FIPS-approved for a MAC, so this isn't fixing a real weakness,
     # just removing the one non-approved-looking default in this app's
     # otherwise SHA-2-everywhere signing.

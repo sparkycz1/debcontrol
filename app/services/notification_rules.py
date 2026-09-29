@@ -7,7 +7,7 @@ The **portable rule shape** (`rule_to_portable_dict`) is what the YAML
 export produces and what both YAML import and the API accept: natural keys
 (recipient email/role name, machine name, group name, custom template
 name) rather than database ids, so a rule can be reviewed,
-version-controlled and moved between instances. See wiki/Notifications.md
+version-controlled and moved between instances. See wiki/Notifications
 for the full shape and an example.
 """
 

@@ -1,7 +1,7 @@
 """Encryption at rest — `app.core.security`. New values are AES-256-GCM;
 `decrypt_secret` must still transparently read a value stored in the
 legacy Fernet (AES-128) format from before this app moved to AES-256. See
-that module's docstring and wiki/Architecture.md's "FIPS alignment"
+that module's docstring and wiki/Architecture's "FIPS alignment"
 section.
 """
 

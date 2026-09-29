@@ -47,7 +47,7 @@ class Permission(enum.StrEnum):
     # user/sudo rights the machine's configured account has), so it's its
     # own dedicated permission rather than folded into ACTION_UPDATES or
     # MACHINE_MANAGE. See app/web/routes/terminal_ws.py and
-    # wiki/Architecture.md's "Interactive SSH terminal" section.
+    # wiki/Architecture's "Interactive SSH terminal" section.
     ACTION_TERMINAL = "action.terminal"
     # The AI assistant page (`/ai`, app/web/routes/ai.py). This gates
     # *reaching the feature at all* and nothing else — it grants no new
@@ -58,7 +58,7 @@ class Permission(enum.StrEnum):
     # update runs and update checks, `action.power` for reboot/shutdown,
     # `action.terminal` for an arbitrary SSH command. A role granted only
     # AI_ACCESS can chat, and can do nothing else. See
-    # wiki/AI-Assistant.md's permission model section.
+    # wiki/AI-Assistant's permission model section.
     AI_ACCESS = "ai.access"
     SCHEDULING_VIEW = "scheduling.view"
     SCHEDULING_MANAGE = "scheduling.manage"
@@ -100,7 +100,7 @@ class Role(Base):
     # request, in `app.auth.middleware` (session requests) and
     # `app.auth.dependencies.get_api_token_user` (API-token requests), not
     # just steered at login time like `User.must_change_password` is. See
-    # those modules for the enforcement and wiki/Architecture.md for the
+    # those modules for the enforcement and wiki/Architecture for the
     # OIDC-exemption reasoning (OIDC accounts can't enroll TOTP here at all —
     # a role with this set would otherwise lock them out unconditionally).
     require_totp: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

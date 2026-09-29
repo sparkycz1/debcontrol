@@ -26,7 +26,7 @@
 #      ENCRYPTION_KEY, treat it exactly like a `.env` file.
 #   5. Prunes backup directories older than `BACKUP_RETENTION_DAYS`
 #      (default 14) so this is safe to run unattended from cron forever
-#      without slowly filling the disk — see wiki/Installation.md
+#      without slowly filling the disk — see wiki/Installation
 #      ("Backups") for a ready-to-use crontab line.
 #
 # Restoring: ./scripts/restore.sh <path to one timestamped backup dir>

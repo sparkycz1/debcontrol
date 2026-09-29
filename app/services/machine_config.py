@@ -5,7 +5,7 @@ convention as `app.services.machine_actions`.
 
 **This is a structural/config export, not a credentials backup.** Consistent
 with this app's "no blind trust" SSH security model (see
-wiki/Architecture.md's host-key-pinning section), the export/import
+wiki/Architecture's host-key-pinning section), the export/import
 deliberately never touches:
 
 - `Machine.secret_encrypted` — the encrypted password/key material for

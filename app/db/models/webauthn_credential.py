@@ -2,7 +2,7 @@
 like Touch ID/Windows Hello, or a hardware security key) — a second login
 factor alongside TOTP, or in its place. See `app.auth.webauthn` for the
 registration/authentication ceremony logic that creates and verifies
-these, and `wiki/Architecture.md`'s "WebAuthn/passkeys" section for the
+these, and `wiki/Architecture`'s "WebAuthn/passkeys" section for the
 full design.
 
 Available to `local` and `ldap` accounts, same restriction (and reasoning)

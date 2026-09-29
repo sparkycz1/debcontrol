@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.80.1"
+version = "0.80.2"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -27,11 +27,11 @@ dependencies = [
     # `redis >=4.5.2,!=4.5.5,!=5.0.2,<6.5` itself — so the real upper bound is
     # kombu's, and repeating a stricter one here would only mask it. Only the
     # lower bound stays, since the app is not tested below 5.3.1.
-    # See wiki/Architecture.md, "Dependency version notes".
+    # See wiki/Architecture, "Dependency version notes".
     "redis[hiredis]>=5.3.1",
     # Task queue: broker AND result backend are the same Redis instance
     # (REDIS_URL). `[redis]` pulls kombu's redis transport. See
-    # app/tasks/celery_app.py and wiki/Architecture.md.
+    # app/tasks/celery_app.py and wiki/Architecture.
     "celery[redis]>=5.6.3",
     "asyncssh>=2.24.0",
     "jinja2>=3.1.6",

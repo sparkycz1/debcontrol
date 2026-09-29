@@ -64,7 +64,7 @@ from app.web.templating import t, templates
 # A rule starts with no condition rows at all — the "+ Add condition" button
 # on rule_form.html (app/web/static/js/notification-conditions.js) appends
 # blank rows client-side, and the "…or as YAML" textarea below the rows is
-# the no-JS fallback (see wiki/Notifications.md's "Condition-based rules"
+# the no-JS fallback (see wiki/Notifications's "Condition-based rules"
 # section for the YAML shape). Kept as a module constant, not inlined,
 # purely so `_condition_rows_for_rule` below reads as "pad by this many"
 # rather than a bare `0` whose meaning isn't obvious at the call site.
@@ -847,7 +847,7 @@ async def delete_rule(
 # unmodified export is a no-op and editing the YAML and re-importing is
 # "update in place." The shape and the upsert live in
 # `app.services.notification_rules` (shared with the REST API); see
-# `wiki/Notifications.md`'s "Condition-based rules" section for an example.
+# `wiki/Notifications`'s "Condition-based rules" section for an example.
 
 
 @router.get("/rules/{rule_id}/export")

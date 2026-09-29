@@ -18,7 +18,7 @@ x-app-image: &app-image
     # formatting; the app and DB both store timestamps as UTC internally
     # regardless of this. Set TZ in .env (e.g. "Europe/Prague"); defaults
     # to UTC if unset. Deliberately global, not per-schedule — see
-    # wiki/Architecture.md.
+    # wiki/Architecture.
     TZ: ${TZ:-UTC}
   restart: unless-stopped
   # The app runs as an unprivileged user on port 8080 and needs no Linux
@@ -42,7 +42,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       TZ: ${TZ:-UTC}
     # Tuned out of the box for a fleet up to roughly 100 machines (see
-    # wiki/Host-Requirements.md's Quick reference table) on a modest host —
+    # wiki/Host-Requirements's Quick reference table) on a modest host —
     # not Postgres' own stock defaults (128MB/4GB/4MB/64MB/0.2/0.1), which
     # assume either a tiny local dev instance or a dedicated DB server with
     # GBs to spare. shared_buffers/maintenance_work_mem/work_mem below are
@@ -54,7 +54,7 @@ services:
     # than stock so autovacuum keeps up with this app's own nightly
     # retention purges (monitoring/audit/notification-log tables can lose
     # a large fraction of their rows in one purge run). Override any of
-    # these via .env for a bigger fleet/host — see wiki/Host-Requirements.md's
+    # these via .env for a bigger fleet/host — see wiki/Host-Requirements's
     # Postgres tuning section for how to size them up.
     command:
       - postgres
@@ -152,7 +152,7 @@ services:
   #
   # --concurrency defaults to 10, the previous queue's own ceiling of jobs in
   # flight — raise it via CELERY_WORKER_CONCURRENCY in .env for a larger
-  # fleet (see wiki/Host-Requirements.md's capacity-planning math for how to
+  # fleet (see wiki/Host-Requirements's capacity-planning math for how to
   # size this against CPU/memory and DB_POOL_SIZE together — more workers
   # means more concurrent DB connections too). Each concurrency slot is a
   # forked child process, which rebuilds its own DB engine after the fork —

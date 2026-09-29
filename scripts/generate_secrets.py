@@ -6,7 +6,7 @@ Usage:
 
 Prints ready-to-paste lines for `.env` — it never edits the file for you,
 so you stay in control of what gets overwritten. Part of the manual setup
-path (see wiki/Installation.md); `scripts/setup.py` does this step for you
+path (see wiki/Installation); `scripts/setup.py` does this step for you
 automatically as part of an interactive, end-to-end setup wizard.
 """
 

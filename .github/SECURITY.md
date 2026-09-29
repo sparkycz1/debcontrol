@@ -22,8 +22,8 @@ Include, if known:
 
 This is a self-hosted admin tool for managing Debian/Ubuntu machines over SSH — the threat model and existing safeguards are documented in the wiki:
 
-- [Architecture → Security essentials](../wiki/Architecture.md#-security-essentials) — CSRF, HTTP headers, startup validation, container hardening, plus links to [Authentication & RBAC](../wiki/Authentication-RBAC.md), [Machine Management](../wiki/Machine-Management.md) (SSH host key pinning, secrets at rest), and [Audit Log](../wiki/Audit-Log.md).
-- [AI Assistant](../wiki/AI-Assistant.md) — the confirm-before-execute rule, permission model, and the residual prompt-injection risk it deliberately does not eliminate.
-- [SSH Host Key Verification](../wiki/SSH-Host-Key-Verification.md) — why there's no trust-on-first-use.
+- [Architecture → Security essentials](https://github.com/sparkycz1/debcontrol/wiki/Architecture#-security-essentials) — CSRF, HTTP headers, startup validation, container hardening, plus links to [Authentication & RBAC](https://github.com/sparkycz1/debcontrol/wiki/Authentication-RBAC), [Machine Management](https://github.com/sparkycz1/debcontrol/wiki/Machine-Management) (SSH host key pinning, secrets at rest), and [Audit Log](https://github.com/sparkycz1/debcontrol/wiki/Audit-Log).
+- [AI Assistant](https://github.com/sparkycz1/debcontrol/wiki/AI-Assistant) — the confirm-before-execute rule, permission model, and the residual prompt-injection risk it deliberately does not eliminate.
+- [SSH Host Key Verification](https://github.com/sparkycz1/debcontrol/wiki/SSH-Host-Key-Verification) — why there's no trust-on-first-use.
 
 Dependency vulnerabilities are tracked automatically via [Dependabot](dependabot.yml) (alerts and security updates are enabled on this repository).

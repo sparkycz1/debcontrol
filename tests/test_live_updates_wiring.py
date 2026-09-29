@@ -6,7 +6,7 @@ attribute names and URL shape, with nothing enforcing that at runtime — a
 mismatch fails silently (the socket simply never opens, or the script
 finds no anchor and no-ops entirely), with no error anywhere a human
 would notice short of watching the browser console. See
-wiki/Architecture.md's "Live updates are a doorbell, not a data feed"
+wiki/Architecture's "Live updates are a doorbell, not a data feed"
 section.
 
 This is exactly the class of bug a sibling project (derived from this
@@ -74,7 +74,7 @@ def test_every_template_that_includes_live_updates_js_sets_the_data_attribute():
 def test_at_least_the_known_machine_pages_wire_up_live_updates():
     """Not exhaustive by design (the test above already is) — this just
     keeps the three pages this feature was actually built for
-    (`wiki/Architecture.md`'s own list) from quietly losing the include
+    (`wiki/Architecture`'s own list) from quietly losing the include
     during an unrelated template refactor."""
     for relative_path in (
         "machines/detail.html",

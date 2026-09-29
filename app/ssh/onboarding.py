@@ -11,7 +11,7 @@ Ansible from their own machine, run here instead directly over SSH (see
 3. Grant it passwordless sudo, scoped to exactly what debcontrol needs
    (`SUDO_COMMANDS`, plus `flatpak`/`snap`/`docker` if present) —
    the exact sudoers line documented in
-   wiki/Machine-Requirements.md.
+   wiki/Machine-Requirements.
 4. Best-effort install `ncurses-term`, so the web Terminal tab gets colors
    and box-drawing (see that same wiki page) without a separate manual
    step. Its failure (no network, offline apt cache) must never fail
@@ -108,7 +108,7 @@ def build_onboarding_command(public_key: str) -> str:
         # for whatever path this machine's `docker` actually lives at. Note
         # this is root-equivalent (anyone who can start a container can
         # mount the host filesystem) — deliberate, the account already has
-        # apt-get as root; see wiki/Machine-Requirements.md.
+        # apt-get as root; see wiki/Machine-Requirements.
         'DP="$(command -v docker 2>/dev/null || true)"; '
         'if [ -n "$DP" ]; then '
         f"printf '%s ALL=(root) NOPASSWD: %s\\n' {user} \"$DP\" > /etc/sudoers.d/{user}-docker; "

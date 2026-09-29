@@ -112,7 +112,7 @@ async def show_dashboard(
 
     # Deliberately never scoped: `audit.view` is a single global permission
     # over the whole deployment's audit trail — a per-group audit view would
-    # be a worse security control than none. See wiki/Architecture.md.
+    # be a worse security control than none. See wiki/Architecture.
     if user.has_permission(Permission.AUDIT_VIEW):
         result = await db.execute(
             select(AuditLogEntry).order_by(AuditLogEntry.created_at.desc()).limit(8)

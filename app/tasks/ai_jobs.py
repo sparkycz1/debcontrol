@@ -302,7 +302,7 @@ def summarize_tool_output(conversation_id: str, output_text: str) -> dict[str, A
     Deliberately runs with **no tools offered** (`allow_tools=False`): this
     turn's whole input is output that came off a managed machine, which is
     the one place in this feature where untrusted text enters the model's
-    context (see the prompt-injection warning in wiki/AI-Assistant.md).
+    context (see the prompt-injection warning in wiki/AI-Assistant).
     Giving it no tools to call means the worst a malicious payload in that
     output can achieve is a misleading summary — it cannot reach a tool,
     and therefore cannot even produce a new proposal to confirm.

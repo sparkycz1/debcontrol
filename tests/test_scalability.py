@@ -1,7 +1,7 @@
 """Fleet-size scalability guards: pages that fan out per-machine work or
 render one row per machine must stay bounded (paginated, aggregate-queried)
 rather than silently degrading into "load everything" as the fleet grows
-into the hundreds/thousands. See wiki/Host-Requirements.md for the
+into the hundreds/thousands. See wiki/Host-Requirements for the
 capacity planning this and the reachability-sweep/DB-pool tuning back.
 """
 
