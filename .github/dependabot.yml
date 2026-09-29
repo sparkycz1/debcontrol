@@ -10,9 +10,19 @@ updates:
     labels:
       - "dependencies"
 
-  # Base images pinned in Dockerfile, plus the image tags in
-  # docker-compose.yml / docker-compose.caddy.yml (postgres, redis, caddy).
+  # Base images pinned in the Dockerfile.
   - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 15
+    labels:
+      - "dependencies"
+
+  # The image tags in docker-compose.yml / docker-compose.caddy.yml
+  # (postgres, redis, caddy) — a separate ecosystem: "docker" above only
+  # reads Dockerfiles.
+  - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: "weekly"

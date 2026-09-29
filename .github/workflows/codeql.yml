@@ -1,7 +1,9 @@
 name: CodeQL
 
-# Static security analysis (SQL injection, XSS, SSRF, path traversal,
-# unsafe deserialization, ...) — a different class of check from the
+# Static security and code-quality analysis (SQL injection, XSS, SSRF, path
+# traversal, unsafe deserialization, ... plus the `security-and-quality`
+# maintainability queries) of the Python app, its own JavaScript and the
+# GitHub Actions workflows themselves — a different class of check from the
 # `security` job in ci.yml, which only scans *dependencies* (pip-audit)
 # for known CVEs, not this app's own code. Results show up under the
 # repo's Security -> Code scanning tab.
@@ -22,6 +24,7 @@ permissions:
 
 jobs:
   analyze:
+    name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     # Job-level permissions replace, not add to, the workflow-level ones
     # above — contents:read has to be repeated here alongside the
@@ -30,14 +33,22 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # `actions` = the workflow files (injection, over-broad token
+        # permissions, untrusted checkouts); none of the three needs a build.
+        language: [python, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
 
       - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4
         with:
-          languages: python
-          queries: security-extended
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended,security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4
         with:
-          category: "/language:python"
+          category: "/language:${{ matrix.language }}"
