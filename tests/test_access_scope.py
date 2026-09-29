@@ -93,7 +93,6 @@ async def _seed(db_session_factory: Any) -> Fixture:
 
 async def _api_token(client: Any) -> dict[str, str]:
     """A bearer token for whoever `client` is currently logged in as."""
-    import re
 
     await client.get("/account")
     csrf_token = client.cookies.get("csrftoken")
@@ -882,13 +881,11 @@ async def test_api_dashboard_trends_are_empty_for_a_restricted_account(
 
 
 def _stat_values(html: str) -> list[str]:
-    import re
 
     return [v.strip() for v in re.findall(r'<span class="stat-value">([^<]+)</span>', html)]
 
 
 def _group_count(html: str) -> str:
-    import re
 
     match = re.search(r'href="/machine-groups">\s*(\d+) groups?\b', html)
     assert match is not None, html

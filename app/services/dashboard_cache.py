@@ -30,8 +30,11 @@ _CACHE_TTL_SECONDS = 5
 
 
 class _RedisLike(Protocol):
-    async def get(self, key: str) -> bytes | str | None: ...
-    async def set(self, key: str, value: str, ex: int) -> object: ...
+    async def get(self, key: str) -> bytes | str | None:
+        """Redis GET."""
+
+    async def set(self, key: str, value: str, ex: int) -> object:
+        """Redis SET with EX."""
 
 
 def _cache_key(group_ids: AbstractSet[uuid.UUID] | None) -> str:

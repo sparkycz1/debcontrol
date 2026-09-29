@@ -96,7 +96,7 @@ async def test_audit_log_does_not_offer_save_when_unfiltered(client):
 
 
 async def test_saving_an_audit_view_from_the_web_and_using_it(client):
-    save_resp = await client.get("/audit")
+    await client.get("/audit")
     csrf_token = client.cookies.get("csrftoken")
     save_resp = await client.post(
         "/audit/saved-views",

@@ -18,6 +18,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.role import Role
 from app.db.models.user import User
+from app.services import notifications as notifications_module
 from app.services.notifications import default_template, notify, render_template
 
 
@@ -239,7 +240,6 @@ async def test_notify_uses_rules_own_custom_template(db_session_factory, monkeyp
     def _fake_send(app_settings, to_address, subject, body):
         sent.append((subject, body))
 
-    import app.services.notifications as notifications_module
 
     monkeypatch.setattr(notifications_module, "send_smtp_message", _fake_send)
 
@@ -288,7 +288,6 @@ async def test_notify_uses_rules_own_custom_template(db_session_factory, monkeyp
 async def test_notify_webhook_channel_posts_and_logs(db_session_factory, monkeypatch):
     posted: list[tuple[str, dict[str, str]]] = []
 
-    import app.services.notifications as notifications_module
     from app.db.models.notification_log import NotificationDeliveryStatus
 
     async def _fake_post(url, event_type, rule_name, subject, body, context):
@@ -339,7 +338,6 @@ async def test_send_test_notification_email_logs_and_targets_caller_only(
 ):
     sent: list[str] = []
 
-    import app.services.notifications as notifications_module
 
     def _fake_send(app_settings, to_address, subject, body):
         sent.append(to_address)
@@ -523,7 +521,6 @@ async def test_notify_sends_to_matching_recipients_only(db_session_factory, monk
     def _fake_send(app_settings, to_address, subject, body):
         sent.append((to_address, subject, body))
 
-    import app.services.notifications as notifications_module
 
     monkeypatch.setattr(notifications_module, "send_smtp_message", _fake_send)
 
@@ -580,7 +577,6 @@ async def test_notify_sends_to_matching_recipients_only(db_session_factory, monk
 
 async def test_notify_is_noop_when_smtp_disabled(db_session_factory, monkeypatch):
     sent: list[object] = []
-    import app.services.notifications as notifications_module
 
     monkeypatch.setattr(
         notifications_module, "send_smtp_message", lambda *a, **k: sent.append(1)

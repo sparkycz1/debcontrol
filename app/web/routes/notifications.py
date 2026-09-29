@@ -247,19 +247,15 @@ def _parse_condition_rows(
     return rows
 
 
-class _NoAliasLoader(yaml.SafeLoader):
-    """`SafeLoader` minus anchors/aliases — a rule export never uses them,
-    and refusing them rules out a "billion laughs" document whose shared
-    references blow up once the import walks them."""
-
-    def compose_node(self, parent: Any, index: Any) -> Any:
-        if self.check_event(yaml.AliasEvent):
-            raise yaml.YAMLError("YAML aliases (*name) aren't supported here.")
-        return super().compose_node(parent, index)
-
-
 def _load_yaml(text: str) -> Any:
-    return yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
+    """`yaml.safe_load` minus anchors/aliases — a rule export never uses
+    them, and refusing them rules out a "billion laughs" document whose
+    shared references blow up once the import walks them. The event scan
+    only tokenizes (no object is ever built), so it's cheap and safe."""
+    for event in yaml.parse(text, Loader=yaml.SafeLoader):
+        if isinstance(event, yaml.AliasEvent):
+            raise yaml.YAMLError("YAML aliases (*name) aren't supported here.")
+    return yaml.safe_load(text)
 
 
 def _parse_conditions_yaml_block(text: str) -> list[dict[str, Any]]:

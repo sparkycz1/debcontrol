@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 from sqlalchemy import select
 
-import app.web.routes.terminal_ws as terminal_ws_module
 from app.auth.sessions import create_session
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.models.user import AuthProvider, User
+from app.web.routes import terminal_ws as terminal_ws_module
 from app.web.routes.terminal_ws import _authenticate, terminal_websocket
 from tests.test_web import _create_machine, _pin_host_key
 
