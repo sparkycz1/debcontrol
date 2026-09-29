@@ -4,7 +4,7 @@ handler attribute, which this app's CSP (`script-src 'self'`, no
 'unsafe-inline') silently strips at the browser layer. The route/template
 logic was entirely correct; changing the dropdown just did nothing, with no
 error visible anywhere in the Python-level test suite (see
-`wiki/Architecture.md`'s CSP note: this class of bug is invisible except as
+`wiki/Architecture`'s CSP note: this class of bug is invisible except as
 a "blank widget" in a real browser). Fixed via `data-autosubmit` +
 `static/js/auto-submit.js`, the same delegated-listener pattern
 `confirm.js` already uses for `data-confirm`/`onsubmit`.

@@ -52,7 +52,7 @@ _NO_TRUSTED_KNOWN_HOSTS: tuple[list[object], list[object], list[object]] = ([], 
 
 # Restricts every *authenticated* connection (`open_connection`, below) to
 # algorithms NIST SP 800-52/SP 800-56A/FIPS 197 approve — see
-# wiki/Architecture.md's "FIPS alignment" section for the full reasoning.
+# wiki/Architecture's "FIPS alignment" section for the full reasoning.
 # AsyncSSH's own (much broader) default negotiation still applies to
 # `discover_host_key_fingerprint` above, deliberately: that probe exists
 # specifically to *learn* whatever host key type a machine actually has,

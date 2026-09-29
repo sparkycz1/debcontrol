@@ -48,10 +48,10 @@ class Settings(BaseSettings):
     # defaults (5/10) are conservative for a low-traffic single-admin
     # deployment; a fleet in the hundreds/thousands with several admins each
     # keeping machine/dashboard pages open (which self-poll every 20-30s,
-    # see wiki/Architecture.md) benefits from a larger pool. Postgres'
+    # see wiki/Architecture) benefits from a larger pool. Postgres'
     # `max_connections` (default 100) must comfortably exceed
     # `db_pool_size + db_max_overflow` plus whatever the worker/beat/migrate
-    # services need at once — see wiki/Host-Requirements.md.
+    # services need at once — see wiki/Host-Requirements.
     db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
 

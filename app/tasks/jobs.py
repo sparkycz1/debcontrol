@@ -1682,7 +1682,7 @@ async def _purge_old_monitoring_samples() -> None:
     machine per table rather than a single global cutoff (unlike
     `_purge_old_machine_update_runs`) since retention can differ per
     machine — acceptable for a once-a-day job; see
-    wiki/Host-Requirements.md if this ever needs to scale further."""
+    wiki/Host-Requirements if this ever needs to scale further."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         default_retention_days = app_settings.monitoring_history_retention_days
@@ -2605,7 +2605,7 @@ async def _record_fleet_snapshot() -> None:
     constrained at the DB level as a second line of defense.
 
     Not audit-logged — same reasoning as the other routine, unattended
-    sweeps in this module (see wiki/Development.md's "Recording a new
+    sweeps in this module (see wiki/Development's "Recording a new
     action in the audit log").
     """
     async with db_session.AsyncSessionLocal() as session:

@@ -9,7 +9,11 @@
 </div>
 
 [![CI](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml)
-![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
+[![CodeQL](https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sparkycz1/debcontrol/badge)](https://scorecard.dev/viewer/?uri=github.com/sparkycz1/debcontrol)
+[![Secret scanning: enabled](https://img.shields.io/badge/secret%20scanning-enabled-brightgreen)](https://github.com/sparkycz1/debcontrol/security)
+[![Security policy](https://img.shields.io/badge/security-policy-blue)](.github/SECURITY.md)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/web-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Task queue](https://img.shields.io/badge/task%20queue-Celery-37814A?logo=celery&logoColor=white)
@@ -21,7 +25,7 @@
 A web application for managing Debian machines over SSH. Officially
 supported: Debian and its derivatives (e.g. Ubuntu), for as long as each
 is supported by its own upstream — see the wiki:
-[Machine Requirements](wiki/Machine-Requirements.md#os).
+[Machine Requirements](https://github.com/sparkycz1/debcontrol/wiki/Machine-Requirements#os).
 Every page requires a login; access is controlled by custom roles (RBAC)
 an admin defines, and accounts can authenticate locally, against LDAP, or
 via OIDC SSO, with optional (or role-required) TOTP two-factor. Everything
@@ -29,11 +33,14 @@ in the web UI is also available as a full read/write REST API, with
 interactive [Swagger](https://swagger.io/tools/swagger-ui/) docs at `/api`
 once logged in.
 
-**Full documentation lives in the [wiki](wiki/Home.md)** — technology
-choices and the full security model ([Architecture](wiki/Architecture.md)),
-every feature in detail ([Home](wiki/Home.md)'s feature table), reverse
+This project was built to manage and monitor my own homelab; most of it
+is vibecoded.
+
+**Full documentation lives in the [wiki](https://github.com/sparkycz1/debcontrol/wiki/Home)** — technology
+choices and the full security model ([Architecture](https://github.com/sparkycz1/debcontrol/wiki/Architecture)),
+every feature in detail ([Home](https://github.com/sparkycz1/debcontrol/wiki/Home)'s feature table), reverse
 proxy guides, and local development/testing
-([Development](wiki/Development.md)). This file only covers getting a
+([Development](https://github.com/sparkycz1/debcontrol/wiki/Development)). This file only covers getting a
 fresh instance running.
 
 ## 🚀 Quick start (Docker)
@@ -50,7 +57,7 @@ It generates every secret, asks a handful of questions (timezone, whether
 to use the bundled Caddy reverse proxy, background-check intervals, the
 Administrator password — or auto-generates one — and the host port), then
 brings the stack up and creates the first admin account for you. Full
-details: [wiki/Installation.md](wiki/Installation.md).
+details: [wiki/Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation).
 
 **Manual setup**, if you'd rather configure everything by hand:
 
@@ -74,14 +81,14 @@ by default — meant to sit behind a TLS-terminating reverse proxy; set
 `APP_BIND_ADDRESS=127.0.0.1` in `.env` — no `docker-compose.yml` edit
 needed — or firewall the port off if you don't want that).
 Point your own nginx/Traefik/Caddy at it — see the reverse-proxy guides in
-the wiki: [nginx](wiki/Reverse-Proxy-Nginx.md) ·
-[Traefik](wiki/Reverse-Proxy-Traefik.md) ·
-[Caddy (standalone)](wiki/Reverse-Proxy-Caddy.md). Or use the **bundled
+the wiki: [nginx](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Nginx) ·
+[Traefik](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Traefik) ·
+[Caddy (standalone)](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Caddy). Or use the **bundled
 Caddy** (automatic HTTPS via Let's Encrypt, TLS 1.3 only, HTTP/3): set
 `DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's DNS at this host,
 open ports 80/tcp, 443/tcp and 443/udp, then
 `docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build`
-— see [wiki/Reverse-Proxy-Caddy.md](wiki/Reverse-Proxy-Caddy.md).
+— see [wiki/Reverse-Proxy-Caddy](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Caddy).
 
 Then create the first administrator account yourself:
 
@@ -94,11 +101,11 @@ docker compose exec web python scripts/create_admin.py --username admin
 > of it, and firewall its port off (or set `APP_BIND_ADDRESS=127.0.0.1` in
 > `.env`) if you don't want it reachable directly.
 
-See [wiki/Installation.md](wiki/Installation.md) for the full walkthrough
+See [wiki/Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation) for the full walkthrough
 (environment variables, LDAP/OIDC setup, account recovery if you ever get
-locked out) and [wiki/Installation.md#updating](wiki/Installation.md#updating)
+locked out) and [wiki/Installation#updating](https://github.com/sparkycz1/debcontrol/wiki/Installation#updating)
 for upgrading later (`./scripts/upgrade.sh`). See
-[wiki/Development.md](wiki/Development.md) for running the test suite,
+[wiki/Development](https://github.com/sparkycz1/debcontrol/wiki/Development) for running the test suite,
 linting/type-checking, adding a migration, and other project conventions.
 
 ## 🔒 Security

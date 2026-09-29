@@ -3,7 +3,7 @@
 // Progressive enhancement only — with JS disabled, a rule can still be
 // saved with whatever rows it already has, and more conditions can be
 // added by pasting YAML into the "…or as YAML" box below the rows (see
-// wiki/Notifications.md's "Condition-based rules" section); nothing here
+// wiki/Notifications's "Condition-based rules" section); nothing here
 // is required to submit the form.
 //
 // Markup contract: a `[data-condition-add]` button and a `<template

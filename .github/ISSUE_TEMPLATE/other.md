@@ -8,7 +8,7 @@ assignees: ""
 ## What's this about?
 
 A question, something confusing/missing in the docs (README or the
-[wiki](../../wiki/Home.md)), a general discussion point — whatever
+[wiki](https://github.com/sparkycz1/debcontrol/wiki/Home)), a general discussion point — whatever
 doesn't fit the Bug report or Feature request templates.
 
 ## Context

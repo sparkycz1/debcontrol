@@ -27,7 +27,7 @@ switched to `scripts/upgrade.sh`.
 
 Pure standard library — no dependency on this project's own virtualenv, so
 it runs with a bare system `python3` before anything has been installed.
-See wiki/Installation.md for what this does step by step, and for the
+See wiki/Installation for what this does step by step, and for the
 manual alternative if you'd rather configure everything by hand instead.
 """
 

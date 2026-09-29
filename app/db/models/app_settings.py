@@ -169,7 +169,7 @@ class AppSettings(Base):
     )
 
     # --- Background checks (moved here from environment variables — see
-    # app.core.config's module docstring and wiki/Development.md's
+    # app.core.config's module docstring and wiki/Development's
     # "Settings vs. environment" note). Defaults match what used to be the
     # hardcoded env defaults, so an upgrading instance behaves identically
     # until an admin changes one from the new Settings → Monitoring tab. ---
@@ -223,7 +223,7 @@ class AppSettings(Base):
     # purge_old_monitoring_samples) — a row is taken every
     # `MONITORING_INTERVAL_SECONDS` (2 minutes by default) for every
     # machine, so this is the one retention setting most likely to matter
-    # for table size at fleet scale (see wiki/Host-Requirements.md).
+    # for table size at fleet scale (see wiki/Host-Requirements).
     # Defaults to a bounded window (90 days) for the same "operational
     # trend data, not a compliance record" reasoning as the two above. NULL
     # still means "keep forever." Overridable per machine — see

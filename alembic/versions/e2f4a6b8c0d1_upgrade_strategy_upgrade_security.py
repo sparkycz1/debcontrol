@@ -21,7 +21,7 @@ depends_on: Sequence[str] | str | None = None
 
 def upgrade() -> None:
     # Enum labels only — nothing else in this migration (see
-    # wiki/Development.md's "Adding a new permission" for why Postgres wants
+    # wiki/Development's "Adding a new permission" for why Postgres wants
     # ALTER TYPE ... ADD VALUE on its own).
     op.execute("ALTER TYPE upgrade_strategy ADD VALUE IF NOT EXISTS 'upgrade'")
     op.execute("ALTER TYPE upgrade_strategy ADD VALUE IF NOT EXISTS 'security'")

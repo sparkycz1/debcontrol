@@ -21,7 +21,7 @@ depends_on: Sequence[str] | str | None = None
 
 def upgrade() -> None:
     # Postgres requires this to not share a transaction with other DDL — see
-    # wiki/Development.md's "Adding a new permission" — so it gets its own
+    # wiki/Development's "Adding a new permission" — so it gets its own
     # standalone op.execute() call, and this migration does nothing else.
     op.execute("ALTER TYPE permission ADD VALUE 'action.terminal'")
 

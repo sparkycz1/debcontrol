@@ -40,7 +40,7 @@ that's affected.
 - **Deployment**: Docker Compose — plain, or with `docker-compose.caddy.yml`?
 - **Browser**: [e.g. Chrome 128, Firefox, Safari] — desktop or mobile?
 - **Auth method involved, if relevant**: local / LDAP / OIDC
-- **Machine OS, if this is about a specific machine**: [see [Machine Requirements](../../wiki/Machine-Requirements.md#os)]
+- **Machine OS, if this is about a specific machine**: [see [Machine Requirements](https://github.com/sparkycz1/debcontrol/wiki/Machine-Requirements#os)]
 
 ## Relevant logs
 

@@ -24,7 +24,7 @@ Two shapes are offered, because call sites come in two shapes:
 What is deliberately **not** scoped: the audit log. `audit.view` stays a
 single global permission with no group filtering — the audit trail is a
 security control over the whole deployment, not a per-operator convenience
-view, and a partial one would be worse than none. See wiki/Architecture.md.
+view, and a partial one would be worse than none. See wiki/Architecture.
 
 Background jobs are not scoped either, and can't be: a Celery task has no
 "current user" (the daily fleet snapshot really is fleet-wide, and a

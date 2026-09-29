@@ -17,7 +17,7 @@ docstring).
 What's deliberately still web-UI-only, and why: SSH key rotation
 (`/settings/ssh-key/...`), LDAP/OIDC configuration, syslog forwarding, and
 the AI assistant's provider credentials are excluded for the reasons given
-in wiki/Architecture.md's "The REST API: read and write, mirroring the web
+in wiki/Architecture's "The REST API: read and write, mirroring the web
 UI" section — each one is either a secret/credential surface or carries a
 lock-out/blast-radius risk that's meant to be handled deliberately, by a
 human, not scriptable. (Notifications, endpoint checks, and the

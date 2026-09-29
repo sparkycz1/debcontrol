@@ -10,7 +10,7 @@ anything. It only ever produces a proposal that is written to
 `AiMessage.pending_actions` with `status="pending"`; running it requires a
 separate, CSRF-protected `POST .../confirm` from the browser. See
 `app.ai.tools` for which tools are mutating (all but two read-only
-lookups), and `wiki/AI-Assistant.md` for the full threat model including
+lookups), and `wiki/AI-Assistant` for the full threat model including
 what this does *not* protect against (a person who confirms without reading).
 
 Layout:

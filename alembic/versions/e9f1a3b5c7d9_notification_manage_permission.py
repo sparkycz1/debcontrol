@@ -21,7 +21,7 @@ depends_on: Sequence[str] | str | None = None
 
 def upgrade() -> None:
     # Same reasoning (and same requirement to be its own migration, separate
-    # from notification.view's) as d8e0f2a4b6c8 — see wiki/Development.md's
+    # from notification.view's) as d8e0f2a4b6c8 — see wiki/Development's
     # "Adding a new permission".
     op.execute("ALTER TYPE permission ADD VALUE 'notification.manage'")
 

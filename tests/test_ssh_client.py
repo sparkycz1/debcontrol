@@ -14,7 +14,7 @@ from app.ssh.exceptions import HostKeyMismatchError, UnknownHostKeyError
 FINGERPRINT_HASH = "sha256"
 
 
-# --- FIPS-aligned channel algorithms — see wiki/Architecture.md's "FIPS
+# --- FIPS-aligned channel algorithms — see wiki/Architecture's "FIPS
 # alignment" section for the reasoning. `test_open_connection_succeeds_
 # with_the_correct_pinned_fingerprint` above already proves these are
 # accepted by a real AsyncSSH server; this pins down exactly *which*

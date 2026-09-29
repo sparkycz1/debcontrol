@@ -1,6 +1,6 @@
 name: CI
 
-# The exact gate wiki/Development.md documents for a local commit — ruff,
+# The exact gate wiki/Development documents for a local commit — ruff,
 # mypy, the full test suite (in-memory SQLite, no real Postgres/Redis/
 # Celery broker needed, see tests/conftest.py), and a single-alembic-head
 # check — now also enforced here so a PR can't merge without it.
@@ -68,7 +68,7 @@ jobs:
           echo "$heads"
           count="$(grep -c '(head)' <<< "$heads")"
           if [ "$count" -ne 1 ]; then
-            echo "::error::Expected exactly one alembic head, found $count — see wiki/Development.md."
+            echo "::error::Expected exactly one alembic head, found $count — see wiki/Development."
             exit 1
           fi
 

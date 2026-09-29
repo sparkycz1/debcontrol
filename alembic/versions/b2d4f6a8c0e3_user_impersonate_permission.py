@@ -22,7 +22,7 @@ depends_on: Sequence[str] | str | None = None
 def upgrade() -> None:
     # Its own migration, separate from the impersonator_id column above —
     # Postgres requires ADD VALUE to run outside any other DDL's transaction.
-    # See wiki/Development.md's "Adding a new permission".
+    # See wiki/Development's "Adding a new permission".
     op.execute("ALTER TYPE permission ADD VALUE 'user.impersonate'")
 
 

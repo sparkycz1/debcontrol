@@ -16,7 +16,7 @@ Why AES-256, not just keep Fernet: Fernet's own construction always
 splits its 32-byte key into two 16-byte halves and only ever encrypts
 with the AES-**128** half — the other half only ever signs. AES-256-GCM
 uses the full 32 bytes as a single AES-256 key, and (being AEAD) needs no
-separate MAC step. See wiki/Architecture.md's "FIPS alignment" section for
+separate MAC step. See wiki/Architecture's "FIPS alignment" section for
 the full reasoning — both AES-128 and AES-256 are themselves FIPS-approved
 ciphers; this is a "prefer the modern default", not a "fixing something
 broken", change.
