@@ -1,0 +1,10 @@
+# Shared by every language in codeql.yml. Third-party bundles vendored under
+# app/web/static/ (htmx, xterm.js, Swagger UI) aren't this project's code:
+# their findings can't be fixed here and would drown out the real ones.
+# They're updated from upstream releases instead (see the wiki: Development).
+name: debcontrol CodeQL config
+paths-ignore:
+  - app/web/static/js/htmx.min.js
+  - app/web/static/js/xterm.min.js
+  - app/web/static/js/xterm-addon-*.min.js
+  - app/web/static/js/swagger-ui-*.js
