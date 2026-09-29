@@ -94,3 +94,14 @@ jobs:
       # touches uv.lock or this project's own venv.
       - name: pip-audit (known CVEs in locked dependencies)
         run: uvx pip-audit --strict -r requirements-audit.txt
+  dependency-review:
+    # Only meaningful on a PR — it diffs the base branch against the PR's
+    # head to flag what a PR specifically *introduces* (a newly-added
+    # vulnerable version, or a dependency under a license this project
+    # can't use), which pip-audit's plain "scan uv.lock as it is right
+    # now" doesn't distinguish from something already there before.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
