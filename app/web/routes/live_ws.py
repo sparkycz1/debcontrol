@@ -107,9 +107,8 @@ async def machine_live_websocket(websocket: WebSocket, machine_id: uuid.UUID) ->
         finally:
             for task in (listen_task, disconnect_task, timeout_task):
                 task.cancel()
-            for task in (listen_task, disconnect_task, timeout_task):
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+            # Wait for the cancellations to land; their outcomes don't matter.
+            await asyncio.gather(listen_task, disconnect_task, timeout_task, return_exceptions=True)
     finally:
         with contextlib.suppress(Exception):
             await pubsub.unsubscribe(channel_for(str(machine.id)))

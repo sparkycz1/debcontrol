@@ -254,7 +254,6 @@ async def test_settings_shows_app_version(client):
 
 
 def _input_value(page_text: str, field_id: str) -> str:
-    import re
 
     match = re.search(rf'id="{field_id}"[^>]*>', page_text)
     assert match is not None, f"no input#{field_id} found"

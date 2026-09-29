@@ -17,6 +17,7 @@ from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
 from app.db.models.role import Permission
 from app.db.models.user import User
+from app.services import notifications as notifications_module
 from app.services.maintenance_windows import covers, window_state
 from app.services.notifications import notify
 from tests.test_api_v1_extended import _api_token
@@ -65,7 +66,6 @@ def test_covers_by_group_machine_or_all() -> None:
 async def test_notify_is_suppressed_inside_an_active_window(db_session_factory, monkeypatch):
     sent: list[str] = []
 
-    import app.services.notifications as notifications_module
 
     monkeypatch.setattr(
         notifications_module, "send_smtp_message", lambda s, to, subj, body: sent.append(to)

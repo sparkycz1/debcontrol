@@ -262,7 +262,10 @@ async def log_event(
     except Exception:
         # An audit trail gap is far better than a broken feature — never let
         # a failure to log take down the action it's describing.
-        logger.exception("Failed to record audit log entry for action=%s", action)
+        logger.exception(
+            "Failed to record audit log entry for action=%s",
+            action.replace("\r", " ").replace("\n", " "),
+        )
         await db.rollback()
 
 

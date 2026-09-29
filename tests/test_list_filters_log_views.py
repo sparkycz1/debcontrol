@@ -177,6 +177,5 @@ async def test_log_views_api(client):
     )
     assert conflict.status_code == 409
     view_id = created.json()["id"]
-    assert (
-        await client.delete(f"/api/v1/account/saved-log-views/{view_id}", headers=headers)
-    ).status_code == 204
+    deleted = await client.delete(f"/api/v1/account/saved-log-views/{view_id}", headers=headers)
+    assert deleted.status_code == 204

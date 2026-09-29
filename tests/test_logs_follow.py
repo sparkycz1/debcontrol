@@ -9,12 +9,12 @@ import json
 import pytest
 from sqlalchemy import select
 
-import app.web.routes.logs_ws as logs_ws_module
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.role import Permission
 from app.ssh.exceptions import SSHConnectionError
 from app.ssh.logs import LogAccessError, build_follow_command
 from app.ssh.shell import with_root_shim
+from app.web.routes import logs_ws as logs_ws_module
 from app.web.routes.logs_ws import follow_logs_websocket
 from tests.test_terminal import (
     _FakeConnection,

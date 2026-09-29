@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -18,8 +17,20 @@ MIN_PASSWORD_LENGTH = 12
 # ever used to send a notification (`app.services.notifications`), never to
 # prove identity or gate access the way `username` does, so rejecting a
 # technically-valid-but-unusual address is a worse failure mode than
-# accepting one that later just bounces.
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# accepting one that later just bounces. Plain string checks, not a regex:
+# `local@domain.tld`, no whitespace, exactly one `@` (and no backtracking
+# to worry about on a hostile input).
+_EMAIL_MAX_LENGTH = 254
+
+
+def _looks_like_email(value: str) -> bool:
+    if len(value) > _EMAIL_MAX_LENGTH or any(ch.isspace() for ch in value):
+        return False
+    local, at, domain = value.partition("@")
+    if not at or not local or "@" in domain:
+        return False
+    name, dot, tld = domain.rpartition(".")
+    return bool(dot and name and tld)
 
 
 def normalize_email(value: str | None) -> str | None:
@@ -31,7 +42,7 @@ def normalize_email(value: str | None) -> str | None:
     if not value or not value.strip():
         return None
     normalized = value.strip().lower()
-    if not _EMAIL_PATTERN.match(normalized):
+    if not _looks_like_email(normalized):
         raise ValueError("Email must look like name@example.com.")
     return normalized
 

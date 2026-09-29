@@ -24,7 +24,7 @@ router = APIRouter()
 
 THEME_COOKIE_NAME = "theme"
 _COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
-_VALID_THEMES = ("light", "dark")
+_VALID_THEMES = {"light": "light", "dark": "dark"}
 
 
 def _safe_redirect_target(next_path: str) -> str:
@@ -38,7 +38,8 @@ def _safe_redirect_target(next_path: str) -> str:
 
 @router.post("/theme", dependencies=[Depends(verify_csrf)])
 async def set_theme(theme: str = Form(...), next: str = Form("/dashboard")) -> RedirectResponse:
-    chosen = theme if theme in _VALID_THEMES else "dark"
+    # Looked up, not echoed: the cookie only ever holds one of our constants.
+    chosen = _VALID_THEMES.get(theme, "dark")
     response = RedirectResponse(
         url=_safe_redirect_target(next), status_code=303
     )

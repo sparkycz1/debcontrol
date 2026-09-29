@@ -71,7 +71,7 @@ async def test_geoip_refresh_interval_out_of_range_is_rejected(client):
 
 
 async def test_download_now_without_a_configured_url_shows_an_error(client):
-    response = await client.get("/settings?tab=integrations")
+    await client.get("/settings?tab=integrations")
     csrf_token = client.cookies.get("csrftoken")
     response = await client.post(
         "/settings/geoip/download",

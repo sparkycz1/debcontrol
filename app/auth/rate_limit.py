@@ -22,8 +22,11 @@ from typing import Protocol
 
 
 class _RedisLike(Protocol):
-    async def incr(self, key: str) -> int: ...
-    async def expire(self, key: str, seconds: int) -> object: ...
+    async def incr(self, key: str) -> int:
+        """Redis INCR."""
+
+    async def expire(self, key: str, seconds: int) -> object:
+        """Redis EXPIRE."""
 
 
 async def check_rate_limit(

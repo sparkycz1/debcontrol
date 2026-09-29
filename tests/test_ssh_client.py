@@ -156,7 +156,6 @@ async def test_open_connection_rejects_a_different_key_than_the_pinned_one(ssh_t
 async def test_discover_host_key_fingerprint_never_authenticates(ssh_test_server):
     """Discovery must stop at key exchange — no username/credentials sent,
     no userauth attempt reaching the server at all."""
-    _host, _port, _fingerprint = ssh_test_server
     auth_attempted = False
 
     class _FlaggingServer(_AcceptAnyPasswordServer):

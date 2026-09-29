@@ -37,7 +37,7 @@ async def _create_failed_run(
 
 async def test_explain_a_failed_update_run(client, db_session_factory):
     machine_id = await create_machine(db_session_factory)
-    _provider_id, _model_id = await setup_provider(db_session_factory)
+    await setup_provider(db_session_factory)
     run_id = await _create_failed_run(
         db_session_factory, machine_id, error="apt-get exited 100", output="E: Unable to fetch"
     )

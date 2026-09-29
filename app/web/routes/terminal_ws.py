@@ -295,9 +295,8 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
         finally:
             for task in (output_task, input_task, timeout_task):
                 task.cancel()
-            for task in (output_task, input_task, timeout_task):
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+            # Wait for the cancellations to land; their outcomes don't matter.
+            await asyncio.gather(output_task, input_task, timeout_task, return_exceptions=True)
     finally:
         if process is not None:
             with contextlib.suppress(Exception):
