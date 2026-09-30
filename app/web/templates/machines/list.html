@@ -187,6 +187,9 @@
     <form method="post" class="form form-wide" id="bulk-actions-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
+      {# Redrawn in place by live-fleet.js when the fleet changes (a bulk
+         update check finishing, a machine going up or down). #}
+      <div id="machine-results" data-live-fleet>
       {% if view_mode == 'list' %}
         <ul class="machine-compact-list">
           {% for machine in machines %}
@@ -293,6 +296,7 @@
           </tbody>
         </table>
       {% endif %}
+      </div>
 
       {# Routine actions first; the power actions sit apart at the far end.
          Until a row is ticked only the hint shows (bulk-select.js). #}
@@ -349,4 +353,8 @@
       </div>
     {% endif %}
   {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/live-fleet.js') }}" defer></script>
 {% endblock %}

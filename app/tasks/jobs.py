@@ -69,6 +69,7 @@ from app.services.live_updates import (
     KIND_SERVICES,
     KIND_STATUS,
     KIND_UPDATES,
+    publish_fleet_event,
     publish_machine_event,
 )
 from app.services.notifications import _rule_matches_scope, notify
@@ -1013,6 +1014,8 @@ async def _ping_all_machines() -> None:
             await session.commit()
             for machine, _outcome in results:
                 await publish_machine_event(str(machine.id), KIND_STATUS)
+            if transitions:
+                await publish_fleet_event(KIND_STATUS)
             # Notify only on an actual state change — not every tick that
             # simply confirms "still unreachable"/"still reachable" — see
             # app.services.notifications's module docstring.
@@ -1060,6 +1063,8 @@ async def _check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
         )
         await session.commit()
         await publish_machine_event(str(machine.id), KIND_STATUS)
+        if was_reachable is not None and was_reachable != outcome.reachable:
+            await publish_fleet_event(KIND_STATUS)
         # `was_reachable is None` means this is the machine's very first
         # reachability check ever — not a transition from a known state, so
         # nothing to notify about yet.

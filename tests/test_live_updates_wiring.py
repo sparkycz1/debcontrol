@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.main import app
+from app.web.routes import live_ws
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES_DIR = _REPO_ROOT / "app" / "web" / "templates"
@@ -84,3 +85,27 @@ def test_at_least_the_known_machine_pages_wire_up_live_updates():
         text = (_TEMPLATES_DIR / relative_path).read_text(encoding="utf-8")
         assert "live-updates.js" in text, f"{relative_path} no longer includes live-updates.js"
         assert _DATA_ATTR_ID in text, f"{relative_path} no longer sets {_DATA_ATTR_ID}"
+
+
+_LIVE_FLEET_JS = (_REPO_ROOT / "app" / "web" / "static" / "js" / "live-fleet.js").read_text(
+    encoding="utf-8"
+)
+
+
+def test_live_fleet_js_connects_to_the_fleet_route():
+    assert "/machines/live/ws" in _LIVE_FLEET_JS
+    assert app.url_path_for("fleet_live_websocket") == "/machines/live/ws"
+
+
+def test_the_fleet_route_is_matched_before_the_per_machine_one():
+    """Otherwise "/machines/live/ws" would be tried as machine id "live"."""
+    paths = [getattr(route, "path", None) for route in live_ws.router.routes]
+    assert paths.index("/machines/live/ws") < paths.index("/machines/{machine_id}/live/ws")
+
+
+def test_the_machine_list_opts_into_live_fleet_updates():
+    template = (_TEMPLATES_DIR / "machines" / "list.html").read_text(encoding="utf-8")
+    assert "js/live-fleet.js" in template
+    assert 'id="machine-results" data-live-fleet' in template
+    assert '"machine-results"' in _LIVE_FLEET_JS
+    assert '"[data-live-fleet]"' in _LIVE_FLEET_JS
