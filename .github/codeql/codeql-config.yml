@@ -16,6 +16,14 @@ paths-ignore:
   # The strict CSP forbids inline scripts, so no real JS lives here anyway.
   - app/web/templates
 query-filters:
+  # Two models with a two-way relationship (User <-> Role, Machine <->
+  # MachineGroup, ...) name each other in their annotations, so each imports
+  # the other for type checking — at the bottom of the module, under
+  # `if TYPE_CHECKING:`, never at runtime. That is still a "cycle" to this
+  # note-level query; the one that matters, py/unsafe-cyclic-import (a class
+  # used before its module finished importing), stays enabled and clean.
+  - exclude:
+      id: py/cyclic-import
   # Unused imports are already enforced by ruff (F401) in CI, which also
   # understands `TYPE_CHECKING` and re-exports — this query doesn't.
   - exclude:

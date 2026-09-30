@@ -89,7 +89,7 @@ def _fernet_key() -> str:
 # Same bound as `app.schemas.user.MIN_PASSWORD_LENGTH` — duplicated rather
 # than imported since this script runs on the host, outside the app's own
 # venv/container (`scripts/create_admin.py` keeps its own copy likewise).
-_MIN_PASSWORD_LENGTH = 12
+_MIN_LENGTH = 12
 
 
 def _prompt_admin_password() -> str:
@@ -100,8 +100,8 @@ def _prompt_admin_password() -> str:
     text in the terminal's scrollback or session log."""
     while True:
         password = getpass.getpass("Administrator account password: ")
-        if len(password) < _MIN_PASSWORD_LENGTH:
-            print(f"  (must be at least {_MIN_PASSWORD_LENGTH} characters)")
+        if len(password) < _MIN_LENGTH:
+            print(f"  (must be at least {_MIN_LENGTH} characters)")
             continue
         if getpass.getpass("Confirm password: ") != password:
             print("  (passwords didn't match — try again)")
