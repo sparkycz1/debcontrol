@@ -163,3 +163,50 @@ async def test_ping_all_machines_publishes_a_status_event_per_checked_machine(
     await jobs._ping_all_machines()
 
     assert [json.loads(m)["kind"] for _c, m in published] == ["status"]
+
+
+async def test_an_updates_event_also_rings_the_fleet_channel(published):
+    await live_updates.publish_machine_event("m1", live_updates.KIND_UPDATES)
+
+    assert [(c, json.loads(m)) for c, m in published] == [
+        ("debcontrol:live:machine:m1", {"kind": "updates"}),
+        (live_updates.FLEET_CHANNEL, {"kind": "updates"}),
+    ]
+
+
+async def test_other_machine_events_stay_off_the_fleet_channel(published):
+    for kind in (live_updates.KIND_STATUS, live_updates.KIND_FACTS, live_updates.KIND_PACKAGES):
+        await live_updates.publish_machine_event("m1", kind)
+
+    assert all(channel != live_updates.FLEET_CHANNEL for channel, _m in published)
+
+
+async def test_a_reachability_flip_rings_the_fleet_channel_once(
+    db_session_factory, monkeypatch, published
+):
+    """The list shows reachability, so a machine going down redraws it — but
+    a sweep that merely confirms "still up" must not (it runs every minute)."""
+    machine_id = await _make_machine(db_session_factory)
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.last_ping_at = None
+        machine.is_reachable = True
+        await session.commit()
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
+
+    async def _unreachable(ip_address: str, port: int) -> ReachabilityResult:
+        return ReachabilityResult(reachable=False, latency_ms=None)
+
+    monkeypatch.setattr(jobs, "check_reachable", _unreachable)
+    await jobs._ping_all_machines()
+    assert [c for c, _m in published].count(live_updates.FLEET_CHANNEL) == 1
+
+    published.clear()
+    async with db_session_factory() as session:
+        machine = await session.get(Machine, machine_id)
+        assert machine is not None
+        machine.last_ping_at = None
+        await session.commit()
+    await jobs._ping_all_machines()  # still unreachable: no flip
+    assert live_updates.FLEET_CHANNEL not in [c for c, _m in published]
