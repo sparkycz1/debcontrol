@@ -207,7 +207,15 @@ def _skip_name(data: bytes, offset: int) -> int:
 
 def parse_dns_answers(data: bytes, query_id: int) -> tuple[int, list[str]]:
     """(rcode, A/AAAA addresses) from a response to `query_id`. Raises
-    ValueError for a malformed or foreign packet."""
+    ValueError for a malformed or foreign packet — including one whose
+    counts or lengths run past its end, which the server controls."""
+    try:
+        return _parse_dns_answers(data, query_id)
+    except (IndexError, struct.error) as exc:
+        raise ValueError("truncated DNS response") from exc
+
+
+def _parse_dns_answers(data: bytes, query_id: int) -> tuple[int, list[str]]:
     if len(data) < 12:
         raise ValueError("short DNS response")
     rid, flags, qdcount, ancount, _ns, _ar = struct.unpack("!HHHHHH", data[:12])

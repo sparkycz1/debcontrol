@@ -20,9 +20,6 @@ from app.db.base import Base
 from app.db.pg_enum import pg_enum
 from app.ssh.packages import PackageSource
 
-if TYPE_CHECKING:
-    from app.db.models.machine import Machine
-
 
 class MachinePackage(Base):
     __tablename__ = "machine_packages"
@@ -58,3 +55,12 @@ class MachinePackage(Base):
             f"MachinePackage(machine_id={self.machine_id!r}, source={self.source!r}, "
             f"name={self.name!r})"
         )
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.machine import Machine

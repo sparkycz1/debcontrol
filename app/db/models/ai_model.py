@@ -24,9 +24,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
-    from app.db.models.ai_provider import AiProviderConfig
-
 
 class AiModel(Base):
     __tablename__ = "ai_models"
@@ -46,3 +43,12 @@ class AiModel(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"AiModel(model_id={self.model_id!r}, enabled={self.enabled!r})"
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.ai_provider import AiProviderConfig

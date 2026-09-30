@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.80.3"
+version = "0.81.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -132,6 +132,12 @@ dev = [
     "types-ldap3>=2.9.13.20260827",
     "types-qrcode>=8.2.0.20260518",
     "types-pyyaml>=6.0.12.20260826",
+]
+# Coverage-guided fuzzing (`python -m fuzz.run`, `.github/workflows/fuzz.yml`).
+# Atheris ships Linux wheels only; `tests/test_fuzz_targets.py` runs the same
+# targets without it on every OS.
+fuzz = [
+    "atheris>=3.1.0 ; sys_platform == 'linux'",
 ]
 
 [tool.uv]

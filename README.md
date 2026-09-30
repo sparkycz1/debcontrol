@@ -10,6 +10,7 @@
 
 [![CI](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml)
+[![Fuzz](https://github.com/sparkycz1/debcontrol/actions/workflows/fuzz.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/fuzz.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sparkycz1/debcontrol/badge)](https://scorecard.dev/viewer/?uri=github.com/sparkycz1/debcontrol)
 [![Secret scanning: enabled](https://img.shields.io/badge/secret%20scanning-enabled-brightgreen)](https://github.com/sparkycz1/debcontrol/security)
 [![Security policy](https://img.shields.io/badge/security-policy-blue)](.github/SECURITY.md)
@@ -55,7 +56,7 @@ python3 scripts/setup.py
 
 It generates every secret, asks a handful of questions (timezone, whether
 to use the bundled Caddy reverse proxy, background-check intervals, the
-Administrator password — or auto-generates one — and the host port), then
+Administrator password — typed twice, never printed — and the host port), then
 brings the stack up and creates the first admin account for you. Full
 details: [wiki/Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation).
 

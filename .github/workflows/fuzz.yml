@@ -1,0 +1,85 @@
+name: Fuzz
+
+# Coverage-guided fuzzing of every target in fuzz/targets.py with Atheris
+# (libFuzzer for Python): the parsers of machine output, network replies and
+# user input — see fuzz/__init__.py. One job per target, in parallel: a
+# short run on every PR that touches the code, a long one weekly. A crash
+# fails the job and uploads the input that caused it (replay it with
+# `python -m fuzz.run <target> <file>`). tests/test_fuzz_targets.py keeps
+# the matrix below in sync with fuzz.targets.TARGETS.
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "fuzz/**", "uv.lock", ".github/workflows/fuzz.yml"]
+  pull_request:
+    paths: ["app/**", "fuzz/**", "uv.lock", ".github/workflows/fuzz.yml"]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - facts
+          - packages
+          - services
+          - monitoring
+          - journal
+          - directory_listing
+          - image_updates
+          - log_path
+          - journal_filters
+          - readiness
+          - advisories
+          - proxmox
+          - dns_answer
+          - conditions_yaml
+          - redirect
+          - webhook_redaction
+          - email
+          - networks
+          - tls_target
+          - tags
+    steps:
+      # Pinned by commit SHA like every other action here (see ci.yml).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Install dependencies (with Atheris)
+        run: uv sync --locked --group fuzz
+
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          # 20 minutes each on the weekly run, one minute otherwise.
+          SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1200' || '60' }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p crashes
+          uv run python -m fuzz.run "$TARGET" \
+            -max_total_time="$SECONDS_PER_TARGET" \
+            -artifact_prefix=crashes/ \
+            -print_final_stats=1
+
+      - name: Upload the crashing input
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: crashes/
+          if-no-files-found: ignore

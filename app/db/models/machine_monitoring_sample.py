@@ -20,9 +20,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
-    from app.db.models.machine import Machine
-
 
 class MachineMonitoringSample(Base):
     __tablename__ = "machine_monitoring_samples"
@@ -108,3 +105,12 @@ class MachineMonitoringSample(Base):
     # (image/ports/health) is kept once on Machine.docker_containers, not
     # repeated in every sample.
     docker_stats: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.machine import Machine

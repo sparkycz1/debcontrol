@@ -141,7 +141,7 @@ def _json_list(section: str) -> list[dict[str, Any]] | None:
         return None
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
         return None
     if not isinstance(data, list):
         return None
@@ -599,7 +599,7 @@ def _json_value(section: str) -> Any:
         return None
     try:
         return json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
         return None
 
 
@@ -626,7 +626,7 @@ def parse_pmg(sections: dict[str, str]) -> tuple[str | None, dict[str, Any] | No
         for line in queue_lines[1:]:
             try:
                 entry = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
                 continue
             if isinstance(entry, dict) and entry.get("queue_name"):
                 name = str(entry["queue_name"])

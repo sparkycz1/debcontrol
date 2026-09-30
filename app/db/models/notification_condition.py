@@ -29,10 +29,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
-    from app.db.models.machine import Machine
-    from app.db.models.notification_rule import NotificationRule
-
 
 class NotificationCondition(Base):
     """One AND-clause of a condition-based rule. `field` is a key into
@@ -102,3 +98,13 @@ class NotificationConditionState(Base):
             f"NotificationConditionState(rule_id={self.rule_id!r}, "
             f"machine_id={self.machine_id!r}, matched={self.matched!r})"
         )
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.machine import Machine
+    from app.db.models.notification_rule import NotificationRule

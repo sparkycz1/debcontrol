@@ -231,7 +231,7 @@ def parse_journal_json(raw: str) -> tuple[list[JournalEntry], str | None, str | 
             continue
         try:
             data = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
             continue
         if not isinstance(data, dict):
             continue

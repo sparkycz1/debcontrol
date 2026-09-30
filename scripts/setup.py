@@ -12,8 +12,8 @@ asks a handful of questions (timezone, the default UI language for
 accounts that haven't picked one for themselves, whether to use the
 bundled Caddy reverse proxy and its domain/email if so, whether the app's
 own port should only accept local connections, the two background-check
-intervals, the Administrator account's password — or auto-generates one —
-and the host port to publish), writes `.env`, brings the stack up with
+intervals, the Administrator account's password — typed twice, masked,
+never printed — and the host port to publish), writes `.env`, brings the stack up with
 `docker compose`, waits for the app to become healthy, and creates the
 first Administrator account.
 
@@ -34,6 +34,7 @@ manual alternative if you'd rather configure everything by hand instead.
 from __future__ import annotations
 
 import base64
+import getpass
 import os
 import re
 import secrets
@@ -84,6 +85,28 @@ def _fernet_key() -> str:
     needing that package installed on the host running this script."""
     return base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
 
+
+# Same bound as `app.schemas.user.MIN_PASSWORD_LENGTH` — duplicated rather
+# than imported since this script runs on the host, outside the app's own
+# venv/container (`scripts/create_admin.py` keeps its own copy likewise).
+_MIN_LENGTH = 12
+
+
+def _prompt_admin_password() -> str:
+    """Asks for the Administrator password by hand — masked (`getpass`,
+    never echoed or kept in shell history) and typed twice to catch a
+    typo, the same flow `scripts/create_admin.py` uses interactively. No
+    auto-generate option: a password printed to stdout would sit in clear
+    text in the terminal's scrollback or session log."""
+    while True:
+        password = getpass.getpass("Administrator account password: ")
+        if len(password) < _MIN_LENGTH:
+            print(f"  (must be at least {_MIN_LENGTH} characters)")
+            continue
+        if getpass.getpass("Confirm password: ") != password:
+            print("  (passwords didn't match — try again)")
+            continue
+        return password
 
 def _set_env_line(lines: list[str], key: str, value: str) -> list[str]:
     """Replace `KEY=...` or a commented-out `# KEY=...` with `KEY=value`,
@@ -341,13 +364,7 @@ def main() -> None:
     )
 
     print()
-    admin_password = input(
-        "Administrator account password (leave empty to auto-generate one): "
-    ).strip()
-    generated_password: str | None = None
-    if not admin_password:
-        generated_password = secrets.token_urlsafe(18)
-        admin_password = generated_password
+    admin_password = _prompt_admin_password()
 
     print()
     port = _prompt("Host port to publish the app on", default="8080")
@@ -429,10 +446,7 @@ def main() -> None:
     else:
         print(f"URL:      http://<this-host>:{port}")
     print("Username: admin")
-    if generated_password:
-        print(f"Password: {generated_password}   (shown once — save it now)")
-    else:
-        print("Password: the one you entered")
+    print("Password: the one you entered")
     print("You'll be asked to change it on first login.")
     print("=" * 64)
 

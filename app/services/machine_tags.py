@@ -30,7 +30,8 @@ def normalize_tag_names(names: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for raw in names:
-        name = raw.strip().lower()[:MAX_TAG_LENGTH]
+        # Trimmed again after the cut, which can end on a space.
+        name = raw.strip().lower()[:MAX_TAG_LENGTH].strip()
         if name and name not in seen:
             seen.add(name)
             result.append(name)
