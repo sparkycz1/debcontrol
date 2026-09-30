@@ -29,15 +29,8 @@ from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.db.models.role import Permission, Role
+from app.db.models.permission import Permission
 from app.db.pg_enum import pg_enum
-
-if TYPE_CHECKING:
-    from app.db.models.api_token import ApiToken
-    from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
-    from app.db.models.totp_recovery_code import TotpRecoveryCode
-    from app.db.models.user_session import UserSession
-    from app.db.models.webauthn_credential import WebAuthnCredential
 
 
 class AuthProvider(enum.StrEnum):
@@ -219,3 +212,17 @@ class User(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"User(id={self.id!r}, username={self.username!r})"
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.api_token import ApiToken
+    from app.db.models.role import Role
+    from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
+    from app.db.models.totp_recovery_code import TotpRecoveryCode
+    from app.db.models.user_session import UserSession
+    from app.db.models.webauthn_credential import WebAuthnCredential

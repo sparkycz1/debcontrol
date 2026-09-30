@@ -24,9 +24,6 @@ from app.db.base import Base
 from app.db.models.machine_tag import Tag, machine_tags
 from app.db.pg_enum import pg_enum
 
-if TYPE_CHECKING:
-    from app.db.models.machine_group import MachineGroup
-
 
 class AuthMethod(enum.StrEnum):
     SSH_KEY = "ssh_key"
@@ -310,3 +307,12 @@ class Machine(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"Machine(id={self.id!r}, name={self.name!r})"
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.machine_group import MachineGroup

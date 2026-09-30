@@ -460,7 +460,7 @@ def _parse_sensors_json(
         return temps, fans, gpu_power_watts
     try:
         chips = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+    except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
         return temps, fans, gpu_power_watts
     if not isinstance(chips, dict):
         return temps, fans, gpu_power_watts
@@ -682,7 +682,7 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
         for line in lines:
             try:
                 row = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
+            except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
                 continue
             if isinstance(row, dict):
                 rows.append(row)

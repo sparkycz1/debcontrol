@@ -249,6 +249,14 @@ wheels = [
 ]
 
 [[package]]
+name = "atheris"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/ff/ae7a5bfe99033e510bea4ed09934e636d93777317a48147369bc0dc2b71f/atheris-3.1.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:315a0b5c819852b1ffe1ca72efc389c7724881f2c33e4aacb8c6bcec49bd5011", size = 36772569, upload-time = "2026-06-17T00:04:07.702Z" },
+]
+
+[[package]]
 name = "authlib"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -601,7 +609,7 @@ wheels = [
 
 [[package]]
 name = "debcontrol"
-version = "0.80.3"
+version = "0.81.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -648,6 +656,9 @@ dev = [
     { name = "types-ldap3" },
     { name = "types-pyyaml" },
     { name = "types-qrcode" },
+]
+fuzz = [
+    { name = "atheris", marker = "sys_platform == 'linux'" },
 ]
 
 [package.metadata]
@@ -697,6 +708,7 @@ dev = [
     { name = "types-pyyaml", specifier = ">=6.0.12.20260826" },
     { name = "types-qrcode", specifier = ">=8.2.0.20260518" },
 ]
+fuzz = [{ name = "atheris", marker = "sys_platform == 'linux'", specifier = ">=3.1.0" }]
 
 [[package]]
 name = "distro"

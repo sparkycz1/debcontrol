@@ -16,10 +16,6 @@ paths-ignore:
   # The strict CSP forbids inline scripts, so no real JS lives here anyway.
   - app/web/templates
 query-filters:
-  # Import cycles are broken on purpose with `if TYPE_CHECKING:` and
-  # function-local imports; this query can't see that and flags every one.
-  - exclude:
-      id: py/unsafe-cyclic-import
   # Unused imports are already enforced by ruff (F401) in CI, which also
   # understands `TYPE_CHECKING` and re-exports — this query doesn't.
   - exclude:

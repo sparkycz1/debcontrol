@@ -23,11 +23,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
-    from app.db.models.machine import Machine
-    from app.db.models.machine_group import MachineGroup
-
-
 maintenance_window_machines = Table(
     "maintenance_window_machines",
     Base.metadata,
@@ -84,3 +79,13 @@ class MaintenanceWindow(Base):
         lazy="selectin",
         order_by="MachineGroup.name",
     )
+
+
+# Imported last, and only for type checking: every class above is already
+# defined by the time this module points back at the models it relates
+# to, so no import cycle can leave a class half-defined (CodeQL's
+# "Module-level cyclic import"). SQLAlchemy resolves the relationship
+# targets by name through its registry, never through these imports.
+if TYPE_CHECKING:
+    from app.db.models.machine import Machine
+    from app.db.models.machine_group import MachineGroup

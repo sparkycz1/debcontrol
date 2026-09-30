@@ -156,11 +156,17 @@ def redact_url(url: str) -> str:
     """`https://host[:port]/…` — a webhook/ntfy/Discord URL's path (and
     query) *is* its secret (Discord's `/api/webhooks/<id>/<token>`, Slack's
     `/services/...`, an ntfy topic), so the delivery history, error text and
-    a view-only account keep only where it goes, never how to post there."""
-    parts = urlsplit(url)
+    a view-only account keep only where it goes, never how to post there.
+    A URL too malformed to split (a broken `[v6]` host, a port out of
+    range) redacts to nothing at all."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return "…"
     if not parts.scheme or not parts.hostname:
         return "…"
-    host = parts.hostname + (f":{parts.port}" if parts.port else "")
+    host = parts.hostname + (f":{port}" if port else "")
     rest = "/…" if parts.path.strip("/") or parts.query else ""
     return f"{parts.scheme}://{host}{rest}"
 
