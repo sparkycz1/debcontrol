@@ -16,6 +16,7 @@ Plain Python on purpose: `fuzz.run` drives these under Atheris, and
 from __future__ import annotations
 
 import contextlib
+import posixpath
 from collections.abc import Callable
 
 import yaml
@@ -27,8 +28,17 @@ from app.services.machine_tags import parse_tag_names_from_text
 from app.services.network_probes import parse_dns_answers
 from app.services.push_channels import redact_url
 from app.ssh.facts import parse_facts_output
-from app.ssh.image_updates import parse_image_update_output
-from app.ssh.logs import parse_directory_listing, parse_journal_json
+from app.ssh.image_updates import ImageCheckError, parse_image_update_output
+from app.ssh.logs import (
+    JOURNAL_PRIORITIES,
+    MAX_BOOT_OFFSET,
+    is_path_allowed,
+    normalize_boot,
+    normalize_priority,
+    normalize_unit,
+    parse_directory_listing,
+    parse_journal_json,
+)
 from app.ssh.monitoring import parse_monitoring_output
 from app.ssh.packages import parse_packages_output
 from app.ssh.proxmox import (
@@ -84,7 +94,27 @@ def directory_listing(data: bytes) -> None:
 
 
 def image_updates(data: bytes) -> None:
-    parse_image_update_output(_text(data))
+    # The documented "this account can't reach Docker" answer.
+    with contextlib.suppress(ImageCheckError):
+        parse_image_update_output(_text(data))
+
+
+def log_path(data: bytes) -> None:
+    """The Logs tab's file/directory path — only ever something inside an
+    allowed prefix, however it's spelled."""
+    path = _text(data)
+    if is_path_allowed(path, ["/var/log"]):
+        normalized = posixpath.normpath(path)
+        assert normalized == "/var/log" or normalized.startswith("/var/log/")
+
+
+def journal_filters(data: bytes) -> None:
+    unit, priority, boot = _sections(data, 3)
+    assert normalize_priority(priority) in ("", *JOURNAL_PRIORITIES)
+    value = normalize_unit(unit)
+    assert value == "" or (len(value) <= 200 and value == value.strip())
+    offset = normalize_boot(boot)
+    assert offset == "" or -MAX_BOOT_OFFSET <= int(offset) <= 0
 
 
 def readiness(data: bytes) -> None:
@@ -174,6 +204,8 @@ TARGETS: dict[str, Callable[[bytes], None]] = {
         journal,
         directory_listing,
         image_updates,
+        log_path,
+        journal_filters,
         readiness,
         advisories,
         proxmox,

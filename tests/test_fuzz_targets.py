@@ -38,6 +38,9 @@ _SEEDS: list[bytes] = [
     b"/\\evil.example",
     b"/\t/evil.example",
     b"*a [&a x]",
+    # The documented "can't reach Docker" answer (not a crash).
+    b"\n@@NOACCESS\n",
+    b"/var/log/../../etc/shadow",
     # JSON from a machine (journal, pvesh, sensors) nested far too deep.
     b"[" * 5000,
     b'{"MESSAGE": "x"}\n' + b"[" * 5000 + b"\n",

@@ -36,6 +36,8 @@ jobs:
           - journal
           - directory_listing
           - image_updates
+          - log_path
+          - journal_filters
           - readiness
           - advisories
           - proxmox
