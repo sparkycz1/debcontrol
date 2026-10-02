@@ -1,4 +1,5 @@
-"""Push notification services: ntfy, Gotify, Telegram, Discord, Pushover.
+"""Push notification services: ntfy, Gotify, Telegram, Discord, Pushover,
+and the team chats Mattermost, Slack and Microsoft Teams.
 
 Each is a single HTTPS request with the rule's rendered subject and body —
 no extra dependency (Apprise would cover more services, but at the cost of
@@ -13,6 +14,13 @@ credential). What each channel needs, stored on the rule
 | telegram | —                                    | bot token               | chat id          |
 | discord  | channel webhook URL                  | —                       | —                |
 | pushover | —                                    | application API token   | user/group key   |
+| mattermost | incoming webhook URL               | —                       | —                |
+| slack    | incoming webhook URL                 | —                       | —                |
+| teams    | Workflows ("Post to a channel when a webhook request is received") URL | — | — |
+
+Teams takes an Adaptive Card — the format Microsoft's Workflows webhooks
+expect (the older Office 365 connector webhooks are being retired and
+accept the same message shape).
 
 Like the plain webhook, the URL and token are admin-authored config
 (`notification.manage`), not untrusted input. `send(...)` returns
@@ -39,16 +47,38 @@ CHANNEL_NAMES: dict[str, str] = {
     C.TELEGRAM.value: "Telegram",
     C.DISCORD.value: "Discord",
     C.PUSHOVER.value: "Pushover",
+    C.MATTERMOST.value: "Mattermost",
+    C.SLACK.value: "Slack",
+    C.TEAMS.value: "Microsoft Teams",
 }
 # Channels whose `webhook_url` is required.
-URL_CHANNELS = frozenset({C.WEBHOOK.value, C.NTFY.value, C.GOTIFY.value, C.DISCORD.value})
+URL_CHANNELS = frozenset(
+    {
+        C.WEBHOOK.value,
+        C.NTFY.value,
+        C.GOTIFY.value,
+        C.DISCORD.value,
+        C.MATTERMOST.value,
+        C.SLACK.value,
+        C.TEAMS.value,
+    }
+)
 # Channels that can't send without a token.
 TOKEN_CHANNELS = frozenset({C.GOTIFY.value, C.TELEGRAM.value, C.PUSHOVER.value})
 # Channels with an optional token.
 OPTIONAL_TOKEN_CHANNELS = frozenset({C.NTFY.value})
 RECIPIENT_CHANNELS = frozenset({C.TELEGRAM.value, C.PUSHOVER.value})
 PUSH_CHANNELS = frozenset(
-    {C.NTFY.value, C.GOTIFY.value, C.TELEGRAM.value, C.DISCORD.value, C.PUSHOVER.value}
+    {
+        C.NTFY.value,
+        C.GOTIFY.value,
+        C.TELEGRAM.value,
+        C.DISCORD.value,
+        C.PUSHOVER.value,
+        C.MATTERMOST.value,
+        C.SLACK.value,
+        C.TEAMS.value,
+    }
 )
 
 _TIMEOUT_SECONDS = 10
@@ -57,6 +87,9 @@ _TELEGRAM_MAX = 4096
 _DISCORD_MAX = 2000
 _PUSHOVER_TITLE_MAX = 250
 _PUSHOVER_MESSAGE_MAX = 1024
+_MATTERMOST_MAX = 16383
+_SLACK_MAX = 3000  # a section's text limit; plenty for an alert
+_TEAMS_MAX = 20000
 
 
 def _clip(text: str, limit: int) -> str:
@@ -120,6 +153,31 @@ def build_request(
                 "user": recipient,
                 "title": _clip(subject, _PUSHOVER_TITLE_MAX),
                 "message": _clip(body, _PUSHOVER_MESSAGE_MAX),
+            }
+        }
+    if channel == C.MATTERMOST.value:
+        assert url is not None
+        return url, {"json": {"text": _clip(f"**{subject}**\n{body}", _MATTERMOST_MAX)}}
+    if channel == C.SLACK.value:
+        assert url is not None
+        return url, {"json": {"text": _clip(f"*{subject}*\n{body}", _SLACK_MAX)}}
+    if channel == C.TEAMS.value:
+        assert url is not None
+        card = {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.4",
+            "body": [
+                {"type": "TextBlock", "text": subject, "weight": "Bolder", "wrap": True},
+                {"type": "TextBlock", "text": _clip(body, _TEAMS_MAX), "wrap": True},
+            ],
+        }
+        return url, {
+            "json": {
+                "type": "message",
+                "attachments": [
+                    {"contentType": "application/vnd.microsoft.card.adaptive", "content": card}
+                ],
             }
         }
     raise ValueError(f'"{channel}" is not a push channel.')

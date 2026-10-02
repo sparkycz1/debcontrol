@@ -136,11 +136,11 @@
          The other channels' fields are rendered hidden;
          static/js/notification-delivery.js re-syncs them as the select
          changes. #}
-      {% set url_channels = ['webhook', 'ntfy', 'gotify', 'discord'] %}
+      {% set url_channels = ['webhook', 'ntfy', 'gotify', 'discord', 'mattermost', 'slack', 'teams'] %}
       {% set token_channels = ['ntfy', 'gotify', 'telegram', 'pushover'] %}
       {% set recipient_channels = ['telegram', 'pushover'] %}
       <select id="delivery_channel" name="delivery_channel" data-delivery-channel-select>
-        {% for channel in ['email', 'webhook', 'ntfy', 'gotify', 'telegram', 'discord', 'pushover'] %}
+        {% for channel in ['email', 'webhook', 'ntfy', 'gotify', 'telegram', 'discord', 'pushover', 'mattermost', 'slack', 'teams'] %}
           <option value="{{ channel }}" {{ 'selected' if selected_delivery_channel == channel else '' }}>
             {{ t(request, "notifications.rule.send_via_" ~ channel) }}
           </option>
