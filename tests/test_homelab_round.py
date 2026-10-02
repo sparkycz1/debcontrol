@@ -372,6 +372,11 @@ async def test_schedule_form_offers_time_zones(client):
         ("discord", "https://discord.com/api/webhooks/1/x", None, None,
          "https://discord.com/api/webhooks/1/x"),
         ("pushover", None, "apptoken", "userkey", "https://api.pushover.net/1/messages.json"),
+        ("mattermost", "https://chat.lan/hooks/abc", None, None, "https://chat.lan/hooks/abc"),
+        ("slack", "https://hooks.slack.com/services/T/B/x", None, None,
+         "https://hooks.slack.com/services/T/B/x"),
+        ("teams", "https://prod.westeurope.logic.azure.com/workflows/x", None, None,
+         "https://prod.westeurope.logic.azure.com/workflows/x"),
     ],
 )
 def test_push_requests(channel, url, token, recipient, expected_url):
@@ -380,6 +385,27 @@ def test_push_requests(channel, url, token, recipient, expected_url):
     )
     assert target == expected_url
     assert "Příliš" in json.dumps(kwargs, ensure_ascii=False)
+
+
+def test_chat_payload_shapes():
+    _url, mattermost = push_channels.build_request(
+        "mattermost", url="https://m/h", token=None, recipient=None, subject="S", body="B"
+    )
+    assert mattermost["json"] == {"text": "**S**\nB"}
+    _url, slack = push_channels.build_request(
+        "slack", url="https://s/h", token=None, recipient=None, subject="S", body="B"
+    )
+    assert slack["json"] == {"text": "*S*\nB"}
+    _url, teams = push_channels.build_request(
+        "teams", url="https://t/h", token=None, recipient=None, subject="S", body="B"
+    )
+    attachment = teams["json"]["attachments"][0]
+    assert attachment["contentType"] == "application/vnd.microsoft.card.adaptive"
+    assert [block["text"] for block in attachment["content"]["body"]] == ["S", "B"]
+    with pytest.raises(ValueError, match="URL"):
+        push_channels.build_request(
+            "slack", url=None, token=None, recipient=None, subject="S", body="B"
+        )
 
 
 def test_push_requests_need_their_settings():

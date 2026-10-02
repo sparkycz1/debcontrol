@@ -38,6 +38,10 @@ class NotificationDeliveryChannel(enum.StrEnum):
     TELEGRAM = "telegram"
     DISCORD = "discord"
     PUSHOVER = "pushover"
+    # Team chat incoming webhooks.
+    MATTERMOST = "mattermost"
+    SLACK = "slack"
+    TEAMS = "teams"
 
 
 class NotificationDeliveryStatus(enum.StrEnum):
