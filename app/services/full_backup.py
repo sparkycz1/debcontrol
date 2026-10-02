@@ -285,6 +285,8 @@ async def _empty_database(db: AsyncSession, tables: list[sa.Table], *, postgres:
         async with db.begin_nested():
             await db.execute(sa.text("SET LOCAL session_replication_role = replica"))
     except sa.exc.DBAPIError:
+        # Not a superuser: carry on without it — rows still arrive in
+        # dependency order, which is enough for this app's schema.
         pass
     names = ", ".join(f'"{table.name}"' for table in tables)
     await db.execute(sa.text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
