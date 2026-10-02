@@ -15,8 +15,9 @@ phrase require an explicit `confirm` field here instead (see each route's
 docstring).
 
 What's deliberately still web-UI-only, and why: SSH key rotation
-(`/settings/ssh-key/...`), LDAP/OIDC configuration, syslog forwarding, and
-the AI assistant's provider credentials are excluded for the reasons given
+(`/settings/ssh-key/...`), LDAP/OIDC configuration, syslog forwarding,
+the AI assistant's provider credentials and the whole-application restore
+(`api_v1_backup.py` only makes the backup) are excluded for the reasons given
 in wiki/Architecture's "The REST API: read and write, mirroring the web
 UI" section — each one is either a secret/credential surface or carries a
 lock-out/blast-radius risk that's meant to be handled deliberately, by a

@@ -59,23 +59,18 @@ class DecryptionError(Exception):
     """Decryption failed — corrupted/tampered data, or the wrong key."""
 
 
-def _encryption_key_bytes() -> bytes:
-    key = get_settings().encryption_key.get_secret_value()
-    return base64.urlsafe_b64decode(key.encode("utf-8"))
-
-
-def _fernet() -> Fernet:
-    key = get_settings().encryption_key.get_secret_value()
-    return Fernet(key.encode("utf-8"))
+def current_encryption_key() -> str:
+    """This instance's `ENCRYPTION_KEY` — a full backup carries it so a
+    restore elsewhere can re-encrypt every secret under its own key
+    (`app.services.full_backup`)."""
+    return get_settings().encryption_key.get_secret_value()
 
 
 def encrypt_secret(plaintext: str) -> bytes:
     """Encrypt a sensitive string (password, private key, ...) for storage
     in the DB. Always writes the current AES-256-GCM format — see the
     module docstring."""
-    nonce = os.urandom(_NONCE_LENGTH)
-    ciphertext = AESGCM(_encryption_key_bytes()).encrypt(nonce, plaintext.encode("utf-8"), None)
-    return _AESGCM_VERSION + nonce + ciphertext
+    return encrypt_secret_with_key(plaintext, current_encryption_key())
 
 
 def decrypt_secret(ciphertext: bytes) -> str:
@@ -83,16 +78,30 @@ def decrypt_secret(ciphertext: bytes) -> str:
     both the current AES-256-GCM format and a value still stored in the
     legacy Fernet format, without ever rewriting it. See the module
     docstring."""
+    return decrypt_secret_with_key(ciphertext, current_encryption_key())
+
+
+def encrypt_secret_with_key(plaintext: str, key: str) -> bytes:
+    """`encrypt_secret` under an explicit `ENCRYPTION_KEY`-format key."""
+    nonce = os.urandom(_NONCE_LENGTH)
+    raw_key = base64.urlsafe_b64decode(key.encode("utf-8"))
+    ciphertext = AESGCM(raw_key).encrypt(nonce, plaintext.encode("utf-8"), None)
+    return _AESGCM_VERSION + nonce + ciphertext
+
+
+def decrypt_secret_with_key(ciphertext: bytes, key: str) -> str:
+    """`decrypt_secret` under an explicit `ENCRYPTION_KEY`-format key."""
     if ciphertext[:1] == _AESGCM_VERSION:
         nonce = ciphertext[1 : 1 + _NONCE_LENGTH]
         body = ciphertext[1 + _NONCE_LENGTH :]
+        raw_key = base64.urlsafe_b64decode(key.encode("utf-8"))
         try:
-            return AESGCM(_encryption_key_bytes()).decrypt(nonce, body, None).decode("utf-8")
+            return AESGCM(raw_key).decrypt(nonce, body, None).decode("utf-8")
         except InvalidTag as exc:
             raise DecryptionError("Failed to decrypt the stored secret.") from exc
 
     try:
-        return _fernet().decrypt(ciphertext).decode("utf-8")
+        return Fernet(key.encode("utf-8")).decrypt(ciphertext).decode("utf-8")
     except InvalidToken as exc:
         raise DecryptionError("Failed to decrypt the stored secret.") from exc
 
