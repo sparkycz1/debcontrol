@@ -2152,7 +2152,7 @@
     "proxmox.pbs.no_jobs": "Žádné úlohy garbage collection, verify, sync ani prune.",
     "proxmox.pbs.store": "Datastore",
     "proxmox.pbs.last_run": "Poslední běh",
-    "proxmox.pbs.kind.gc": "Garbage collection",
+    "proxmox.pbs.kind.gc": "Úklid úložiště (garbage collection)",
     "proxmox.pbs.kind.verify": "Ověření",
     "proxmox.pbs.kind.sync": "Synchronizace",
     "proxmox.pbs.kind.prune": "Prořezání",
