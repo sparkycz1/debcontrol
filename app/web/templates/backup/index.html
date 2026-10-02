@@ -9,6 +9,48 @@
   </div>
   <p class="hint">{{ t(request, "backup.intro") }}</p>
 
+  {% if errors %}
+    <div class="alert alert-error">
+      {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if full_backup %}
+    <section class="panel">
+      <h2>{{ t(request, "backup.full.heading") }}</h2>
+      <p class="hint">{{ t(request, "backup.full.hint") }}</p>
+      <form method="post" action="/backup/full" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="full-passphrase">{{ t(request, "backup.full.passphrase") }}</label>
+        <input type="password" id="full-passphrase" name="passphrase" minlength="{{ min_passphrase }}"
+               required autocomplete="new-password">
+        <label for="full-passphrase-confirm">{{ t(request, "backup.full.passphrase_confirm") }}</label>
+        <input type="password" id="full-passphrase-confirm" name="passphrase_confirm"
+               minlength="{{ min_passphrase }}" required autocomplete="new-password">
+        <p class="hint">{{ t(request, "backup.full.passphrase_hint", count=min_passphrase) }}</p>
+        <button type="submit" class="button">{{ t(request, "backup.full.download") }}</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>{{ t(request, "backup.full.restore_heading") }}</h2>
+      <div class="alert alert-error"><p>{{ t(request, "backup.full.restore_warning") }}</p></div>
+      <form method="post" action="/backup/full/restore" class="form" enctype="multipart/form-data"
+            autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="full-backup-file">{{ t(request, "backup.full.file") }}</label>
+        <input type="file" id="full-backup-file" name="backup_file" accept=".dcbak" required>
+        <label for="full-restore-passphrase">{{ t(request, "backup.full.passphrase") }}</label>
+        <input type="password" id="full-restore-passphrase" name="passphrase" required
+               autocomplete="off">
+        <label for="full-restore-confirm">{{ t(request, "backup.full.confirm_label") }}</label>
+        <input type="text" id="full-restore-confirm" name="confirm" required pattern="RESTORE"
+               autocomplete="off" spellcheck="false">
+        <button type="submit" class="button button-danger">{{ t(request, "backup.full.restore") }}</button>
+      </form>
+    </section>
+  {% endif %}
+
   {% for section in sections %}
     <section class="panel">
       <h2>{{ t(request, "backup.section." ~ section.key) }}</h2>

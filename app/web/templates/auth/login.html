@@ -12,6 +12,10 @@
   <main class="auth-page">
     <span class="brand">{{ render_brand('auth') }}</span>
     <div class="panel">
+      {% set notice = flash(request, 'notice') %}
+      {% if notice %}
+        <div class="alert alert-ok"><p>{{ notice }}</p></div>
+      {% endif %}
       {% if oidc_error %}
         <div class="alert alert-error"><p>{{ oidc_error }}</p></div>
       {% endif %}
