@@ -47,7 +47,7 @@ from email.message import EmailMessage
 from types import SimpleNamespace
 from typing import Any, Protocol
 
-import httpx
+import httpx2
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -505,7 +505,7 @@ async def _send_webhook(
         "timestamp": context.get("timestamp"),
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx2.AsyncClient(timeout=10) as client:
             response = await client.post(url, json=payload)
         if response.status_code >= 400:
             return NotificationDeliveryStatus.FAILED, f"HTTP {response.status_code}"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from app.auth.sessions import IMPERSONATION_RETURN_COOKIE_NAME, SESSION_COOKIE_NAME, create_session
 from app.db.models.role import Permission, Role, RolePermission

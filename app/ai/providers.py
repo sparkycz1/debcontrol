@@ -19,11 +19,11 @@ means richer typed access to OpenRouter-specific response fields
 format doesn't carry — none of that is surfaced by this app today, but the
 client is now built on the SDK that actually models it.
 
-Three different HTTP layers end up in play, purely as a fact of depending
-on these SDKs as they currently ship, not a choice made in this module:
-`anthropic` and `openai` build on `httpx2` (a distinct package from the
-plain `httpx` this app uses everywhere else); `openrouter` and
-`google-genai` both build on plain `httpx`. `http_client=`/
+Two HTTP client packages end up in play, purely as a fact of depending on
+these SDKs as they currently ship, not a choice made in this module:
+`anthropic` and `openai` build on `httpx2` — what the rest of this app
+uses too — while `openrouter` and `google-genai` still build on plain
+`httpx`, the only reason that package is still a dependency. `http_client=`/
 `httpx_async_client=`/`transport=` (whichever the given SDK calls it) is
 how `tests/test_ai_providers.py` injects a `MockTransport` of the matching
 package and reaches no real network, for every client here.

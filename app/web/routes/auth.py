@@ -725,7 +725,7 @@ async def oidc_login(request: Request, db: AsyncSession = Depends(get_db)) -> Re
         )
     except Exception:
         # Most commonly a bad Issuer URL (a discovery document that 404s or
-        # doesn't parse, an unreachable host) — Authlib/httpx can raise many
+        # doesn't parse, an unreachable host) — Authlib/httpx2 can raise many
         # different exception types for this, none of them worth
         # distinguishing to the user. oidc_callback already handles this
         # same class of failure broadly; oidc_login didn't, so a

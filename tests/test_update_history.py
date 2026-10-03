@@ -9,7 +9,7 @@ import re
 import uuid
 from typing import Any
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from tests.test_web import _create_machine, _pin_host_key

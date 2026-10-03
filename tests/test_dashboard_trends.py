@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, date, datetime, timedelta
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from app.core.app_settings import get_or_create_app_settings
 from app.db.models.fleet_snapshot import FleetSnapshot

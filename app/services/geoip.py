@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from ipaddress import ip_address as parse_ip
 from typing import Any
 
-import httpx
+import httpx2
 import maxminddb
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,7 +101,7 @@ def _validate_mmdb(data: bytes) -> None:
 
 
 async def _fetch_one(url: str) -> bytes:
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         timeout=_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True
     ) as client:
         response = await client.get(url)
@@ -112,18 +112,18 @@ async def _fetch_one(url: str) -> bytes:
 def _describe_error(exc: Exception) -> str:
     """A short, safe-to-log description of `exc` that never includes the
     configured download URL — a MaxMind "permalink" embeds a license key
-    in its query string, and `httpx.HTTPStatusError`/`ConnectError`/etc.
+    in its query string, and `httpx2.HTTPStatusError`/`ConnectError`/etc.
     all put the full request URL straight into their own `str()`. This
     description is what ends up in the application log, the audit log
     (`app.tasks.jobs._refresh_geoip_database`, readable by anyone with
     `audit.view`, not just `settings.manage`), and the Settings page's own
     error banner — none of which should ever leak a secret embedded in an
     admin-entered URL."""
-    if isinstance(exc, httpx.HTTPStatusError):
+    if isinstance(exc, httpx2.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, httpx2.TimeoutException):
         return "timed out"
-    if isinstance(exc, httpx.HTTPError):
+    if isinstance(exc, httpx2.HTTPError):
         return f"{type(exc).__name__} (network error)"
     return f"{type(exc).__name__}: could not parse the downloaded file"
 

@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
+import httpx2
 
 from app.db.models.notification_log import NotificationDeliveryChannel, NotificationDeliveryStatus
 
@@ -116,7 +116,7 @@ def build_request(
     subject: str,
     body: str,
 ) -> tuple[str, dict[str, Any]]:
-    """`(url, httpx request kwargs)` for one push — pure, so each service's
+    """`(url, httpx2 request kwargs)` for one push — pure, so each service's
     exact request shape is testable without a network. Raises ValueError
     when the rule is missing something the channel needs."""
     if channel in URL_CHANNELS and not url:
@@ -197,7 +197,7 @@ async def send(
         target, kwargs = build_request(
             channel, url=url, token=token, recipient=recipient, subject=subject, body=body
         )
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        async with httpx2.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             response = await client.post(target, **kwargs)
         if response.status_code >= 400:
             return NotificationDeliveryStatus.FAILED, f"HTTP {response.status_code}"

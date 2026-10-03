@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from app.db.models.role import Permission
 

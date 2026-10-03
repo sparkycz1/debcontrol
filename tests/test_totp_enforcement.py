@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pyotp
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from app.auth.api_tokens import create_api_token
 from app.auth.security import hash_password

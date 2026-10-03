@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 
-import httpx
+import httpx2
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models.machine import Machine
@@ -482,7 +482,7 @@ async def test_verify_audit_chain_endpoint_reports_intact_chain(client):
 
 
 async def _create_machine(
-    client: httpx.AsyncClient, csrf_token: str, **overrides: str
+    client: httpx2.AsyncClient, csrf_token: str, **overrides: str
 ) -> uuid.UUID:
     data = {
         "name": "m",

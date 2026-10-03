@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 from cryptography import x509
 
 from app.db.models.endpoint_check import EndpointCheck
@@ -151,7 +151,7 @@ async def probe_tls(target: str, timeout_seconds: float, verify: bool = True) ->
         return ProbeResult(ok=False, error=str(exc) or exc.__class__.__name__)
 
 
-async def _read_body_prefix(response: httpx.Response) -> str:
+async def _read_body_prefix(response: httpx2.Response) -> str:
     chunks: list[bytes] = []
     size = 0
     async for chunk in response.aiter_bytes():
@@ -222,16 +222,16 @@ async def probe_http(
     started = time.perf_counter()
     try:
         async with (
-            httpx.AsyncClient(
+            httpx2.AsyncClient(
                 timeout=timeout_seconds, verify=verify, follow_redirects=True
             ) as client,
             client.stream("GET", url, headers={"User-Agent": "debcontrol-check"}) as response,
         ):
             code = response.status_code
             body = await _read_body_prefix(response) if body_rules.needs_body else ""
-    except httpx.TimeoutException:
+    except httpx2.TimeoutException:
         result = ProbeResult(ok=False, error="Timed out.")
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         result = ProbeResult(ok=False, error=str(exc) or exc.__class__.__name__)
     else:
         latency = round((time.perf_counter() - started) * 1000, 1)

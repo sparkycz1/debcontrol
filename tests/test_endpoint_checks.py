@@ -225,15 +225,15 @@ async def test_api_crud(client, db_session_factory, celery_calls):
 
 
 def _mock_http(monkeypatch: pytest.MonkeyPatch, status: int, body: bytes) -> None:
-    import httpx
+    import httpx2
 
-    real_client = httpx.AsyncClient
+    real_client = httpx2.AsyncClient
 
-    def _client(**kwargs: object) -> httpx.AsyncClient:
-        transport = httpx.MockTransport(lambda request: httpx.Response(status, content=body))
+    def _client(**kwargs: object) -> httpx2.AsyncClient:
+        transport = httpx2.MockTransport(lambda request: httpx2.Response(status, content=body))
         return real_client(transport=transport, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(httpx, "AsyncClient", _client)
+    monkeypatch.setattr(httpx2, "AsyncClient", _client)
 
 
 async def test_expected_body_present_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
