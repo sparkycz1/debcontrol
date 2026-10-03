@@ -52,6 +52,8 @@ uv run mypy app alembic tests    # type check (strict for app/ and alembic/)
 uv run alembic revision --autogenerate -m "..."   # after changing a model — READ the generated file
 uv run alembic upgrade head
 uv run alembic heads             # must show exactly one head before committing a migration
+uv run python -m fuzz.run <target> -max_total_time=60   # Linux only (atheris); targets in fuzz/targets.py
+uvx pip-audit --strict -r <(uv export --frozen --no-hashes --all-groups)   # known CVEs, same as CI
 ```
 
 There is no supported way to run the app itself outside Docker:
@@ -61,6 +63,12 @@ first-time setup). See [wiki/Installation](https://github.com/sparkycz1/debcontr
 **Before committing**, run the same gate this repo's history consistently
 uses: `ruff check .`, `mypy app alembic tests`, `pytest`, `alembic heads`
 (single head) — all clean.
+
+**One PR per change, always based on `main`.** Never stack a PR on another
+open PR's branch: merging the upper one first lands it in that branch, not
+in `main`, so no tag or release is cut and the change silently goes
+missing. If work depends on an unmerged PR, wait for it to merge (or
+rebase onto `main` right after), then open the next one against `main`.
 
 **Every round of changes** bumps `APP_VERSION` in `app/core/version.py`
 **and** `version` in `pyproject.toml` together (patch for a small fix,
@@ -216,6 +224,26 @@ Before considering a change finished, not just "the code works":
    the commit on `main` that carries it). Don't batch several version
    bumps into one eventual tag; each `APP_VERSION` that lands on `main`
    gets its own.
+
+9. **Pinned versions stay pinned.** Docker base images are pinned by tag
+   *and* digest (`python:3.14.x-slim@sha256:...`), GitHub Actions by commit
+   SHA with a trailing `# vX.Y.Z` comment, Postgres/Redis/Caddy by exact
+   patch — update the tag and the pin together (Dependabot understands
+   both). Vendored JS/CSS (htmx, xterm.js, Swagger UI) is copied verbatim
+   from the npm tarball after checking its `dist.integrity` hash, never
+   from a CDN and never hand-edited; note the new version in the release
+   notes.
+10. **The guard tests are the i18n/audit contract.** `tests/test_i18n_template_keys.py`
+   fails when a `t()` key used in a template or in Python code is missing
+   from `en.json`; `tests/test_audit_labels.py` fails when a new audit
+   action code has no `audit.action_label.<code>` in every locale. Fix the
+   locale files, not the test.
+11. **CodeQL runs on every PR** (and blocks on a new alert). Typical
+   catches here: a regex with a nested quantifier (`py/redos` — keep
+   patterns linear, e.g. one character class instead of `(?:\.[a-z.]+)+`),
+   clear-text logging of something named like a secret, an empty
+   `except`. Fix the code (or explain an intentional `except` with a
+   comment) rather than dismissing the alert.
 
 None of this means doing every possible thing for every tiny change —
 it means actually checking each of these against what you just did,
