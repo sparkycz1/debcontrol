@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 
 async def _api_token(client: AsyncClient) -> dict[str, str]:

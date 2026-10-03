@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from celery.app.task import Task
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from webauthn.helpers.structs import (
     AttestationFormat,
     CredentialDeviceType,

@@ -7,7 +7,7 @@ infrastructure in tests" rule this suite already follows for Celery/Redis
 elsewhere (see tests/conftest.py's module comment). The WebSocket relay
 itself (app/web/routes/live_ws.py) has no dedicated test here, for the
 same reason app/web/routes/terminal_ws.py doesn't either: this project's
-async test client (httpx + ASGITransport) has no WebSocket support, so
+async test client (httpx2 + ASGITransport) has no WebSocket support, so
 that module is exercised for real only by running the app.
 """
 

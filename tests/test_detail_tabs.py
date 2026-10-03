@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-import httpx
+import httpx2
 
 from app.db.models.role import Permission
 from tests.test_web import _create_machine, _pin_host_key
@@ -24,7 +24,7 @@ def _tabnav_html(page_text: str) -> str:
     return match.group(0)
 
 
-async def _create_group(client: httpx.AsyncClient, csrf_token: str, name: str) -> str:
+async def _create_group(client: httpx2.AsyncClient, csrf_token: str, name: str) -> str:
     response = await client.post(
         "/machine-groups", data={"name": name, "description": "", "csrf_token": csrf_token}
     )

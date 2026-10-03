@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from tests.test_web import _create_machine
 

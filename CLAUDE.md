@@ -8,7 +8,7 @@ debcontrol: a FastAPI + htmx web app for managing a fleet of Debian/Ubuntu
 (and Proxmox VE, and other common distros) machines over SSH — facts,
 package updates, monitoring, a browser SSH terminal, scheduled actions,
 RBAC, an AI assistant, and a full read/write REST API mirroring the web
-UI. Server-rendered Jinja2 + htmx, not a SPA. Python 3.14, SQLAlchemy 2.0
+UI. Server-rendered Jinja2 + htmx, not a SPA. Python 3.14, SQLAlchemy 2.1
 async + PostgreSQL, Celery + Redis for background work, deployed via
 Docker Compose only (no supported bare-metal/venv run path for the app
 itself).
@@ -194,7 +194,9 @@ Before considering a change finished, not just "the code works":
    without the same scrutiny `wiki/Architecture`'s security model
    section already applies elsewhere.
 6. **Current, not legacy, tech.** Match what's already here (Python 3.14,
-   SQLAlchemy 2.0 async, Pydantic v2, FastAPI, htmx 2.x) — don't introduce
+   SQLAlchemy 2.1 async, Pydantic v2, FastAPI, htmx 2.x, `httpx2` for
+   outbound HTTP — plain `httpx` only in `app/ai/providers.py`, for the two
+   SDKs still built on it) — don't introduce
    an older pattern (sync SQLAlchemy, Pydantic v1 style, a jQuery-era JS
    habit) because it's more familiar; if a genuinely better modern option
    exists for a *new* piece of work, prefer it over copying an older

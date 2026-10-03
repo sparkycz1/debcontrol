@@ -33,7 +33,7 @@ async def test_creating_machine_writes_audit_entry(client):
     assert log.status_code == 200
     assert "machine.create" in log.text
     assert "audit-me" in log.text
-    # httpx's ASGITransport reports a fixed client address for test requests.
+    # httpx2's ASGITransport reports a fixed client address for test requests.
     assert "127.0.0.1" in log.text
     assert "badge-ok" in log.text  # success outcome
 

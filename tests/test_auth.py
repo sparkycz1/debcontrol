@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pyotp
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from app.auth.security import USERNAME_PATTERN
 from tests.conftest import create_local_user

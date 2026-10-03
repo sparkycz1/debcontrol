@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.84.1"
+version = "0.84.2"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -58,14 +58,20 @@ dependencies = [
     # validation. Used together with Starlette's own SessionMiddleware (no
     # new dependency needed for that) to carry state/nonce across the
     # redirect to/from the provider.
-    "authlib>=1.7.2",
-    # Not used directly by this app's own code — but
-    # authlib.integrations.starlette_client (app/auth/oidc.py) imports
-    # authlib.integrations.httpx_client at module load time regardless of
-    # whether OIDC is actually configured, so httpx has to be a real
-    # runtime dependency, not just something the test suite happens to
-    # need. Without it here, a production image built with `uv sync
-    # --no-dev` fails to import app.main at all.
+    "authlib>=1.8.0",
+    # HTTP client for this app's own outbound requests (notifications,
+    # endpoint checks, the GeoIP download, OIDC discovery) and for Authlib:
+    # authlib.integrations.starlette_client (app/auth/oidc.py) imports its
+    # httpx client at module load time whether or not OIDC is configured,
+    # and since Authlib 1.8 that is httpx2 (plain httpx is only a
+    # deprecated fallback). httpx2 is the maintained successor of httpx
+    # (github.com/pydantic/httpx2), same API under a new package name; the
+    # anthropic and openai SDKs build on it too.
+    "httpx2>=2.13.1",
+    # Plain httpx stays only because the openrouter and google-genai SDKs
+    # still build on it: app/ai/providers.py hands them an httpx
+    # transport/client of the matching package. Drop it (and that import)
+    # once both SDKs have moved to httpx2.
     "httpx>=0.28.1",
     # TOTP (RFC 6238) generation/verification for two-factor authentication.
     "pyotp>=2.10.0",

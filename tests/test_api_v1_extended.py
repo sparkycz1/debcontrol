@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy import select
 
 from app.db.models.audit_log import AuditLogEntry

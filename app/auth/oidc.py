@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
+import httpx2
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Request
 
@@ -95,11 +95,11 @@ async def check_discovery(app_settings: AppSettings) -> str:
         )
     url = f"{app_settings.oidc_issuer_url.rstrip('/')}/.well-known/openid-configuration"
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        async with httpx2.AsyncClient(timeout=10, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
             document = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
+    except (httpx2.HTTPError, ValueError) as exc:
         raise ValueError(f"Could not read {url}: {exc}") from exc
     if not isinstance(document, dict) or not document.get("authorization_endpoint"):
         raise ValueError(f"{url} is not an OpenID Connect discovery document.")
