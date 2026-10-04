@@ -135,6 +135,10 @@ class NotificationEventType(enum.StrEnum):
     MAIL_QUEUE_BACKLOG = "machine.mail_queue_backlog"
     # a Proxmox VE cluster lost quorum (monitoring sample).
     CLUSTER_QUORUM_LOST = "machine.cluster_quorum_lost"
+    # A scheduled backup of debcontrol itself failed
+    # (`app.tasks.jobs.run_due_app_backup`). Not about a machine, so like
+    # FLEET_SUMMARY_GENERATED it matches every rule's machine scope.
+    APP_BACKUP_FAILED = "app.backup_failed"
 
 
 notification_rule_users = Table(

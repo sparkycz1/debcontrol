@@ -55,6 +55,7 @@ _EXPECTED_PERIODIC_TASKS = {
     "app.tasks.jobs.purge_old_monitoring_samples",
     "app.tasks.ai_jobs.generate_fleet_summary",
     "app.tasks.ai_jobs.purge_old_fleet_summaries",
+    "app.tasks.jobs.run_due_app_backup",
 }
 
 
