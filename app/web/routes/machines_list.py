@@ -9,6 +9,7 @@ import csv
 import io
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from fastapi import Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -222,8 +223,13 @@ def _safe_machines_redirect(next_path: str) -> str:
     """Only ever redirect back into `/machines...` — `next` comes from a
     form field an attacker could tamper with, same reasoning
     `app.web.routes.theme._safe_redirect_target` already documents."""
-    if next_path.startswith("/machines") and not next_path.startswith("//"):
-        return next_path
+    # The shape static analysis recognises as safe, and stricter than the
+    # prefix test alone: no backslashes (browsers read them as slashes), no
+    # scheme and no host — so only a path on this site is left.
+    target = next_path.replace("\\", "")
+    parsed = urlparse(target)
+    if not parsed.netloc and not parsed.scheme and target.startswith("/machines"):
+        return target
     return "/machines"
 
 
