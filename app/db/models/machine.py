@@ -232,6 +232,15 @@ class Machine(Base):
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # --- Acknowledged problem (app.services.acknowledgements) ---
+    # Set by a person ("I know about this"): notifications about this
+    # machine are withheld until it recovers, `acknowledged_until` passes
+    # (NULL = no end time) or someone clears it.
+    acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    acknowledged_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    acknowledged_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    acknowledged_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     # --- Per-machine overrides of the global `.env` sweep cadences
     # (`REACHABILITY_CHECK_INTERVAL_SECONDS`/`FACTS_REFRESH_INTERVAL_SECONDS`)
     # — NULL means "use the global default". Both sweeps still tick at the

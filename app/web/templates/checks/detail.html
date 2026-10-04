@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "macros/charts.html" import chart_card with context %}
+{% from "partials/acknowledgement.html" import ack_panel with context %}
 
 {% block title %}{{ check.name }} — {{ t(request, "checks.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -30,6 +31,8 @@
     {% if check.json_path %} · JSON: <code>{{ check.json_path }}{% if check.json_expected %} = {{ check.json_expected }}{% endif %}</code>{% endif %}
     {% if check.max_latency_ms %} · {{ t(request, "checks.max_latency") }}: {{ check.max_latency_ms }} ms{% endif %}
     {% if check.sla_target_percent %} · SLA {{ check.sla_target_percent }} %{% endif %}</p>
+
+  {{ ack_panel(request, check, "/checks/" ~ check.id, can_manage) }}
 
   <div class="monitoring-toolbar">
     <form method="get" action="/checks/{{ check.id }}" class="inline-form">

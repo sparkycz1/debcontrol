@@ -2189,6 +2189,27 @@
     "audit.action_label.backup.auto.run": "Automatic backup ran",
     "audit.action_label.backup.auto.update": "Automatic backup settings changed",
     "audit.action_label.backup.auto.download": "Stored backup downloaded",
-    "audit.action_label.backup.auto.delete": "Stored backup deleted"
+    "audit.action_label.backup.auto.delete": "Stored backup deleted",
+    "ack.heading": "Acknowledge a problem",
+    "ack.hint": "Tells everyone you know about it. Notifications about this item are withheld until it recovers, the time below passes or the acknowledgement is cleared. The delivery history lists them as suppressed.",
+    "ack.duration": "For how long",
+    "ack.duration.until_recovered": "Until it recovers",
+    "ack.duration.1h": "1 hour",
+    "ack.duration.8h": "8 hours",
+    "ack.duration.24h": "24 hours",
+    "ack.duration.3d": "3 days",
+    "ack.duration.7d": "7 days",
+    "ack.note": "Note (optional)",
+    "ack.submit": "Acknowledge",
+    "ack.active": "Acknowledged by {by} on {when}.",
+    "ack.until": "Lasts until {when} or until it recovers.",
+    "ack.until_recovered": "Lasts until it recovers.",
+    "ack.muted": "Notifications about it are withheld.",
+    "ack.clear": "Clear acknowledgement",
+    "ack.badge": "acknowledged",
+    "audit.action_label.machine.acknowledge": "Problem on a machine acknowledged",
+    "audit.action_label.machine.acknowledge.clear": "Machine acknowledgement cleared",
+    "audit.action_label.endpoint_check.acknowledge": "Problem on a check acknowledged",
+    "audit.action_label.endpoint_check.acknowledge.clear": "Check acknowledgement cleared"
   }
 }

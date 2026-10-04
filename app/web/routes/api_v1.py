@@ -86,10 +86,11 @@ from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
+from app.schemas.acknowledgement import AcknowledgeRequest
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
-from app.services import machine_timeline, monitoring_history
+from app.services import acknowledgements, machine_timeline, monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     can_see_machine,
@@ -177,6 +178,7 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "is_active": machine.is_active,
         "is_reachable": machine.is_reachable,
         "last_ping_at": _isoformat(machine.last_ping_at),
+        "acknowledgement": acknowledgements.as_dict(machine),
         "host_key_fingerprint": machine.host_key_fingerprint,
         "os_version": machine.os_version,
         "pve_version": machine.pve_version,
@@ -2486,3 +2488,58 @@ async def update_batch_detail_api(
     if not runs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
     return {"batch_id": str(batch_id), "runs": [_update_run_to_dict(r) for r in runs]}
+
+
+@router.post("/machines/{machine_id}/acknowledge", dependencies=[_manage_machines])
+async def acknowledge_machine_api(
+    payload: AcknowledgeRequest,
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Acknowledge a problem on a machine: its notifications are withheld
+    until it is reachable again, `hours` pass or the acknowledgement is
+    deleted — see `app.services.acknowledgements`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    acknowledgements.acknowledge(
+        machine, by=user.username, note=payload.note, hours=payload.hours
+    )
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.acknowledge",
+        summary=f'Acknowledged a problem on "{machine.name}" (REST API)',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"hours": payload.hours, "note": machine.acknowledged_note},
+    )
+    return {"acknowledgement": acknowledgements.as_dict(machine)}
+
+
+@router.delete(
+    "/machines/{machine_id}/acknowledge",
+    dependencies=[_manage_machines],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def clear_machine_acknowledgement_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    acknowledgements.clear(machine)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.acknowledge.clear",
+        summary=f'Cleared the acknowledgement on "{machine.name}" (REST API)',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

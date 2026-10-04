@@ -80,6 +80,15 @@ class EndpointCheck(Base):
     # sent for — one warning per certificate, a renewed one warns again.
     cert_warned_for: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # --- Acknowledged problem (app.services.acknowledgements) ---
+    # Set by a person ("I know about this"): notifications about this
+    # check are withheld until it recovers, `acknowledged_until` passes
+    # (NULL = no end time) or someone clears it.
+    acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    acknowledged_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    acknowledged_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    acknowledged_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only

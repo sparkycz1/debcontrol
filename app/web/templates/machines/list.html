@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/_os_badge.html" import render as render_os_badge %}
+{% from "partials/acknowledgement.html" import ack_badge with context %}
 
 {% block title %}{{ t(request, 'machines.title') }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -12,6 +13,7 @@
   {% else %}
     <span class="badge badge-error">{{ t(request, "groups.status.offline") }}</span>
   {% endif %}
+  {{ ack_badge(request, machine) }}
 {% endmacro %}
 
 {% macro host_key_badge(machine) %}

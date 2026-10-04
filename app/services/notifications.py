@@ -54,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.app_settings import get_or_create_app_settings
 from app.core.security import decrypt_secret
 from app.db.models.app_settings import AppSettings, SmtpEncryption
+from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.machine import Machine
 from app.db.models.notification_condition import NotificationCondition
 from app.db.models.notification_log import (
@@ -68,7 +69,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.user import User
 from app.i18n import DEFAULT_LOCALE_CODE
-from app.services import push_channels
+from app.services import acknowledgements, push_channels
 from app.services.maintenance_windows import active_window_for
 
 logger = logging.getLogger(__name__)
@@ -631,6 +632,29 @@ async def _throttle_state(
     return False, held_back, aware
 
 
+async def _withheld_by(
+    db: AsyncSession,
+    event_type: NotificationEventType,
+    machine: Machine | None,
+    check: EndpointCheck | None,
+) -> str | None:
+    """Why this event must not be sent right now — an active maintenance
+    window covering the machine, or an acknowledgement on the machine or
+    check — as the text the delivery history shows; None when it may go."""
+    if machine is not None:
+        window = await active_window_for(db, machine)
+        if window is not None:
+            return f'maintenance window "{window.name}"'
+    subject = machine if machine is not None else check
+    if (
+        subject is not None
+        and acknowledgements.withholds(event_type)
+        and acknowledgements.is_active(subject)
+    ):
+        return f"acknowledged by {subject.acknowledged_by or 'someone'}"
+    return None
+
+
 async def _send_rule_emails(
     db: AsyncSession,
     app_settings: AppSettings,
@@ -688,6 +712,7 @@ async def notify(
     *,
     machine: Machine | None = None,
     context: dict[str, Any] | None = None,
+    check: EndpointCheck | None = None,
 ) -> None:
     """Fire `event_type` — find every enabled rule that lists it and whose
     scope includes `machine` (or has no scope at all), and deliver
@@ -710,27 +735,27 @@ async def notify(
         if not rules:
             return
 
-        # A machine inside an active maintenance window: nothing is sent,
-        # but each rule that would have fired is recorded as suppressed, so
-        # "why didn't this alert go out" has an answer in the history.
-        if machine is not None:
-            window = await active_window_for(db, machine)
-            if window is not None:
-                db.add_all(
-                    _delivery_log(
-                        rule=rule,
-                        rule_name=rule.name,
-                        event_type=event_type.value,
-                        channel=NotificationDeliveryChannel(rule.delivery_channel),
-                        target=f'maintenance window "{window.name}"',
-                        machine=machine,
-                        status=NotificationDeliveryStatus.SUPPRESSED,
-                        error=None,
-                    )
-                    for rule in rules
+        # Inside a maintenance window, or about a problem someone has
+        # acknowledged: nothing is sent, but each rule that would have
+        # fired is recorded as suppressed, so "why didn't this alert go
+        # out" has an answer in the history.
+        withheld_by = await _withheld_by(db, event_type, machine, check)
+        if withheld_by is not None:
+            db.add_all(
+                _delivery_log(
+                    rule=rule,
+                    rule_name=rule.name,
+                    event_type=event_type.value,
+                    channel=NotificationDeliveryChannel(rule.delivery_channel),
+                    target=withheld_by,
+                    machine=machine,
+                    status=NotificationDeliveryStatus.SUPPRESSED,
+                    error=None,
                 )
-                await db.commit()
-                return
+                for rule in rules
+            )
+            await db.commit()
+            return
 
         default_template = (
             await db.execute(

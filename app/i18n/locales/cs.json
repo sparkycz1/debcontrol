@@ -2234,6 +2234,27 @@
     "audit.action_label.backup.auto.run": "Proběhla automatická záloha",
     "audit.action_label.backup.auto.update": "Změna nastavení automatických záloh",
     "audit.action_label.backup.auto.download": "Stažena uložená záloha",
-    "audit.action_label.backup.auto.delete": "Smazána uložená záloha"
+    "audit.action_label.backup.auto.delete": "Smazána uložená záloha",
+    "ack.heading": "Potvrdit problém",
+    "ack.hint": "Dá ostatním vědět, že o problému víte. Upozornění k této položce se neposílají, dokud se nezotaví, neuplyne čas níže nebo potvrzení někdo nezruší. V historii doručení jsou vedena jako potlačená.",
+    "ack.duration": "Na jak dlouho",
+    "ack.duration.until_recovered": "Dokud se nezotaví",
+    "ack.duration.1h": "1 hodina",
+    "ack.duration.8h": "8 hodin",
+    "ack.duration.24h": "24 hodin",
+    "ack.duration.3d": "3 dny",
+    "ack.duration.7d": "7 dní",
+    "ack.note": "Poznámka (nepovinná)",
+    "ack.submit": "Potvrdit",
+    "ack.active": "Potvrdil(a) {by} dne {when}.",
+    "ack.until": "Platí do {when} nebo do zotavení.",
+    "ack.until_recovered": "Platí do zotavení.",
+    "ack.muted": "Upozornění k této položce se neposílají.",
+    "ack.clear": "Zrušit potvrzení",
+    "ack.badge": "potvrzeno",
+    "audit.action_label.machine.acknowledge": "Potvrzen problém na stroji",
+    "audit.action_label.machine.acknowledge.clear": "Zrušeno potvrzení u stroje",
+    "audit.action_label.endpoint_check.acknowledge": "Potvrzen problém u kontroly",
+    "audit.action_label.endpoint_check.acknowledge.clear": "Zrušeno potvrzení u kontroly"
   }
 }

@@ -59,7 +59,13 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
-from app.services import auto_backup, config_drift, disk_forecast, health_events
+from app.services import (
+    acknowledgements,
+    auto_backup,
+    config_drift,
+    disk_forecast,
+    health_events,
+)
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import apply_result, is_due, run_probe
 from app.services.fleet_stats import compute_fleet_stats
@@ -600,7 +606,7 @@ async def _run_endpoint_check(check_id: str) -> dict[str, Any]:
         )
         await session.commit()
         for event_type, context in events:
-            await notify(session, event_type, context=context)
+            await notify(session, event_type, context=context, check=check)
         return {"ok": True, "up": result.ok}
 
 
@@ -1001,6 +1007,9 @@ async def _ping_all_machines() -> None:
                 # not a transition from a known state, so nothing to notify.
                 if was_reachable is not None and was_reachable != outcome.reachable:
                     transitions.append((machine, outcome.reachable))
+                    if outcome.reachable:
+                        # Back again: whatever was acknowledged is over.
+                        acknowledgements.clear(machine)
                 machine.is_reachable = outcome.reachable
                 machine.last_ping_at = now
                 session.add(
@@ -1051,6 +1060,9 @@ async def _check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
         outcome = await check_reachable(machine.ip_address, machine.port)
         now = datetime.now(UTC)
         was_reachable = machine.is_reachable
+        if was_reachable is False and outcome.reachable:
+            # Back again: whatever was acknowledged is over.
+            acknowledgements.clear(machine)
         machine.is_reachable = outcome.reachable
         machine.last_ping_at = now
         session.add(

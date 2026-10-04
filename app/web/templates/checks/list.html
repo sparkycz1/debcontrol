@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 
+{% from "partials/acknowledgement.html" import ack_badge with context %}
 {% block title %}{{ t(request, "checks.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
 
@@ -41,6 +42,7 @@
                 {% elif c.last_ok is sameas true %}<span class="badge badge-ok">{{ t(request, "checks.up") }}</span>
                 {% elif c.last_ok is sameas false %}<span class="badge badge-error" title="{{ c.last_error or '' }}">{{ t(request, "checks.down") }}</span>
                 {% else %}<span class="badge">{{ t(request, "checks.pending") }}</span>{% endif %}
+                {{ ack_badge(request, c) }}
               </td>
               <td><a href="/checks/{{ c.id }}"><strong>{{ c.name }}</strong></a>{% if c.last_ok is sameas false and c.last_error %}<div class="table-summary">{{ c.last_error }}</div>{% endif %}</td>
               <td><span class="badge">{{ c.kind | upper }}</span></td>
