@@ -10,6 +10,9 @@ The SVG uses a fixed 1000x100 viewBox stretched to its box
 labels are plain HTML laid out by flexbox (`space-between` over evenly
 spaced ticks lines them up with the grid exactly, with no inline style the
 CSP would block).
+
+Shared word for word with the sister app (debcontrol / honeypot-shelf) —
+see `shared-ui.json`.
 """
 
 from __future__ import annotations

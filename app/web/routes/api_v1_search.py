@@ -1,6 +1,7 @@
 """`GET /api/v1/search?q=` — the header search box as JSON
 (`app.services.global_search`): the same kinds, the same per-kind
-permission and machine/group scope as the web page."""
+access rules as the web page. Shared word for word with the sister app —
+see `shared-ui.json`."""
 
 from __future__ import annotations
 

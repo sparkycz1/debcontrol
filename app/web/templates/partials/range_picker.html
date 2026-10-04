@@ -1,7 +1,8 @@
 {# The time-range control of a chart page: the preset selector, and a
    from–to pair for anything else. `action` is the page's own URL; `window`
    an app.services.monitoring_history.TimeWindow. Dragging across a chart
-   on the page fills the same two parameters (monitoring-chart.js). #}
+   on the page fills the same two parameters (monitoring-chart.js).
+   Shared word for word with the sister app — see shared-ui.json. #}
 {% macro range_picker(request, action, window, time_ranges) %}
   <form method="get" action="{{ action }}" class="inline-form">
     <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">

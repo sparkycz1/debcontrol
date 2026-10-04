@@ -1,3 +1,4 @@
+// Shared word for word with the sister app — see shared-ui.json.
 // Interactivity for the Monitoring tab's charts (markup from
 // macros/charts.html's `render_chart`, geometry from app/web/charts.py).
 // (`e` in the JSON below: the same points as epoch seconds, for the
@@ -7,13 +8,13 @@
 //
 //  - hover: a cursor line plus a tooltip listing every visible series'
 //    value at that point (highest first), built with textContent — labels
-//    are sensor/container names reported by the managed machine;
+//    are names reported by the managed host;
 //  - legend buttons toggle a series on/off;
 //  - a card's `[data-chart-filter]` box shows only series whose label
 //    contains the typed text.
 //
 // Also: `[data-table-filter]` / `th[data-sort]` for the Monitoring tab's
-// tables (services, containers, S.M.A.R.T.) — client-side, since the whole
+// tables — client-side, since the whole
 // table is already on the page.
 
 (function () {
@@ -242,6 +243,7 @@
 
   document.querySelectorAll(".chart[data-chart]").forEach(setUpChart);
 
+
   document.addEventListener("input", (event) => {
     const box = event.target.closest("[data-chart-filter]");
     if (!box) return;
@@ -307,5 +309,32 @@
       return 0;
     });
     tbody.append(...rows);
+  });
+  // Where the charts sit in an htmx panel that re-renders itself (on a
+  // timer or a live-update push): carry what the visitor typed
+  // into a filter box or picked in the services select across the swap,
+  // then set up the charts the swap brought in.
+  let kept = [];
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    const target = event.target;
+    if (!target || typeof target.querySelectorAll !== "function") return;
+    kept = [];
+    target.querySelectorAll("[data-table-filter]").forEach((el) => {
+      kept.push([`[data-table-filter="${el.dataset.tableFilter}"]`, el.value]);
+    });
+    target.querySelectorAll("[data-row-state-filter]").forEach((el) => {
+      kept.push([`[data-row-state-filter="${el.dataset.rowStateFilter}"]`, el.value]);
+    });
+  });
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    const target = event.target;
+    if (!target || typeof target.querySelectorAll !== "function") return;
+    target.querySelectorAll(".chart[data-chart]").forEach(setUpChart);
+    kept.forEach(([selector, value]) => {
+      const el = target.querySelector(selector);
+      if (el) el.value = value;
+    });
+    kept = [];
+    target.querySelectorAll("table[id]").forEach((table) => filterTable(table.id));
   });
 })();
