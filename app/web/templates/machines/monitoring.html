@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/range_picker.html" import range_picker with context %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 {% from "macros/charts.html" import chart_card with context %}
 
@@ -14,7 +15,7 @@
 {%- endmacro %}
 
 {% block content %}
-  {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
+  {% set tf = window.axis_format %}
   {% from "partials/_js_i18n.html" import js_i18n with context %}
   {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.other"]) }}
   <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
@@ -23,16 +24,9 @@
 
   {{ render_tabnav(tabs, active_tab) }}
 
-  <div class="monitoring-toolbar">
+  <div class="monitoring-toolbar" data-chart-zoom>
     {% if machine.monitoring_updated_at or availability.sample_count %}
-      <form method="get" action="/machines/{{ machine.id }}/monitoring" class="inline-form">
-        <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
-          {% for key, label, _delta in time_ranges %}
-            <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ t(request, "monitoring.range." ~ key) }}</option>
-          {% endfor %}
-        </select>
-        <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
-      </form>
+      {{ range_picker(request, "/machines/" ~ machine.id ~ "/monitoring", window, time_ranges) }}
     {% endif %}
     <p class="hint">
       {% if last_checked_at %}
@@ -43,7 +37,7 @@
     </p>
     <span class="monitoring-toolbar-spacer"></span>
     {% if request.state.user.has_permission('machine.manage') %}
-      <form method="post" action="/machines/{{ machine.id }}/monitoring/refresh?range_key={{ range_key | urlencode }}" class="inline-form">
+      <form method="post" action="/machines/{{ machine.id }}/monitoring/refresh?{{ window_query }}" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="button button-secondary" {% if not machine.host_key_fingerprint %}disabled{% endif %}>
           {{ t(request, "monitoring.refresh_now") }}

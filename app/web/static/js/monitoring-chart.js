@@ -1,5 +1,7 @@
 // Interactivity for the Monitoring tab's charts (markup from
 // macros/charts.html's `render_chart`, geometry from app/web/charts.py).
+// (`e` in the JSON below: the same points as epoch seconds, for the
+// drag-to-zoom at the end of setUpChart.)
 // Each `.chart[data-chart]` carries JSON: {fmt, stacked, t: [time labels],
 // s: [{label, color, v: [values or null]}]}.
 //
@@ -181,6 +183,61 @@
 
     svg.addEventListener("pointermove", (event) => show(indexAt(event.clientX)));
     svg.addEventListener("pointerleave", hide);
+
+    // Drag across the chart to zoom: the page reloads with that stretch as
+    // a custom from–to window. Only on pages that have a range picker
+    // (`[data-chart-zoom]`), and only with a mouse or pen — a finger drag
+    // is a scroll.
+    const epochs = data.e || [];
+    if (!document.querySelector("[data-chart-zoom]") || epochs.length < 3) return;
+    const band = document.createElement("div");
+    band.className = "chart-zoom-band";
+    band.hidden = true;
+    svg.parentElement.appendChild(band);
+    el.classList.add("chart-zoomable");
+    let dragFrom = null;
+
+    function drawBand(fromIdx, toIdx) {
+      const last = times.length - 1;
+      const lo = Math.min(fromIdx, toIdx) / last;
+      const hi = Math.max(fromIdx, toIdx) / last;
+      const box = svg.getBoundingClientRect();
+      const host = svg.parentElement.getBoundingClientRect();
+      band.style.left = `${box.left - host.left + lo * box.width}px`;
+      band.style.width = `${(hi - lo) * box.width}px`;
+      band.style.top = `${box.top - host.top}px`;
+      band.style.height = `${box.height}px`;
+      band.hidden = false;
+    }
+
+    svg.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch" || event.button !== 0) return;
+      dragFrom = indexAt(event.clientX);
+      try {
+        svg.setPointerCapture(event.pointerId);
+      } catch {
+        // Not capturable (a synthetic event): the drag still works inside the chart.
+      }
+      event.preventDefault();
+    });
+    svg.addEventListener("pointermove", (event) => {
+      if (dragFrom !== null) drawBand(dragFrom, indexAt(event.clientX));
+    });
+    function endDrag(event, apply) {
+      if (dragFrom === null) return;
+      const from = Math.min(dragFrom, indexAt(event.clientX));
+      const to = Math.max(dragFrom, indexAt(event.clientX));
+      dragFrom = null;
+      band.hidden = true;
+      if (!apply || to - from < 2) return;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("range_key");
+      url.searchParams.set("start", new Date(epochs[from] * 1000).toISOString());
+      url.searchParams.set("end", new Date(epochs[to] * 1000).toISOString());
+      window.location.assign(url.toString());
+    }
+    svg.addEventListener("pointerup", (event) => endDrag(event, true));
+    svg.addEventListener("pointercancel", (event) => endDrag(event, false));
   }
 
   document.querySelectorAll(".chart[data-chart]").forEach(setUpChart);

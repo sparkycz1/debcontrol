@@ -68,6 +68,61 @@ def time_range_delta(range_key: str) -> timedelta:
     return by_key.get(range_key, by_key[DEFAULT_TIME_RANGE])
 
 
+# `TimeWindow.range_key` for a from-to window that is not one of TIME_RANGES.
+CUSTOM_RANGE = "custom"
+# A custom window shorter than this shows nothing useful (samples are at
+# least a minute apart); longer than the longest preset has no data left.
+MIN_CUSTOM_SPAN = timedelta(minutes=5)
+MAX_CUSTOM_SPAN = timedelta(days=366)
+
+
+@dataclass(frozen=True)
+class TimeWindow:
+    """What stretch of history a chart page shows: one of `TIME_RANGES`
+    ending now, or a custom from-to window (the from/to boxes, or a drag
+    across a chart)."""
+
+    range_key: str
+    since: datetime
+    # None = "up to now" (a preset), so a refresh keeps moving forward.
+    until: datetime | None = None
+
+    @property
+    def is_custom(self) -> bool:
+        return self.range_key == CUSTOM_RANGE
+
+    @property
+    def axis_format(self) -> str:
+        """strftime format for the X axis: clock times within two days,
+        dates beyond."""
+        end = self.until or datetime.now(UTC)
+        return "%H:%M" if end - self.since <= timedelta(hours=48) else "%d.%m."
+
+
+def resolve_window(
+    range_key: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    *,
+    now: datetime | None = None,
+) -> TimeWindow:
+    """The window a request asks for. `start` and `end` together (aware
+    datetimes) make a custom window — clamped to not end in the future and
+    to span `MIN_CUSTOM_SPAN`..`MAX_CUSTOM_SPAN`; a pair in the wrong order
+    is swapped. Otherwise `range_key`, falling back to the default like
+    `normalize_range_key`."""
+    now = now or datetime.now(UTC)
+    if start is not None and end is not None:
+        if end < start:
+            start, end = end, start
+        end = min(end, now)
+        start = min(start, end - MIN_CUSTOM_SPAN)
+        start = max(start, end - MAX_CUSTOM_SPAN)
+        return TimeWindow(CUSTOM_RANGE, start, end)
+    key = normalize_range_key(range_key)
+    return TimeWindow(key, now - time_range_delta(key))
+
+
 def _bucket_timestamps(timestamps: list[datetime], target_points: int) -> list[datetime]:
     """The same positional bucketing `_bucket_average` does, but returning
     one representative timestamp (the bucket's middle sample) per bucket
@@ -551,20 +606,31 @@ def normalize_range_key(range_key: str) -> str:
 
 
 async def load_machine_history(
-    db: AsyncSession, machine_id: uuid.UUID, range_key: str
+    db: AsyncSession, machine_id: uuid.UUID, window: TimeWindow | str
 ) -> tuple[MonitoringHistory, AvailabilityHistory]:
-    """Fetch one machine's monitoring and reachability samples inside the
-    window `range_key` names (oldest first, each capped at
-    `MAX_RAW_SAMPLES`) and downsample both. `range_key` must already be
-    normalized (`normalize_range_key`). Both queries are served by the
-    `(machine_id, sampled_at)`/`(machine_id, checked_at)` indexes."""
-    since = datetime.now(UTC) - time_range_delta(range_key)
+    """Fetch one machine's monitoring and reachability samples inside
+    `window` (oldest first, each capped at `MAX_RAW_SAMPLES`) and
+    downsample both. A plain range key (already normalized,
+    `normalize_range_key`) is accepted for "that preset, ending now". Both
+    queries are served by the `(machine_id, sampled_at)`/`(machine_id,
+    checked_at)` indexes."""
+    if isinstance(window, str):
+        window = resolve_window(window)
+    range_key = window.range_key
+    sampled = [
+        MachineMonitoringSample.machine_id == machine_id,
+        MachineMonitoringSample.sampled_at >= window.since,
+    ]
+    checked = [
+        MachineReachabilitySample.machine_id == machine_id,
+        MachineReachabilitySample.checked_at >= window.since,
+    ]
+    if window.until is not None:
+        sampled.append(MachineMonitoringSample.sampled_at <= window.until)
+        checked.append(MachineReachabilitySample.checked_at <= window.until)
     result = await db.execute(
         select(MachineMonitoringSample)
-        .where(
-            MachineMonitoringSample.machine_id == machine_id,
-            MachineMonitoringSample.sampled_at >= since,
-        )
+        .where(*sampled)
         .order_by(MachineMonitoringSample.sampled_at)
         .limit(MAX_RAW_SAMPLES)
     )
@@ -572,10 +638,7 @@ async def load_machine_history(
 
     reachability_result = await db.execute(
         select(MachineReachabilitySample)
-        .where(
-            MachineReachabilitySample.machine_id == machine_id,
-            MachineReachabilitySample.checked_at >= since,
-        )
+        .where(*checked)
         .order_by(MachineReachabilitySample.checked_at)
         .limit(MAX_RAW_SAMPLES)
     )

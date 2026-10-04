@@ -55,7 +55,7 @@ import contextlib
 import re
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 
 # NOT the builtin `TimeoutError` — `celery.exceptions.TimeoutError` does not
 # subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
@@ -156,6 +156,13 @@ _UPDATE_RUNS_PAGE_SIZE = 50
 # uses for the same ad-hoc-selection / "All machines" cases.
 _BULK_POWER_CONFIRM_PHRASE = "SELECTED MACHINES"
 _ALL_MACHINES_CONFIRM_PHRASE = "ALL MACHINES"
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """A query-string timestamp without an offset is read as UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -804,6 +811,10 @@ async def get_machine_monitoring_api(
         monitoring_history.DEFAULT_TIME_RANGE,
         description="One of " + ", ".join(k for k, _l, _d in monitoring_history.TIME_RANGES),
     ),
+    start: datetime | None = Query(
+        None, description="With `end`: a custom window instead of `range_key` (ISO 8601)."
+    ),
+    end: datetime | None = Query(None, description="End of the custom window (ISO 8601)."),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """The Monitoring tab's trend graphs as data: CPU/RAM/load, network and
@@ -812,14 +823,19 @@ async def get_machine_monitoring_api(
     axis), plus the latest raw readings. `/hardware` has the rest of the
     tab (S.M.A.R.T., Docker, sensors)."""
     await _get_machine_or_404(machine_id, db, user)
-    range_key = monitoring_history.normalize_range_key(range_key)
+    window = monitoring_history.resolve_window(range_key, _as_utc(start), _as_utc(end))
     history, availability = await monitoring_history.load_machine_history(
-        db, machine_id, range_key
+        db, machine_id, window
     )
     encoded: dict[str, object] = jsonable_encoder(
         {"monitoring": asdict(history), "availability": asdict(availability)}
     )
-    return {"range_key": range_key, **encoded}
+    return {
+        "range_key": window.range_key,
+        "since": window.since.isoformat(),
+        "until": window.until.isoformat() if window.until else None,
+        **encoded,
+    }
 
 
 @router.post("/machines/{machine_id}/monitoring/refresh", dependencies=[_manage_machines])

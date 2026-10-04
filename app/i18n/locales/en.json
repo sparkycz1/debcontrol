@@ -2233,6 +2233,9 @@
     "account.api_tokens.read_only": "Read-only (the token can look things up but not change anything)",
     "account.api_tokens.groups": "Only these machine groups (none selected = all the account can see)",
     "account.api_tokens.limits_hint": "A token never has more access than this account. The group limit applies to machines and groups; pair it with read-only for a token that only reads one part of the fleet. Limits can't be changed later: revoke the token and create a new one.",
-    "account.error.token_groups": "None of the selected machine groups can be used for this token."
+    "account.error.token_groups": "None of the selected machine groups can be used for this token.",
+    "monitoring.range.custom": "Custom range",
+    "monitoring.range.from": "From",
+    "monitoring.range.to": "To"
   }
 }

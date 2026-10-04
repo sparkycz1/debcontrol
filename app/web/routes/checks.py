@@ -36,6 +36,7 @@ from app.services.endpoint_sla import (
 )
 from app.tasks import jobs as tasks
 from app.web.templating import t, templates
+from app.web.time_window import window_from_query
 
 router = APIRouter(
     prefix="/checks", dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))]
@@ -314,20 +315,23 @@ async def check_detail(
     check_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    start: str = "",
+    end: str = "",
 ) -> Response:
     """One check's history: uptime %, latency, uptime/latency charts over
     the chosen range (same selector as a machine's Monitoring tab) and its
     most recent failures — see `app.services.endpoint_check_history`."""
     check = await _get_check_or_404(check_id, db)
-    range_key = monitoring_history.normalize_range_key(range_key)
-    history = await load_check_history(db, check.id, range_key)
+    window = window_from_query(range_key, start, end)
+    history = await load_check_history(db, check.id, window)
     return templates.TemplateResponse(
         request,
         "checks/detail.html",
         {
             "check": check,
             "history": history,
-            "range_key": range_key,
+            "range_key": window.range_key,
+            "window": window,
             "time_ranges": monitoring_history.TIME_RANGES,
         },
     )

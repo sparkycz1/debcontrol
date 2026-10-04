@@ -109,6 +109,7 @@ from app.web.machine_search import (
 from app.web.messages import LocalizedText
 from app.web.routes.audit import _csv_safe
 from app.web.templating import t, templates
+from app.web.time_window import window_from_query, window_query
 
 # Typed phrase to confirm a power action against an arbitrary ad-hoc
 # selection from the machine list — unlike a group or "All machines", a
@@ -1322,6 +1323,8 @@ async def machine_monitoring(
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    start: str = "",
+    end: str = "",
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """CPU/RAM/disk-usage trend graphs (see `app.services.monitoring_history`
@@ -1329,12 +1332,14 @@ async def machine_monitoring(
     `range_key` is one of `monitoring_history.TIME_RANGES`'s keys — an
     unrecognized value quietly falls back to the default rather than
     erroring, same tolerance `status_filter` on the Updates tab already has
-    for a bad query param."""
+    for a bad query param. `start` + `end` (the from-to boxes, or a drag
+    across a chart) ask for a custom window instead."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
 
-    range_key = monitoring_history.normalize_range_key(range_key)
+    window = window_from_query(range_key, start, end)
+    range_key = window.range_key
     history, availability = await monitoring_history.load_machine_history(
-        db, machine_id, range_key
+        db, machine_id, window
     )
 
     # One unified "Last checked" timestamp for the whole tab, replacing a
@@ -1362,6 +1367,8 @@ async def machine_monitoring(
             "last_checked_at": last_checked_at,
             "time_ranges": monitoring_history.TIME_RANGES,
             "range_key": range_key,
+            "window": window,
+            "window_query": window_query(window),
             "service_counts": await _get_service_counts(machine_id, db),
             "services": await _get_services(machine_id, db, svc_q="", svc_state=""),
             # A configured condition-based notification's own trigger
@@ -1384,6 +1391,8 @@ async def refresh_machine_monitoring_endpoint(
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    start: str = "",
+    end: str = "",
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """"Refresh now" for the Monitoring tab — forces a fresh monitoring
@@ -1433,7 +1442,10 @@ async def refresh_machine_monitoring_endpoint(
     )
 
     return RedirectResponse(
-        url=f"/machines/{machine.id}/monitoring?range_key={range_key}",
+        url=(
+            f"/machines/{machine.id}/monitoring?"
+            f"{window_query(window_from_query(range_key, start, end))}"
+        ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
