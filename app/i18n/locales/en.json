@@ -2225,6 +2225,14 @@
     "search.kind.checks": "Checks",
     "search.kind.scheduled_tasks": "Scheduled tasks",
     "search.kind.notification_rules": "Notification rules",
-    "search.kind.users": "Users"
+    "search.kind.users": "Users",
+    "account.api_tokens.limits": "Limits",
+    "account.api_tokens.no_limits": "none",
+    "account.api_tokens.read_only_badge": "read-only",
+    "account.api_tokens.groups_badge": "{count} group(s)",
+    "account.api_tokens.read_only": "Read-only (the token can look things up but not change anything)",
+    "account.api_tokens.groups": "Only these machine groups (none selected = all the account can see)",
+    "account.api_tokens.limits_hint": "A token never has more access than this account. The group limit applies to machines and groups; pair it with read-only for a token that only reads one part of the fleet. Limits can't be changed later: revoke the token and create a new one.",
+    "account.error.token_groups": "None of the selected machine groups can be used for this token."
   }
 }

@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.api_tokens import get_user_for_api_token
+from app.auth.api_tokens import get_valid_api_token
 from app.db.models.role import Permission
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
@@ -38,6 +38,9 @@ def require_permission(permission: Permission) -> Callable[[User], User]:
     return _dependency
 
 
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 async def get_api_token_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Like `get_current_user`, but for routes under `/api/` — those are on
     `app.auth.middleware`'s public-prefix allowlist (no session cookie), so
@@ -47,11 +50,21 @@ async def get_api_token_user(request: Request, db: AsyncSession = Depends(get_db
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token.")
-    user = await get_user_for_api_token(db, auth_header.removeprefix("Bearer ").strip())
-    if user is None:
+    token = await get_valid_api_token(db, auth_header.removeprefix("Bearer ").strip())
+    if token is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Invalid, expired, or revoked API token."
         )
+    user = token.user
+    # The token's own limits, on top of what the account may do.
+    if token.read_only and request.method not in _READ_METHODS:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="This API token is read-only.",
+        )
+    # Read by `app.services.access_scope.allowed_group_ids` for the rest of
+    # this request (the instance belongs to this request's session only).
+    user.token_group_scope = token.group_scope
     # Same real-time `require_totp` gate `app.auth.middleware` applies to
     # session requests (see its `_totp_enrollment_required`), but an API
     # token has no interactive way to enroll TOTP — there's no browser flow

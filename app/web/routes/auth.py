@@ -68,12 +68,14 @@ from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditOutcome
+from app.db.models.machine_group import MachineGroup
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
 from app.i18n import available_locales, get_locale
 from app.schemas.user import MIN_PASSWORD_LENGTH, normalize_email
+from app.services.access_scope import groups_visible_to
 from app.web.redirects import safe_local_path
 from app.web.templating import t, templates
 
@@ -819,6 +821,11 @@ async def _render_account(
         "unused_recovery_codes": unused_recovery_codes,
         "min_password_length": MIN_PASSWORD_LENGTH,
         "api_tokens": list(tokens_result.scalars().all()),
+        "token_groups": list(
+            (
+                await db.execute((await groups_visible_to(db, user)).order_by(MachineGroup.name))
+            ).scalars()
+        ),
         "available_locales": available_locales(),
         "webauthn_credentials": webauthn_credentials,
         **extra,
@@ -1247,6 +1254,8 @@ async def create_own_api_token(
     current_user: User = Depends(get_current_user),
     name: str = Form(...),
     expires_in_days: str = Form(""),
+    read_only: str = Form(""),
+    group_ids: list[str] = Form(default=[]),
 ) -> Response:
     user = await db.get(User, current_user.id)
     assert user is not None
@@ -1277,7 +1286,28 @@ async def create_own_api_token(
             )
         expires_at = datetime.now(UTC) + timedelta(days=days)
 
-    token, raw_token = await create_api_token(db, user, name=name, expires_at=expires_at)
+    # Only groups this account can see itself may be picked; anything else
+    # in the form is dropped, not an error (a group deleted in another tab).
+    visible_groups = {
+        str(group.id): group
+        for group in (await db.execute(await groups_visible_to(db, user))).scalars()
+    }
+    chosen = [
+        visible_groups[value] for value in dict.fromkeys(group_ids) if value in visible_groups
+    ]
+    if group_ids and not chosen:
+        return await _render_account(
+            request, db, user, errors=[t(request, "account.error.token_groups")]
+        )
+
+    token, raw_token = await create_api_token(
+        db,
+        user,
+        name=name,
+        expires_at=expires_at,
+        read_only=bool(read_only),
+        machine_group_ids=[group.id for group in chosen] if chosen else None,
+    )
     await log_event(
         db,
         request=request,
@@ -1286,6 +1316,7 @@ async def create_own_api_token(
         target_type="user",
         target_id=user.id,
         target_label=user.username,
+        details={"read_only": token.read_only, "groups": [group.name for group in chosen]},
     )
     return await _render_account(request, db, user, new_api_token=raw_token)
 

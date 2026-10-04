@@ -2,11 +2,17 @@
 and, as an alternative to the shared `INFORM_TOKEN`, for `POST /api/inform`
 — see that route's module docstring.
 
-A token authorizes whatever its owning user's role currently permits,
+A token authorizes at most what its owning user's role currently permits,
 checked fresh on every request (`app.auth.api_tokens.get_user_for_api_token`)
 rather than snapshotting permissions at creation time — revoking a role's
 permission (or deactivating the user) takes effect on the token immediately,
 the same as it would for that user's browser session.
+
+A token can be narrowed further when it is created, never widened:
+`read_only` refuses every request that would change something, and
+`machine_group_ids` limits the machines and groups it sees to those groups
+(on top of the owner's own group scope) — see `app.auth.dependencies.
+get_api_token_user` and `app.services.access_scope.allowed_group_ids`.
 
 Self-service, like TOTP enrollment: a user creates and revokes their own
 tokens from "My account"; nobody (including debcontrol itself, after
@@ -21,7 +27,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, func
+from sqlalchemy import JSON, Boolean, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -48,6 +54,21 @@ class ApiToken(Base):
     # NULL = never expires.
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # Only GET/HEAD requests are accepted with this token.
+    read_only: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # Machine-group ids (as strings) this token is limited to. NULL = no
+    # limit beyond the owner's own; an empty list (every listed group since
+    # deleted) sees no machines at all rather than falling back to "all".
+    machine_group_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    @property
+    def group_scope(self) -> frozenset[uuid.UUID] | None:
+        if self.machine_group_ids is None:
+            return None
+        return frozenset(uuid.UUID(value) for value in self.machine_group_ids)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"ApiToken(id={self.id!r}, name={self.name!r})"

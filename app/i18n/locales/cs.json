@@ -2270,6 +2270,14 @@
     "search.kind.checks": "Kontroly",
     "search.kind.scheduled_tasks": "Naplánované úlohy",
     "search.kind.notification_rules": "Notifikační pravidla",
-    "search.kind.users": "Uživatelé"
+    "search.kind.users": "Uživatelé",
+    "account.api_tokens.limits": "Omezení",
+    "account.api_tokens.no_limits": "žádné",
+    "account.api_tokens.read_only_badge": "jen pro čtení",
+    "account.api_tokens.groups_badge": "skupin: {count}",
+    "account.api_tokens.read_only": "Jen pro čtení (token může data číst, ale nic nezmění)",
+    "account.api_tokens.groups": "Jen tyto skupiny zařízení (bez výběru = vše, co účet vidí)",
+    "account.api_tokens.limits_hint": "Token nikdy nemá větší přístup než tento účet. Omezení na skupiny platí pro zařízení a skupiny; pro token, který jen čte část flotily, ho zkombinujte s volbou jen pro čtení. Omezení nejde později změnit: token zrušte a vytvořte nový.",
+    "account.error.token_groups": "Žádnou z vybraných skupin zařízení nelze pro tento token použít."
   }
 }

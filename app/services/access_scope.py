@@ -54,15 +54,26 @@ async def allowed_group_ids(db: AsyncSession, user: User) -> set[uuid.UUID] | No
     `None` and `set()` mean opposite things and the distinction is the
     whole feature: `None` is "no scoping applies, see everything" (the
     common case, and what every account has until an admin says otherwise);
-    an empty `set()` can only be returned as a *filter result*, never from
-    here — a user with no rows is unrestricted by definition."""
+    an empty `set()` is never returned for the account itself — a user
+    with no rows is unrestricted by definition. It can come back for a
+    request made with a group-limited API token (see below), and then it
+    means what it says: nothing is visible."""
     result = await db.execute(
         select(UserMachineGroupAccess.group_id).where(
             UserMachineGroupAccess.user_id == user.id
         )
     )
     group_ids = set(result.scalars().all())
-    return group_ids or None
+    own = group_ids or None
+    # A REST API token limited to some groups narrows this further for the
+    # request it authenticates — never widens it. An empty result here is
+    # deliberate (a token whose groups are all gone, or outside the
+    # account's own scope, sees no machines), unlike the account-level case
+    # above.
+    token_scope = user.token_group_scope
+    if token_scope is None:
+        return own
+    return set(token_scope) if own is None else own & token_scope
 
 
 async def is_restricted(db: AsyncSession, user: User) -> bool:
