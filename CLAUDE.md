@@ -101,7 +101,7 @@ history around v0.19.0/v0.19.1).
 - **One action, three callers, one code path.** A machine/group action
   (system update, power, a custom command) lives once in
   `app/services/machine_actions.py` and is called identically by a human's
-  button click (`app/web/routes/machines.py`), the REST API
+  button click (`app/web/routes/machines_*.py`), the REST API
   (`app/web/routes/api_v1.py`), and a cron-scheduled task
   (`app/scheduling/`) — never reimplemented per caller.
 - **The REST API mirrors the web UI, deliberately incompletely.** Every

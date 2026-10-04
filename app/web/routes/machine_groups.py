@@ -37,7 +37,7 @@ from app.services.machine_actions import (
 )
 from app.ssh.power import PowerAction
 from app.web.machine_search import machine_search_clause
-from app.web.routes.machines import _MACHINE_LIST_PAGE_SIZE
+from app.web.routes.machines_list import _MACHINE_LIST_PAGE_SIZE
 from app.web.templating import t, templates
 
 router = APIRouter(
