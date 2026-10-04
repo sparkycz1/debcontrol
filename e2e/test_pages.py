@@ -145,9 +145,21 @@ def test_page_loads_without_browser_errors(page: Any, path: str) -> None:
 
 
 def _first_href(page: Any, list_path: str, prefix: str) -> str:
+    """The first link on `list_path` that leads to one item's own page —
+    `prefix` followed by an id and nothing else (not an export or a
+    filter link under the same prefix)."""
     _open(page, list_path)
-    href = page.locator(f'main a[href^="{prefix}"]').first.get_attribute("href")
-    assert href, f"no link starting with {prefix} on {list_path}"
+    href = page.evaluate(
+        """(prefix) => {
+            const one = new RegExp("^" + prefix + "[0-9a-f-]{36}$");
+            const link = [...document.querySelectorAll("main a[href]")].find((a) =>
+                one.test(a.getAttribute("href"))
+            );
+            return link ? link.getAttribute("href") : null;
+        }""",
+        prefix,
+    )
+    assert href, f"no link to a single {prefix} item on {list_path}"
     return str(href)
 
 
