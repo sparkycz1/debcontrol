@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
-from app.web.routes.machines import _get_machine_or_404
+from app.web.routes.machines_common import _get_machine_or_404
 from tests.conftest import _create_user_with_permissions
 
 

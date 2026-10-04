@@ -83,7 +83,7 @@ async def test_failed_discovery_offers_a_retry_button(client, monkeypatch):
     """A failed auto-triggered discovery (e.g. the machine isn't reachable
     yet right after being added) must not strand the user without any way
     to try again short of reloading the whole page."""
-    import app.web.routes.machines as machines_routes
+    import app.web.routes.machines_detail as machines_routes
     from app.ssh.exceptions import SSHConnectionError
 
     async def _always_fails(*args, **kwargs):
