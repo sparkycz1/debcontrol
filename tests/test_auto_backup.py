@@ -226,9 +226,7 @@ async def test_api_auto_backup(
     name = listed["backups"][0]["name"]
     file = await client.get(f"/api/v1/backup/auto/files/{name}", headers=headers)
     assert file.content.startswith(full_backup.MAGIC)
-    assert (
-        await client.delete(f"/api/v1/backup/auto/files/{name}", headers=headers)
-    ).status_code == 204
-    assert (
-        await client.delete(f"/api/v1/backup/auto/files/{name}", headers=headers)
-    ).status_code == 404
+    deleted = await client.delete(f"/api/v1/backup/auto/files/{name}", headers=headers)
+    assert deleted.status_code == 204
+    again = await client.delete(f"/api/v1/backup/auto/files/{name}", headers=headers)
+    assert again.status_code == 404
