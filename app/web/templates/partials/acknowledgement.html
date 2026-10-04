@@ -1,0 +1,48 @@
+{# "I know about this one" for a machine or an endpoint check — see
+   app.services.acknowledgements. `action` is the target's own URL
+   (/machines/<id> or /checks/<id>); the two POST routes hang off it. #}
+{% macro ack_panel(request, target, action, can_manage) %}
+  {% if ack_active(target) %}
+    <div class="alert alert-warn">
+      <p>
+        <strong>{{ t(request, "ack.active", by=(target.acknowledged_by or "?"), when=(target.acknowledged_at | local_time('%Y-%m-%d %H:%M'))) }}</strong>
+        {% if target.acknowledged_until %}
+          {{ t(request, "ack.until", when=(target.acknowledged_until | local_time('%Y-%m-%d %H:%M'))) }}
+        {% else %}
+          {{ t(request, "ack.until_recovered") }}
+        {% endif %}
+        {{ t(request, "ack.muted") }}
+      </p>
+      {% if target.acknowledged_note %}<p>{{ target.acknowledged_note }}</p>{% endif %}
+      {% if can_manage %}
+        <form method="post" action="{{ action }}/acknowledge/clear" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+          <button type="submit" class="button button-secondary log-small-button">{{ t(request, "ack.clear") }}</button>
+        </form>
+      {% endif %}
+    </div>
+  {% elif can_manage %}
+    <details class="form-advanced">
+      <summary>{{ t(request, "ack.heading") }}</summary>
+      <form method="post" action="{{ action }}/acknowledge" class="form">
+        <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+        <p class="hint">{{ t(request, "ack.hint") }}</p>
+        <label for="ack-duration">{{ t(request, "ack.duration") }}</label>
+        <select id="ack-duration" name="duration">
+          {% for key, _hours in ack_durations %}
+            <option value="{{ key }}">{{ t(request, "ack.duration." ~ key) }}</option>
+          {% endfor %}
+        </select>
+        <label for="ack-note">{{ t(request, "ack.note") }}</label>
+        <input type="text" id="ack-note" name="note" maxlength="500">
+        <button type="submit" class="button">{{ t(request, "ack.submit") }}</button>
+      </form>
+    </details>
+  {% endif %}
+{% endmacro %}
+
+{% macro ack_badge(request, target) %}
+  {% if ack_active(target) %}
+    <span class="badge badge-warn" title="{{ target.acknowledged_note or '' }}">{{ t(request, "ack.badge") }}</span>
+  {% endif %}
+{% endmacro %}

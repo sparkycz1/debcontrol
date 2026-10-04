@@ -43,7 +43,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
-from app.services import machine_timeline, monitoring_history
+from app.services import acknowledgements, machine_timeline, monitoring_history
 from app.services.access_scope import (
     can_see_group_id,
     groups_visible_to,
@@ -3508,3 +3508,61 @@ async def delete_machine(
         target_label=machine_name,
     )
     return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Acknowledging a problem (app.services.acknowledgements) ---------------
+
+
+@router.post("/{machine_id}/acknowledge", dependencies=[_manage, Depends(verify_csrf)])
+async def acknowledge_machine(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    duration: str = Form("until_recovered"),
+    note: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """"I know about this one": withhold notifications about this machine
+    until it recovers, the chosen time passes or someone clears it."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    try:
+        hours = acknowledgements.hours_for(duration)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from None
+    acknowledgements.acknowledge(machine, by=current_user.username, note=note, hours=hours)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.acknowledge",
+        summary=f'Acknowledged a problem on "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"hours": hours, "note": machine.acknowledged_note},
+    )
+    return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{machine_id}/acknowledge/clear", dependencies=[_manage, Depends(verify_csrf)])
+async def clear_machine_acknowledgement(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    acknowledgements.clear(machine)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.acknowledge.clear",
+        summary=f'Cleared the acknowledgement on "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+    )
+    return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)

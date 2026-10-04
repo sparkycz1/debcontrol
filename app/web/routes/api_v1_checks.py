@@ -8,7 +8,7 @@ import uuid
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,8 +20,9 @@ from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
+from app.schemas.acknowledgement import AcknowledgeRequest
 from app.schemas.endpoint_check import EndpointCheckSave
-from app.services import monitoring_history
+from app.services import acknowledgements, monitoring_history
 from app.services.access_scope import machines_visible_to
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import load_sla_report
@@ -59,6 +60,7 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "last_status_code": check.last_status_code,
         "last_latency_ms": check.last_latency_ms,
         "cert_expires_at": iso(check.cert_expires_at),
+        "acknowledgement": acknowledgements.as_dict(check),
     }
 
 
@@ -213,3 +215,50 @@ async def check_history_api(
     history = await load_check_history(db, check.id, range_key)
     encoded: dict[str, Any] = jsonable_encoder(asdict(history))
     return encoded
+
+
+@router.post("/{check_id}/acknowledge", dependencies=[_manage])
+async def acknowledge_check_api(
+    payload: AcknowledgeRequest,
+    request: Request,
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Acknowledge a problem on a check — see
+    `app.services.acknowledgements`."""
+    check = await _get_or_404(check_id, db)
+    acknowledgements.acknowledge(check, by=user.username, note=payload.note, hours=payload.hours)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="endpoint_check.acknowledge",
+        summary=f'Acknowledged a problem on check "{check.name}" (REST API)',
+        target_type="endpoint_check",
+        target_id=check.id,
+        target_label=check.name,
+        details={"hours": payload.hours, "note": check.acknowledged_note},
+    )
+    return {"acknowledgement": acknowledgements.as_dict(check)}
+
+
+@router.delete(
+    "/{check_id}/acknowledge", dependencies=[_manage], status_code=status.HTTP_204_NO_CONTENT
+)
+async def clear_check_acknowledgement_api(
+    request: Request, check_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    check = await _get_or_404(check_id, db)
+    acknowledgements.clear(check)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="endpoint_check.acknowledge.clear",
+        summary=f'Cleared the acknowledgement on check "{check.name}" (REST API)',
+        target_type="endpoint_check",
+        target_id=check.id,
+        target_label=check.name,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

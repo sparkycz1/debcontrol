@@ -9,7 +9,7 @@ import asyncio
 import uuid
 
 from celery.exceptions import TimeoutError as CeleryTimeoutError
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -25,7 +25,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
-from app.services import monitoring_history
+from app.services import acknowledgements, monitoring_history
 from app.services.access_scope import machines_visible_to
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import (
@@ -331,3 +331,56 @@ async def check_detail(
             "time_ranges": monitoring_history.TIME_RANGES,
         },
     )
+
+
+# --- Acknowledging a problem (app.services.acknowledgements) ---------------
+
+
+@router.post("/{check_id}/acknowledge", dependencies=[_manage, Depends(verify_csrf)])
+async def acknowledge_check(
+    request: Request,
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    duration: str = Form("until_recovered"),
+    note: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    check = await _get_check_or_404(check_id, db)
+    try:
+        hours = acknowledgements.hours_for(duration)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from None
+    acknowledgements.acknowledge(check, by=current_user.username, note=note, hours=hours)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="endpoint_check.acknowledge",
+        summary=f'Acknowledged a problem on check "{check.name}"',
+        target_type="endpoint_check",
+        target_id=check.id,
+        target_label=check.name,
+        details={"hours": hours, "note": check.acknowledged_note},
+    )
+    return RedirectResponse(url=f"/checks/{check.id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{check_id}/acknowledge/clear", dependencies=[_manage, Depends(verify_csrf)])
+async def clear_check_acknowledgement(
+    request: Request, check_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    check = await _get_check_or_404(check_id, db)
+    acknowledgements.clear(check)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="endpoint_check.acknowledge.clear",
+        summary=f'Cleared the acknowledgement on check "{check.name}"',
+        target_type="endpoint_check",
+        target_id=check.id,
+        target_label=check.name,
+    )
+    return RedirectResponse(url=f"/checks/{check.id}", status_code=status.HTTP_303_SEE_OTHER)

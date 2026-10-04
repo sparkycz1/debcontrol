@@ -37,7 +37,7 @@ from cryptography import x509
 
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.notification_rule import NotificationEventType
-from app.services import network_probes
+from app.services import acknowledgements, network_probes
 
 # A single failed probe is often a blip; announce an outage after this many
 # consecutive failures.
@@ -327,6 +327,8 @@ def apply_result(
             events.append((NotificationEventType.ENDPOINT_RECOVERED, context))
         check.consecutive_failures = 0
         check.down_notified = False
+        # Up again: whatever was acknowledged is over.
+        acknowledgements.clear(check)
     else:
         check.consecutive_failures += 1
         if check.consecutive_failures >= FAILURES_BEFORE_DOWN and not check.down_notified:

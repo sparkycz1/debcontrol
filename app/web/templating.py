@@ -22,7 +22,7 @@ from app.core.version import APP_VERSION, get_git_commit
 from app.db.models.role import Permission
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
-from app.services import fleet_overview
+from app.services import acknowledgements, fleet_overview
 from app.ssh import proxmox
 from app.ssh.onboarding import SUDO_COMMAND_LIST
 from app.ssh.updates import reboot_hint_packages
@@ -149,6 +149,8 @@ def _cert_days(expires_at: datetime) -> int:
 
 templates.env.globals["cert_days"] = _cert_days
 templates.env.globals["chart_palette"] = charts.PALETTE
+templates.env.globals["ack_active"] = acknowledgements.is_active
+templates.env.globals["ack_durations"] = acknowledgements.DURATION_CHOICES
 
 
 def strategy_label(request: Request, value: str | None) -> str:

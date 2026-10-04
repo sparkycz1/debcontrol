@@ -3,6 +3,7 @@
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 {% from "partials/_os_badge.html" import render as render_os_badge %}
 
+{% from "partials/acknowledgement.html" import ack_panel with context %}
 {% block title %}{{ machine.name }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
 
@@ -19,6 +20,8 @@
       {% if request.state.user.has_permission('notification.view') %}<a href="/scheduling/maintenance">{{ maintenance_window.name }}</a>{% else %}{{ maintenance_window.name }}{% endif %}
     </p></div>
   {% endif %}
+
+  {{ ack_panel(request, machine, "/machines/" ~ machine.id, request.state.user.has_permission('machine.manage')) }}
 
   {{ render_tabnav(tabs, active_tab) }}
 
