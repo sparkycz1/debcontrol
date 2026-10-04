@@ -294,6 +294,26 @@ class AppSettings(Base):
         Integer, nullable=True, default=180
     )
 
+    # --- Automatic full backups (app.services.auto_backup) ---
+    # Off until an admin sets a passphrase and switches it on.
+    auto_backup_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    auto_backup_interval_hours: Mapped[int] = mapped_column(
+        Integer, default=24, server_default="24", nullable=False
+    )
+    # How many of the newest backups stay on the data volume.
+    auto_backup_keep: Mapped[int] = mapped_column(
+        Integer, default=7, server_default="7", nullable=False
+    )
+    # Needed to write a backup unattended; write-only in the UI and API.
+    auto_backup_passphrase_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    # When the last attempt ran, and why it failed (NULL = it worked).
+    auto_backup_last_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    auto_backup_last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
     # --- LDAP login (app.auth.ldap) ---
     ldap_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ldap_server_uri: Mapped[str | None] = mapped_column(String(255), nullable=True)

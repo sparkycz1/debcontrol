@@ -59,7 +59,7 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
-from app.services import config_drift, disk_forecast, health_events
+from app.services import auto_backup, config_drift, disk_forecast, health_events
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import apply_result, is_due, run_probe
 from app.services.fleet_stats import compute_fleet_stats
@@ -2782,6 +2782,55 @@ async def _purge_old_notification_logs() -> None:
 @celery_app.task(name="app.tasks.jobs.purge_old_notification_logs")
 def purge_old_notification_logs() -> None:
     asyncio.run(_purge_old_notification_logs())
+
+
+_AUTO_BACKUP_ACTOR = "Automatic backup"
+
+
+async def _run_due_app_backup(*, force: bool = False) -> dict[str, Any]:
+    """Write a scheduled full backup when one is due (`force`: now, for
+    "Back up now") — see `app.services.auto_backup`. A failure is recorded
+    on the settings row, audited and sent to APP_BACKUP_FAILED rules."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        now = datetime.now(UTC)
+        if not force and not auto_backup.is_due(app_settings, now):
+            return {"ok": True, "skipped": True}
+        error: str | None = None
+        stored: auto_backup.StoredBackup | None = None
+        try:
+            stored = await auto_backup.run_backup(session, app_settings, now)
+        except Exception as exc:
+            logger.warning("Automatic backup failed", exc_info=True)
+            await session.rollback()
+            app_settings = await get_or_create_app_settings(session)
+            error = (str(exc) or exc.__class__.__name__)[:1000]
+        app_settings.auto_backup_last_at = now
+        app_settings.auto_backup_last_error = error
+        await session.commit()
+
+        await log_event(
+            session,
+            actor=_AUTO_BACKUP_ACTOR,
+            action="backup.auto.run",
+            summary=(
+                f"Automatic backup failed: {error}"
+                if error
+                else f"Automatic backup written: {stored.name if stored else ''}"
+            ),
+            outcome=AuditOutcome.FAILURE if error else AuditOutcome.SUCCESS,
+            details={"error": error} if error else {"file": stored.name if stored else None},
+        )
+        if error:
+            await notify(
+                session, NotificationEventType.APP_BACKUP_FAILED, context={"details": error}
+            )
+        return {"ok": error is None, "error": error, "file": stored.name if stored else None}
+
+
+@celery_app.task(name="app.tasks.jobs.run_due_app_backup")
+def run_due_app_backup(force: bool = False) -> dict[str, Any]:
+    return asyncio.run(_run_due_app_backup(force=force))
 
 
 _GEOIP_REFRESH_ACTOR = "GeoIP refresh (automatic)"

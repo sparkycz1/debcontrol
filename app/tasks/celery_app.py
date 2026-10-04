@@ -393,6 +393,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.ai_jobs.generate_fleet_summary",
         "schedule": crontab(hour=6, minute=0),
     },
+    # Cheap when nothing is due: one settings read (see
+    # `app.services.auto_backup.is_due`).
+    "run-due-app-backup": {
+        "task": "app.tasks.jobs.run_due_app_backup",
+        "schedule": crontab(minute="*/10"),
+    },
     "purge-old-notification-logs": {
         "task": "app.tasks.jobs.purge_old_notification_logs",
         "schedule": crontab(hour=3, minute=25),

@@ -184,6 +184,10 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "{machine_name} ({machine_ip}) reports that cluster {cluster} is no longer "
             "quorate at {timestamp}.\n\n{details}",
         ),
+        NotificationEventType.APP_BACKUP_FAILED: (
+            "debcontrol: the automatic backup failed",
+            "The scheduled backup of debcontrol itself failed at {timestamp}.\n\n{details}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -283,6 +287,10 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: cluster Proxmoxu {cluster} ztratil quorum",
             "{machine_name} ({machine_ip}) hlásí v {timestamp}, že cluster {cluster} "
             "nemá quorum.\n\n{details}",
+        ),
+        NotificationEventType.APP_BACKUP_FAILED: (
+            "debcontrol: automatická záloha selhala",
+            "Plánovaná záloha samotného debcontrol v {timestamp} selhala.\n\n{details}",
         ),
     },
 }

@@ -15,7 +15,88 @@
     </div>
   {% endif %}
 
+  {% if notice in ("saved", "started", "deleted") %}
+    <div class="alert alert-ok"><p>{{ t(request, "backup.auto.notice_" ~ notice) }}</p></div>
+  {% endif %}
+
   {% if full_backup %}
+    <section class="panel">
+      <h2>{{ t(request, "backup.auto.heading") }}</h2>
+      <p class="hint">{{ t(request, "backup.auto.hint") }}</p>
+      <form method="post" action="/backup/auto" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="checkbox-row">
+          <input type="checkbox" name="enabled" {{ 'checked' if app_settings.auto_backup_enabled else '' }}>
+          {{ t(request, "backup.auto.enabled") }}
+        </label>
+        <label for="auto-interval">{{ t(request, "backup.auto.interval") }}</label>
+        <input type="number" id="auto-interval" name="interval_hours" required
+               min="{{ auto_backup_limits.MIN_INTERVAL_HOURS }}" max="{{ auto_backup_limits.MAX_INTERVAL_HOURS }}"
+               value="{{ app_settings.auto_backup_interval_hours }}">
+        <label for="auto-keep">{{ t(request, "backup.auto.keep") }}</label>
+        <input type="number" id="auto-keep" name="keep" required
+               min="{{ auto_backup_limits.MIN_KEEP }}" max="{{ auto_backup_limits.MAX_KEEP }}"
+               value="{{ app_settings.auto_backup_keep }}">
+        <label for="auto-passphrase">{{ t(request, "backup.full.passphrase") }}</label>
+        <input type="password" id="auto-passphrase" name="passphrase" minlength="{{ min_passphrase }}"
+               autocomplete="new-password"
+               placeholder="{{ t(request, 'backup.auto.passphrase_keep') if app_settings.auto_backup_passphrase_encrypted else '' }}">
+        <p class="hint">{{ t(request, "backup.auto.passphrase_hint", count=min_passphrase) }}</p>
+        <button type="submit" class="button">{{ t(request, "backup.auto.save") }}</button>
+      </form>
+
+      <p class="hint">
+        {{ t(request, "backup.auto.last_run") }}
+        {% if app_settings.auto_backup_last_at %}
+          {{ app_settings.auto_backup_last_at | local_time('%Y-%m-%d %H:%M') }}
+          {% if app_settings.auto_backup_last_error %}
+            <span class="badge badge-error">{{ t(request, "backup.auto.failed") }}</span>
+            {{ app_settings.auto_backup_last_error }}
+          {% else %}
+            <span class="badge badge-ok">{{ t(request, "backup.auto.ok") }}</span>
+          {% endif %}
+        {% else %}
+          {{ t(request, "backup.auto.never") }}
+        {% endif %}
+      </p>
+      <form method="post" action="/backup/auto/run" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-secondary"
+                {{ '' if app_settings.auto_backup_passphrase_encrypted else 'disabled' }}>{{ t(request, "backup.auto.run_now") }}</button>
+      </form>
+
+      {% if stored_backups %}
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t(request, "backup.auto.column_file") }}</th>
+              <th>{{ t(request, "backup.auto.column_created") }}</th>
+              <th>{{ t(request, "backup.auto.column_size") }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for backup in stored_backups %}
+              <tr>
+                <td><a href="/backup/auto/files/{{ backup.name }}">{{ backup.name }}</a></td>
+                <td class="cell-nowrap">{{ backup.created_at | local_time('%Y-%m-%d %H:%M') }}</td>
+                <td>{{ backup.size | bytes }}</td>
+                <td>
+                  <form method="post" action="/backup/auto/files/{{ backup.name }}/delete" class="inline-form"
+                        data-confirm="{{ t(request, 'backup.auto.delete_confirm', name=backup.name) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="button button-danger log-small-button">{{ t(request, "backup.auto.delete") }}</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint">{{ t(request, "backup.auto.none_stored") }}</p>
+      {% endif %}
+    </section>
+
     <section class="panel">
       <h2>{{ t(request, "backup.full.heading") }}</h2>
       <p class="hint">{{ t(request, "backup.full.hint") }}</p>
