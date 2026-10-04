@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,9 +22,10 @@ from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.services.monitoring_history import (
     _TARGET_POINTS,
     MAX_RAW_SAMPLES,
+    TimeWindow,
     _bucket_average,
     _bucket_timestamps,
-    time_range_delta,
+    resolve_window,
 )
 
 # How many of the latest failed probes the detail page lists.
@@ -90,16 +91,24 @@ def build_check_history(
 
 
 async def load_check_history(
-    db: AsyncSession, check_id: uuid.UUID, range_key: str
+    db: AsyncSession, check_id: uuid.UUID, window: TimeWindow | str
 ) -> EndpointCheckHistory:
-    """`range_key` must already be normalized
-    (`monitoring_history.normalize_range_key`). Served by the
-    `(check_id, checked_at)` index."""
-    since = datetime.now(UTC) - time_range_delta(range_key)
+    """One check's results inside `window` — a `TimeWindow`, or a range
+    key already normalized (`monitoring_history.normalize_range_key`) for
+    "that preset, ending now". Served by the `(check_id, checked_at)`
+    index."""
+    if isinstance(window, str):
+        window = resolve_window(window)
+    conditions = [
+        EndpointCheckResult.check_id == check_id,
+        EndpointCheckResult.checked_at >= window.since,
+    ]
+    if window.until is not None:
+        conditions.append(EndpointCheckResult.checked_at <= window.until)
     result = await db.execute(
         select(EndpointCheckResult)
-        .where(EndpointCheckResult.check_id == check_id, EndpointCheckResult.checked_at >= since)
+        .where(*conditions)
         .order_by(EndpointCheckResult.checked_at)
         .limit(MAX_RAW_SAMPLES)
     )
-    return build_check_history(list(result.scalars().all()), range_key)
+    return build_check_history(list(result.scalars().all()), window.range_key)

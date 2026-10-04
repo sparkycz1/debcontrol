@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% from "macros/charts.html" import chart_card with context %}
+{% from "partials/range_picker.html" import range_picker with context %}
 {% from "partials/acknowledgement.html" import ack_panel with context %}
 
 {% block title %}{{ check.name }} — {{ t(request, "checks.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
 
 {% block content %}
-  {% set tf = '%H:%M' if range_key in ('1h', '24h') else '%d.%m.' %}
+  {% set tf = window.axis_format %}
   {% set can_manage = request.state.user.has_permission('machine.manage') %}
   <p class="hint"><a href="/checks">← {{ t(request, "checks.title") }}</a></p>
   <div class="page-header">
@@ -34,15 +35,8 @@
 
   {{ ack_panel(request, check, "/checks/" ~ check.id, can_manage) }}
 
-  <div class="monitoring-toolbar">
-    <form method="get" action="/checks/{{ check.id }}" class="inline-form">
-      <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
-        {% for key, _label, _delta in time_ranges %}
-          <option value="{{ key }}" {% if key == range_key %}selected{% endif %}>{{ t(request, "monitoring.range." ~ key) }}</option>
-        {% endfor %}
-      </select>
-      <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
-    </form>
+  <div class="monitoring-toolbar" data-chart-zoom>
+    {{ range_picker(request, "/checks/" ~ check.id, window, time_ranges) }}
     <p class="hint">{{ t(request, "checks.history.samples", count=history.sample_count) }}</p>
   </div>
 

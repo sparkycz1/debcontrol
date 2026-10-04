@@ -1,0 +1,29 @@
+{# The time-range control of a chart page: the preset selector, and a
+   from–to pair for anything else. `action` is the page's own URL; `window`
+   an app.services.monitoring_history.TimeWindow. Dragging across a chart
+   on the page fills the same two parameters (monitoring-chart.js). #}
+{% macro range_picker(request, action, window, time_ranges) %}
+  <form method="get" action="{{ action }}" class="inline-form">
+    <select name="range_key" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
+      {% if window.is_custom %}<option value="" selected disabled>{{ t(request, "monitoring.range.custom") }}</option>{% endif %}
+      {% for key, _label, _delta in time_ranges %}
+        <option value="{{ key }}" {% if key == window.range_key %}selected{% endif %}>{{ t(request, "monitoring.range." ~ key) }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
+  </form>
+  <details class="range-custom" {{ 'open' if window.is_custom else '' }}>
+    <summary>{{ t(request, "monitoring.range.custom") }}</summary>
+    <form method="get" action="{{ action }}" class="range-custom-form">
+      <label>
+        {{ t(request, "monitoring.range.from") }}
+        <input type="datetime-local" name="start" required value="{{ window.since | local_input if window.is_custom else '' }}">
+      </label>
+      <label>
+        {{ t(request, "monitoring.range.to") }}
+        <input type="datetime-local" name="end" required value="{{ window.until | local_input if window.is_custom else '' }}">
+      </label>
+      <button type="submit" class="button button-secondary">{{ t(request, "monitoring.apply") }}</button>
+    </form>
+  </details>
+{% endmacro %}

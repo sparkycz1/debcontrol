@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -204,15 +205,24 @@ async def check_history_api(
     check_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     range_key: str = monitoring_history.DEFAULT_TIME_RANGE,
+    start: datetime | None = None,
+    end: datetime | None = None,
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
     """A check's detail page as data: uptime %, average/p95 latency,
     downsampled uptime and latency series over `range_key` (`1h`/`24h`/
     `7d`/`30d`/`90d`, sharing `bucket_timestamps` as the X axis) and the
-    latest failures."""
+    latest failures. `start` + `end` (ISO 8601, UTC when no offset is
+    given) ask for a custom window instead."""
     check = await _get_or_404(check_id, db)
-    range_key = monitoring_history.normalize_range_key(range_key)
-    history = await load_check_history(db, check.id, range_key)
+
+    def utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    window = monitoring_history.resolve_window(range_key, utc(start), utc(end))
+    history = await load_check_history(db, check.id, window)
     encoded: dict[str, Any] = jsonable_encoder(asdict(history))
     return encoded
 

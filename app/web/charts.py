@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 VIEW_WIDTH = 1000.0
@@ -384,6 +384,11 @@ def build_chart(
             "fmt": fmt,
             "stacked": stacked,
             "t": [labels_fn(ts, "%d.%m. %H:%M") for ts in timestamps],
+            # The same points as epoch seconds — what a drag across the
+            # chart turns into a from-to window (monitoring-chart.js).
+            "e": [
+                int((ts if ts.tzinfo else ts.replace(tzinfo=UTC)).timestamp()) for ts in timestamps
+            ],
             "h": [i for i, s in enumerate(prepared) if hidden and s.label in hidden],
             "s": [
                 {
