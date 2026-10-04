@@ -32,7 +32,13 @@ def _hash_token(raw_token: str) -> str:
 
 
 async def create_api_token(
-    db: AsyncSession, user: User, *, name: str, expires_at: datetime | None
+    db: AsyncSession,
+    user: User,
+    *,
+    name: str,
+    expires_at: datetime | None,
+    read_only: bool = False,
+    machine_group_ids: list[uuid.UUID] | None = None,
 ) -> tuple[ApiToken, str]:
     raw_token = _TOKEN_PREFIX + secrets.token_urlsafe(32)
     token = ApiToken(
@@ -41,6 +47,12 @@ async def create_api_token(
         token_hash=_hash_token(raw_token),
         token_prefix=raw_token[:_PREFIX_DISPLAY_LENGTH],
         expires_at=expires_at,
+        read_only=read_only,
+        machine_group_ids=(
+            [str(group_id) for group_id in machine_group_ids]
+            if machine_group_ids is not None
+            else None
+        ),
     )
     db.add(token)
     await db.commit()
@@ -49,11 +61,19 @@ async def create_api_token(
 
 
 async def get_user_for_api_token(db: AsyncSession, raw_token: str) -> User | None:
-    """Look up the (still active) user behind a bearer token, or None if the
-    token is unknown, revoked, expired, or its owner is deactivated. Also
-    opportunistically records `last_used_at` — best-effort, a failure here
-    shouldn't block the request that's using the token, so callers should
-    treat this as a read even though it writes.
+    """The user behind a bearer token — see `get_valid_api_token`. For a
+    caller that only needs "who is this"; one that must honor the token's
+    own limits (`read_only`, `machine_group_ids`) needs the token itself."""
+    token = await get_valid_api_token(db, raw_token)
+    return token.user if token is not None else None
+
+
+async def get_valid_api_token(db: AsyncSession, raw_token: str) -> ApiToken | None:
+    """Look up a bearer token with its (still active) user loaded, or None
+    if the token is unknown, revoked, expired, or its owner is deactivated.
+    Also opportunistically records `last_used_at` — best-effort, a failure
+    here shouldn't block the request that's using the token, so callers
+    should treat this as a read even though it writes.
     """
     result = await db.execute(
         select(ApiToken)
@@ -78,7 +98,7 @@ async def get_user_for_api_token(db: AsyncSession, raw_token: str) -> User | Non
 
     token.last_used_at = datetime.now(UTC)
     await db.commit()
-    return token.user
+    return token
 
 
 async def revoke_api_token(db: AsyncSession, token_id: uuid.UUID, *, owner_id: uuid.UUID) -> bool:

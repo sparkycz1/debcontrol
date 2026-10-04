@@ -183,6 +183,20 @@ class User(Base):
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    # Not a column: set for the length of one REST API request by
+    # `app.auth.dependencies.get_api_token_user` when the bearer token is
+    # limited to some machine groups (`ApiToken.machine_group_ids`), and
+    # read by `app.services.access_scope.allowed_group_ids`. None = the
+    # request is not token-limited (every browser session, most tokens).
+    @property
+    def token_group_scope(self) -> frozenset[uuid.UUID] | None:
+        scope: frozenset[uuid.UUID] | None = self.__dict__.get("_token_group_scope")
+        return scope
+
+    @token_group_scope.setter
+    def token_group_scope(self, value: frozenset[uuid.UUID] | None) -> None:
+        self.__dict__["_token_group_scope"] = value
+
     def has_permission(self, permission: Permission) -> bool:
         """Does this user's role grant `permission` — directly, via a
         MANAGE permission that implies it, or via a currently-active
