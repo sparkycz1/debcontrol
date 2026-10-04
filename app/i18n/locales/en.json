@@ -2210,6 +2210,21 @@
     "audit.action_label.machine.acknowledge": "Problem on a machine acknowledged",
     "audit.action_label.machine.acknowledge.clear": "Machine acknowledgement cleared",
     "audit.action_label.endpoint_check.acknowledge": "Problem on a check acknowledged",
-    "audit.action_label.endpoint_check.acknowledge.clear": "Check acknowledgement cleared"
+    "audit.action_label.endpoint_check.acknowledge.clear": "Check acknowledgement cleared",
+    "search.title": "Search",
+    "search.placeholder": "Search…",
+    "search.submit": "Search",
+    "search.shortcut_hint": "Press / to search",
+    "search.hint": "Finds machines (name, address, hostname, tag), machine groups, checks, scheduled tasks, notification rules and users by name. You only see what your account can open.",
+    "search.too_short": "Type at least {count} characters.",
+    "search.nothing": "Nothing matches “{query}”.",
+    "search.more": "More results are not shown.",
+    "search.show_all": "Show all",
+    "search.kind.machines": "Machines",
+    "search.kind.groups": "Machine groups",
+    "search.kind.checks": "Checks",
+    "search.kind.scheduled_tasks": "Scheduled tasks",
+    "search.kind.notification_rules": "Notification rules",
+    "search.kind.users": "Users"
   }
 }

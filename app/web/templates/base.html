@@ -73,6 +73,11 @@
       </details>
     </nav>
     <div class="site-header-user">
+      <form method="get" action="/search" class="site-search" role="search">
+        <input type="search" name="q" maxlength="100" data-global-search
+               placeholder="{{ t(request, 'search.placeholder') }}" aria-label="{{ t(request, 'search.title') }}"
+               title="{{ t(request, 'search.shortcut_hint') }}">
+      </form>
       {% set current_theme = 'light' if request.cookies.get('theme') == 'light' else 'dark' %}
       {% set next_theme_label = t(request, 'theme.dark' if current_theme == 'light' else 'theme.light') %}
       <form method="post" action="/theme" class="inline-form">
@@ -120,6 +125,7 @@
 
   <script src="{{ static_url('js/htmx.min.js') }}" defer></script>
   <script src="{{ static_url('js/confirm.js') }}" defer></script>
+  <script src="{{ static_url('js/global-search.js') }}" defer></script>
   <script src="{{ static_url('js/bulk-select.js') }}" defer></script>
   <script src="{{ static_url('js/model-picker.js') }}" defer></script>
   <script src="{{ static_url('js/auto-submit.js') }}" defer></script>
