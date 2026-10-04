@@ -35,9 +35,9 @@ def machines_router() -> APIRouter:
     )
 
 
-_manage = Depends(require_permission(Permission.MACHINE_MANAGE))
-_updates = Depends(require_permission(Permission.ACTION_UPDATES))
-_power = Depends(require_permission(Permission.ACTION_POWER))
+need_manage = Depends(require_permission(Permission.MACHINE_MANAGE))
+need_updates = Depends(require_permission(Permission.ACTION_UPDATES))
+need_power = Depends(require_permission(Permission.ACTION_POWER))
 
 
 def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[str, str, str]]:

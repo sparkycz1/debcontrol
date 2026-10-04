@@ -30,8 +30,8 @@ from app.web.routes.machines_common import (
     _get_service_counts,
     _get_services,
     _machine_tabs,
-    _manage,
     machines_router,
+    need_manage,
 )
 from app.web.templating import templates
 from app.web.time_window import window_from_query, window_query
@@ -107,7 +107,7 @@ async def machine_monitoring(
     return response
 
 
-@router.post("/{machine_id}/monitoring/refresh", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/monitoring/refresh", dependencies=[need_manage, Depends(verify_csrf)])
 async def refresh_machine_monitoring_endpoint(
     request: Request,
     machine_id: uuid.UUID,

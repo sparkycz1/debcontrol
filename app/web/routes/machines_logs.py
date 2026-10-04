@@ -47,10 +47,10 @@ from app.web.templating import templates
 router = machines_router()
 
 
-_terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
+need_terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 
 
-@router.get("/{machine_id}/terminal", dependencies=[_terminal])
+@router.get("/{machine_id}/terminal", dependencies=[need_terminal])
 async def terminal_page(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -79,7 +79,7 @@ async def terminal_page(
     )
 
 
-@router.get("/{machine_id}/logs", dependencies=[_terminal])
+@router.get("/{machine_id}/logs", dependencies=[need_terminal])
 async def machine_logs(
     request: Request,
     machine_id: uuid.UUID,
@@ -249,7 +249,7 @@ async def machine_logs(
     return response
 
 
-@router.post("/{machine_id}/logs/views", dependencies=[_terminal, Depends(verify_csrf)])
+@router.post("/{machine_id}/logs/views", dependencies=[need_terminal, Depends(verify_csrf)])
 async def save_log_view(
     request: Request,
     machine_id: uuid.UUID,
@@ -279,7 +279,7 @@ async def save_log_view(
 
 @router.post(
     "/{machine_id}/logs/views/{view_id}/delete",
-    dependencies=[_terminal, Depends(verify_csrf)],
+    dependencies=[need_terminal, Depends(verify_csrf)],
 )
 async def delete_log_view(
     machine_id: uuid.UUID,
@@ -298,7 +298,7 @@ def _join_log_path(directory: str, name: str) -> str:
     return name if directory in ("", "/") else f"{directory.rstrip('/')}/{name}"
 
 
-@router.get("/{machine_id}/logs/browse", dependencies=[_terminal])
+@router.get("/{machine_id}/logs/browse", dependencies=[need_terminal])
 async def machine_logs_browse(
     request: Request,
     machine_id: uuid.UUID,

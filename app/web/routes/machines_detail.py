@@ -62,9 +62,9 @@ from app.web.routes.machines_common import (
     _get_service_counts,
     _get_services,
     _machine_tabs,
-    _manage,
-    _power,
     machines_router,
+    need_manage,
+    need_power,
 )
 from app.web.templating import t, templates
 
@@ -315,7 +315,7 @@ async def edit_machine_form(
     return response
 
 
-@router.post("/{machine_id}/run-onboarding", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/run-onboarding", dependencies=[need_manage, Depends(verify_csrf)])
 async def run_onboarding_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -393,7 +393,7 @@ async def run_onboarding_endpoint(
     return response
 
 
-@router.post("/{machine_id}/recheck-readiness", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/recheck-readiness", dependencies=[need_manage, Depends(verify_csrf)])
 async def recheck_readiness_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -415,7 +415,7 @@ async def recheck_readiness_endpoint(
 
 
 @router.post(
-    "/{machine_id}/run-onboarding-with-credential", dependencies=[_manage, Depends(verify_csrf)]
+    "/{machine_id}/run-onboarding-with-credential", dependencies=[need_manage, Depends(verify_csrf)]
 )
 async def run_onboarding_with_credential_endpoint(
     request: Request,
@@ -500,7 +500,7 @@ async def run_onboarding_with_credential_endpoint(
 
 
 @router.post(
-    "/{machine_id}/fix-readiness-directly", dependencies=[_manage, Depends(verify_csrf)]
+    "/{machine_id}/fix-readiness-directly", dependencies=[need_manage, Depends(verify_csrf)]
 )
 async def fix_readiness_directly_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
@@ -548,7 +548,7 @@ async def fix_readiness_directly_endpoint(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/edit", dependencies=[need_manage, Depends(verify_csrf)])
 async def update_machine(
     request: Request,
     machine_id: uuid.UUID,
@@ -706,7 +706,7 @@ async def update_machine(
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/discover-host-key", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/discover-host-key", dependencies=[need_manage, Depends(verify_csrf)])
 async def discover_host_key(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -741,7 +741,7 @@ async def discover_host_key(
     return response
 
 
-@router.post("/{machine_id}/trust-host-key", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/trust-host-key", dependencies=[need_manage, Depends(verify_csrf)])
 async def trust_host_key(
     request: Request,
     machine_id: uuid.UUID,
@@ -788,7 +788,7 @@ async def trust_host_key(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/test-connection", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/test-connection", dependencies=[need_manage, Depends(verify_csrf)])
 async def test_connection_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -830,7 +830,7 @@ async def test_connection_endpoint(
     )
 
 
-@router.post("/{machine_id}/refresh-facts", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/refresh-facts", dependencies=[need_manage, Depends(verify_csrf)])
 async def refresh_facts_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -878,7 +878,7 @@ async def refresh_facts_endpoint(
     )
 
 
-@router.post("/{machine_id}/refresh-packages", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/refresh-packages", dependencies=[need_manage, Depends(verify_csrf)])
 async def refresh_packages_endpoint(
     request: Request,
     machine_id: uuid.UUID,
@@ -940,7 +940,7 @@ async def refresh_packages_endpoint(
     )
 
 
-@router.post("/{machine_id}/refresh-services", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/refresh-services", dependencies=[need_manage, Depends(verify_csrf)])
 async def refresh_services_endpoint(
     request: Request,
     machine_id: uuid.UUID,
@@ -1038,7 +1038,7 @@ async def machine_proxmox(
 
 
 @router.post(
-    "/{machine_id}/proxmox/guests/{vmid}", dependencies=[_power, Depends(verify_csrf)]
+    "/{machine_id}/proxmox/guests/{vmid}", dependencies=[need_power, Depends(verify_csrf)]
 )
 async def proxmox_guest_action(
     request: Request,
@@ -1140,7 +1140,7 @@ async def machine_history(
     return response
 
 
-@router.post("/{machine_id}/notes", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/notes", dependencies=[need_manage, Depends(verify_csrf)])
 async def add_machine_note(
     request: Request,
     machine_id: uuid.UUID,
@@ -1162,7 +1162,7 @@ async def add_machine_note(
 
 
 @router.post(
-    "/{machine_id}/notes/{note_id}/delete", dependencies=[_manage, Depends(verify_csrf)]
+    "/{machine_id}/notes/{note_id}/delete", dependencies=[need_manage, Depends(verify_csrf)]
 )
 async def delete_machine_note(
     request: Request,
@@ -1179,7 +1179,7 @@ async def delete_machine_note(
     )
 
 
-@router.post("/{machine_id}/docker/check-images", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/docker/check-images", dependencies=[need_manage, Depends(verify_csrf)])
 async def check_image_updates_endpoint(
     request: Request,
     machine_id: uuid.UUID,
@@ -1226,7 +1226,7 @@ async def check_image_updates_endpoint(
 
 @router.post(
     "/{machine_id}/containers/{container}/{action}",
-    dependencies=[_power, Depends(verify_csrf)],
+    dependencies=[need_power, Depends(verify_csrf)],
 )
 async def container_action_endpoint(
     request: Request,
@@ -1320,7 +1320,7 @@ async def power_confirm_form(
     return response
 
 
-@router.post("/{machine_id}/power", dependencies=[_power, Depends(verify_csrf)])
+@router.post("/{machine_id}/power", dependencies=[need_power, Depends(verify_csrf)])
 async def power_action(
     request: Request,
     machine_id: uuid.UUID,
@@ -1395,7 +1395,7 @@ async def power_action(
     )
 
 
-@router.post("/{machine_id}/delete", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/delete", dependencies=[need_manage, Depends(verify_csrf)])
 async def delete_machine(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1419,7 +1419,7 @@ async def delete_machine(
 # --- Acknowledging a problem (app.services.acknowledgements) ---------------
 
 
-@router.post("/{machine_id}/acknowledge", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/acknowledge", dependencies=[need_manage, Depends(verify_csrf)])
 async def acknowledge_machine(
     request: Request,
     machine_id: uuid.UUID,
@@ -1452,7 +1452,7 @@ async def acknowledge_machine(
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/{machine_id}/acknowledge/clear", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/{machine_id}/acknowledge/clear", dependencies=[need_manage, Depends(verify_csrf)])
 async def clear_machine_acknowledgement(
     request: Request,
     machine_id: uuid.UUID,

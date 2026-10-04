@@ -72,10 +72,10 @@ from app.web.routes.audit import _csv_safe
 from app.web.routes.machines_common import (
     _get_all_tags,
     _get_groups,
-    _manage,
-    _power,
-    _updates,
     machines_router,
+    need_manage,
+    need_power,
+    need_updates,
 )
 from app.web.templating import t, templates
 
@@ -323,7 +323,7 @@ async def new_machine_form(
     return response
 
 
-@router.post("", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("", dependencies=[need_manage, Depends(verify_csrf)])
 async def create_machine(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -445,7 +445,7 @@ async def import_machines_form(request: Request) -> Response:
     return response
 
 
-@router.post("/import", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/import", dependencies=[need_manage, Depends(verify_csrf)])
 async def import_machines_submit(
     request: Request, db: AsyncSession = Depends(get_db), csv_text: str = Form("")
 ) -> Response:
@@ -710,7 +710,7 @@ async def import_machine_config_form(request: Request) -> Response:
     return response
 
 
-@router.post("/config/import", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/config/import", dependencies=[need_manage, Depends(verify_csrf)])
 async def import_machine_config_submit(
     request: Request, db: AsyncSession = Depends(get_db), json_text: str = Form("")
 ) -> Response:
@@ -788,7 +788,7 @@ async def _get_machines_by_ids(
     return await visible_machines_by_ids(db, user, machine_ids)
 
 
-@router.post("/bulk/check-updates", dependencies=[_updates, Depends(verify_csrf)])
+@router.post("/bulk/check-updates", dependencies=[need_updates, Depends(verify_csrf)])
 async def bulk_check_updates(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -822,7 +822,7 @@ async def bulk_check_updates(
     )
 
 
-@router.post("/bulk/updates", dependencies=[_updates, Depends(verify_csrf)])
+@router.post("/bulk/updates", dependencies=[need_updates, Depends(verify_csrf)])
 async def bulk_trigger_updates(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -854,7 +854,7 @@ async def bulk_trigger_updates(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/bulk/power-confirm/{action}", dependencies=[_power, Depends(verify_csrf)])
+@router.post("/bulk/power-confirm/{action}", dependencies=[need_power, Depends(verify_csrf)])
 async def bulk_power_confirm(
     request: Request,
     action: PowerAction,
@@ -889,7 +889,7 @@ async def bulk_power_confirm(
     return response
 
 
-@router.post("/bulk/power/{action}", dependencies=[_power, Depends(verify_csrf)])
+@router.post("/bulk/power/{action}", dependencies=[need_power, Depends(verify_csrf)])
 async def bulk_power_action(
     request: Request,
     action: PowerAction,
@@ -947,7 +947,7 @@ async def bulk_power_action(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/bulk/group", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/bulk/group", dependencies=[need_manage, Depends(verify_csrf)])
 async def bulk_assign_group(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -1018,7 +1018,7 @@ async def bulk_assign_group(
     )
 
 
-@router.post("/bulk/tags/add", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/bulk/tags/add", dependencies=[need_manage, Depends(verify_csrf)])
 async def bulk_add_tags(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -1051,7 +1051,7 @@ async def bulk_add_tags(
     return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/bulk/tags/remove", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/bulk/tags/remove", dependencies=[need_manage, Depends(verify_csrf)])
 async def bulk_remove_tags(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -1084,7 +1084,7 @@ async def bulk_remove_tags(
     return RedirectResponse(url="/machines", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/pending/{pending_id}/dismiss", dependencies=[_manage, Depends(verify_csrf)])
+@router.post("/pending/{pending_id}/dismiss", dependencies=[need_manage, Depends(verify_csrf)])
 async def dismiss_pending_machine(
     request: Request, pending_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> Response:

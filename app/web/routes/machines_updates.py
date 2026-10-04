@@ -36,8 +36,8 @@ from app.web.messages import LocalizedText
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     _machine_tabs,
-    _updates,
     machines_router,
+    need_updates,
 )
 from app.web.templating import t, templates
 
@@ -54,7 +54,7 @@ async def _get_update_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> Machine
     return run
 
 
-@router.post("/{machine_id}/check-updates", dependencies=[_updates, Depends(verify_csrf)])
+@router.post("/{machine_id}/check-updates", dependencies=[need_updates, Depends(verify_csrf)])
 async def check_updates_endpoint(
     request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -99,7 +99,7 @@ async def check_updates_endpoint(
     )
 
 
-@router.get("/{machine_id}/updates/preview", dependencies=[_updates])
+@router.get("/{machine_id}/updates/preview", dependencies=[need_updates])
 async def preview_machine_update(
     request: Request,
     machine_id: uuid.UUID,
@@ -167,7 +167,7 @@ async def preview_machine_update(
     return response
 
 
-@router.post("/{machine_id}/updates", dependencies=[_updates, Depends(verify_csrf)])
+@router.post("/{machine_id}/updates", dependencies=[need_updates, Depends(verify_csrf)])
 async def trigger_machine_update(
     request: Request,
     machine_id: uuid.UUID,
@@ -218,7 +218,7 @@ async def trigger_machine_update(
 
 
 @router.post(
-    "/{machine_id}/updates/{run_id}/rollback", dependencies=[_updates, Depends(verify_csrf)]
+    "/{machine_id}/updates/{run_id}/rollback", dependencies=[need_updates, Depends(verify_csrf)]
 )
 async def rollback_machine_update_endpoint(
     request: Request,
@@ -274,7 +274,7 @@ async def rollback_machine_update_endpoint(
     )
 
 
-@router.post("/{machine_id}/updates/hold", dependencies=[_updates, Depends(verify_csrf)])
+@router.post("/{machine_id}/updates/hold", dependencies=[need_updates, Depends(verify_csrf)])
 async def set_package_hold_endpoint(
     request: Request,
     machine_id: uuid.UUID,
