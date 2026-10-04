@@ -175,6 +175,11 @@
         {% endfor %}
       </div>
 
+      <label for="throttle_minutes">{{ t(request, "notifications.rule.throttle_label") }}</label>
+      <input type="number" id="throttle_minutes" name="throttle_minutes" min="1" max="10080" step="1"
+             value="{{ selected_throttle_minutes or '' }}" placeholder="{{ t(request, 'notifications.rule.throttle_placeholder') }}">
+      <p class="hint">{{ t(request, "notifications.rule.throttle_hint") }}</p>
+
       <label for="custom_template_id">{{ t(request, "notifications.rule.template_label") }}</label>
       <select id="custom_template_id" name="custom_template_id">
         <option value="">{{ t(request, "notifications.rule.template_default") }}</option>

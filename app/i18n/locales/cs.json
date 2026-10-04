@@ -2202,6 +2202,10 @@
     "updates.hold.held": "Balíček {package} je podržený v nainstalované verzi.",
     "updates.hold.released": "Balíček {package} je uvolněný a bude se znovu aktualizovat.",
     "updates.hold.failed": "apt-mark selhal: {error}",
-    "updates.hold.invalid_package": "To není platný název balíčku."
+    "updates.hold.invalid_package": "To není platný název balíčku.",
+    "notifications.rule.throttle_label": "Nejvýše jedno upozornění za (minut)",
+    "notifications.rule.throttle_placeholder": "bez omezení",
+    "notifications.rule.throttle_hint": "Prázdné pole posílá každé upozornění. S číslem se stejná událost o stejném stroji nebo kontrole pošle nejvýše jednou za tolik minut. Ostatní jsou v historii doručení jako ztlumené a další odeslané upozornění uvede, kolik jich bylo zadrženo.",
+    "notifications.history.status_throttled": "ztlumeno"
   }
 }

@@ -43,7 +43,17 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, Column, ForeignKey, LargeBinary, String, Table, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Table,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -224,6 +234,14 @@ class NotificationRule(Base):
     # doubles as the ntfy topic URL, Gotify server URL or Discord webhook.
     channel_token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     channel_recipient: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # "At most one notification per this many minutes" for the same event
+    # about the same machine (or endpoint check). What arrives inside the
+    # window is recorded as `throttled` in the delivery history, and the
+    # next one that does go out says how many were held back — see
+    # `app.services.notifications.notify`. NULL (the default) sends every
+    # one, as before.
+    throttle_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def event_type_enums(self) -> list[NotificationEventType]:

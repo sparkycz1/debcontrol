@@ -77,6 +77,17 @@ router = APIRouter(
 _manage = Depends(require_permission(Permission.NOTIFICATION_MANAGE))
 
 
+def _parse_throttle_minutes(raw: str) -> int | None:
+    """The rule form's "at most one per N minutes" box: empty = no limit."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError("The throttle window must be a whole number of minutes.") from None
+
+
 def _can_manage(request: Request) -> bool:
     """Only an account that could edit a rule sees its webhook URL in full —
     the URL's path is the webhook's secret (see `push_channels.redact_url`)."""
@@ -206,6 +217,7 @@ def _rule_form_context(
             else ""
         ),
         "selected_channel_recipient": (rule.channel_recipient or "") if rule else "",
+        "selected_throttle_minutes": (rule.throttle_minutes or "") if rule else "",
         "channel_token_set": bool(rule and rule.channel_token_encrypted),
         "condition_rows": _condition_rows_for_rule(rule),
         "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
@@ -425,6 +437,7 @@ async def create_rule(
     webhook_url: str = Form(""),
     channel_token: str = Form(""),
     channel_recipient: str = Form(""),
+    throttle_minutes: str = Form(""),
 ) -> Response:
     async def _rerender(
         errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
@@ -462,6 +475,7 @@ async def create_rule(
                 "selected_delivery_channel": delivery_channel,
                 "selected_webhook_url": webhook_url,
                 "selected_channel_recipient": channel_recipient,
+                "selected_throttle_minutes": throttle_minutes,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -508,6 +522,7 @@ async def create_rule(
             webhook_url=webhook_url or None,
             channel_token=channel_token or None,
             channel_recipient=channel_recipient or None,
+            throttle_minutes=_parse_throttle_minutes(throttle_minutes),
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -670,6 +685,7 @@ async def update_rule(
     webhook_url: str = Form(""),
     channel_token: str = Form(""),
     channel_recipient: str = Form(""),
+    throttle_minutes: str = Form(""),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
@@ -709,6 +725,7 @@ async def update_rule(
                 "selected_delivery_channel": delivery_channel,
                 "selected_webhook_url": webhook_url,
                 "selected_channel_recipient": channel_recipient,
+                "selected_throttle_minutes": throttle_minutes,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -753,6 +770,7 @@ async def update_rule(
             webhook_url=webhook_url or None,
             channel_token=channel_token or None,
             channel_recipient=channel_recipient or None,
+            throttle_minutes=_parse_throttle_minutes(throttle_minutes),
         )
     except ValueError as exc:
         rows = raw_conditions + [
