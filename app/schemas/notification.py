@@ -51,6 +51,9 @@ class NotificationRuleCreate(BaseModel):
     # Write-only: a new token, or None/"" to keep the one already stored.
     channel_token: str | None = Field(default=None, max_length=512)
     channel_recipient: str | None = Field(default=None, max_length=255)
+    # At most one notification per this many minutes for the same event
+    # about the same machine or check (None = no limit); up to a week.
+    throttle_minutes: int | None = Field(default=None, ge=1, le=10080)
 
     @field_validator("event_types")
     @classmethod

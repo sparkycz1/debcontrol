@@ -38,13 +38,15 @@
               {% if entry.is_test %}<span class="badge badge-tag">{{ t(request, "notifications.history.test_badge") }}</span>{% endif %}
             </td>
             <td>{{ entry.event_type }}</td>
-            <td>{{ t(request, "notifications.rule.send_via_webhook") if entry.channel == "webhook" else t(request, "notifications.rule.send_via_email") }}</td>
+            <td>{{ t(request, "notifications.rule.send_via_" ~ entry.channel) }}</td>
             <td>{{ entry.target }}</td>
             <td>
               {% if entry.status == "sent" %}
                 <span class="badge badge-ok">{{ t(request, "notifications.history.status_sent") }}</span>
               {% elif entry.status == "suppressed" %}
                 <span class="badge badge-warn">{{ t(request, "notifications.history.status_suppressed") }}</span>
+              {% elif entry.status == "throttled" %}
+                <span class="badge badge-warn">{{ t(request, "notifications.history.status_throttled") }}</span>
               {% else %}
                 <span class="badge badge-error" title="{{ entry.error or '' }}">{{ t(request, "notifications.history.status_failed") }}</span>
               {% endif %}

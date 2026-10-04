@@ -51,6 +51,9 @@ class NotificationDeliveryStatus(enum.StrEnum):
     # maintenance window (`target` names the window) — see
     # `app.services.maintenance_windows`.
     SUPPRESSED = "suppressed"
+    # Not delivered on purpose: the rule already sent this event for this
+    # source inside its `throttle_minutes` window.
+    THROTTLED = "throttled"
 
 
 class NotificationLog(Base):
@@ -69,6 +72,9 @@ class NotificationLog(Base):
     # The email address or webhook URL this particular attempt went to.
     target: Mapped[str] = mapped_column(String(2048), nullable=False)
     machine_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # What the notification was about, for a rule's throttle window:
+    # "machine:<id>", "check:<name>", or NULL for a fleet-wide event.
+    source_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

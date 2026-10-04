@@ -2157,6 +2157,10 @@
     "updates.hold.held": "{package} is held at its installed version.",
     "updates.hold.released": "{package} is released and will be updated again.",
     "updates.hold.failed": "apt-mark failed: {error}",
-    "updates.hold.invalid_package": "That isn't a valid package name."
+    "updates.hold.invalid_package": "That isn't a valid package name.",
+    "notifications.rule.throttle_label": "At most one notification every (minutes)",
+    "notifications.rule.throttle_placeholder": "no limit",
+    "notifications.rule.throttle_hint": "Leave empty to send every notification. With a number, the same event about the same machine or check is sent at most once in that many minutes. The rest are listed as throttled in the delivery history, and the next one sent says how many were held back.",
+    "notifications.history.status_throttled": "throttled"
   }
 }

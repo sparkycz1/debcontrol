@@ -42,13 +42,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import smtplib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from types import SimpleNamespace
 from typing import Any, Protocol
 
 import httpx2
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.app_settings import get_or_create_app_settings
@@ -548,6 +548,7 @@ def _delivery_log(
     status: NotificationDeliveryStatus,
     error: str | None,
     is_test: bool = False,
+    source_key: str | None = None,
 ) -> NotificationLog:
     return NotificationLog(
         rule_id=rule.id if rule else None,
@@ -559,7 +560,118 @@ def _delivery_log(
         status=status.value,
         error=error,
         is_test=is_test,
+        source_key=source_key,
     )
+
+
+_HELD_BACK_NOTE = {
+    "en": "{count} more notification(s) like this were held back since {since} (throttled).",
+    "cs": "Od {since} bylo zadrženo {count} dalších podobných upozornění (tlumení).",
+}
+
+
+def _held_back_note(held_back: int, since: datetime | None, locale: str) -> str:
+    """The line a throttled rule's next real notification ends with."""
+    if not held_back or since is None:
+        return ""
+    template = _HELD_BACK_NOTE.get(locale, _HELD_BACK_NOTE[DEFAULT_LOCALE_CODE])
+    return "\n\n" + template.format(count=held_back, since=since.strftime("%Y-%m-%d %H:%M UTC"))
+
+
+async def _throttle_state(
+    db: AsyncSession,
+    rule: NotificationRule,
+    event_type: NotificationEventType,
+    source_key: str | None,
+    now: datetime,
+) -> tuple[bool, int, datetime | None]:
+    """`(throttled, held_back, last_sent)` for one rule + event + source,
+    read from the delivery history itself (no separate state to drift):
+    throttled while the last real send is younger than the rule's window;
+    otherwise how many were held back since that send."""
+    key = [
+        NotificationLog.rule_id == rule.id,
+        NotificationLog.event_type == event_type.value,
+        NotificationLog.is_test.is_(False),
+        NotificationLog.source_key.is_(None)
+        if source_key is None
+        else NotificationLog.source_key == source_key,
+    ]
+    last_sent = (
+        await db.execute(
+            select(func.max(NotificationLog.sent_at)).where(
+                *key, NotificationLog.status == NotificationDeliveryStatus.SENT.value
+            )
+        )
+    ).scalar_one_or_none()
+    if last_sent is None:
+        return False, 0, None
+    aware = last_sent if last_sent.tzinfo else last_sent.replace(tzinfo=UTC)
+    if aware > now - timedelta(minutes=rule.throttle_minutes or 0):
+        return True, 0, aware
+    held_back = (
+        await db.execute(
+            select(func.count())
+            .select_from(NotificationLog)
+            .where(
+                *key,
+                NotificationLog.status == NotificationDeliveryStatus.THROTTLED.value,
+                NotificationLog.sent_at >= last_sent,
+            )
+        )
+    ).scalar_one()
+    return False, held_back, aware
+
+
+async def _send_rule_emails(
+    db: AsyncSession,
+    app_settings: AppSettings,
+    rule: NotificationRule,
+    event_type: NotificationEventType,
+    rule_template: _TemplateLike | None,
+    rule_context: dict[str, Any],
+    *,
+    machine: Machine | None,
+    source_key: str | None,
+    held_back: int,
+    held_since: datetime | None,
+) -> list[NotificationLog]:
+    """One email-channel rule's deliveries: one message per resolved
+    recipient, each with its own history row. Nothing (and no row) when
+    SMTP is off or the rule resolves to no address."""
+    if not app_settings.smtp_enabled or not app_settings.smtp_host:
+        return []
+    logs: list[NotificationLog] = []
+    # Rendered once per recipient, in *their* own UI language
+    # (`User.locale`, same field the rest of the app already uses
+    # for this) rather than once for everyone — an admin-set
+    # template is still a single value regardless of locale (see
+    # the module-level note above `_DEFAULT_TEMPLATES`).
+    for user in await _recipients(db, [rule]):
+        assert user.email is not None  # guaranteed by `_recipients`
+        locale = user.locale or DEFAULT_LOCALE_CODE
+        subject, body = render_template(event_type, rule_template, rule_context, locale=locale)
+        body += _held_back_note(held_back, held_since, locale)
+        status, error = NotificationDeliveryStatus.SENT, None
+        try:
+            await asyncio.to_thread(send_smtp_message, app_settings, user.email, subject, body)
+        except Exception as exc:
+            logger.warning("Failed to send notification email to %s", user.email, exc_info=True)
+            status, error = NotificationDeliveryStatus.FAILED, str(exc)[:2000]
+        logs.append(
+            _delivery_log(
+                rule=rule,
+                rule_name=rule.name,
+                event_type=event_type.value,
+                channel=NotificationDeliveryChannel.EMAIL,
+                target=user.email,
+                machine=machine,
+                status=status,
+                error=error,
+                source_key=source_key,
+            )
+        )
+    return logs
 
 
 async def notify(
@@ -627,12 +739,45 @@ async def notify(
             full_context.setdefault("machine_name", machine.name)
             full_context.setdefault("machine_ip", machine.ip_address)
 
+        # What this notification is about, for a rule's throttle window.
+        source_key: str | None = None
+        if machine is not None:
+            source_key = f"machine:{machine.id}"
+        elif full_context.get("endpoint_name"):
+            source_key = f"check:{full_context['endpoint_name']}"[:300]
+        now = datetime.now(UTC)
+
         logs: list[NotificationLog] = []
         for rule in rules:
             rule_template = rule.custom_template if rule.custom_template_id else default_template
 
+            held_back, held_since = 0, None
+            if rule.throttle_minutes:
+                throttled, held_back, held_since = await _throttle_state(
+                    db, rule, event_type, source_key, now
+                )
+                if throttled:
+                    logs.append(
+                        _delivery_log(
+                            rule=rule,
+                            rule_name=rule.name,
+                            event_type=event_type.value,
+                            channel=NotificationDeliveryChannel(rule.delivery_channel),
+                            target=f"at most one per {rule.throttle_minutes} min",
+                            machine=machine,
+                            status=NotificationDeliveryStatus.THROTTLED,
+                            error=None,
+                            source_key=source_key,
+                        )
+                    )
+                    continue
+            rule_context = (
+                {**full_context, "held_back": str(held_back)} if held_back else full_context
+            )
+
             if rule.delivery_channel in push_channels.PUSH_CHANNELS:
-                subject, body = render_template(event_type, rule_template, full_context)
+                subject, body = render_template(event_type, rule_template, rule_context)
+                body += _held_back_note(held_back, held_since, DEFAULT_LOCALE_CODE)
                 status, error = await _send_push(rule, subject, body)
                 if status is NotificationDeliveryStatus.FAILED:
                     logger.warning(
@@ -653,6 +798,7 @@ async def notify(
                         machine=machine,
                         status=status,
                         error=error,
+                        source_key=source_key,
                     )
                 )
                 continue
@@ -660,9 +806,10 @@ async def notify(
             if rule.delivery_channel == NotificationDeliveryChannel.WEBHOOK.value:
                 if not rule.webhook_url:
                     continue
-                subject, body = render_template(event_type, rule_template, full_context)
+                subject, body = render_template(event_type, rule_template, rule_context)
+                body += _held_back_note(held_back, held_since, DEFAULT_LOCALE_CODE)
                 status, error = await _send_webhook(
-                    rule.webhook_url, event_type.value, rule.name, subject, body, full_context
+                    rule.webhook_url, event_type.value, rule.name, subject, body, rule_context
                 )
                 if status is NotificationDeliveryStatus.FAILED:
                     logger.warning(
@@ -678,62 +825,25 @@ async def notify(
                         machine=machine,
                         status=status,
                         error=error,
+                        source_key=source_key,
                     )
                 )
                 continue
 
-            if not app_settings.smtp_enabled or not app_settings.smtp_host:
-                continue
-            recipients = await _recipients(db, [rule])
-            if not recipients:
-                continue
-
-            # Rendered once per recipient, in *their* own UI language
-            # (`User.locale`, same field the rest of the app already uses
-            # for this) rather than once for everyone — an admin-set
-            # template is still a single value regardless of locale (see
-            # the module-level note above `_DEFAULT_TEMPLATES`).
-            for user in recipients:
-                assert user.email is not None  # guaranteed by `_recipients`
-                subject, body = render_template(
+            logs.extend(
+                await _send_rule_emails(
+                    db,
+                    app_settings,
+                    rule,
                     event_type,
                     rule_template,
-                    full_context,
-                    locale=user.locale or DEFAULT_LOCALE_CODE,
+                    rule_context,
+                    machine=machine,
+                    source_key=source_key,
+                    held_back=held_back,
+                    held_since=held_since,
                 )
-                try:
-                    await asyncio.to_thread(
-                        send_smtp_message, app_settings, user.email, subject, body
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to send notification email to %s", user.email, exc_info=True
-                    )
-                    logs.append(
-                        _delivery_log(
-                            rule=rule,
-                            rule_name=rule.name,
-                            event_type=event_type.value,
-                            channel=NotificationDeliveryChannel.EMAIL,
-                            target=user.email,
-                            machine=machine,
-                            status=NotificationDeliveryStatus.FAILED,
-                            error=str(exc)[:2000],
-                        )
-                    )
-                else:
-                    logs.append(
-                        _delivery_log(
-                            rule=rule,
-                            rule_name=rule.name,
-                            event_type=event_type.value,
-                            channel=NotificationDeliveryChannel.EMAIL,
-                            target=user.email,
-                            machine=machine,
-                            status=NotificationDeliveryStatus.SENT,
-                            error=None,
-                        )
-                    )
+            )
         if logs:
             db.add_all(logs)
             await db.commit()

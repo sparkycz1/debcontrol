@@ -105,6 +105,7 @@ def rule_to_portable_dict(
         # (or keeps the one already stored on a same-named rule).
         **({"channel_recipient": rule.channel_recipient} if rule.channel_recipient else {}),
         **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
+        **({"throttle_minutes": rule.throttle_minutes} if rule.throttle_minutes else {}),
     }
 
 
@@ -154,6 +155,7 @@ async def apply_portable_rule(
             channel_recipient=(
                 str(data["channel_recipient"]) if data.get("channel_recipient") else None
             ),
+            throttle_minutes=data.get("throttle_minutes") or None,
         )
         apply_channel_settings(rule, payload)
     except ValueError as exc:
@@ -243,12 +245,13 @@ async def delete_custom_template(db: AsyncSession, template: NotificationCustomT
 
 def apply_channel_settings(rule: NotificationRule, payload: NotificationRuleCreate) -> None:
     """Delivery settings from a validated payload onto `rule`: the channel,
-    its URL and recipient, and — only when a new one was given — its token
+    its URL and recipient, its throttle window, and — only when a new one was given — its token
     (encrypted; an empty token keeps the stored one, like a password field).
     Raises ValueError when the channel needs a token and none is stored."""
     rule.delivery_channel = payload.delivery_channel
     rule.webhook_url = payload.webhook_url
     rule.channel_recipient = (payload.channel_recipient or "").strip() or None
+    rule.throttle_minutes = payload.throttle_minutes
     token = (payload.channel_token or "").strip()
     if token:
         rule.channel_token_encrypted = encrypt_secret(token)
