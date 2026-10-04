@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "search.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "search.title") }}</h1>
+  </div>
+
+  <form method="get" action="/search" class="search-page-form" role="search">
+    <input type="search" name="q" value="{{ query }}" maxlength="100" autofocus
+           placeholder="{{ t(request, 'search.placeholder') }}" aria-label="{{ t(request, 'search.title') }}">
+    <button type="submit" class="button">{{ t(request, "search.submit") }}</button>
+  </form>
+
+  {% if too_short %}
+    <div class="empty-state"><p>{{ t(request, "search.too_short", count=min_length) }}</p></div>
+  {% elif not query %}
+    <p class="hint">{{ t(request, "search.hint") }}</p>
+  {% elif not groups %}
+    <div class="empty-state"><p>{{ t(request, "search.nothing", query=query) }}</p></div>
+  {% else %}
+    {% for group in groups %}
+      <section class="panel">
+        <h2>{{ t(request, "search.kind." ~ group.kind) }}</h2>
+        <ul class="search-results">
+          {% for hit in group.hits %}
+            <li>
+              <a href="{{ hit.href }}">{{ hit.label }}</a>
+              {% if hit.detail %}<span class="hint">{{ hit.detail }}</span>{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+        {% if group.has_more %}
+          <p class="hint">
+            {{ t(request, "search.more") }}
+            {% if group.more_href %}<a href="{{ group.more_href }}">{{ t(request, "search.show_all") }}</a>{% endif %}
+          </p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  {% endif %}
+{% endblock %}

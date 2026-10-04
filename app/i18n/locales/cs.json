@@ -2255,6 +2255,21 @@
     "audit.action_label.machine.acknowledge": "Potvrzen problém na stroji",
     "audit.action_label.machine.acknowledge.clear": "Zrušeno potvrzení u stroje",
     "audit.action_label.endpoint_check.acknowledge": "Potvrzen problém u kontroly",
-    "audit.action_label.endpoint_check.acknowledge.clear": "Zrušeno potvrzení u kontroly"
+    "audit.action_label.endpoint_check.acknowledge.clear": "Zrušeno potvrzení u kontroly",
+    "search.title": "Hledání",
+    "search.placeholder": "Hledat…",
+    "search.submit": "Hledat",
+    "search.shortcut_hint": "Hledání otevřete klávesou /",
+    "search.hint": "Najde zařízení (název, adresa, hostname, štítek), skupiny zařízení, kontroly, naplánované úlohy, notifikační pravidla a uživatele podle názvu. Vidíte jen to, co váš účet smí otevřít.",
+    "search.too_short": "Zadejte aspoň {count} znaky.",
+    "search.nothing": "Výrazu „{query}“ nic neodpovídá.",
+    "search.more": "Další výsledky nejsou zobrazené.",
+    "search.show_all": "Zobrazit vše",
+    "search.kind.machines": "Zařízení",
+    "search.kind.groups": "Skupiny zařízení",
+    "search.kind.checks": "Kontroly",
+    "search.kind.scheduled_tasks": "Naplánované úlohy",
+    "search.kind.notification_rules": "Notifikační pravidla",
+    "search.kind.users": "Uživatelé"
   }
 }
