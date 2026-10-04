@@ -1,4 +1,4 @@
-// Logs tab viewer (machines/logs.html): start scrolled to the newest line
+// Logs tab viewer (logs.html, shared with the sister app): start scrolled to the newest line
 // (logs show the *last* N lines, so the interesting end is the bottom), a
 // "Wrap lines" toggle, a "Jump to bottom" button and "Follow live", which
 // streams new lines over a WebSocket (app/web/routes/logs_ws.py). No

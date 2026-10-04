@@ -2,9 +2,10 @@
    this app's CSP forbids external chart libraries (no external CDN, and
    generated markup here only ever uses SVG presentation attributes and
    classes, never a `style=` attribute or a `<style>` block, so nothing
-   here needs `style-src` to allow anything beyond 'self'). #}
+   here needs `style-src` to allow anything beyond 'self'). Shared word
+   for word with the sister app — see shared-ui.json. #}
 
-{# The Monitoring tab's charts. All geometry comes from
+{# One chart. All geometry comes from
    `app.web.charts.build_chart` (the `chart(...)` template global) — this
    only lays it out. The SVG carries no text (it's stretched to its box);
    Y labels are a flex column and X labels a flex row, both
@@ -12,7 +13,7 @@
    up with the grid without any inline style. Hover, legend toggling and
    the series filter are static/js/monitoring-chart.js, reading the
    `data-chart` JSON. Every label/value here goes through autoescaping or
-   `tojson` — sensor/container names come from the managed machine. #}
+   `tojson` — series names come from the managed host. #}
 {% macro render_chart(chart) %}
   <div class="chart" data-chart='{{ chart.data | tojson }}'>
     <div class="chart-y" aria-hidden="true">
@@ -73,8 +74,8 @@
 {% endmacro %}
 
 {# A titled card around one chart (see `render_chart`). `filter` adds the
-   header's series filter box (worth it once a chart has many lines —
-   temperatures, containers); `footer` is an optional line of text under
+   header's series filter box (worth it once a chart has many lines);
+   `footer` is an optional line of text under
    the chart (the current reading, typically). #}
 {% macro chart_card(title, subtitle, chart, filter=false, footer=none, wide=false, empty_text='—') %}
   <section class="chart-card{{ ' chart-card-wide' if wide else '' }}">

@@ -1,0 +1,21 @@
+{
+  "about": "Files debcontrol and honeypot-shelf share word for word. See scripts/sync_shared_ui.py.",
+  "files": {
+    "app/schemas/acknowledgement.py": "60c5078d98883351c0a6e8544c70108deb93b8baf78757c8b9706443bdd97893",
+    "app/web/charts.py": "4cf55aad1896cad09663f04a44ee51023379950eacdfbe763d04334d86938f22",
+    "app/web/routes/api_v1_search.py": "6b8a6ac4cc4b5ba02c14a265481c05fb4ad45ab7e429d0279d2ced5bfc0cbf7a",
+    "app/web/routes/search.py": "ec7ef2524fe5ef32bf0443b20d2b179684c607334d7430ff9c940b493d49423b",
+    "app/web/static/js/auto-submit.js": "ecd0317951467d0f57f6857f12c9d3c87b76434e3eb2d37facb33e0c0be478a0",
+    "app/web/static/js/confirm.js": "5022674f74e272e6b2aba8346269aabad9b5cbdc00485d14c6f9e64c42c77fa5",
+    "app/web/static/js/global-search.js": "0d7db4beb1d03a6bcabff6e67e880ecc81118dfd153312ac309c9d1aaeae6e5c",
+    "app/web/static/js/log-viewer.js": "72a57bc70fa24bc273fcc3bc6d2982cc720fda5651365137d95e6988dd285b26",
+    "app/web/static/js/monitoring-chart.js": "5dc5f56e05b4241d5a49daec34fac78db49f589e98b2969c4bfe5914bb40c166",
+    "app/web/templates/macros/charts.html": "b13f19e800269661dbf7673a508605cab91ef004c8ca6762ee4a0eeb56050f79",
+    "app/web/templates/partials/_tabnav.html": "500550dbe1a05db520ac499129894fc50213ddc6efaadc4ffd4067c7bbc13230",
+    "app/web/templates/partials/acknowledgement.html": "45ab8605b62e10b8c5825af7966fc4cea00e56bfdfa0a790344ffc493cafdcac",
+    "app/web/templates/partials/range_picker.html": "a0c346be94e5e1f823f6c3b277756dbe50b9bd7367a4017f2cbbb0877c00df19",
+    "app/web/time_window.py": "ce844d7d868b3d45e75c6bb28479c159a22ed284f68de1664b3cba74ab89fc32",
+    "scripts/sync_shared_ui.py": "8cd69d859fba1b5a5547df7a40c5e3df47572ce8a28765d4753f6e11121f275d",
+    "tests/test_shared_ui.py": "ce7234d0fac22873855564260a0c408f6422e7f3767f0572d7ac65e22040ae04"
+  }
+}

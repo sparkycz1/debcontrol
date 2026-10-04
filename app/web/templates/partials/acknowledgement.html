@@ -1,6 +1,6 @@
-{# "I know about this one" for a machine or an endpoint check — see
-   app.services.acknowledgements. `action` is the target's own URL
-   (/machines/<id> or /checks/<id>); the two POST routes hang off it. #}
+{# "I know about this one" — see app.services.acknowledgements. `action`
+   is the target's own URL; the two POST routes hang off it. Shared word
+   for word with the sister app — see shared-ui.json. #}
 {% macro ack_panel(request, target, action, can_manage) %}
   {% if ack_active(target) %}
     <div class="alert alert-warn">

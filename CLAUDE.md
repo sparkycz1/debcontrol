@@ -247,6 +247,16 @@ Before considering a change finished, not just "the code works":
    `except`. Fix the code (or explain an intentional `except` with a
    comment) rather than dismissing the alert.
 
+12. **Shared files stay shared.** debcontrol and honeypot-shelf are meant
+   to look and work the same; the files listed in `shared-ui.json` (the
+   chart code and script, a few templates, the search and time-window
+   helpers) are word-for-word identical in both. `tests/test_shared_ui.py`
+   fails when one changes here only. After changing one on purpose:
+   `python scripts/sync_shared_ui.py --update`, then
+   `python scripts/sync_shared_ui.py --to <honeypot-shelf checkout>` and
+   open a PR there too. App-specific wording does not belong in a shared
+   file — a shared template takes what differs as a parameter.
+
 None of this means doing every possible thing for every tiny change —
 it means actually checking each of these against what you just did,
 the same way you'd check the test/lint/mypy gate, and either handling it
