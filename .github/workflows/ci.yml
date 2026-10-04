@@ -116,6 +116,30 @@ jobs:
       - name: Postgres-only tests
         run: uv run pytest -q tests/test_full_backup_postgres.py
 
+  browser:
+    # Every main page in a real browser, under the real Content Security
+    # Policy (e2e/test_pages.py). A CSP violation or a script error is
+    # invisible to the Python suite above — the route returns 200 — and
+    # shows up only as a dead widget and a console error.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      - name: Install Python 3.14
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --locked --group e2e
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Browser smoke test
+        run: uv run pytest -q e2e
+
   security:
     runs-on: ubuntu-latest
     steps:
