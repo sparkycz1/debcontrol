@@ -2276,6 +2276,12 @@
     "host_key_changed.accept_button": "Accept the new key",
     "host_key_changed.accept_confirm": "Accept the new SSH host key? Only do this after checking the fingerprint on the machine itself.",
     "host_key_changed.badge": "SSH key changed",
-    "host_key_changed.badge_hint": "The machine answers with a different SSH host key than the pinned one. Connections are refused until the new key is accepted."
+    "host_key_changed.badge_hint": "The machine answers with a different SSH host key than the pinned one. Connections are refused until the new key is accepted.",
+    "checks.source": "Run from",
+    "checks.source_server": "the debcontrol server",
+    "checks.source_hint": "Pick a machine to check something only that machine can reach, such as a service on an internal network. The check then runs on it over SSH with curl, openssl, ping, bash and getent or dig; nothing is installed. An HTTP check run from a machine does not report certificate expiry; a TLS check does.",
+    "checks.from_machine": "run from {machine}",
+    "checks.open_source_machine": "open the machine",
+    "checks.error.unknown_source": "Pick the debcontrol server or one of the listed machines."
   }
 }

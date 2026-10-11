@@ -24,7 +24,7 @@ from app.db.session import get_db
 from app.schemas.acknowledgement import AcknowledgeRequest
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.services import acknowledgements, monitoring_history
-from app.services.access_scope import machines_visible_to
+from app.services.access_scope import machines_visible_to, visible_machines_by_ids
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import load_sla_report
 from app.tasks import jobs as tasks
@@ -55,6 +55,8 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "timeout_seconds": check.timeout_seconds,
         "cert_warn_days": check.cert_warn_days,
         "enabled": check.enabled,
+        # null = probed from the debcontrol server.
+        "source_machine_id": str(check.source_machine_id) if check.source_machine_id else None,
         "last_checked_at": iso(check.last_checked_at),
         "last_ok": check.last_ok,
         "last_error": check.last_error,
@@ -63,6 +65,17 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "cert_expires_at": iso(check.cert_expires_at),
         "acknowledgement": acknowledgements.as_dict(check),
     }
+
+
+async def _require_visible_source(
+    db: AsyncSession, user: User, machine_id: uuid.UUID | None
+) -> None:
+    """A check may only be run from a machine the token's account can see."""
+    if machine_id is not None and not await visible_machines_by_ids(db, user, [machine_id]):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="source_machine_id is not a machine this account can see.",
+        )
 
 
 async def _get_or_404(check_id: uuid.UUID, db: AsyncSession) -> EndpointCheck:
@@ -116,6 +129,7 @@ async def create_check_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
+    await _require_visible_source(db, user, payload.source_machine_id)
     check = EndpointCheck(**payload.model_dump())
     db.add(check)
     await db.commit()
@@ -141,6 +155,8 @@ async def update_check_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
     check = await _get_or_404(check_id, db)
+    if payload.source_machine_id != check.source_machine_id:
+        await _require_visible_source(db, user, payload.source_machine_id)
     for field, value in payload.model_dump().items():
         setattr(check, field, value)
     await db.commit()

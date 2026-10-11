@@ -66,6 +66,18 @@
     <label for="cert_warn_days">{{ t(request, "checks.cert_warn_days") }}</label>
     <input type="number" id="cert_warn_days" name="cert_warn_days" value="{{ values.cert_warn_days }}" min="0" max="365" required>
 
+    <label for="source_machine_id">{{ t(request, "checks.source") }}</label>
+    <select id="source_machine_id" name="source_machine_id">
+      <option value="" {% if not values.source_machine_id %}selected{% endif %}>{{ t(request, "checks.source_server") }}</option>
+      {% for machine in source_machines %}
+        <option value="{{ machine.id }}" {% if values.source_machine_id == machine.id | string %}selected{% endif %}>{{ machine.name }}</option>
+      {% endfor %}
+      {% if check and check.source_machine and check.source_machine not in source_machines %}
+        <option value="{{ check.source_machine_id }}" selected>{{ check.source_machine.name }}</option>
+      {% endif %}
+    </select>
+    <p class="hint">{{ t(request, "checks.source_hint") }}</p>
+
     <label>
       <input type="checkbox" name="verify_tls" value="1" {% if values.verify_tls %}checked{% endif %}>
       {{ t(request, "checks.verify_tls") }}

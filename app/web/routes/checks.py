@@ -21,12 +21,13 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
+from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
 from app.services import acknowledgements, monitoring_history
-from app.services.access_scope import machines_visible_to
+from app.services.access_scope import machines_visible_to, visible_machines_by_ids
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import (
     SlaReport,
@@ -56,7 +57,7 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
     values = {key: str(form.get(key, "")) for key in (
         "name", "kind", "target", "expected_status", "expected_body", "unexpected_body",
         "json_path", "json_expected", "max_latency_ms", "sla_target_percent",
-        "interval_seconds", "timeout_seconds", "cert_warn_days",
+        "interval_seconds", "timeout_seconds", "cert_warn_days", "source_machine_id",
     )}
     values["verify_tls"] = "1" if form.get("verify_tls") else ""
     values["enabled"] = "1" if form.get("enabled") else ""
@@ -81,6 +82,9 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
             timeout_seconds=int(values["timeout_seconds"] or 10),
             cert_warn_days=int(values["cert_warn_days"] or 14),
             enabled=bool(values["enabled"]),
+            source_machine_id=(
+                uuid.UUID(values["source_machine_id"]) if values["source_machine_id"] else None
+            ),
         )
     except ValidationError as exc:
         return None, values, _form_error(exc)
@@ -101,13 +105,41 @@ async def _get_check_or_404(check_id: uuid.UUID, db: AsyncSession) -> EndpointCh
     return check
 
 
-def _render_form(
-    request: Request, check: EndpointCheck | None, values: dict[str, str], error: str
+async def _source_machines(db: AsyncSession, user: User) -> list[Machine]:
+    """The machines `user` may run a check from: the ones they can see."""
+    result = await db.execute((await machines_visible_to(db, user)).order_by(Machine.name))
+    return list(result.scalars().all())
+
+
+async def _source_error(
+    request: Request, db: AsyncSession, user: User, payload: EndpointCheckSave
+) -> str:
+    """An error when the chosen source machine is not one `user` can see —
+    a check is the one way to make a machine talk to an arbitrary address,
+    so it follows the same scope as everything else about the machine."""
+    if payload.source_machine_id is None:
+        return ""
+    visible = await visible_machines_by_ids(db, user, [payload.source_machine_id])
+    return "" if visible else t(request, "checks.error.unknown_source")
+
+
+async def _render_form(
+    request: Request,
+    db: AsyncSession,
+    user: User,
+    check: EndpointCheck | None,
+    values: dict[str, str],
+    error: str,
 ) -> Response:
     return templates.TemplateResponse(
         request,
         "checks/form.html",
-        {"check": check, "values": values, "error": error},
+        {
+            "check": check,
+            "values": values,
+            "error": error,
+            "source_machines": await _source_machines(db, user),
+        },
         status_code=status.HTTP_400_BAD_REQUEST if error else status.HTTP_200_OK,
     )
 
@@ -129,6 +161,7 @@ def _values_of(check: EndpointCheck) -> dict[str, str]:
         "cert_warn_days": str(check.cert_warn_days),
         "verify_tls": "1" if check.verify_tls else "",
         "enabled": "1" if check.enabled else "",
+        "source_machine_id": str(check.source_machine_id or ""),
     }
 
 
@@ -141,7 +174,7 @@ _DEFAULT_VALUES = {
     "unexpected_body": "", "json_path": "", "json_expected": "", "max_latency_ms": "",
     "sla_target_percent": "",
     "interval_seconds": "300", "timeout_seconds": "10", "cert_warn_days": "14",
-    "verify_tls": "1", "enabled": "1",
+    "verify_tls": "1", "enabled": "1", "source_machine_id": "",
 }
 
 
@@ -205,15 +238,25 @@ async def sla_report_export(
 
 
 @router.get("/new", dependencies=[_manage])
-async def new_check_form(request: Request) -> Response:
-    return _render_form(request, None, dict(_DEFAULT_VALUES), "")
+async def new_check_form(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    return await _render_form(request, db, current_user, None, dict(_DEFAULT_VALUES), "")
 
 
 @router.post("/new", dependencies=[_manage, Depends(verify_csrf)])
-async def create_check(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+async def create_check(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
     payload, values, error = await _parse_form(request)
-    if payload is None:
-        return _render_form(request, None, values, error)
+    if payload is not None:
+        error = await _source_error(request, db, current_user, payload)
+    if payload is None or error:
+        return await _render_form(request, db, current_user, None, values, error)
     check = EndpointCheck()
     _apply(check, payload)
     db.add(check)
@@ -233,20 +276,29 @@ async def create_check(request: Request, db: AsyncSession = Depends(get_db)) -> 
 
 @router.get("/{check_id}/edit", dependencies=[_manage])
 async def edit_check_form(
-    request: Request, check_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     check = await _get_check_or_404(check_id, db)
-    return _render_form(request, check, _values_of(check), "")
+    return await _render_form(request, db, current_user, check, _values_of(check), "")
 
 
 @router.post("/{check_id}/edit", dependencies=[_manage, Depends(verify_csrf)])
 async def update_check(
-    request: Request, check_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    request: Request,
+    check_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     check = await _get_check_or_404(check_id, db)
     payload, values, error = await _parse_form(request)
-    if payload is None:
-        return _render_form(request, check, values, error)
+    # Leaving a source the account cannot see in place is not a new choice.
+    if payload is not None and payload.source_machine_id != check.source_machine_id:
+        error = await _source_error(request, db, current_user, payload)
+    if payload is None or error:
+        return await _render_form(request, db, current_user, check, values, error)
     _apply(check, payload)
     await db.commit()
     await log_event(
