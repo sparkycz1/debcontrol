@@ -2348,3 +2348,17 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 /* Compare two machines: a fact that differs stands out. */
 .compare-differs > th, .compare-differs > td { background: var(--color-surface-raised); }
 .compare-differs > th { border-left: 3px solid var(--color-warn); }
+
+/* Dashboard: the account's own order of sections. */
+.dashboard-arrange { margin: 0 0 var(--space-3); }
+.dashboard-arrange > summary { cursor: pointer; color: var(--color-muted); }
+.dashboard-arrange-list { list-style: none; margin: var(--space-2) 0; padding: 0; max-width: 34rem; }
+.dashboard-arrange-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.dashboard-arrange-name { flex: 1; }
+.dashboard-arrange-list li.is-hidden .dashboard-arrange-name { color: var(--color-muted); }

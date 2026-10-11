@@ -5,8 +5,45 @@
 {% block main_class %}container-wide{% endblock %}
 
 {% block content %}
-  <h1>{{ t(request, "dashboard.title") }}</h1>
+  <div class="page-header">
+    <h1>{{ t(request, "dashboard.title") }}</h1>
+  </div>
 
+  {% if arrangeable | length > 1 %}
+  <details class="dashboard-arrange" {{ 'open' if layout_open else '' }}>
+    <summary>{{ t(request, "dashboard.arrange.summary") }}</summary>
+    <p class="hint">{{ t(request, "dashboard.arrange.hint") }}</p>
+    <ol class="dashboard-arrange-list">
+      {% for key in arrangeable %}
+        {% set is_hidden = key in layout.hidden %}
+        <li class="{{ 'is-hidden' if is_hidden else '' }}">
+          <span class="dashboard-arrange-name">{{ t(request, "dashboard.section." ~ key) }}</span>
+          {% if is_hidden %}<span class="badge">{{ t(request, "dashboard.arrange.hidden") }}</span>{% endif %}
+          <form method="post" action="/dashboard/layout" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="section" value="{{ key }}">
+            <button type="submit" name="action" value="up" class="link-button" {{ 'disabled' if loop.first else '' }}
+                    aria-label="{{ t(request, 'dashboard.arrange.up', section=t(request, 'dashboard.section.' ~ key)) }}">&uarr;</button>
+            <button type="submit" name="action" value="down" class="link-button" {{ 'disabled' if loop.last else '' }}
+                    aria-label="{{ t(request, 'dashboard.arrange.down', section=t(request, 'dashboard.section.' ~ key)) }}">&darr;</button>
+            <button type="submit" name="action" value="{{ 'show' if is_hidden else 'hide' }}" class="link-button">{{ t(request, "dashboard.arrange.show" if is_hidden else "dashboard.arrange.hide") }}</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ol>
+    {% if not layout.is_default %}
+      <form method="post" action="/dashboard/layout" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" name="action" value="reset" class="button button-secondary">{{ t(request, "dashboard.arrange.reset") }}</button>
+      </form>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {# The sections in this account's own order, the hidden ones left out
+     (app.services.dashboard_layout). Each still checks its own permission. #}
+  {% for section_key in layout.visible %}
+  {% if section_key == 'machines' %}
   {% if machine_stats %}
   <section class="panel">
     <h2>{{ t(request, "nav.machines") }}</h2>
@@ -34,7 +71,7 @@
     </p>
   </section>
   {% endif %}
-
+  {% elif section_key == 'summary' %}
   {% if fleet_summary %}
   <section class="panel">
     <h2>{{ t(request, "dashboard.fleet_summary.heading") }}</h2>
@@ -45,7 +82,7 @@
     <div class="fleet-summary-content">{{ fleet_summary.content }}</div>
   </section>
   {% endif %}
-
+  {% elif section_key == 'trends' %}
   {% if fleet_snapshots is defined %}
   <section class="panel">
     <h2>{{ t(request, "dashboard.fleet_trends.heading") }}</h2>
@@ -66,7 +103,7 @@
     </div>
   </section>
   {% endif %}
-
+  {% elif section_key == 'scheduling' %}
   {% if upcoming_tasks is defined %}
   <section class="panel">
     <h2>{{ t(request, "nav.scheduling") }}</h2>
@@ -89,7 +126,7 @@
     <p class="hint"><a href="/scheduling">{{ t(request, "dashboard.scheduling.all_tasks") }}</a></p>
   </section>
   {% endif %}
-
+  {% elif section_key == 'activity' %}
   {% if recent_audit_entries is defined %}
   <section class="panel">
     <h2>{{ t(request, "dashboard.activity.heading") }}</h2>
@@ -120,7 +157,7 @@
     <p class="hint"><a href="/audit">{{ t(request, "dashboard.activity.full_log") }}</a></p>
   </section>
   {% endif %}
-
+  {% elif section_key == 'fleet' %}
   {% if machine_stats %}
   <section class="panel" id="fleet">
     <div class="panel-header">
@@ -131,6 +168,8 @@
     {% include "partials/fleet_grid.html" %}
   </section>
   {% endif %}
+  {% endif %}
+  {% endfor %}
 
   {% if not machine_stats and upcoming_tasks is not defined and recent_audit_entries is not defined %}
   <section class="panel">

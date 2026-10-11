@@ -2303,6 +2303,20 @@
     "compare.different": "Different on each ({count})",
     "compare.only_on": "Only on {machine} ({count})",
     "compare.more": "…and {count} more.",
-    "compare.not_refreshed": "One of the machines has not reported this yet, so there is nothing to compare."
+    "compare.not_refreshed": "One of the machines has not reported this yet, so there is nothing to compare.",
+    "dashboard.arrange.summary": "Arrange this page",
+    "dashboard.arrange.hint": "The order of the sections and which of them you see. It applies to your account only.",
+    "dashboard.arrange.hidden": "hidden",
+    "dashboard.arrange.hide": "hide",
+    "dashboard.arrange.show": "show",
+    "dashboard.arrange.up": "Move {section} up",
+    "dashboard.arrange.down": "Move {section} down",
+    "dashboard.arrange.reset": "Back to the default",
+    "dashboard.section.machines": "Machines (counts)",
+    "dashboard.section.summary": "AI fleet summary",
+    "dashboard.section.trends": "Fleet trends",
+    "dashboard.section.scheduling": "Scheduling",
+    "dashboard.section.activity": "Recent activity",
+    "dashboard.section.fleet": "Machine cards"
   }
 }
