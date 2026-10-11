@@ -2348,6 +2348,20 @@
     "compare.different": "Liší se ({count})",
     "compare.only_on": "Jen na {machine} ({count})",
     "compare.more": "…a dalších {count}.",
-    "compare.not_refreshed": "Jedno ze zařízení to zatím nenahlásilo, takže není co porovnat."
+    "compare.not_refreshed": "Jedno ze zařízení to zatím nenahlásilo, takže není co porovnat.",
+    "dashboard.arrange.summary": "Uspořádat tuto stránku",
+    "dashboard.arrange.hint": "Pořadí sekcí a které z nich vidíte. Platí jen pro váš účet.",
+    "dashboard.arrange.hidden": "skryto",
+    "dashboard.arrange.hide": "skrýt",
+    "dashboard.arrange.show": "zobrazit",
+    "dashboard.arrange.up": "Posunout sekci {section} nahoru",
+    "dashboard.arrange.down": "Posunout sekci {section} dolů",
+    "dashboard.arrange.reset": "Zpět na výchozí",
+    "dashboard.section.machines": "Zařízení (počty)",
+    "dashboard.section.summary": "AI souhrn flotily",
+    "dashboard.section.trends": "Trendy flotily",
+    "dashboard.section.scheduling": "Plánování",
+    "dashboard.section.activity": "Poslední aktivita",
+    "dashboard.section.fleet": "Karty zařízení"
   }
 }

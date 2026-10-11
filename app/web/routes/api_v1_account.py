@@ -34,6 +34,7 @@ from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.user import User
 from app.db.session import get_db
 from app.i18n import Locale, available_locales, get_locale
+from app.services import dashboard_layout
 from app.services.saved_audit_views import (
     DuplicateViewNameError as DuplicateAuditViewNameError,
 )
@@ -400,3 +401,48 @@ async def delete_saved_audit_view_api(
             target_id=view_id,
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- The account's own Dashboard layout (app.services.dashboard_layout) ----
+
+
+class _DashboardLayout(BaseModel):
+    # Section keys in the wanted order; the ones left out keep their
+    # default place after them.
+    order: list[str] = Field(default_factory=list, max_length=32)
+    hidden: list[str] = Field(default_factory=list, max_length=32)
+
+
+def _layout_response(layout: dashboard_layout.Layout) -> dict[str, object]:
+    return {**layout.as_dict(), "sections": list(dashboard_layout.SECTIONS)}
+
+
+@router.get("/account/dashboard-layout")
+async def get_dashboard_layout_api(
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The order of this account's Dashboard sections and which are hidden,
+    plus every section key there is."""
+    return _layout_response(dashboard_layout.resolve(user.dashboard_layout))
+
+
+@router.put("/account/dashboard-layout")
+async def set_dashboard_layout_api(
+    payload: _DashboardLayout,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Replace the layout. An unknown section key is refused; an empty
+    `order` and `hidden` go back to the default."""
+    unknown = sorted(set(payload.order + payload.hidden) - set(dashboard_layout.SECTIONS))
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown section(s): {', '.join(unknown)}.",
+        )
+    layout = dashboard_layout.resolve({"order": payload.order, "hidden": payload.hidden})
+    account = await db.get(User, user.id)
+    assert account is not None
+    account.dashboard_layout = dashboard_layout.to_store(layout)
+    await db.commit()
+    return _layout_response(layout)
