@@ -17,7 +17,9 @@
 {% endmacro %}
 
 {% macro host_key_badge(machine) %}
-  {% if machine.host_key_fingerprint %}
+  {% if machine.host_key_changed_fingerprint %}
+    <span class="badge badge-error" title="{{ t(request, 'host_key_changed.badge_hint') }}">{{ t(request, "host_key_changed.badge") }}</span>
+  {% elif machine.host_key_fingerprint %}
     <span class="badge badge-ok">{{ t(request, "machines.host_key.pinned") }}</span>
   {% else %}
     <span class="badge badge-warn">{{ t(request, "machines.host_key.unconfirmed") }}</span>

@@ -679,6 +679,8 @@ async def update_machine(
 
     if connection_target_changed:
         machine.host_key_fingerprint = None
+        machine.host_key_changed_fingerprint = None
+        machine.host_key_changed_at = None
         machine.discovered_hostname = None
         machine.os_version = None
         machine.os_id = None
@@ -756,7 +758,10 @@ async def trust_host_key(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid fingerprint format."
         )
+    previous_fingerprint = machine.host_key_fingerprint
     machine.host_key_fingerprint = fingerprint
+    machine.host_key_changed_fingerprint = None
+    machine.host_key_changed_at = None
     await db.commit()
 
     await log_event(
@@ -767,7 +772,14 @@ async def trust_host_key(
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
-        details={"fingerprint": fingerprint},
+        details={
+            "fingerprint": fingerprint,
+            **(
+                {"previous_fingerprint": previous_fingerprint}
+                if previous_fingerprint and previous_fingerprint != fingerprint
+                else {}
+            ),
+        },
     )
 
     # Now that the machine can be safely connected to, kick off an initial

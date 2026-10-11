@@ -211,6 +211,8 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "apt_upgradable_packages": machine.apt_upgradable_packages,
         "apt_held_packages": machine.apt_held_packages,
         "updates_check_error": machine.updates_check_error,
+        "host_key_changed_fingerprint": machine.host_key_changed_fingerprint,
+        "host_key_changed_at": _isoformat(machine.host_key_changed_at),
         "flatpak_upgradable_packages": machine.flatpak_upgradable_packages,
         "snap_upgradable_packages": machine.snap_upgradable_packages,
         "updates_checked_at": _isoformat(machine.updates_checked_at),
@@ -1022,6 +1024,8 @@ async def update_machine_api(
 
     if connection_target_changed:
         machine.host_key_fingerprint = None
+        machine.host_key_changed_fingerprint = None
+        machine.host_key_changed_at = None
         machine.discovered_hostname = None
         machine.os_version = None
         machine.os_id = None
@@ -1179,7 +1183,10 @@ async def trust_host_key_api(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid fingerprint format."
         )
+    previous_fingerprint = machine.host_key_fingerprint
     machine.host_key_fingerprint = fingerprint
+    machine.host_key_changed_fingerprint = None
+    machine.host_key_changed_at = None
     await db.commit()
 
     await log_event(
@@ -1190,7 +1197,14 @@ async def trust_host_key_api(
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
-        details={"fingerprint": fingerprint},
+        details={
+            "fingerprint": fingerprint,
+            **(
+                {"previous_fingerprint": previous_fingerprint}
+                if previous_fingerprint and previous_fingerprint != fingerprint
+                else {}
+            ),
+        },
     )
     # Same follow-up the web UI's equivalent kicks off: an initial facts pass
     # and a readiness check, both fire-and-forget.

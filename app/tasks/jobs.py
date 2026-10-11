@@ -82,7 +82,7 @@ from app.services.notifications import _rule_matches_scope, notify
 from app.ssh.client import test_connection
 from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
-from app.ssh.exceptions import SSHConnectionError
+from app.ssh.exceptions import HostKeyMismatchError, SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import check_reboot_required, gather_facts
 from app.ssh.identity import get_or_create_identity
@@ -1411,6 +1411,20 @@ async def _refresh_all_machine_services() -> None:
         refresh_machine_services.delay(str(machine_id))
 
 
+def _note_host_key_change(machine: Machine, exc: SSHConnectionError) -> bool:
+    """Record on `machine` that it answered with a different key than the
+    pinned one, if that is what `exc` says and it isn't recorded already.
+    Called from the monitoring sample: the one connection every pinned
+    machine gets regularly, so it is where a changed key is noticed.
+    Returns whether anything changed."""
+    presented = exc.presented_fingerprint if isinstance(exc, HostKeyMismatchError) else None
+    if not presented or presented == machine.host_key_changed_fingerprint:
+        return False
+    machine.host_key_changed_fingerprint = presented
+    machine.host_key_changed_at = datetime.now(UTC)
+    return True
+
+
 async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
     """Connect to one machine and take one CPU/RAM/disk/failed-services
     sample for the Monitoring tab. Requires a pinned host key — machines
@@ -1434,7 +1448,16 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             )
         except SSHConnectionError as exc:
             logger.warning("sample_machine_monitoring failed for %s: %s", machine.name, exc)
+            if _note_host_key_change(machine, exc):
+                await session.commit()
+                await publish_machine_event(machine_id, KIND_STATUS)
             return {"ok": False, "error": str(exc)}
+
+        # Connected with the pinned key — whatever answered differently
+        # before (if anything did) is gone.
+        if machine.host_key_changed_fingerprint is not None:
+            machine.host_key_changed_fingerprint = None
+            machine.host_key_changed_at = None
 
         now = datetime.now(UTC)
         previous_smart = (
