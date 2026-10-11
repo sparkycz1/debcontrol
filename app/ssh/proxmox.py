@@ -678,3 +678,31 @@ def build_guest_action_command(guest: dict[str, Any], action: str) -> str:
     if guest_type not in ("qemu", "lxc") or not isinstance(vmid, int) or not _NODE_RE.match(node):
         raise ValueError("Unknown guest.")
     return f"sudo -n pvesh create /nodes/{node}/{guest_type}/{vmid}/status/{action} 2>&1"
+
+
+# --- Guests deliberately left out of backups ---
+
+
+def split_not_backed_up(
+    backups: dict[str, Any] | None, exempt: list[int] | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(guests no backup job covers that nobody signed off, the ones marked
+    as deliberately not backed up). Only guests Proxmox still reports as
+    uncovered appear in either list — an exempt VMID that has since been
+    added to a job, or deleted, is in neither."""
+    exempt_ids = set(exempt or [])
+    uncovered: list[dict[str, Any]] = []
+    signed_off: list[dict[str, Any]] = []
+    for guest in (backups or {}).get("not_backed_up") or []:
+        (signed_off if guest.get("vmid") in exempt_ids else uncovered).append(guest)
+    return uncovered, signed_off
+
+
+def with_backup_exempt(current: list[int] | None, vmids: list[int], *, exempt: bool) -> list[int]:
+    """`current` with `vmids` added (or removed), sorted, no duplicates."""
+    result = set(current or [])
+    if exempt:
+        result.update(vmids)
+    else:
+        result.difference_update(vmids)
+    return sorted(result)

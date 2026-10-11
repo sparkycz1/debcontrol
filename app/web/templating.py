@@ -206,7 +206,10 @@ def proxmox_summary(machine: Any) -> dict[str, Any] | None:
         "pools": len(machine.zfs_pools or []),
         "unhealthy_pools": proxmox.unhealthy_pools(machine.zfs_pools),
         "last_backup": proxmox.last_backup(machine.pve_backups),
-        "not_backed_up": len(backups.get("not_backed_up") or []),
+        # Guests marked as deliberately not backed up are not counted.
+        "not_backed_up": len(
+            proxmox.split_not_backed_up(backups, machine.pve_backup_exempt)[0]
+        ),
     }
 
 

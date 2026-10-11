@@ -2252,6 +2252,13 @@
     "batches.count.running": "{count} running",
     "batches.count.pending": "{count} waiting",
     "batches.count.failed": "{count} failed",
-    "batches.count.of": "of {count}"
+    "batches.count.of": "of {count}",
+    "proxmox.backup_exempt.mark": "don't warn",
+    "proxmox.backup_exempt.mark_title": "This guest is deliberately not backed up (a template, a test VM). It leaves this warning.",
+    "proxmox.backup_exempt.mark_all": "Don't warn about any of these",
+    "proxmox.backup_exempt.unmark": "warn again",
+    "proxmox.backup_exempt.heading": "Deliberately not backed up ({count}):",
+    "audit.action_label.machine.proxmox.backup_exempt.add": "Guest marked as deliberately not backed up",
+    "audit.action_label.machine.proxmox.backup_exempt.remove": "Guest counts as not backed up again"
   }
 }

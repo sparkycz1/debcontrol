@@ -195,6 +195,10 @@ class Machine(Base):
     pve_storage: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # {"tasks": [...], "jobs": [...], "not_backed_up": [...]}
     pve_backups: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # VMIDs someone marked as deliberately not backed up (templates, test
+    # VMs) — left out of the "not in any backup job" warning. Set by hand
+    # on the Proxmox tab, never by a refresh.
+    pve_backup_exempt: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
     pve_guests: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # {"name", "quorate", "nodes": [...]} (monitoring sample) and the last
     # failed tasks of any kind (facts refresh) — Proxmox VE.

@@ -36,6 +36,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineUpdate
 from app.services import acknowledgements, machine_timeline
+from app.services import proxmox_backup_exempt as proxmox_backup_exempt_service
 from app.services.access_scope import (
     can_see_group_id,
 )
@@ -1014,6 +1015,9 @@ async def machine_proxmox(
         )
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     running, total = proxmox.guest_counts(machine.pve_guests)
+    uncovered, signed_off = proxmox.split_not_backed_up(
+        machine.pve_backups, machine.pve_backup_exempt
+    )
     response = templates.TemplateResponse(
         request,
         "machines/proxmox.html",
@@ -1026,6 +1030,9 @@ async def machine_proxmox(
             "guests_total": total,
             "unhealthy_pools": proxmox.unhealthy_pools(machine.zfs_pools),
             "last_backup": proxmox.last_backup(machine.pve_backups),
+            "not_backed_up": uncovered,
+            "backup_exempt": signed_off,
+            "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
             "can_power": current_user.has_permission(Permission.ACTION_POWER),
             "now_epoch": int(datetime.now(UTC).timestamp()),
             "stale_seconds": proxmox.STALE_BACKUP_SECONDS,
@@ -1035,6 +1042,37 @@ async def machine_proxmox(
     if new_cookie:
         set_csrf_cookie(response, new_cookie)
     return response
+
+
+@router.post(
+    "/{machine_id}/proxmox/backup-exempt", dependencies=[need_manage, Depends(verify_csrf)]
+)
+async def proxmox_backup_exempt(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    vmid: str = Form(""),
+    exempt: str = Form("1"),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Mark a guest as deliberately not backed up, so it leaves the "not
+    in any backup job" warning (`exempt=0` puts it back). `vmid=all` takes
+    every guest in the warning, or every marked one. `machine.manage`,
+    audited as `machine.proxmox.backup_exempt.add` / `.remove`."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    marking = exempt not in ("0", "false", "")
+    vmids = None if vmid.strip() == "all" else [int(vmid)] if vmid.strip().isdigit() else []
+    try:
+        await proxmox_backup_exempt_service.set_exempt(
+            db, request, machine, vmids, exempt=marking
+        )
+    except proxmox_backup_exempt_service.UnknownGuestError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No such guest in the list."
+        ) from None
+    return RedirectResponse(
+        url=f"/machines/{machine.id}/proxmox#backups", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post(
