@@ -24,12 +24,13 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.db.models.user import User
 from app.db.session import get_db
-from app.ssh.security_advisories import is_safe_package_name
-from app.ssh.updates import PendingPackage
 
 # Imported as a module, not name-by-name: this file already has a route
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
+from app.services import update_batches
+from app.ssh.security_advisories import is_safe_package_name
+from app.ssh.updates import PendingPackage
 from app.tasks import jobs as tasks
 from app.web.flash import sign_flash
 from app.web.messages import LocalizedText
@@ -471,8 +472,22 @@ async def machine_update_run_detail(
     run = await _get_update_run_or_404(run_id, db)
     if run.machine_id != machine.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
+    # The other machines updated together with this one, so the page can
+    # lead back to the batch and on to its neighbours.
+    batch_runs = (
+        await update_batches.visible_batch_runs(db, current_user, run.batch_id)
+        if run.batch_id is not None
+        else []
+    )
     return templates.TemplateResponse(
-        request, "machines/update_run.html", {"machine": machine, "run": run}
+        request,
+        "machines/update_run.html",
+        {
+            "machine": machine,
+            "run": run,
+            "batch_runs": batch_runs if len(batch_runs) > 1 else [],
+            "batch_counts": update_batches.count_runs(batch_runs),
+        },
     )
 
 

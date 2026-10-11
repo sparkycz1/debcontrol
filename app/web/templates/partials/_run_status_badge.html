@@ -1,0 +1,23 @@
+{# One update run's status as a badge: {{ run_status_badge(request, run) }} #}
+{% macro run_status_badge(request, run) -%}
+  {%- if run.status.value == 'pending' -%}
+    <span class="badge badge-warn">{{ t(request, "machine.update_run.pending") }}</span>
+  {%- elif run.status.value == 'running' -%}
+    <span class="badge badge-warn">{{ t(request, "machine.update_run.running") }}</span>
+  {%- elif run.status.value == 'succeeded' -%}
+    <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
+  {%- else -%}
+    <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{# "3 done, 1 running, 1 failed of 5" for a batch's counts. #}
+{% macro batch_progress(request, counts) -%}
+  <span class="batch-progress">
+    <span class="badge badge-ok">{{ t(request, "batches.count.succeeded", count=counts.succeeded) }}</span>
+    {%- if counts.running %} <span class="badge badge-warn">{{ t(request, "batches.count.running", count=counts.running) }}</span>{% endif -%}
+    {%- if counts.pending %} <span class="badge badge-warn">{{ t(request, "batches.count.pending", count=counts.pending) }}</span>{% endif -%}
+    {%- if counts.failed %} <span class="badge badge-error">{{ t(request, "batches.count.failed", count=counts.failed) }}</span>{% endif %}
+    <span class="hint">{{ t(request, "batches.count.of", count=counts.total) }}</span>
+  </span>
+{%- endmacro %}

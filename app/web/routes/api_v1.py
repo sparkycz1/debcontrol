@@ -90,7 +90,12 @@ from app.schemas.acknowledgement import AcknowledgeRequest
 from app.schemas.machine import MachineCreate, MachineUpdate
 from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
-from app.services import acknowledgements, machine_timeline, monitoring_history
+from app.services import (
+    acknowledgements,
+    machine_timeline,
+    monitoring_history,
+    update_batches,
+)
 from app.services.access_scope import (
     can_see_group_id,
     can_see_machine,
@@ -2176,6 +2181,50 @@ async def create_machine_group_api(
     return _group_to_dict(group)
 
 
+# Both registered before `/machine-groups/{group_id}`: "batches" would
+# otherwise be read as a group id.
+@router.get("/machine-groups/batches", dependencies=[_view_machines])
+async def update_batch_list_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The newest update batches of more than one machine, newest first,
+    with the number of runs in each state — the API equivalent of the
+    "Update batches" page. Only the runs on machines this account can see
+    are counted."""
+    batches = await update_batches.recent_batches(db, user)
+    return {
+        "batches": [
+            {
+                "batch_id": str(batch.batch_id),
+                "started_at": _isoformat(batch.started_at),
+                "strategy": batch.strategy.value,
+                **batch.counts.as_dict(),
+            }
+            for batch in batches
+        ]
+    }
+
+
+@router.get("/machine-groups/batches/{batch_id}", dependencies=[_view_machines])
+async def update_batch_detail_api(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    # Restricted to this account's own machines, so a batch that straddles
+    # the boundary (an unrestricted admin's "All machines" run) reports only
+    # the part this account can see.
+    runs = await update_batches.visible_batch_runs(db, user, batch_id)
+    if not runs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
+    return {
+        "batch_id": str(batch_id),
+        **update_batches.count_runs(runs).as_dict(),
+        "runs": [_update_run_to_dict(r) for r in runs],
+    }
+
+
 @router.get("/machine-groups/{group_id}", dependencies=[_view_groups])
 async def get_machine_group_api(
     group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
@@ -2479,31 +2528,6 @@ async def group_power_action_api(
     )
     return {"ok": True, "skipped": skipped}
 
-
-
-@router.get("/machine-groups/batches/{batch_id}", dependencies=[_view_machines])
-async def update_batch_detail_api(
-    batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_api_token_user),
-) -> dict[str, object]:
-    # Restricted to this account's own machines, so a batch that straddles
-    # the boundary (an unrestricted admin's "All machines" run) reports only
-    # the part this account can see.
-    visible_ids = (await machines_visible_to(db, user)).with_only_columns(Machine.id)
-    result = await db.execute(
-        select(MachineUpdateRun)
-        .options(selectinload(MachineUpdateRun.machine))
-        .where(
-            MachineUpdateRun.batch_id == batch_id,
-            MachineUpdateRun.machine_id.in_(visible_ids),
-        )
-        .order_by(MachineUpdateRun.created_at)
-    )
-    runs = list(result.scalars().all())
-    if not runs:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
-    return {"batch_id": str(batch_id), "runs": [_update_run_to_dict(r) for r in runs]}
 
 
 @router.post("/machines/{machine_id}/acknowledge", dependencies=[_manage_machines])
