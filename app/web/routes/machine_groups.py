@@ -18,11 +18,12 @@ from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_tag import Tag
-from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
+from app.services import update_batches
 from app.services.access_scope import (
     can_see_machine,
     count_visible_machines,
@@ -425,6 +426,66 @@ async def all_power_action(
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
+# Registered before `/{group_id}` on purpose: "batches" would otherwise be
+# read as a group id.
+@router.get("/batches")
+async def update_batch_list(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The newest update batches (a "run update" on several machines at
+    once) with how each stands — the way back to a batch after leaving its
+    page. See `app.services.update_batches`."""
+    return templates.TemplateResponse(
+        request,
+        "machine_groups/batches.html",
+        {"batches": await update_batches.recent_batches(db, current_user)},
+    )
+
+
+def _batch_context(
+    batch_id: uuid.UUID, runs: list[MachineUpdateRun], **extra: object
+) -> dict[str, object]:
+    counts = update_batches.count_runs(runs)
+    return {
+        "runs": runs,
+        "batch_id": batch_id,
+        "counts": counts,
+        "has_pending": counts.unfinished > 0,
+        **extra,
+    }
+
+
+@router.get("/batches/{batch_id}")
+async def update_batch_detail(
+    request: Request,
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    skipped: int = 0,
+) -> Response:
+    runs = await update_batches.visible_batch_runs(db, current_user, batch_id)
+    if not runs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
+    return templates.TemplateResponse(
+        request, "machine_groups/batch.html", _batch_context(batch_id, runs, skipped=skipped)
+    )
+
+
+@router.get("/batches/{batch_id}/status")
+async def update_batch_status(
+    request: Request,
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    runs = await update_batches.visible_batch_runs(db, current_user, batch_id)
+    return templates.TemplateResponse(
+        request, "partials/update_batch_status.html", _batch_context(batch_id, runs)
+    )
+
+
 @router.get("/{group_id}")
 async def group_detail(
     request: Request,
@@ -725,64 +786,6 @@ async def group_power_action(
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
-
-
-async def _visible_batch_runs(
-    batch_id: uuid.UUID, db: AsyncSession, user: User
-) -> list[MachineUpdateRun]:
-    """One batch's update runs, restricted to machines `user` can see.
-
-    A batch is an ad-hoc set of machines, so it can straddle the boundary
-    (an unrestricted admin triggering "All machines" produces one batch
-    covering everything). Showing a restricted account only its own rows
-    keeps the page useful without leaking the rest."""
-    visible_ids = (await machines_visible_to(db, user)).with_only_columns(Machine.id)
-    result = await db.execute(
-        select(MachineUpdateRun)
-        .options(selectinload(MachineUpdateRun.machine))
-        .where(
-            MachineUpdateRun.batch_id == batch_id,
-            MachineUpdateRun.machine_id.in_(visible_ids),
-        )
-        .order_by(MachineUpdateRun.created_at)
-    )
-    return list(result.scalars().all())
-
-
-@router.get("/batches/{batch_id}")
-async def update_batch_detail(
-    request: Request,
-    batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    skipped: int = 0,
-) -> Response:
-    runs = await _visible_batch_runs(batch_id, db, current_user)
-    if not runs:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
-
-    has_pending = any(r.status in (UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING) for r in runs)
-    return templates.TemplateResponse(
-        request,
-        "machine_groups/batch.html",
-        {"runs": runs, "batch_id": batch_id, "skipped": skipped, "has_pending": has_pending},
-    )
-
-
-@router.get("/batches/{batch_id}/status")
-async def update_batch_status(
-    request: Request,
-    batch_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Response:
-    runs = await _visible_batch_runs(batch_id, db, current_user)
-    has_pending = any(r.status in (UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING) for r in runs)
-    return templates.TemplateResponse(
-        request,
-        "partials/update_batch_status.html",
-        {"runs": runs, "batch_id": batch_id, "has_pending": has_pending},
-    )
 
 
 @router.post("/{group_id}/delete", dependencies=[_manage, Depends(verify_csrf)])

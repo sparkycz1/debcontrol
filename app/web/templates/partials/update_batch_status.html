@@ -1,3 +1,4 @@
+{% from "partials/_run_status_badge.html" import run_status_badge, batch_progress %}
 <div
   id="batch-status"
   {% if has_pending %}
@@ -6,12 +7,14 @@
   hx-swap="outerHTML"
   {% endif %}
 >
+  <p>{{ batch_progress(request, counts) }}</p>
   <table class="data-table">
     <thead>
       <tr>
         <th>{{ t(request, "nav.machines") }}</th>
         <th>{{ t(request, "machine.updates.strategy") }}</th>
         <th>{{ t(request, "machines.table.status") }}</th>
+        <th>{{ t(request, "machine.updates.finished") }}</th>
         <th></th>
       </tr>
     </thead>
@@ -21,14 +24,10 @@
           <td><a href="/machines/{{ run.machine_id }}">{{ run.machine.name }}</a></td>
           <td>{{ strategy_label(request, run.strategy.value) }}</td>
           <td>
-            {% if run.status.value in ('pending', 'running') %}
-              <span class="badge badge-warn">{{ run.status.value }}</span>
-            {% elif run.status.value == 'succeeded' %}
-              <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
-            {% else %}
-              <span class="badge badge-error">{{ t(request, "machine.updates.failed") }}</span>
-            {% endif %}
+            {{ run_status_badge(request, run) }}
+            {% if run.error %}<div class="table-summary">{{ run.error }}</div>{% endif %}
           </td>
+          <td>{{ run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') if run.finished_at else '—' }}</td>
           <td><a href="/machines/{{ run.machine_id }}/updates/{{ run.id }}">{{ t(request, "machine.updates.details") }}</a></td>
         </tr>
       {% endfor %}

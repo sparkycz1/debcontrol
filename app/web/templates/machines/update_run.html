@@ -1,12 +1,33 @@
 {% extends "base.html" %}
+{% from "partials/_run_status_badge.html" import run_status_badge, batch_progress %}
 
 {% block title %}{{ t(request, "machine.update_run.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <h1>{{ t(request, "machine.update_run.title") }} — {{ machine.name }}</h1>
-    <a class="button button-secondary" href="/machines/{{ machine.id }}">{{ t(request, "machine.update_run.back") }}</a>
+    <div class="page-header-actions">
+      {% if batch_runs %}
+        <a class="button" href="/machine-groups/batches/{{ run.batch_id }}">&larr; {{ t(request, "batches.back_to_batch", count=batch_counts.total) }}</a>
+      {% endif %}
+      <a class="button button-secondary" href="/machines/{{ machine.id }}/updates">{{ t(request, "machine.update_run.back") }}</a>
+    </div>
   </div>
+
+  {% if batch_runs %}
+    {# The machines updated together with this one: where each stands, and
+       a way to step to the next without going back to the batch page. #}
+    <nav class="batch-strip" aria-label="{{ t(request, 'batches.strip_aria') }}">
+      <span class="hint">{{ t(request, "batches.strip_label") }}</span>
+      {% for sibling in batch_runs %}
+        <a class="batch-strip-item {{ 'is-current' if sibling.id == run.id else '' }}"
+           href="/machines/{{ sibling.machine_id }}/updates/{{ sibling.id }}"
+           {% if sibling.id == run.id %}aria-current="page"{% endif %}>
+          {{ sibling.machine.name }} {{ run_status_badge(request, sibling) }}
+        </a>
+      {% endfor %}
+    </nav>
+  {% endif %}
 
   <section class="panel">
     {% include "partials/update_run_status.html" %}
