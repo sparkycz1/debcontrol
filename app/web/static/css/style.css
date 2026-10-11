@@ -66,7 +66,9 @@
 
 * { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
+/* `scrollbar-gutter`: a short page and a long one keep the same width, so
+   moving between them in the menu does not shift everything sideways. */
+html { -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; }
 
 body {
   margin: 0;

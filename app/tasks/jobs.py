@@ -2278,6 +2278,9 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
             )
         except SSHConnectionError as exc:
             logger.warning("check_machine_updates failed for %s: %s", machine.name, exc)
+            machine.updates_check_error = str(exc)[:1024]
+            await session.commit()
+            await publish_machine_event(machine_id, KIND_UPDATES)
             return {"ok": False, "error": str(exc)}
 
         machine.updates_checked_at = datetime.now(UTC)
@@ -2292,6 +2295,7 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
             machine.apt_held_packages = result.held_packages
 
         if result.exit_status == 0:
+            machine.updates_check_error = None
             previous_packages = machine.apt_upgradable_packages
             machine.upgradable_count = result.upgradable_count
             machine.security_upgradable_count = result.security_upgradable_count
@@ -2314,9 +2318,13 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
         machine.upgradable_count = None
         machine.security_upgradable_count = None
         machine.apt_upgradable_packages = None
+        error = f"apt-get update exited with status {result.exit_status}."
+        # apt's own last lines say why (an unreachable mirror, an expired
+        # key, no sudo) — kept so the Updates tab can show them.
+        tail = "\n".join(result.output.strip().splitlines()[-6:])
+        machine.updates_check_error = f"{error}\n{tail}".strip()[:1024]
         await session.commit()
         await publish_machine_event(machine_id, KIND_UPDATES)
-        error = f"apt-get update exited with status {result.exit_status}."
         logger.warning("check_machine_updates failed for %s: %s", machine.name, error)
         return {"ok": False, "error": error}
 

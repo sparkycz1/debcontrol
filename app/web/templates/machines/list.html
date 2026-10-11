@@ -327,6 +327,15 @@
           <button type="submit" formaction="/machines/bulk/group" class="button button-secondary">
             {{ t(request, 'machines.bulk.move_to_group') }}
           </button>
+          <input type="text" name="tags" class="inline-text-input" maxlength="200"
+                 aria-label="{{ t(request, 'machines.bulk.tags_aria') }}"
+                 placeholder="{{ t(request, 'machines.bulk.tags_placeholder') }}">
+          <button type="submit" formaction="/machines/bulk/tags/add" class="button button-secondary">
+            {{ t(request, 'machines.bulk.add_tags') }}
+          </button>
+          <button type="submit" formaction="/machines/bulk/tags/remove" class="button button-secondary">
+            {{ t(request, 'machines.bulk.remove_tags') }}
+          </button>
         {% endif %}
         <span class="bulk-danger-zone">
           <button type="submit" formaction="/machines/bulk/power-confirm/reboot" class="button button-secondary">

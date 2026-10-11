@@ -1,5 +1,7 @@
 {% set other_count = (machine.flatpak_upgradable_count or 0) + (machine.snap_upgradable_count or 0) %}
-{% if machine.updates_checked_at is none %}
+{% if machine.updates_check_error %}
+  <span class="badge badge-error" title="{{ machine.updates_check_error }}">{{ t(request, "machine.update_check_failed") }}</span>
+{% elif machine.updates_checked_at is none %}
   <span class="hint">—</span>
 {% elif machine.upgradable_count is none %}
   <span class="hint">{{ t(request, "groups.status.unknown") }}</span>

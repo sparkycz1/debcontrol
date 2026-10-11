@@ -177,6 +177,63 @@ async def _reachability_transitions(
     ]
 
 
+_TERMINAL_OPEN = "machine.terminal.open"
+_TERMINAL_CLOSE = "machine.terminal.close"
+TERMINAL_SESSION = "machine.terminal.session"
+# How far the logged "open" may sit from where its "close" says the session
+# began (close time minus duration) and still be the same session.
+_SESSION_MATCH_SECONDS = 15
+
+
+def _audit_event(entry: AuditLogEntry) -> TimelineEvent:
+    data: dict[str, Any] = {"action": entry.action, "outcome": entry.outcome.value}
+    details = entry.details if isinstance(entry.details, dict) else {}
+    duration = details.get("duration_seconds")
+    if entry.action == _TERMINAL_CLOSE and isinstance(duration, int | float):
+        data["duration_seconds"] = duration
+    return TimelineEvent(
+        at=_utc(entry.created_at),
+        kind="audit",
+        summary=entry.summary,
+        outcome="ok" if entry.outcome == AuditOutcome.SUCCESS else "error",
+        actor=entry.actor,
+        data=data,
+    )
+
+
+def _merge_terminal_sessions(events: list[TimelineEvent]) -> list[TimelineEvent]:
+    """One entry per terminal session instead of an "opened" and a "closed"
+    one: the close carries the duration, so it becomes the session — placed
+    at the moment it started — and the matching open is dropped. An open
+    with no close yet (still running, or the close was never written)
+    stays as it is. `events` is newest first, and stays so."""
+    opens = [e for e in events if e.data.get("action") == _TERMINAL_OPEN]
+    dropped: set[int] = set()
+    for event in events:
+        duration = event.data.get("duration_seconds")
+        if event.data.get("action") != _TERMINAL_CLOSE or duration is None:
+            continue
+        started = event.at - timedelta(seconds=float(duration))
+        match = next(
+            (
+                o
+                for o in opens
+                if id(o) not in dropped
+                and o.actor == event.actor
+                and abs((o.at - started).total_seconds()) <= _SESSION_MATCH_SECONDS
+            ),
+            None,
+        )
+        if match is not None:
+            dropped.add(id(match))
+        event.at = started
+        event.data["action"] = TERMINAL_SESSION
+        event.summary = f"Terminal session ({float(duration):.0f}s)"
+    merged = [e for e in events if id(e) not in dropped]
+    merged.sort(key=lambda e: e.at, reverse=True)
+    return merged
+
+
 async def load_timeline(
     db: AsyncSession,
     machine: Machine,
@@ -241,20 +298,16 @@ async def load_timeline(
                 AuditLogEntry.created_at >= since,
                 not_(AuditLogEntry.action.like("%.view")),
                 not_(AuditLogEntry.action.like("machine.note.%")),
+                # A manual "refresh now" and following a log live are
+                # look-ups too: they change nothing on the machine.
+                not_(AuditLogEntry.action.like("%.refresh")),
+                not_(AuditLogEntry.action.like("machine.logs.follow%")),
             )
             .order_by(AuditLogEntry.created_at.desc())
             .limit(MAX_EVENTS)
         )
         events.extend(
-            TimelineEvent(
-                at=_utc(entry.created_at),
-                kind="audit",
-                summary=entry.summary,
-                outcome="ok" if entry.outcome == AuditOutcome.SUCCESS else "error",
-                actor=entry.actor,
-                data={"action": entry.action, "outcome": entry.outcome.value},
-            )
-            for entry in entries.scalars().all()
+            _merge_terminal_sessions([_audit_event(entry) for entry in entries.scalars().all()])
         )
 
     events.sort(key=lambda e: e.at, reverse=True)

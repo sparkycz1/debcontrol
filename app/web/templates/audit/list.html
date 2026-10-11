@@ -114,7 +114,13 @@
               {% endif %}
             </td>
             <td title="{{ entry.summary }}">
-              {{ audit_text(request, entry.action, entry.summary) }}
+              {% set label = audit_text(request, entry.action, entry.summary) %}
+              {{ label }}
+              {# A translated label says what was attempted; for anything
+                 that did not succeed, the stored summary says why. #}
+              {% if entry.outcome.value != 'success' and entry.summary and entry.summary != label %}
+                <br><span class="hint">{{ entry.summary }}</span>
+              {% endif %}
               {% if entry.details %}
                 <br><span class="hint">
                   {%- if entry.details is mapping -%}

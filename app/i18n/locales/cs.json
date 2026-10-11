@@ -655,7 +655,7 @@
     "machine.update_run.back": "Zpět na zařízení",
     "machine.availability.check_error": "Kontrolu aktualizací se nepodařilo provést: {error}",
     "machine.availability.not_checked_yet": "Zatím nezkontrolováno. Toto běží automaticky ve stejném pravidelném cyklu jako fakta, kdykoli klikneš níže na \"Zkontrolovat aktualizace teď\", a kdykoli se spustí naplánovaná úloha \"Zkontrolovat aktualizace\" (viz záložka Plánování) — zobrazuje se výsledek toho, co proběhlo naposledy, včetně názvů balíčků.",
-    "machine.availability.last_check_failed": "Poslední kontrola (zkontrolováno {when}) nezjistila, co je dostupné přes apt — viz chyba výše, nebo zkus znovu. (kontroly flatpak/snap níže na tomto nezávisí.)",
+    "machine.availability.last_check_failed": "Poslední kontrola (zkontrolováno {when}) nezjistila, co je dostupné přes apt. (Kontroly flatpak/snap níže na tom nezávisí.)",
     "machine.availability.apt_update_singular": "{count} aktualizace apt",
     "machine.availability.apt_update_plural": "{count} aktualizací apt",
     "machine.availability.apt_update_plural.few": "{count} aktualizace apt",
@@ -2304,6 +2304,13 @@
     "proxmox.backup_exempt.unmark": "znovu hlásit",
     "proxmox.backup_exempt.heading": "Záměrně nezálohované ({count}):",
     "audit.action_label.machine.proxmox.backup_exempt.add": "Host označen jako záměrně nezálohovaný",
-    "audit.action_label.machine.proxmox.backup_exempt.remove": "Host se znovu počítá jako nezálohovaný"
+    "audit.action_label.machine.proxmox.backup_exempt.remove": "Host se znovu počítá jako nezálohovaný",
+    "machine.update_check_failed": "kontrola selhala",
+    "machine.availability.last_check_error": "Poslední kontrola aktualizací selhala:",
+    "machines.bulk.tags_aria": "Štítky k přidání nebo odebrání",
+    "machines.bulk.tags_placeholder": "štítky oddělené čárkou",
+    "machines.bulk.add_tags": "Přidat štítky",
+    "machines.bulk.remove_tags": "Odebrat štítky",
+    "history.terminal_session": "Relace terminálu, {duration}"
   }
 }
