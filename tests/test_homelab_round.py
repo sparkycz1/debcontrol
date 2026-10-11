@@ -511,3 +511,13 @@ def test_chart_noise_defaults():
         [("a", [1.0]), ("b", [2.0])], [datetime(2026, 1, 1, tzinfo=UTC)], hidden=["b"]
     )
     assert chart.data["h"] == [1] and chart.hidden_count == 1
+
+
+def test_zfs_and_guest_numbers_ignore_non_ascii_digits():
+    """`"²4".isdigit()` is true but `int("²4")` raises — found by the fuzzer."""
+    pools = proxmox.parse_zfs_pools("rpool	100	50	²4	1	50	ONLINE", "")
+    assert pools is not None and pools[0]["free_bytes"] is None
+    assert proxmox.parse_guests('[{"vmid":"²4","name":"x","type":"qemu","status":"running"}]') in (
+        [],
+        None,
+    )

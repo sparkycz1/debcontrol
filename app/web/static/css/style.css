@@ -2344,3 +2344,7 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 /* Proxmox tab: guests in or out of the "not backed up" warning. */
 .guest-chips { list-style: none; margin: 0.35rem 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
 .guest-chips li { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+/* Compare two machines: a fact that differs stands out. */
+.compare-differs > th, .compare-differs > td { background: var(--color-surface-raised); }
+.compare-differs > th { border-left: 3px solid var(--color-warn); }

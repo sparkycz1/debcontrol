@@ -2282,6 +2282,27 @@
     "checks.source_hint": "Pick a machine to check something only that machine can reach, such as a service on an internal network. The check then runs on it over SSH with curl, openssl, ping, bash and getent or dig; nothing is installed. An HTTP check run from a machine does not report certificate expiry; a TLS check does.",
     "checks.from_machine": "run from {machine}",
     "checks.open_source_machine": "open the machine",
-    "checks.error.unknown_source": "Pick the debcontrol server or one of the listed machines."
+    "checks.error.unknown_source": "Pick the debcontrol server or one of the listed machines.",
+    "compare.title": "Compare machines",
+    "compare.button": "Compare",
+    "compare.button_title": "Tick exactly two machines to see what differs between them",
+    "compare.error.pick_two": "Tick exactly two machines to compare.",
+    "compare.versus": "compared with",
+    "compare.swap": "Swap sides",
+    "compare.intro": "From what each machine reported at its last facts, packages and services refresh. Nothing is run on either machine.",
+    "compare.facts": "Facts",
+    "compare.packages": "Installed packages",
+    "compare.services": "Services",
+    "compare.package": "Package",
+    "compare.version": "Version",
+    "compare.service": "Unit",
+    "compare.state": "State",
+    "compare.identical": "identical",
+    "compare.same_count": "{count} the same",
+    "compare.summary": "{differences} differences, {same} the same.",
+    "compare.different": "Different on each ({count})",
+    "compare.only_on": "Only on {machine} ({count})",
+    "compare.more": "…and {count} more.",
+    "compare.not_refreshed": "One of the machines has not reported this yet, so there is nothing to compare."
   }
 }
