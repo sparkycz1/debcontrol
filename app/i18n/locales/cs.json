@@ -2281,6 +2281,22 @@
     "account.error.token_groups": "Žádnou z vybraných skupin zařízení nelze pro tento token použít.",
     "monitoring.range.custom": "Vlastní rozsah",
     "monitoring.range.from": "Od",
-    "monitoring.range.to": "Do"
+    "monitoring.range.to": "Do",
+    "batches.title": "Dávkové aktualizace",
+    "batches.intro": "Aktualizace spuštěné na více zařízeních najednou, od nejnovější. Po otevření uvidíte, jak je na tom každé zařízení.",
+    "batches.none": "Zatím nebyla spuštěna žádná aktualizace na více zařízeních najednou.",
+    "batches.all": "Všechny dávkové aktualizace",
+    "batches.back_to_machines": "Zpět na zařízení",
+    "batches.back_to_batch": "Zpět na dávku ({count} zařízení)",
+    "batches.link": "dávka",
+    "batches.progress": "Průběh",
+    "batches.started": "Spuštěno {when}.",
+    "batches.strip_label": "V této dávce:",
+    "batches.strip_aria": "Zařízení aktualizovaná ve stejné dávce",
+    "batches.count.succeeded": "{count} hotovo",
+    "batches.count.running": "{count} běží",
+    "batches.count.pending": "{count} čeká",
+    "batches.count.failed": "{count} selhalo",
+    "batches.count.of": "z {count}"
   }
 }

@@ -106,7 +106,10 @@
               {% endif %}
             </td>
             <td>{{ run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
-            <td><a href="/machines/{{ machine.id }}/updates/{{ run.id }}">{{ t(request, "machine.updates.details") }}</a></td>
+            <td>
+              <a href="/machines/{{ machine.id }}/updates/{{ run.id }}">{{ t(request, "machine.updates.details") }}</a>
+              {% if run.batch_id %}· <a href="/machine-groups/batches/{{ run.batch_id }}">{{ t(request, "batches.link") }}</a>{% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>

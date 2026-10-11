@@ -5,7 +5,9 @@
 {% block content %}
   <div class="page-header">
     <h1>{{ t(request, "groups.batch.title") }}</h1>
+    <a class="button button-secondary" href="/machine-groups/batches">{{ t(request, "batches.all") }}</a>
   </div>
+  <p class="hint">{{ t(request, "batches.started", when=(runs[0].created_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</p>
 
   {% if skipped %}
     <div class="alert alert-warn">

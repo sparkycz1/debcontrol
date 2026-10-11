@@ -2236,6 +2236,22 @@
     "account.error.token_groups": "None of the selected machine groups can be used for this token.",
     "monitoring.range.custom": "Custom range",
     "monitoring.range.from": "From",
-    "monitoring.range.to": "To"
+    "monitoring.range.to": "To",
+    "batches.title": "Update batches",
+    "batches.intro": "Updates run on several machines at once, newest first. Open one to see where each machine stands.",
+    "batches.none": "No update has been run on several machines at once yet.",
+    "batches.all": "All update batches",
+    "batches.back_to_machines": "Back to machines",
+    "batches.back_to_batch": "Back to the batch ({count} machines)",
+    "batches.link": "batch",
+    "batches.progress": "Progress",
+    "batches.started": "Started {when}.",
+    "batches.strip_label": "In this batch:",
+    "batches.strip_aria": "Machines updated in the same batch",
+    "batches.count.succeeded": "{count} done",
+    "batches.count.running": "{count} running",
+    "batches.count.pending": "{count} waiting",
+    "batches.count.failed": "{count} failed",
+    "batches.count.of": "of {count}"
   }
 }

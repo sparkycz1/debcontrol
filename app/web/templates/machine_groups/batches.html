@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "partials/_run_status_badge.html" import batch_progress %}
+
+{% block title %}{{ t(request, "batches.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "batches.title") }}</h1>
+    <a class="button button-secondary" href="/machines">{{ t(request, "batches.back_to_machines") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "batches.intro") }}</p>
+
+  {% if batches %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "machine.updates.started") }}</th>
+          <th>{{ t(request, "machine.updates.strategy") }}</th>
+          <th>{{ t(request, "batches.progress") }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for batch in batches %}
+          <tr>
+            <td>{{ batch.started_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
+            <td>{{ strategy_label(request, batch.strategy.value) }}</td>
+            <td>{{ batch_progress(request, batch.counts) }}</td>
+            <td><a href="/machine-groups/batches/{{ batch.batch_id }}">{{ t(request, "machine.updates.details") }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "batches.none") }}</p></div>
+  {% endif %}
+{% endblock %}

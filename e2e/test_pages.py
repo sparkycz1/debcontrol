@@ -34,6 +34,7 @@ PAGES = [
     "/dashboard",
     "/machines",
     "/machine-groups",
+    "/machine-groups/batches",
     "/security/updates",
     "/checks",
     "/checks/sla",
