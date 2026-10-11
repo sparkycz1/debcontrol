@@ -569,7 +569,7 @@ async def add_machine_to_group(
         details={"machine_id": str(machine.id), "machine_name": machine.name},
     )
     return RedirectResponse(
-        url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
+        url=f"/machine-groups/{group.id}", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -583,7 +583,7 @@ async def remove_machine_from_group(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    await _get_group_or_404(group_id, db, current_user)
+    group = await _get_group_or_404(group_id, db, current_user)
     machine = await db.get(Machine, machine_id)
     if (
         machine is not None
@@ -602,7 +602,7 @@ async def remove_machine_from_group(
             details={"machine_id": str(machine.id), "machine_name": machine.name},
         )
     return RedirectResponse(
-        url=f"/machine-groups/{group_id}", status_code=status.HTTP_303_SEE_OTHER
+        url=f"/machine-groups/{group.id}", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -698,7 +698,7 @@ async def trigger_group_check_updates(
         details={"skipped": skipped},
     )
     return RedirectResponse(
-        url=f"/machine-groups/{group_id}/updates", status_code=status.HTTP_303_SEE_OTHER
+        url=f"/machine-groups/{group.id}/updates", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -782,7 +782,8 @@ async def group_power_action(
         target_label=group.name,
         details={"skipped": skipped},
     )
-    redirect_url = f"/machine-groups/{group_id}/power"
+    # Built from the loaded group, not from the id in the request path.
+    redirect_url = f"/machine-groups/{group.id}/power"
     if skipped:
         redirect_url += f"?power_skipped={skipped}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)

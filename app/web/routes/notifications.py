@@ -656,7 +656,7 @@ async def test_rule(
         else "test_error=" + sign_flash(error or t(request, "common.error.unknown"))
     )
     return RedirectResponse(
-        url=f"/notifications/rules/{rule_id}/edit?{query}",
+        url=f"/notifications/rules/{rule.id}/edit?{query}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
