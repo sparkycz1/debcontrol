@@ -105,6 +105,8 @@
               {% if e.detail %}<p class="table-summary">{{ e.detail }}</p>{% endif %}
             {% elif e.kind == 'reachability' %}
               <p><span class="badge {{ 'badge-ok' if e.data.reachable else 'badge-error' }}">{{ t(request, "history.reachable_again" if e.data.reachable else "history.unreachable") }}</span></p>
+            {% elif e.kind == 'audit' and e.data.action == 'machine.terminal.session' %}
+              <p>{{ t(request, "history.terminal_session", duration=(e.data.duration_seconds | short_duration)) }}</p>
             {% else %}
               <p title="{{ e.summary }}">{{ audit_text(request, e.data.action, e.summary) if e.kind == 'audit' and e.data.action else e.summary }}{% if e.outcome == 'error' %} <span class="badge badge-error">{{ t(request, "audit.outcome_" ~ e.data.outcome) if e.data.outcome else '' }}</span>{% endif %}</p>
             {% endif %}

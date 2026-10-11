@@ -163,6 +163,22 @@ def strategy_label(request: Request, value: str | None) -> str:
 
 
 templates.env.globals["strategy_label"] = strategy_label
+
+
+def short_duration(seconds: float | int | None) -> str:
+    """`{{ seconds | short_duration }}` — "45 s", "12 min", "2 h 5 min"."""
+    if seconds is None:
+        return ""
+    total = int(seconds)
+    if total < 60:
+        return f"{total} s"
+    minutes = total // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60} min"
+
+
+templates.env.filters["short_duration"] = short_duration
 templates.env.globals["reboot_hint_packages"] = reboot_hint_packages
 templates.env.globals["noise_interfaces"] = charts.noise_interfaces
 templates.env.globals["secondary_sensors"] = charts.secondary_sensors

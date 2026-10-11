@@ -638,7 +638,7 @@
     "machine.update_run.back": "Back to machine",
     "machine.availability.check_error": "Could not check for updates: {error}",
     "machine.availability.not_checked_yet": "Not checked yet. This runs automatically on the same periodic sweep as facts, whenever you click \"Check for updates now\" below, and whenever a scheduled \"Check for updates\" task fires (see the Scheduling tab) — whichever ran last is what's shown here, including the package names.",
-    "machine.availability.last_check_failed": "Last check (checked {when}) couldn't determine what's available via apt — see the error above, or try again. (flatpak/snap checks below don't depend on this.)",
+    "machine.availability.last_check_failed": "Last check (checked {when}) couldn't determine what's available via apt. (The flatpak/snap checks below don't depend on this.)",
     "machine.availability.apt_update_singular": "{count} apt update",
     "machine.availability.apt_update_plural": "{count} apt updates",
     "machine.availability.security_count": "{count} security",
@@ -2259,6 +2259,13 @@
     "proxmox.backup_exempt.unmark": "warn again",
     "proxmox.backup_exempt.heading": "Deliberately not backed up ({count}):",
     "audit.action_label.machine.proxmox.backup_exempt.add": "Guest marked as deliberately not backed up",
-    "audit.action_label.machine.proxmox.backup_exempt.remove": "Guest counts as not backed up again"
+    "audit.action_label.machine.proxmox.backup_exempt.remove": "Guest counts as not backed up again",
+    "machine.update_check_failed": "check failed",
+    "machine.availability.last_check_error": "The last update check failed:",
+    "machines.bulk.tags_aria": "Tags to add or remove",
+    "machines.bulk.tags_placeholder": "tags, comma separated",
+    "machines.bulk.add_tags": "Add tags",
+    "machines.bulk.remove_tags": "Remove tags",
+    "history.terminal_session": "Terminal session, {duration}"
   }
 }

@@ -9,6 +9,13 @@
   </div>
 {% endif %}
 
+{% if machine.updates_check_error and not error %}
+  <div class="alert alert-error">
+    <p>{{ t(request, "machine.availability.last_check_error") }}</p>
+    <pre class="changelog">{{ machine.updates_check_error }}</pre>
+  </div>
+{% endif %}
+
 {% set other_count = (machine.flatpak_upgradable_count or 0) + (machine.snap_upgradable_count or 0) %}
 
 {% if not machine.updates_checked_at %}

@@ -291,6 +291,9 @@ class Machine(Base):
     flatpak_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snap_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updates_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Why the last update check failed (apt's own last lines, or the SSH
+    # error); None once a check succeeds.
+    updates_check_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Which packages, not just how many — each a {name, current_version,
     # new_version} dict (see app.ssh.updates.PendingPackage). Populated by
     # the same check_machine_updates job as the counts above, whether it

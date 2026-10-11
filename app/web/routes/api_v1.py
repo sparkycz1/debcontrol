@@ -210,6 +210,7 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "snap_upgradable_count": machine.snap_upgradable_count,
         "apt_upgradable_packages": machine.apt_upgradable_packages,
         "apt_held_packages": machine.apt_held_packages,
+        "updates_check_error": machine.updates_check_error,
         "flatpak_upgradable_packages": machine.flatpak_upgradable_packages,
         "snap_upgradable_packages": machine.snap_upgradable_packages,
         "updates_checked_at": _isoformat(machine.updates_checked_at),
