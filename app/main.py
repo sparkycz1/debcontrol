@@ -32,6 +32,7 @@ from app.web.routes import (
     api_v1_backup,
     api_v1_checks,
     api_v1_dashboard,
+    api_v1_metrics,
     api_v1_notifications,
     api_v1_roles,
     api_v1_scheduling,
@@ -292,6 +293,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_checks.router)
     app.include_router(api_v1_notifications.router)
     app.include_router(api_v1_search.router)
+    app.include_router(api_v1_metrics.router)
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)
