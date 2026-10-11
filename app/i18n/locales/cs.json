@@ -2321,6 +2321,12 @@
     "host_key_changed.accept_button": "Přijmout nový klíč",
     "host_key_changed.accept_confirm": "Přijmout nový SSH klíč hostitele? Udělejte to až po ověření otisku přímo na zařízení.",
     "host_key_changed.badge": "změněný SSH klíč",
-    "host_key_changed.badge_hint": "Zařízení odpovídá jiným SSH klíčem hostitele než připnutým. Spojení jsou odmítána, dokud nový klíč nepřijmete."
+    "host_key_changed.badge_hint": "Zařízení odpovídá jiným SSH klíčem hostitele než připnutým. Spojení jsou odmítána, dokud nový klíč nepřijmete.",
+    "checks.source": "Spouštět z",
+    "checks.source_server": "serveru debcontrol",
+    "checks.source_hint": "Zvolte zařízení, pokud chcete kontrolovat něco, kam dosáhne jen ono, například službu ve vnitřní síti. Kontrola pak běží na něm přes SSH pomocí curl, openssl, ping, bash a getent nebo dig; nic se neinstaluje. Kontrola HTTP spouštěná ze zařízení nehlásí expiraci certifikátu, tu hlásí jen kontrola TLS.",
+    "checks.from_machine": "spouští se z {machine}",
+    "checks.open_source_machine": "otevřít zařízení",
+    "checks.error.unknown_source": "Zvolte server debcontrol nebo některé z nabízených zařízení."
   }
 }

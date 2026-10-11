@@ -1,5 +1,6 @@
-"""One TLS certificate or HTTP endpoint check, run from the debcontrol
-server itself (not from a managed machine) — see
+"""One endpoint check (HTTP, TLS certificate, ping, TCP, DNS), run from
+the debcontrol server itself or, with `source_machine_id`, from a managed
+machine — see
 `app.services.endpoint_checks` for the probes and the notification
 transitions, `app.tasks.jobs.run_due_endpoint_checks` for scheduling.
 
@@ -13,10 +14,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Float, Integer, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.models.machine import Machine
 
 CHECK_KINDS = ("http", "tls", "ping", "tcp", "dns")
 
@@ -58,6 +60,14 @@ class EndpointCheck(Base):
     # monthly SLA report (`app.services.endpoint_sla`); None = no target.
     sla_target_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     verify_tls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Where the probe runs. None = from the debcontrol server. A machine =
+    # over SSH from that machine (`app.services.remote_probes`), for what
+    # only it can reach. Deleting the machine deletes the checks that ran
+    # from it: such a check means nothing run from anywhere else.
+    source_machine_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    source_machine: Mapped[Machine | None] = relationship(lazy="selectin")
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     # Warn this many days before the certificate expires.

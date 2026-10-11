@@ -4,6 +4,8 @@ the web form (`app/web/routes/checks.py`) and the REST API
 
 from __future__ import annotations
 
+import uuid
+
 from pydantic import BaseModel, Field, model_validator
 
 from app.db.models.endpoint_check import CHECK_KINDS
@@ -26,6 +28,8 @@ class EndpointCheckSave(BaseModel):
     timeout_seconds: int = Field(default=10, ge=1, le=60)
     cert_warn_days: int = Field(default=14, ge=0, le=365)
     enabled: bool = True
+    # None = run from the debcontrol server; a machine's id = from it.
+    source_machine_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check_kind_and_target(self) -> EndpointCheckSave:

@@ -67,7 +67,12 @@ from app.services import (
     health_events,
 )
 from app.services.condition_fields import evaluate_condition, summarize_condition
-from app.services.endpoint_checks import apply_result, is_due, run_probe
+from app.services.endpoint_checks import (
+    apply_latency_limit,
+    apply_result,
+    is_due,
+    run_probe,
+)
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
     KIND_FACTS,
@@ -79,6 +84,7 @@ from app.services.live_updates import (
     publish_machine_event,
 )
 from app.services.notifications import _rule_matches_scope, notify
+from app.services.remote_probes import probe_from_machine
 from app.ssh.client import test_connection
 from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
@@ -591,7 +597,20 @@ async def _run_endpoint_check(check_id: str) -> dict[str, Any]:
         check = await session.get(EndpointCheck, uuid.UUID(check_id))
         if check is None:
             return {"ok": False, "error": "Check not found."}
-        result = await run_probe(check)
+        if check.source_machine is not None:
+            # From a managed machine, over its SSH connection.
+            app_settings = await get_or_create_app_settings(session)
+            result = apply_latency_limit(
+                await probe_from_machine(
+                    check,
+                    check.source_machine,
+                    await resolve_machine_credential(check.source_machine, session),
+                    app_settings.ssh_connect_timeout,
+                ),
+                check.max_latency_ms,
+            )
+        else:
+            result = await run_probe(check)
         now = datetime.now(UTC)
         events = apply_result(check, result, now)
         session.add(
