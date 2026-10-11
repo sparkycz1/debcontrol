@@ -92,6 +92,7 @@ from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
 from app.services import (
     acknowledgements,
+    machine_compare,
     machine_timeline,
     monitoring_history,
     proxmox_backup_exempt,
@@ -579,6 +580,23 @@ async def delete_machine_note_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     if not await delete_note(db, request, machine, note_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+
+
+@router.get("/machines/compare", dependencies=[_view_machines])
+async def compare_machines_api(
+    a: uuid.UUID,
+    b: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """What differs between machines `a` and `b`: tracked facts, installed
+    packages and systemd services, from what is already stored — the API
+    equivalent of the "Compare" page. Package and service lists are not
+    capped here. See `app.services.machine_compare`."""
+    machines = {m.id: m for m in await visible_machines_by_ids(db, user, [a, b])}
+    if a == b or a not in machines or b not in machines:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
+    return machine_compare.as_dict(await machine_compare.compare(db, machines[a], machines[b]))
 
 
 @router.get("/machines/package-search", dependencies=[_view_machines])

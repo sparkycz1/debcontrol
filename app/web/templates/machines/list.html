@@ -339,6 +339,8 @@
             {{ t(request, 'machines.bulk.remove_tags') }}
           </button>
         {% endif %}
+        <button type="submit" formaction="/machines/bulk/compare" class="button button-secondary"
+                title="{{ t(request, 'compare.button_title') }}">{{ t(request, 'compare.button') }}</button>
         <span class="bulk-danger-zone">
           <button type="submit" formaction="/machines/bulk/power-confirm/reboot" class="button button-secondary">
             {{ t(request, 'machines.bulk.reboot') }}

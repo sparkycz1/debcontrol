@@ -155,7 +155,7 @@ def _int(value: Any) -> int | None:
         return value
     if isinstance(value, float):
         return int(value)
-    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+    if isinstance(value, str) and value.isascii() and value.strip().lstrip("-").isdigit():
         return int(value.strip())
     return None
 
@@ -202,7 +202,8 @@ def parse_guests(section: str) -> list[dict[str, Any]] | None:
 
 
 def _zfs_number(value: str) -> int | None:
-    return int(value) if value.isdigit() else None
+    # `isdigit()` alone also accepts characters `int()` rejects ("²", "④").
+    return int(value) if value.isascii() and value.isdigit() else None
 
 
 def parse_zfs_pools(list_section: str, status_section: str) -> list[dict[str, Any]] | None:

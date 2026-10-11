@@ -2327,6 +2327,27 @@
     "checks.source_hint": "Zvolte zařízení, pokud chcete kontrolovat něco, kam dosáhne jen ono, například službu ve vnitřní síti. Kontrola pak běží na něm přes SSH pomocí curl, openssl, ping, bash a getent nebo dig; nic se neinstaluje. Kontrola HTTP spouštěná ze zařízení nehlásí expiraci certifikátu, tu hlásí jen kontrola TLS.",
     "checks.from_machine": "spouští se z {machine}",
     "checks.open_source_machine": "otevřít zařízení",
-    "checks.error.unknown_source": "Zvolte server debcontrol nebo některé z nabízených zařízení."
+    "checks.error.unknown_source": "Zvolte server debcontrol nebo některé z nabízených zařízení.",
+    "compare.title": "Porovnání zařízení",
+    "compare.button": "Porovnat",
+    "compare.button_title": "Zaškrtněte právě dvě zařízení a uvidíte, čím se liší",
+    "compare.error.pick_two": "K porovnání zaškrtněte právě dvě zařízení.",
+    "compare.versus": "ve srovnání s",
+    "compare.swap": "Prohodit strany",
+    "compare.intro": "Podle toho, co každé zařízení nahlásilo při posledním obnovení faktů, balíčků a služeb. Na žádném zařízení se nic nespouští.",
+    "compare.facts": "Fakta",
+    "compare.packages": "Nainstalované balíčky",
+    "compare.services": "Služby",
+    "compare.package": "Balíček",
+    "compare.version": "Verze",
+    "compare.service": "Jednotka",
+    "compare.state": "Stav",
+    "compare.identical": "shodné",
+    "compare.same_count": "{count} stejných",
+    "compare.summary": "{differences} rozdílů, {same} stejných.",
+    "compare.different": "Liší se ({count})",
+    "compare.only_on": "Jen na {machine} ({count})",
+    "compare.more": "…a dalších {count}.",
+    "compare.not_refreshed": "Jedno ze zařízení to zatím nenahlásilo, takže není co porovnat."
   }
 }

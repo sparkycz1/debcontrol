@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "compare.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro item_section(heading, diff, known, name_label, value_label) %}
+  <section class="panel">
+    <h2>{{ heading }}</h2>
+    {% if not known %}
+      <p class="hint">{{ t(request, "compare.not_refreshed") }}</p>
+    {% elif not diff.differences %}
+      <p><span class="badge badge-ok">{{ t(request, "compare.identical") }}</span>
+        <span class="hint">{{ t(request, "compare.same_count", count=diff.same) }}</span></p>
+    {% else %}
+      <p class="hint">{{ t(request, "compare.summary", differences=diff.differences, same=diff.same) }}</p>
+      {% if diff.different %}
+        <h3>{{ t(request, "compare.different", count=(diff.different | length)) }}</h3>
+        <table class="data-table">
+          <thead><tr><th>{{ name_label }}</th><th>{{ cmp.a.name }}</th><th>{{ cmp.b.name }}</th></tr></thead>
+          <tbody>
+            {% for name, a, b in diff.different[:max_rows] %}
+              <tr><td><code>{{ name }}</code></td><td>{{ a }}</td><td>{{ b }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if diff.different | length > max_rows %}<p class="hint">{{ t(request, "compare.more", count=(diff.different | length) - max_rows) }}</p>{% endif %}
+      {% endif %}
+      {% for machine, rows in ((cmp.a, diff.only_a), (cmp.b, diff.only_b)) %}
+        {% if rows %}
+          <h3>{{ t(request, "compare.only_on", machine=machine.name, count=(rows | length)) }}</h3>
+          <table class="data-table">
+            <thead><tr><th>{{ name_label }}</th><th>{{ value_label }}</th></tr></thead>
+            <tbody>
+              {% for name, value in rows[:max_rows] %}
+                <tr><td><code>{{ name }}</code></td><td>{{ value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% if rows | length > max_rows %}<p class="hint">{{ t(request, "compare.more", count=(rows | length) - max_rows) }}</p>{% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+  </section>
+{% endmacro %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "compare.title") }}</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/machines/compare?a={{ cmp.b.id }}&amp;b={{ cmp.a.id }}">{{ t(request, "compare.swap") }}</a>
+      <a class="button button-secondary" href="/machines">{{ t(request, "batches.back_to_machines") }}</a>
+    </div>
+  </div>
+  <p>
+    <a href="/machines/{{ cmp.a.id }}"><strong>{{ cmp.a.name }}</strong></a>
+    {{ t(request, "compare.versus") }}
+    <a href="/machines/{{ cmp.b.id }}"><strong>{{ cmp.b.name }}</strong></a>
+  </p>
+  <p class="hint">{{ t(request, "compare.intro") }}</p>
+
+  <section class="panel">
+    <h2>{{ t(request, "compare.facts") }}</h2>
+    <table class="data-table">
+      <thead><tr><th></th><th>{{ cmp.a.name }}</th><th>{{ cmp.b.name }}</th></tr></thead>
+      <tbody>
+        {% for row in cmp.facts %}
+          <tr class="{{ 'compare-differs' if row.differs else '' }}">
+            <th scope="row">{{ t(request, "history.field." ~ row.name) }}</th>
+            {% if row.is_set %}
+              {% for extra in (row.only_a, row.only_b) %}
+                <td>
+                  {% if extra %}
+                    {% for value in extra %}<div class="timeline-added">+ {{ value }}</div>{% endfor %}
+                  {% elif row.differs %}—{% endif %}
+                  {% if loop.first and not row.differs %}<span class="table-muted">{{ t(request, "compare.same_count", count=row.common) }}</span>{% endif %}
+                </td>
+              {% endfor %}
+            {% else %}
+              <td>{{ row.a or '—' }}</td>
+              <td>{{ row.b or '—' }}</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  {{ item_section(t(request, "compare.packages"), cmp.packages, cmp.packages_known, t(request, "compare.package"), t(request, "compare.version")) }}
+  {{ item_section(t(request, "compare.services"), cmp.services, cmp.services_known, t(request, "compare.service"), t(request, "compare.state")) }}
+{% endblock %}

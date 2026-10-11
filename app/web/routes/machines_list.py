@@ -33,6 +33,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate
 from app.schemas.machine_config import MachineConfigExport
+from app.services import machine_compare
 from app.services.access_scope import (
     can_see_group_id,
     is_restricted,
@@ -773,6 +774,53 @@ async def import_machine_config_submit(
 async def security_updates_moved(request: Request) -> Response:
     """Moved to Security → Security updates (`app.web.routes.security`)."""
     return RedirectResponse(url="/security/updates", status_code=308)
+
+
+@router.post("/bulk/compare", dependencies=[Depends(verify_csrf)])
+async def bulk_compare(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    machine_ids: list[uuid.UUID] = Form(default=[]),
+) -> Response:
+    """"Compare" in the machine list's bulk bar: exactly two ticked machines
+    lead to their comparison page. A POST only because the bar is one form
+    with a CSRF token; it changes nothing."""
+    machines = await _get_machines_by_ids(machine_ids, db, current_user)
+    if len(machines) != 2:
+        return RedirectResponse(
+            url=_bulk_error_url(request, "compare.error.pick_two"),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    first, second = sorted(machines, key=lambda m: m.name.lower())
+    return RedirectResponse(
+        url=f"/machines/compare?a={first.id}&b={second.id}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.get("/compare")
+async def compare_machines(
+    request: Request,
+    a: uuid.UUID,
+    b: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Two machines side by side: differing facts, packages and services
+    (`app.services.machine_compare`). Both must be machines the account
+    can see; nothing is run on either."""
+    machines = {m.id: m for m in await _get_machines_by_ids([a, b], db, current_user)}
+    if a == b or a not in machines or b not in machines:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
+    return templates.TemplateResponse(
+        request,
+        "machines/compare.html",
+        {
+            "cmp": await machine_compare.compare(db, machines[a], machines[b]),
+            "max_rows": machine_compare.MAX_ROWS,
+        },
+    )
 
 
 @router.get("/package-search")
