@@ -2266,6 +2266,16 @@
     "machines.bulk.tags_placeholder": "tags, comma separated",
     "machines.bulk.add_tags": "Add tags",
     "machines.bulk.remove_tags": "Remove tags",
-    "history.terminal_session": "Terminal session, {duration}"
+    "history.terminal_session": "Terminal session, {duration}",
+    "host_key_changed.title": "The SSH host key changed.",
+    "host_key_changed.banner": "Since {since} this machine answers with a different key than the pinned one, so every connection to it is refused: no monitoring, no facts, no updates.",
+    "host_key_changed.panel_link": "See the host key panel",
+    "host_key_changed.since": "Noticed {since}.",
+    "host_key_changed.presented": "Key presented now:",
+    "host_key_changed.accept_hint": "This happens after a reinstall or when a VM is moved and its keys are regenerated. It can also mean something is intercepting the connection. Compare the fingerprint with the machine itself (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) before accepting it.",
+    "host_key_changed.accept_button": "Accept the new key",
+    "host_key_changed.accept_confirm": "Accept the new SSH host key? Only do this after checking the fingerprint on the machine itself.",
+    "host_key_changed.badge": "SSH key changed",
+    "host_key_changed.badge_hint": "The machine answers with a different SSH host key than the pinned one. Connections are refused until the new key is accepted."
   }
 }

@@ -25,6 +25,16 @@
 
   {{ render_tabnav(tabs, active_tab) }}
 
+  {% if machine.host_key_changed_fingerprint %}
+    <div class="alert alert-error">
+      <p>
+        <strong>{{ t(request, "host_key_changed.title") }}</strong>
+        {{ t(request, "host_key_changed.banner", since=(machine.host_key_changed_at | local_time('%Y-%m-%d %H:%M %Z'))) }}
+        <a href="#host-key-panel">{{ t(request, "host_key_changed.panel_link") }}</a>.
+      </p>
+    </div>
+  {% endif %}
+
   {% set pve = proxmox_summary(machine) %}
   {% if pve %}
     <a class="proxmox-strip" href="/machines/{{ machine.id }}/proxmox">
@@ -116,6 +126,24 @@
     <h2>{{ t(request, "machine.host_key_heading") }}</h2>
     {% if machine.host_key_fingerprint %}
       <p>{{ t(request, "machine.pinned_fingerprint") }}: <code>{{ machine.host_key_fingerprint }}</code></p>
+      {% if machine.host_key_changed_fingerprint %}
+        <div class="alert alert-error">
+          <p>
+            <strong>{{ t(request, "host_key_changed.title") }}</strong>
+            {{ t(request, "host_key_changed.since", since=(machine.host_key_changed_at | local_time('%Y-%m-%d %H:%M %Z'))) }}
+          </p>
+          <p>{{ t(request, "host_key_changed.presented") }} <code>{{ machine.host_key_changed_fingerprint }}</code></p>
+          <p class="hint">{{ t(request, "host_key_changed.accept_hint") }}</p>
+          {% if request.state.user.has_permission('machine.manage') %}
+            <form method="post" action="/machines/{{ machine.id }}/trust-host-key"
+                  class="inline-form" data-confirm="{{ t(request, 'host_key_changed.accept_confirm') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="fingerprint" value="{{ machine.host_key_changed_fingerprint }}">
+              <button type="submit" class="button button-danger">{{ t(request, "host_key_changed.accept_button") }}</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
       <p class="hint">
         {{ t(request, "machine.host_key_pinned_hint") }}
       </p>

@@ -290,6 +290,17 @@ class Machine(Base):
     security_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     flatpak_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snap_upgradable_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set when the machine last answered with a different key than the
+    # pinned one (the monitoring sample notices, see
+    # `app.tasks.jobs._sample_machine_monitoring`): what it presented and
+    # since when. Connections stay refused either way — this only makes
+    # the refusal visible, and lets an operator who verified the new key
+    # accept it. Cleared once a connection succeeds again or a key is
+    # (re)trusted.
+    host_key_changed_fingerprint: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    host_key_changed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     updates_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
     # Why the last update check failed (apt's own last lines, or the SSH
     # error); None once a check succeeds.

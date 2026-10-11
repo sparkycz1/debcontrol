@@ -2311,6 +2311,16 @@
     "machines.bulk.tags_placeholder": "štítky oddělené čárkou",
     "machines.bulk.add_tags": "Přidat štítky",
     "machines.bulk.remove_tags": "Odebrat štítky",
-    "history.terminal_session": "Relace terminálu, {duration}"
+    "history.terminal_session": "Relace terminálu, {duration}",
+    "host_key_changed.title": "SSH klíč hostitele se změnil.",
+    "host_key_changed.banner": "Od {since} toto zařízení odpovídá jiným klíčem než připnutým, takže každé spojení je odmítnuto: žádný monitoring, fakta ani aktualizace.",
+    "host_key_changed.panel_link": "Zobrazit panel s klíčem hostitele",
+    "host_key_changed.since": "Zjištěno {since}.",
+    "host_key_changed.presented": "Aktuálně předkládaný klíč:",
+    "host_key_changed.accept_hint": "Stává se to po reinstalaci nebo po přesunu VM, když se klíče vygenerují znovu. Může to ale také znamenat, že spojení někdo odposlouchává. Než klíč přijmete, porovnejte otisk přímo na zařízení (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub).",
+    "host_key_changed.accept_button": "Přijmout nový klíč",
+    "host_key_changed.accept_confirm": "Přijmout nový SSH klíč hostitele? Udělejte to až po ověření otisku přímo na zařízení.",
+    "host_key_changed.badge": "změněný SSH klíč",
+    "host_key_changed.badge_hint": "Zařízení odpovídá jiným SSH klíčem hostitele než připnutým. Spojení jsou odmítána, dokud nový klíč nepřijmete."
   }
 }

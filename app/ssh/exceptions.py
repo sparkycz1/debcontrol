@@ -17,3 +17,9 @@ class UnknownHostKeyError(HostKeyError):
 
 class HostKeyMismatchError(HostKeyError):
     """The server presented a different key than the one pinned — possible MITM."""
+
+    def __init__(self, message: str, *, presented_fingerprint: str | None = None) -> None:
+        super().__init__(message)
+        # What the server showed instead — kept so the change can be
+        # reported, and accepted by an operator who verified it.
+        self.presented_fingerprint = presented_fingerprint
