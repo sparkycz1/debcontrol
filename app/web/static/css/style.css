@@ -2338,3 +2338,7 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 }
 .batch-strip-item.is-current { border-color: var(--color-accent); font-weight: 600; }
 .batch-progress { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+
+/* Proxmox tab: guests in or out of the "not backed up" warning. */
+.guest-chips { list-style: none; margin: 0.35rem 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
+.guest-chips li { display: inline-flex; align-items: center; gap: 0.4rem; }

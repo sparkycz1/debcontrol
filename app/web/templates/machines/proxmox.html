@@ -206,13 +206,42 @@
 
   {% if machine.pve_backups is not none %}
     {% set backups = machine.pve_backups %}
-    <section class="panel">
+    <section class="panel" id="backups">
       <h2>{{ t(request, "proxmox.backups") }}</h2>
-      {% if backups.not_backed_up %}
-        <div class="alert alert-warn"><p>
-          {{ t(request, "proxmox.not_backed_up", count=(backups.not_backed_up | length)) }}
-          {% for g in backups.not_backed_up %}{{ g.vmid }}{% if g.name %} ({{ g.name }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
-        </p></div>
+      {% macro exempt_form(vmid, exempt, label, title='') %}
+        <form method="post" action="/machines/{{ machine.id }}/proxmox/backup-exempt" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="vmid" value="{{ vmid }}">
+          <input type="hidden" name="exempt" value="{{ exempt }}">
+          <button type="submit" class="link-button" {% if title %}title="{{ title }}"{% endif %}>{{ label }}</button>
+        </form>
+      {% endmacro %}
+      {% if not_backed_up %}
+        <div class="alert alert-warn">
+          <p>{{ t(request, "proxmox.not_backed_up", count=(not_backed_up | length)) }}</p>
+          <ul class="guest-chips">
+            {% for g in not_backed_up %}
+              <li>
+                {{ g.vmid }}{% if g.name %} ({{ g.name }}){% endif %}
+                {% if can_manage %}{{ exempt_form(g.vmid, 1, t(request, "proxmox.backup_exempt.mark"), t(request, "proxmox.backup_exempt.mark_title")) }}{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+          {% if can_manage and not_backed_up | length > 1 %}
+            <p>{{ exempt_form("all", 1, t(request, "proxmox.backup_exempt.mark_all")) }}</p>
+          {% endif %}
+        </div>
+      {% endif %}
+      {% if backup_exempt %}
+        <p class="hint">{{ t(request, "proxmox.backup_exempt.heading", count=(backup_exempt | length)) }}</p>
+        <ul class="guest-chips">
+          {% for g in backup_exempt %}
+            <li>
+              {{ g.vmid }}{% if g.name %} ({{ g.name }}){% endif %}
+              {% if can_manage %}{{ exempt_form(g.vmid, 0, t(request, "proxmox.backup_exempt.unmark")) }}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
       {% endif %}
 
       <h3>{{ t(request, "proxmox.backup_jobs") }}</h3>

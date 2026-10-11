@@ -2297,6 +2297,13 @@
     "batches.count.running": "{count} běží",
     "batches.count.pending": "{count} čeká",
     "batches.count.failed": "{count} selhalo",
-    "batches.count.of": "z {count}"
+    "batches.count.of": "z {count}",
+    "proxmox.backup_exempt.mark": "nehlásit",
+    "proxmox.backup_exempt.mark_title": "Tento host se záměrně nezálohuje (šablona, testovací VM). Z tohoto varování zmizí.",
+    "proxmox.backup_exempt.mark_all": "Nehlásit žádný z nich",
+    "proxmox.backup_exempt.unmark": "znovu hlásit",
+    "proxmox.backup_exempt.heading": "Záměrně nezálohované ({count}):",
+    "audit.action_label.machine.proxmox.backup_exempt.add": "Host označen jako záměrně nezálohovaný",
+    "audit.action_label.machine.proxmox.backup_exempt.remove": "Host se znovu počítá jako nezálohovaný"
   }
 }

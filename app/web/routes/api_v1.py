@@ -94,6 +94,7 @@ from app.services import (
     acknowledgements,
     machine_timeline,
     monitoring_history,
+    proxmox_backup_exempt,
     update_batches,
 )
 from app.services.access_scope import (
@@ -390,9 +391,62 @@ async def machine_proxmox_api(
         "zfs_pools": machine.zfs_pools,
         "storage": machine.pve_storage,
         "backups": machine.pve_backups,
+        # VMIDs marked as deliberately not backed up: still listed in
+        # `backups.not_backed_up`, no longer warned about.
+        "backup_exempt": machine.pve_backup_exempt or [],
         "monitoring_updated_at": _isoformat(machine.monitoring_updated_at),
         "facts_updated_at": _isoformat(machine.facts_updated_at),
     }
+
+
+async def _set_backup_exempt_api(
+    request: Request, machine: Machine, vmid: int, *, exempt: bool, db: AsyncSession
+) -> dict[str, object]:
+    try:
+        await proxmox_backup_exempt.set_exempt(db, request, machine, [vmid], exempt=exempt)
+    except proxmox_backup_exempt.UnknownGuestError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Not a guest the last refresh reported as not backed up."
+                if exempt
+                else "That guest is not marked."
+            ),
+        ) from None
+    return {"backup_exempt": machine.pve_backup_exempt or []}
+
+
+@router.put(
+    "/machines/{machine_id}/proxmox/backup-exempt/{vmid}", dependencies=[_manage_machines]
+)
+async def mark_backup_exempt_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    vmid: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Mark a guest as deliberately not backed up: it stays in
+    `backups.not_backed_up` but is no longer warned about. Only a guest
+    the last refresh reported as not backed up can be marked.
+    `machine.manage`, audited as `machine.proxmox.backup_exempt.add`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return await _set_backup_exempt_api(request, machine, vmid, exempt=True, db=db)
+
+
+@router.delete(
+    "/machines/{machine_id}/proxmox/backup-exempt/{vmid}", dependencies=[_manage_machines]
+)
+async def unmark_backup_exempt_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    vmid: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The reverse of `PUT` on the same path."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return await _set_backup_exempt_api(request, machine, vmid, exempt=False, db=db)
 
 
 @router.post(
