@@ -14,6 +14,7 @@ from typing import Any, TypedDict
 from app.db.models.machine import Machine
 from app.ssh import proxmox
 from app.ssh.client import open_connection
+from app.ssh.hardware import parse_hardware
 from app.ssh.pool import machine_connection
 from app.ssh.shell import with_root_shim
 from app.ssh.smart import SMART_FACTS_SECTION, parse_smart_section
@@ -39,6 +40,7 @@ _SECTION_MARKERS = (
     "LOGINS",
     "VIRT",
     "BOOT_ID",
+    "HARDWARE",
     "SMART",
     "REBOOT_FLAG",
     *proxmox.INVENTORY_MARKERS,
@@ -138,6 +140,14 @@ FACTS_COMMAND = (
     # host — how debcontrol recognises the machine it runs on
     # (app.services.self_host).
     "echo ===BOOT_ID===; cat /proc/sys/kernel/random/boot_id 2>/dev/null; "
+    # What the box is, from its firmware (app.services.hardware_inventory).
+    # Vendor and model are world-readable; the serial needs root, hence
+    # dmidecode (already in the sudoers rule for the RAM speed above).
+    "echo ===HARDWARE===; "
+    "echo \"vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)\"; "
+    "echo \"model=$(cat /sys/class/dmi/id/product_name 2>/dev/null)\"; "
+    "echo \"serial=$( (sudo -n dmidecode -s system-serial-number 2>/dev/null "
+    "|| cat /sys/class/dmi/id/product_serial 2>/dev/null) | head -n 1)\"; "
     # Full per-disk S.M.A.R.T. detail — bare metal only, see app.ssh.smart.
     f"{SMART_FACTS_SECTION}; "
     # Debian/Ubuntu's own "a reboot is needed" flag (written by package
@@ -181,6 +191,10 @@ class MachineFacts(TypedDict):
     is_physical: bool | None
     # The kernel's boot id (app.services.self_host); None if unreadable.
     boot_id: str | None
+    # Vendor / model / serial from the firmware; None where it says nothing.
+    hw_vendor: str | None
+    hw_model: str | None
+    hw_serial: str | None
     # One summary per readable disk (see app.ssh.smart.parse_smart_device);
     # None = not applicable (a VM, or no smartctl), [] = ran, nothing readable.
     smart_devices: list[dict[str, Any]] | None
@@ -322,6 +336,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
     if virt_raw:
         is_physical = virt_raw == "none"
 
+    hardware = parse_hardware(sections.get("HARDWARE", ""))
     pbs_version, pbs_data = proxmox.parse_pbs(sections)
     pmg_version, pmg_data = proxmox.parse_pmg(sections)
     return MachineFacts(
@@ -345,6 +360,9 @@ def parse_facts_output(raw: str) -> MachineFacts:
         login_users=login_users,
         is_physical=is_physical,
         boot_id=_parse_boot_id(sections.get("BOOT_ID", "")),
+        hw_vendor=hardware["vendor"],
+        hw_model=hardware["model"],
+        hw_serial=hardware["serial"],
         smart_devices=parse_smart_section(sections.get("SMART", "")),
         pve_version=proxmox.parse_pve_version(sections.get("PVE_VERSION", "")),
         pve_storage=proxmox.parse_storage(sections.get("PVE_STORAGE", "")),

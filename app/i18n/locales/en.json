@@ -2514,6 +2514,21 @@
     "watched_files.saved": "Saved. New files are being read now.",
     "watched_files.checked_result": "Read. Files changed since the last reading: {count}.",
     "history.field.watched_file": "Watched file",
-    "audit.action_label.machine.watched_files.update": "Watched files changed"
+    "audit.action_label.machine.watched_files.update": "Watched files changed",
+    "hardware.title": "Hardware and warranties",
+    "hardware.intro": "Physical machines: what each one is, read from its firmware, and the purchase and warranty dates recorded for it. Virtual machines are not listed. The ones whose warranty ends soonest come first; a notification rule can watch \"Hardware: days of warranty left\".",
+    "hardware.panel": "Hardware",
+    "hardware.vendor_model": "Vendor and model",
+    "hardware.serial": "Serial number",
+    "hardware.purchased": "Purchased",
+    "hardware.warranty_until": "Warranty until",
+    "hardware.note": "Note",
+    "hardware.expired": "ended",
+    "hardware.days_left": "{count} days left",
+    "hardware.edit": "Record purchase and warranty",
+    "hardware.serial_hint": "Only when the firmware gives none or a wrong one; empty uses the firmware's.",
+    "hardware.none": "No physical machines yet.",
+    "notifications.condition_field.hardware_warranty_days_left": "Hardware: days of warranty left",
+    "audit.action_label.machine.asset.update": "Hardware record changed"
   }
 }

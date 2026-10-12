@@ -37,6 +37,7 @@ from app.db.session import get_db
 from app.schemas.machine import MachineUpdate
 from app.services import (
     acknowledgements,
+    hardware_inventory,
     machine_timeline,
     proxmox_guest_links,
     self_host,
@@ -60,7 +61,7 @@ from app.ssh.logs import is_container_name_valid
 from app.ssh.packages import PackageSource
 from app.ssh.power import PowerAction
 from app.tasks import jobs as tasks
-from app.web.flash import sign_flash
+from app.web.flash import read_flash, sign_flash
 from app.web.messages import LocalizedText
 from app.web.routes.machines_common import (
     _get_all_tags,
@@ -145,6 +146,12 @@ async def machine_detail(
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "overview",
             "runs_on": await proxmox_guest_links.visible_host_of(db, current_user, machine),
+            "hardware_applies": hardware_inventory.applies(machine),
+            "hardware_serial": hardware_inventory.serial_of(machine),
+            "warranty_days_left": hardware_inventory.warranty_days_left(machine),
+            "warranty_soon_days": hardware_inventory.WARRANTY_SOON_DAYS,
+            "asset_error": read_flash(request, "asset_error"),
+            "can_manage_machine": current_user.has_permission(Permission.MACHINE_MANAGE),
             "self_host_role": await self_host.role_of(db, machine),
             # The package *rows* themselves are deliberately not fetched
             # here — a machine can easily have several hundred installed
@@ -1551,3 +1558,53 @@ async def clear_machine_acknowledgement(
         target_label=machine.name,
     )
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{machine_id}/asset", dependencies=[need_manage, Depends(verify_csrf)])
+async def save_machine_asset(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    purchase_date: str = Form(""),
+    warranty_until: str = Form(""),
+    asset_serial: str = Form(""),
+    asset_note: str = Form(""),
+) -> Response:
+    """What a person records about a physical machine: when it was bought,
+    until when its warranty runs, a serial the firmware does not give."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    base = f"/machines/{machine.id}"
+    if not hardware_inventory.applies(machine):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A virtual machine has no hardware record.",
+        )
+    try:
+        hardware_inventory.apply_asset(
+            machine,
+            purchase_date=hardware_inventory.parse_date(purchase_date, "Purchased"),
+            warranty_until=hardware_inventory.parse_date(warranty_until, "Warranty until"),
+            asset_serial=asset_serial,
+            asset_note=asset_note,
+        )
+    except hardware_inventory.AssetError as exc:
+        return RedirectResponse(
+            url=f"{base}?asset_error={sign_flash(str(exc))}#hardware",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.asset.update",
+        summary=f'Changed the hardware record of "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={
+            "purchase_date": purchase_date.strip() or None,
+            "warranty_until": warranty_until.strip() or None,
+        },
+    )
+    return RedirectResponse(url=f"{base}#hardware", status_code=status.HTTP_303_SEE_OTHER)

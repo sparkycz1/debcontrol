@@ -2559,6 +2559,21 @@
     "watched_files.saved": "Uloženo. Nové soubory se právě čtou.",
     "watched_files.checked_result": "Přečteno. Souborů změněných od minulého čtení: {count}.",
     "history.field.watched_file": "Hlídaný soubor",
-    "audit.action_label.machine.watched_files.update": "Změněny hlídané soubory"
+    "audit.action_label.machine.watched_files.update": "Změněny hlídané soubory",
+    "hardware.title": "Hardware a záruky",
+    "hardware.intro": "Fyzická zařízení: co které je, přečteno z jeho firmwaru, a k tomu zapsané datum pořízení a konec záruky. Virtuální zařízení tu nejsou. Nahoře jsou ta, kterým záruka končí nejdřív; notifikační pravidlo může hlídat podmínku „Hardware: zbývající dny záruky“.",
+    "hardware.panel": "Hardware",
+    "hardware.vendor_model": "Výrobce a model",
+    "hardware.serial": "Sériové číslo",
+    "hardware.purchased": "Pořízeno",
+    "hardware.warranty_until": "Záruka do",
+    "hardware.note": "Poznámka",
+    "hardware.expired": "skončila",
+    "hardware.days_left": "zbývá {count} dní",
+    "hardware.edit": "Zapsat pořízení a záruku",
+    "hardware.serial_hint": "Jen když firmware žádné neudává nebo udává špatné; prázdné pole použije to z firmwaru.",
+    "hardware.none": "Zatím žádná fyzická zařízení.",
+    "notifications.condition_field.hardware_warranty_days_left": "Hardware: zbývající dny záruky",
+    "audit.action_label.machine.asset.update": "Změněn záznam o hardwaru"
   }
 }
