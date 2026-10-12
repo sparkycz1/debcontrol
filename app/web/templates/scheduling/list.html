@@ -10,6 +10,7 @@
       {% if request.state.user.has_permission('notification.view') %}
         <a class="button button-secondary" href="/scheduling/maintenance">{{ t(request, "maintenance.title") }}</a>
       {% endif %}
+      <a class="button button-secondary" href="/scheduling/calendar">{{ t(request, "calendar.title") }}</a>
       <a class="button" href="/scheduling/new">{{ t(request, "scheduling.new") }}</a>
     </div>
   </div>

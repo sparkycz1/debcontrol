@@ -2401,3 +2401,54 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 
 /* Audit -> Terminal recordings: the player's controls. */
 .player-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0 0 var(--space-2); }
+
+/* --- Month calendar (Scheduling -> Calendar) --- */
+
+.calendar-grid {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.calendar-grid th {
+  padding: var(--space-2);
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+.calendar-grid td {
+  vertical-align: top;
+  height: 6.5rem;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  border: 1px solid var(--color-border);
+}
+.calendar-day { font-size: 0.8rem; color: var(--color-muted); margin-bottom: var(--space-1); }
+.calendar-outside .calendar-day { opacity: 0.45; }
+.calendar-today { box-shadow: inset 0 0 0 2px var(--color-accent); }
+.calendar-today .calendar-day { color: var(--color-text); font-weight: 600; }
+.calendar-entry {
+  display: block;
+  margin-bottom: 2px;
+  padding: 1px var(--space-1);
+  border-left: 3px solid var(--color-border-strong);
+  border-radius: 2px;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: var(--color-text);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.calendar-entry:hover { background: var(--color-surface-raised); }
+.calendar-time { color: var(--color-muted); }
+.calendar-task { border-left-color: var(--color-accent); }
+.calendar-window { border-left-color: var(--color-warn); }
+.calendar-batch { border-left-color: var(--color-ok); }
+.calendar-batch.calendar-flag { border-left-color: var(--color-danger); }
+.calendar-task.calendar-flag { opacity: 0.6; }
+.calendar-legend { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.calendar-legend .calendar-entry { display: inline-block; margin: 0; }
