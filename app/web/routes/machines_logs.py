@@ -75,6 +75,7 @@ async def terminal_page(
             "machine": machine,
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "terminal",
+            "recording": (await get_or_create_app_settings(db)).terminal_recording_enabled,
         },
     )
 

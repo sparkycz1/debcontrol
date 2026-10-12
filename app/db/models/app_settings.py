@@ -27,7 +27,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, Text, func
+from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -153,6 +153,17 @@ class AppSettings(Base):
     # unboundedly by default. NULL still means "keep forever."
     machine_update_run_retention_days: Mapped[int | None] = mapped_column(
         Integer, nullable=True, default=90
+    )
+
+    # Recording of browser terminal sessions (app.db.models.
+    # terminal_recording). Off unless an administrator turns it on: a
+    # recording holds everything a session printed. Recordings are kept
+    # for a bounded time by default (30 days); NULL = keep forever.
+    terminal_recording_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    terminal_recording_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=30, server_default="30"
     )
 
     # Same idea again, for `NotificationLog` rows (app.tasks.jobs.

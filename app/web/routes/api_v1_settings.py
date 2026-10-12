@@ -105,6 +105,10 @@ async def get_settings_api(db: AsyncSession = Depends(get_db)) -> dict[str, obje
         "ssh_fingerprint": identity.fingerprint,
         "ssh_pending_fingerprint": identity.pending_fingerprint,
         **{field: getattr(app_settings, field) for field in _WRITABLE_FIELDS},
+        # Read-only here: whether terminal sessions are recorded is decided
+        # by a person on Settings -> Security, not by a script.
+        "terminal_recording_enabled": app_settings.terminal_recording_enabled,
+        "terminal_recording_retention_days": app_settings.terminal_recording_retention_days,
     }
 
 

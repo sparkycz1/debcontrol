@@ -19,6 +19,9 @@
   <p class="hint">
     {{ t(request, "machine.terminal.hint", username=(machine.username | e), ip=(machine.ip_address | e)) | safe }}
   </p>
+  {% if recording %}
+    <div class="alert alert-warn"><p>{{ t(request, "machine.terminal.recorded") }}</p></div>
+  {% endif %}
   <div id="terminal-status" class="hint" role="status"></div>
   <div
     id="terminal-container"

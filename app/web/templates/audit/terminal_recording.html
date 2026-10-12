@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "recordings.title") }} — {{ recording.machine_name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ static_url('css/xterm.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/xterm-csp.css') }}">
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "recordings.one_title", machine=recording.machine_name) }}</h1>
+    <a class="button button-secondary" href="/audit/terminal-recordings">{{ t(request, "recordings.back_to_list") }}</a>
+  </div>
+
+  <p class="hint">
+    {{ t(request, "recordings.one_meta", user=recording.username, started=(recording.started_at | local_time('%Y-%m-%d %H:%M:%S %Z')), duration=(recording.duration_seconds | short_duration)) }}
+    {{ t(request, "recordings.output_only") }}
+  </p>
+  {% if recording.truncated %}
+    <div class="alert alert-warn"><p>{{ t(request, "recordings.truncated_hint") }}</p></div>
+  {% endif %}
+
+  <div class="player-controls">
+    <button type="button" id="player-play" class="button" disabled>{{ t(request, "recordings.play") }}</button>
+    <button type="button" id="player-restart" class="button button-secondary">{{ t(request, "recordings.restart") }}</button>
+    <label for="player-speed">{{ t(request, "recordings.speed") }}</label>
+    <select id="player-speed" class="inline-select">
+      <option value="1">1×</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+      <option value="16">16×</option>
+    </select>
+    <span id="player-position" class="table-muted"></span>
+    <span id="player-status" class="hint" role="status"></span>
+  </div>
+  <div
+    id="terminal-player"
+    class="terminal-shell"
+    data-cast-url="/audit/terminal-recordings/{{ recording.id }}/cast"
+    data-label-play="{{ t(request, 'recordings.play') }}"
+    data-label-pause="{{ t(request, 'recordings.pause') }}"
+    data-label-loading="{{ t(request, 'recordings.loading') }}"
+    data-label-failed="{{ t(request, 'recordings.load_failed') }}"
+    data-label-ended="{{ t(request, 'recordings.ended') }}"
+    data-label-empty="{{ t(request, 'recordings.empty') }}"
+  ></div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/xterm.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-webgl.min.js') }}"></script>
+  <script src="{{ static_url('js/terminal-player.js') }}" defer></script>
+{% endblock %}

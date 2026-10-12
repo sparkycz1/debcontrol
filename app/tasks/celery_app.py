@@ -374,6 +374,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.purge_old_machine_update_runs",
         "schedule": crontab(hour=3, minute=10),
     },
+    "purge-old-terminal-recordings": {
+        "task": "app.tasks.jobs.purge_old_terminal_recordings",
+        "schedule": crontab(hour=3, minute=12),
+    },
     "purge-old-monitoring-samples": {
         "task": "app.tasks.jobs.purge_old_monitoring_samples",
         "schedule": crontab(hour=3, minute=15),
