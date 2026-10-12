@@ -2059,6 +2059,66 @@ def run_machine_update(run_id: str) -> None:
     asyncio.run(_run_machine_update(run_id))
 
 
+# A run still "running" this long after the longest an update may take was
+# abandoned by its worker (the worker, or the whole debcontrol host, was
+# restarted mid-run — easy to do when debcontrol updates the machine it
+# runs on). Nothing will ever finish it.
+_STALE_RUN_GRACE_SECONDS = 15 * 60
+_STALE_RUN_ACTOR = "update watchdog (automatic)"
+STALE_RUN_ERROR = (
+    "The update did not finish: the worker running it stopped before it was done "
+    "(for example debcontrol itself, or the machine it runs on, was restarted). "
+    "The machine may be partly updated — check it and run the update again."
+)
+
+
+async def _fail_stale_update_runs() -> int:
+    """Mark update runs nobody is running any more as failed, so they do not
+    show as "running" for ever and a rolling batch waiting on one is
+    released. Returns how many were closed."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        limit = max(app_settings.update_timeout_seconds, 0) + _STALE_RUN_GRACE_SECONDS
+        cutoff = datetime.now(UTC) - timedelta(seconds=limit)
+        result = await session.execute(
+            select(MachineUpdateRun).where(
+                MachineUpdateRun.status == UpdateRunStatus.RUNNING,
+                MachineUpdateRun.started_at.is_not(None),
+                MachineUpdateRun.started_at < cutoff,
+            )
+        )
+        stale = list(result.scalars().all())
+        if not stale:
+            return 0
+        now = datetime.now(UTC)
+        for run in stale:
+            run.status = UpdateRunStatus.FAILED
+            run.error = STALE_RUN_ERROR
+            run.finished_at = now
+        await session.commit()
+        await log_event(
+            session,
+            actor=_STALE_RUN_ACTOR,
+            action="machine_update_runs.reap",
+            summary=(
+                f"Closed {len(stale)} update run{'s' if len(stale) != 1 else ''} "
+                "left running by a worker that stopped"
+            ),
+            outcome=AuditOutcome.FAILURE,
+            details={"run_ids": [str(run.id) for run in stale][:50], "count": len(stale)},
+        )
+        waiting_batches = [str(run.id) for run in stale if run.rollout_position is not None]
+    # A rolling batch stops at a failed run: let it mark what was waiting.
+    for run_id in waiting_batches:
+        finish_update_run.delay(run_id)
+    return len(stale)
+
+
+@celery_app.task(name="app.tasks.jobs.fail_stale_update_runs")
+def fail_stale_update_runs() -> int:
+    return asyncio.run(_fail_stale_update_runs())
+
+
 # After "reboot only if needed": how long a machine gets to go down, then to
 # answer on its SSH port again, before a rolling update gives up on it.
 _REBOOT_DOWN_WAIT_SECONDS = 180

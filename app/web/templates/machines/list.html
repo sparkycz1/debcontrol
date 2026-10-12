@@ -271,7 +271,8 @@
           <tbody>
             {% for machine in machines %}
               <tr>
-                <td><input type="checkbox" name="machine_ids" value="{{ machine.id }}"></td>
+                <td><input type="checkbox" name="machine_ids" value="{{ machine.id }}"
+                           aria-label="{{ t(request, 'machines.select_machine_label', name=machine.name) }}"></td>
                 <td>
                   {{ render_os_badge(machine.os_id) }}
                   <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>

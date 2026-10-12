@@ -1286,7 +1286,7 @@
     "notifications.event.cert_expiring": "TLS certificate expiring",
     "nav.checks": "Checks",
     "checks.title": "Endpoint checks",
-    "checks.intro": "TLS certificate and HTTP checks, run from the debcontrol server. An endpoint is reported down after 2 failures in a row; certificates warn once before they expire. Notifications: the Endpoint check failing / recovered and TLS certificate expiring events.",
+    "checks.intro": "HTTP, TLS certificate, ping, TCP port and DNS checks, run from the debcontrol server or from a machine you choose. An endpoint is reported down after 2 failures in a row; certificates warn once before they expire. Notifications: the Endpoint check failing / recovered and TLS certificate expiring events.",
     "checks.add": "Add check",
     "checks.status": "Status",
     "checks.name": "Name",
@@ -2317,6 +2317,12 @@
     "dashboard.section.trends": "Fleet trends",
     "dashboard.section.scheduling": "Scheduling",
     "dashboard.section.activity": "Recent activity",
-    "dashboard.section.fleet": "Machine cards"
+    "dashboard.section.fleet": "Machine cards",
+    "machine.update_run.state.pending": "waiting",
+    "machine.update_run.state.running": "running",
+    "machine.update_run.state.succeeded": "succeeded",
+    "machine.update_run.state.failed": "failed",
+    "machine.connection_heading": "Connection",
+    "audit.action_label.machine_update_runs.reap": "Abandoned update runs closed"
   }
 }

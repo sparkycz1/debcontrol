@@ -67,7 +67,7 @@
       <option value="" {% if not status_filter %}selected{% endif %}>{{ t(request, "audit.search.any_outcome") }}</option>
       {% for s in statuses %}
         <option value="{{ s.value }}" {% if status_filter == s.value %}selected{% endif %}>
-          {{ s.value }}
+          {{ t(request, "machine.update_run.state." ~ s.value) }}
         </option>
       {% endfor %}
     </select>
@@ -98,7 +98,7 @@
             </td>
             <td>
               {% if run.status.value in ('pending', 'running') %}
-                <span class="badge badge-warn">{{ run.status.value }}</span>
+                <span class="badge badge-warn">{{ t(request, "machine.update_run.state." ~ run.status.value) }}</span>
               {% elif run.status.value == 'succeeded' %}
                 <span class="badge badge-ok">{{ t(request, "machine.updates.succeeded") }}</span>
               {% else %}

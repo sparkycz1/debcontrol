@@ -297,6 +297,10 @@ async def load_timeline(
                 AuditLogEntry.target_type == "machine",
                 AuditLogEntry.created_at >= since,
                 not_(AuditLogEntry.action.like("%.view")),
+                not_(AuditLogEntry.action.like("%.browse")),
+                # The run itself is on the timeline; "someone started it"
+                # right next to it says the same thing twice.
+                AuditLogEntry.action != "machine.updates.run",
                 not_(AuditLogEntry.action.like("machine.note.%")),
                 # A manual "refresh now" and following a log live are
                 # look-ups too: they change nothing on the machine.
