@@ -366,6 +366,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.purge_old_fleet_snapshots",
         "schedule": crontab(hour=3, minute=5),
     },
+    "fail-stale-update-runs": {
+        "task": "app.tasks.jobs.fail_stale_update_runs",
+        "schedule": crontab(minute="*/10"),
+    },
     "purge-old-machine-update-runs": {
         "task": "app.tasks.jobs.purge_old_machine_update_runs",
         "schedule": crontab(hour=3, minute=10),

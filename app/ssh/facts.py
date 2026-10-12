@@ -104,7 +104,7 @@ FACTS_COMMAND = (
     "echo ===PROCESSES===; ls -d /proc/[0-9]* 2>/dev/null | wc -l; "
     "echo ===FILESYSTEMS===; "
     "df -B1 --output=target,size,used,avail,pcent "
-    "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
+    "-x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2; "
     "echo ===NETWORK===; "
     "ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}'; "
     # Listening TCP sockets, local address:port only (`ss` is iproute2,

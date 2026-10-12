@@ -206,7 +206,7 @@ MONITORING_COMMAND = (
     "$3 in want { print $3, $6*512, $10*512 }' /proc/diskstats 2>/dev/null; "
     "echo ===FILESYSTEMS===; "
     "df -B1 --output=target,size,used,avail,pcent "
-    "-x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2; "
+    "-x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2; "
     # `@@OK` first — telling "systemd, nothing failed" apart from "no
     # systemd" — then one failed unit name per line.
     "echo ===FAILED_SERVICES===; "
