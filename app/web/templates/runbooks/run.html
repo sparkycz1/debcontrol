@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}{{ runbook.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "runbooks.run_title", name=runbook.name) }}</h1>
+  {% if runbook.description %}<p class="hint">{{ runbook.description }}</p>{% endif %}
+  {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+
+  <form method="post" action="/runbooks/{{ runbook.id }}/preview" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <fieldset class="strategy-fields">
+      <legend>{{ t(request, "runbooks.target") }}</legend>
+      <label><input type="radio" name="target_type" value="machine" {{ 'checked' if target_type == 'machine' else '' }}> {{ t(request, "runbooks.target_machine") }}</label>
+      <select name="machine_id" class="inline-select" aria-label="{{ t(request, 'runbooks.target_machine') }}">
+        <option value="">—</option>
+        {% for value, label in machine_choices %}
+          <option value="{{ value }}" {{ 'selected' if value == machine_id else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <label><input type="radio" name="target_type" value="group" {{ 'checked' if target_type == 'group' else '' }}> {{ t(request, "runbooks.target_group") }}</label>
+      <select name="group_id" class="inline-select" aria-label="{{ t(request, 'runbooks.target_group') }}">
+        <option value="">—</option>
+        {% for value, label in group_choices %}
+          <option value="{{ value }}" {{ 'selected' if value == group_id else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </fieldset>
+
+    {% for param in runbook.params %}
+      <label for="param_{{ param.key }}">{{ param.label or param.key }}</label>
+      <input type="text" id="param_{{ param.key }}" name="param_{{ param.key }}" maxlength="200"
+             value="{{ values.get(param.key) or param.default }}">
+    {% endfor %}
+    {% if runbook.params %}<p class="hint">{{ t(request, "runbooks.value_hint") }}</p>{% endif %}
+
+    <button type="submit" class="button">{{ t(request, "runbooks.preview") }}</button>
+    <a class="button button-secondary" href="/runbooks">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

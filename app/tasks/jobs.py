@@ -59,6 +59,7 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
+from app.db.models.runbook import RunbookRun, RunbookRunStatus
 from app.db.models.terminal_recording import TerminalRecording
 from app.services import (
     acknowledgements,
@@ -145,6 +146,8 @@ _PROGRESS_COMMIT_INTERVAL_SECONDS = 2.0
 # How long a one-shot `run_remote_ssh_command` may run for, on top of the
 # connect timeout.
 _SSH_COMMAND_EXTRA_SECONDS = 60
+# How long one step of a runbook may take.
+_RUNBOOK_STEP_SECONDS = 600
 
 # Celery's own hard per-task wall-clock kill switches — a process-safety
 # ceiling, evaluated once at import time (a `@celery_app.task(time_limit=
@@ -2766,6 +2769,69 @@ async def _run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> 
 )
 def run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> dict[str, Any]:
     return asyncio.run(_run_proxmox_guest_action(machine_id, vmid, action))
+
+
+async def _run_runbook(run_id: str) -> None:
+    """Run one `RunbookRun`: its commands in order on its machine, each
+    one's output appended as it finishes, stopping at the first that exits
+    non-zero (`app.services.runbooks`).
+
+    **No authorization happens here**: a run exists only because a route
+    checked `runbook.run` and the machine's visibility before creating it,
+    and the commands on it were rendered then."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        run = await session.get(RunbookRun, uuid.UUID(run_id))
+        if run is None or run.status != RunbookRunStatus.PENDING:
+            return
+        machine = await session.get(Machine, run.machine_id)
+        run.status = RunbookRunStatus.RUNNING
+        run.started_at = datetime.now(UTC)
+        await session.commit()
+
+        output: list[str] = []
+        error: str | None = None
+        if machine is None or not machine.host_key_fingerprint:
+            error = "The machine has no confirmed host key."
+        else:
+            secret = await resolve_machine_credential(machine, session)
+            for index, step in enumerate(run.commands or [], start=1):
+                command = str(step.get("command") or "")
+                name = str(step.get("name") or f"Step {index}")
+                output.append(f"=== {index}. {name} ===\n$ {command}")
+                try:
+                    result = await run_command(
+                        machine,
+                        secret,
+                        command,
+                        app_settings.ssh_connect_timeout,
+                        app_settings.ssh_connect_timeout + _RUNBOOK_STEP_SECONDS,
+                    )
+                except (SSHConnectionError, TimeoutError) as exc:
+                    error = f'Step {index} ("{name}") could not run: {exc}'
+                    break
+                output.append(result.output.rstrip())
+                run.output = _truncate_output("\n".join(output))
+                await session.commit()
+                if result.exit_status != 0:
+                    error = (
+                        f'Step {index} ("{name}") exited with status {result.exit_status}; '
+                        "the steps after it were not run."
+                    )
+                    break
+        run.output = _truncate_output("\n".join(output)) if output else None
+        run.error = error[:1024] if error else None
+        run.status = RunbookRunStatus.FAILED if error else RunbookRunStatus.SUCCEEDED
+        run.finished_at = datetime.now(UTC)
+        await session.commit()
+
+
+@celery_app.task(
+    name="app.tasks.jobs.run_runbook",
+    time_limit=_UPDATE_TASK_TIME_LIMIT_SECONDS,
+)
+def run_runbook(run_id: str) -> None:
+    asyncio.run(_run_runbook(run_id))
 
 
 async def _send_machine_power_command(machine_id: str, action: str) -> dict[str, Any]:

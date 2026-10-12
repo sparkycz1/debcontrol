@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ runbook.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "runbooks.confirm_title", name=runbook.name) }}</h1>
+  <p>{{ t(request, "runbooks.confirm_intro", target=target_label, count=(machine_names | length)) }}</p>
+  {% if skipped %}
+    <div class="alert alert-warn"><p>{{ t(request, "runbooks.skipped", count=skipped) }}</p></div>
+  {% endif %}
+
+  <section class="panel">
+    <h2>{{ t(request, "runbooks.commands") }}</h2>
+    <ol>
+      {% for step in commands %}
+        <li>{{ step.name }}<pre class="run-output">{{ step.command }}</pre></li>
+      {% endfor %}
+    </ol>
+    <h2>{{ t(request, "nav.machines") }}</h2>
+    <p>{{ machine_names | join(", ") or '—' }}</p>
+  </section>
+
+  <form method="post" action="/runbooks/{{ runbook.id }}/run" class="form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="target_type" value="{{ target_type }}">
+    <input type="hidden" name="machine_id" value="{{ machine_id }}">
+    <input type="hidden" name="group_id" value="{{ group_id }}">
+    {% for key, value in values.items() %}
+      <input type="hidden" name="param_{{ key }}" value="{{ value }}">
+    {% endfor %}
+    <button type="submit" class="button" {{ 'disabled' if not machine_names else '' }}>{{ t(request, "runbooks.confirm_run", count=(machine_names | length)) }}</button>
+    <a class="button button-secondary" href="/runbooks">{{ t(request, "common.cancel") }}</a>
+  </form>
+{% endblock %}

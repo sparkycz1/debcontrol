@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}{{ runs[0].runbook_name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "runbooks.batch_title", name=runs[0].runbook_name) }}</h1>
+    <a class="button button-secondary" href="/runbooks">{{ t(request, "nav.runbooks") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "runbooks.batch_started", when=(runs[0].created_at | local_time('%Y-%m-%d %H:%M %Z')), user=(runs[0].started_by or '—')) }}</p>
+  {% include "partials/runbook_batch_status.html" %}
+{% endblock %}
