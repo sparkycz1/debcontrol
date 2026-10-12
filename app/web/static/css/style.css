@@ -2452,3 +2452,10 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .calendar-task.calendar-flag { opacity: 0.6; }
 .calendar-legend { display: flex; gap: var(--space-3); flex-wrap: wrap; }
 .calendar-legend .calendar-entry { display: inline-block; margin: 0; }
+
+/* --- A watched file's last change (machine -> Watched files) --- */
+
+.file-diff span { display: block; }
+.file-diff .diff-add { color: var(--color-ok); }
+.file-diff .diff-del { color: var(--color-danger); }
+.file-diff .diff-hunk { color: var(--color-muted); }
