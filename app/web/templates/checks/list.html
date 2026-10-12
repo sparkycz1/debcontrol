@@ -85,6 +85,10 @@
       </table>
     </div>
   {% else %}
-    <div class="empty-state"><p>{{ t(request, "checks.empty") }}</p></div>
+    <div class="empty-state">
+      <p><strong>{{ t(request, "checks.empty") }}</strong></p>
+      <p>{{ t(request, "checks.empty_what") }}</p>
+      {% if can_manage %}<a class="button" href="/checks/new">{{ t(request, "checks.add") }}</a>{% endif %}
+    </div>
   {% endif %}
 {% endblock %}

@@ -22,7 +22,7 @@ from app.core.version import APP_VERSION, get_git_commit
 from app.db.models.role import Permission
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
-from app.services import acknowledgements, fleet_overview
+from app.services import acknowledgements, audit_subject, fleet_overview
 from app.ssh import proxmox
 from app.ssh.onboarding import SUDO_COMMAND_LIST
 from app.ssh.updates import reboot_hint_packages
@@ -303,7 +303,11 @@ templates.env.globals["t"] = t
 
 
 def audit_text(
-    request: Request, action: str, summary: str, target_label: str | None = None
+    request: Request,
+    action: str,
+    summary: str,
+    target_label: str | None = None,
+    details: Any = None,
 ) -> str:
     """`{{ audit_text(request, entry.action, entry.summary) }}` — an audit
     entry's one-line description in the reader's language.
@@ -317,7 +321,11 @@ def audit_text(
     when neither is translated. The label describes *what* happened; the
     table row still shows who and the outcome next to it; pass
     `target_label` where no separate target column shows it, and it's
-    appended to a translated label (`Zobrazení journalu: prx`)."""
+    appended to a translated label (`Zobrazení journalu: prx`). Pass
+    `details` (the entry's own, or a subject already taken from them) where
+    they are not listed next to it: what the action was about — a guest
+    id, a package — follows in brackets, so three "Proxmox guest action"
+    rows are not three identical rows."""
     locale = getattr(request.state, "locale", None) or get_locale(None)
     if locale.code == DEFAULT_LOCALE_CODE:
         return summary
@@ -325,7 +333,9 @@ def audit_text(
     while code:
         label = locale.strings.get(f"audit.action_label.{code}")
         if label is not None:
-            return f"{label}: {target_label}" if target_label else label
+            text = f"{label}: {target_label}" if target_label else label
+            about = details if isinstance(details, str) else audit_subject.subject(details)
+            return f"{text} ({about})" if about else text
         code = code.rpartition(".")[0]
     return summary
 

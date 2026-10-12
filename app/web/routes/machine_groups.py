@@ -446,7 +446,11 @@ async def update_batch_list(
 
 
 def _batch_context(
-    batch_id: uuid.UUID, runs: list[MachineUpdateRun], **extra: object
+    user: User,
+    batch_id: uuid.UUID,
+    runs: list[MachineUpdateRun],
+    csrf_token: str,
+    **extra: object,
 ) -> dict[str, object]:
     counts = update_batches.count_runs(runs)
     return {
@@ -454,6 +458,13 @@ def _batch_context(
         "batch_id": batch_id,
         "counts": counts,
         "has_pending": counts.unfinished > 0,
+        # "Run again on the failed ones", once nothing is running any more.
+        "can_retry": (
+            counts.failed > 0
+            and counts.unfinished == 0
+            and user.has_permission(Permission.ACTION_UPDATES)
+        ),
+        "csrf_token": csrf_token,
         **extra,
     }
 
@@ -469,9 +480,54 @@ async def update_batch_detail(
     runs = await update_batches.visible_batch_runs(db, current_user, batch_id)
     if not runs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.")
-    return templates.TemplateResponse(
-        request, "machine_groups/batch.html", _batch_context(batch_id, runs, skipped=skipped)
+    csrf_token, new_cookie = get_or_create_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "machine_groups/batch.html",
+        _batch_context(current_user, batch_id, runs, csrf_token, skipped=skipped),
     )
+    if new_cookie:
+        set_csrf_cookie(response, new_cookie)
+    return response
+
+
+@router.post("/batches/{batch_id}/retry", dependencies=[_updates, Depends(verify_csrf)])
+async def retry_update_batch(
+    request: Request,
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Run the batch again on the machines where it failed."""
+    try:
+        new_batch_id, skipped = await update_batches.retry_failed(db, current_user, batch_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found."
+        ) from exc
+    except update_batches.BatchNotFinishedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="The batch is still running."
+        ) from exc
+    except update_batches.NothingFailedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="No run of this batch failed."
+        ) from exc
+    await log_event(
+        db,
+        request=request,
+        action="update_batch.retry",
+        summary="Ran an update batch again on the machines where it failed",
+        details={
+            "batch_id": str(new_batch_id),
+            "retry_of_batch_id": str(batch_id),
+            "skipped": skipped,
+        },
+    )
+    redirect_url = f"/machine-groups/batches/{new_batch_id}"
+    if skipped:
+        redirect_url += f"?skipped={skipped}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/batches/{batch_id}/status")
@@ -482,8 +538,11 @@ async def update_batch_status(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     runs = await update_batches.visible_batch_runs(db, current_user, batch_id)
+    csrf_token, _new_cookie = get_or_create_csrf_token(request)
     return templates.TemplateResponse(
-        request, "partials/update_batch_status.html", _batch_context(batch_id, runs)
+        request,
+        "partials/update_batch_status.html",
+        _batch_context(current_user, batch_id, runs, csrf_token),
     )
 
 

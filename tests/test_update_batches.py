@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from httpx2 import AsyncClient
+from sqlalchemy import select
 
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
@@ -23,6 +24,7 @@ async def _create_machine(db_session_factory: Any, name: str) -> uuid.UUID:
             port=22,
             username="admin",
             auth_method=AuthMethod.SSH_KEY,
+            host_key_fingerprint="SHA256:test",
         )
         db.add(machine)
         await db.commit()
@@ -180,3 +182,84 @@ async def test_api_lists_batches_with_counts(
     assert (batch["total"], batch["succeeded"], batch["running"]) == (2, 1, 1)
     assert detail.json()["total"] == 2 and len(detail.json()["runs"]) == 2
     assert missing.status_code == 404
+
+
+async def test_a_finished_batch_can_be_run_again_where_it_failed(
+    client: AsyncClient, db_session_factory: Any, celery_calls: Any
+) -> None:
+    batch_id, runs = await _batch(
+        client,
+        db_session_factory,
+        {
+            "ok-1": UpdateRunStatus.SUCCEEDED,
+            "bad-1": UpdateRunStatus.FAILED,
+            "bad-2": UpdateRunStatus.FAILED,
+        },
+    )
+    running, _ = await _batch(
+        client,
+        db_session_factory,
+        {"busy-1": UpdateRunStatus.FAILED, "busy-2": UpdateRunStatus.RUNNING},
+    )
+    clean, _ = await _batch(client, db_session_factory, {"fine-1": UpdateRunStatus.SUCCEEDED})
+
+    page = await client.get(f"/machine-groups/batches/{batch_id}")
+    busy_page = await client.get(f"/machine-groups/batches/{running}")
+    csrf = client.cookies.get("csrftoken")
+    retried = await client.post(
+        f"/machine-groups/batches/{batch_id}/retry",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    too_early = await client.post(
+        f"/machine-groups/batches/{running}/retry", data={"csrf_token": csrf}
+    )
+    nothing = await client.post(
+        f"/machine-groups/batches/{clean}/retry", data={"csrf_token": csrf}
+    )
+    missing = await client.post(
+        f"/machine-groups/batches/{uuid.uuid4()}/retry", data={"csrf_token": csrf}
+    )
+
+    assert "Run again where it failed (2)" in page.text
+    assert "Run again where it failed" not in busy_page.text
+    assert retried.status_code == 303
+    new_batch = retried.headers["location"].rsplit("/", 1)[1]
+    assert new_batch != str(batch_id)
+    assert (too_early.status_code, nothing.status_code, missing.status_code) == (409, 409, 404)
+    async with db_session_factory() as db:
+        new_runs = list(
+            (
+                await db.execute(
+                    select(MachineUpdateRun).where(
+                        MachineUpdateRun.batch_id == uuid.UUID(new_batch)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert {r.machine_id for r in new_runs} == {runs["bad-1"][0], runs["bad-2"][0]}
+    assert all(r.strategy == UpgradeStrategy.FULL_UPGRADE for r in new_runs)
+    assert celery_calls.names.count("app.tasks.jobs.run_machine_update") == 2
+
+
+async def test_api_runs_a_batch_again_where_it_failed(
+    client: AsyncClient, db_session_factory: Any
+) -> None:
+    batch_id, runs = await _batch(
+        client,
+        db_session_factory,
+        {"api-ok": UpdateRunStatus.SUCCEEDED, "api-bad": UpdateRunStatus.FAILED},
+    )
+    headers = await _api_token(client)
+
+    retried = await client.post(
+        f"/api/v1/machine-groups/batches/{batch_id}/retry", headers=headers
+    )
+    again = await client.get(
+        f"/api/v1/machine-groups/batches/{retried.json()['batch_id']}", headers=headers
+    )
+
+    assert retried.status_code == 200
+    assert [r["machine_id"] for r in again.json()["runs"]] == [str(runs["api-bad"][0])]

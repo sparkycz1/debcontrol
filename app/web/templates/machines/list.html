@@ -253,7 +253,9 @@
           {% endfor %}
         </div>
       {% else %}
-        <table class="data-table">
+        {# On a phone each row is drawn as a card (`.machine-table` in
+           style.css) — same markup, no second view to keep in step. #}
+        <table class="data-table machine-table">
           <thead>
             <tr>
               <th><input type="checkbox" data-select-all="machine_ids" aria-label="{{ t(request, 'machines.bulk.select_all') }}"></th>
@@ -277,7 +279,7 @@
                   {{ render_os_badge(machine.os_id) }}
                   <a href="/machines/{{ machine.id }}">{{ machine.name }}</a>
                 </td>
-                <td class="col-optional">{{ machine.ip_address }}</td>
+                <td class="col-optional col-card table-muted">{{ machine.ip_address }}</td>
                 <td class="col-optional">{{ machine.discovered_hostname or '—' }}</td>
                 <td class="col-optional">
                   {% if machine.group %}
@@ -295,7 +297,7 @@
                 </td>
                 <td>{{ status_badge(machine) }}</td>
                 <td>{% include "partials/machine_update_status_cell.html" %}</td>
-                <td class="col-optional">{{ host_key_badge(machine) }}</td>
+                <td class="col-optional col-card">{{ host_key_badge(machine) }}</td>
                 <td class="col-optional"><a href="/machines/{{ machine.id }}">{{ t(request, 'machines.table.details') }}</a></td>
               </tr>
             {% endfor %}

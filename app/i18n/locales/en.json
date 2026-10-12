@@ -2371,6 +2371,13 @@
     "proxmox.runs_on_vm": "Runs as VM {vmid} on",
     "proxmox.runs_on_ct": "Runs as container {vmid} on",
     "proxmox.guest_is_machine": "Managed here as {name}",
-    "proxmox.failed_tasks_hint": "From the last {days} days. Older failures stay in Proxmox's own task log."
+    "proxmox.failed_tasks_hint": "From the last {days} days. Older failures stay in Proxmox's own task log.",
+    "batches.retry_failed": "Run again where it failed ({count})",
+    "batches.retry_confirm": "Start the same update again on every machine where it failed ({count})?",
+    "batches.retry_hint": "Starts a new batch with the same kind of update, only on the machines where this one failed.",
+    "audit.action_label.update_batch.retry": "Update batch run again on the failed machines",
+    "checks.empty_what": "A check watches something from the outside: that a website answers, a TLS certificate is not about to expire, a port is open, a name resolves. When one fails twice in a row, a notification rule can tell you.",
+    "scheduling.empty_what": "A scheduled task runs an action by itself at set times: nightly updates of a group, a weekly reboot, an update check every morning. You pick the action, the machines and when.",
+    "notifications.empty_what": "A rule says what to be told about and where: a machine that stopped answering, a failed update or a nearly full disk, sent by e-mail, to a chat or to a webhook. Without a rule debcontrol tells nobody."
   }
 }

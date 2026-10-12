@@ -2334,6 +2334,45 @@ async def update_batch_detail_api(
     }
 
 
+@router.post("/machine-groups/batches/{batch_id}/retry", dependencies=[_action_updates])
+async def retry_update_batch_api(
+    request: Request,
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Run a finished batch again on the machines where it failed: a new
+    batch with the same strategy and reboot choice (rolling again if the
+    first one was). 409 while the batch is still running, or when nothing
+    in it failed."""
+    try:
+        new_batch_id, skipped = await update_batches.retry_failed(db, user, batch_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found."
+        ) from exc
+    except update_batches.BatchNotFinishedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="The batch is still running."
+        ) from exc
+    except update_batches.NothingFailedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="No run of this batch failed."
+        ) from exc
+    await log_event(
+        db,
+        request=request,
+        action="update_batch.retry",
+        summary="Ran an update batch again on the machines where it failed",
+        details={
+            "batch_id": str(new_batch_id),
+            "retry_of_batch_id": str(batch_id),
+            "skipped": skipped,
+        },
+    )
+    return {"batch_id": str(new_batch_id), "skipped": skipped}
+
+
 @router.get("/machine-groups/{group_id}", dependencies=[_view_groups])
 async def get_machine_group_api(
     group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
