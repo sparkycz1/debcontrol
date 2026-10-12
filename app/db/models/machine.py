@@ -198,6 +198,11 @@ class Machine(Base):
     pve_storage: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # {"tasks": [...], "jobs": [...], "not_backed_up": [...]}
     pve_backups: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # {vmid: {"last": epoch, "count": n}} — the backups each guest has on
+    # this node's backup storages (app.ssh.proxmox.parse_guest_backups).
+    pve_guest_backups: Mapped[dict[str, dict[str, int]] | None] = mapped_column(
+        JSON, nullable=True
+    )
     # VMIDs someone marked as deliberately not backed up (templates, test
     # VMs) — left out of the "not in any backup job" warning. Set by hand
     # on the Proxmox tab, never by a refresh.

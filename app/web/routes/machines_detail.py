@@ -1058,6 +1058,12 @@ async def machine_proxmox(
             ),
             "failed_tasks": proxmox.recent_failed_tasks(machine.pve_failed_tasks, now_epoch),
             "failed_task_days": proxmox.FAILED_TASK_DAYS,
+            "guest_backup_rows": proxmox.guest_backup_rows(
+                machine.pve_guests,
+                machine.pve_guest_backups,
+                machine.pve_backup_exempt,
+                now_epoch,
+            ),
             "old_snapshots": update_snapshots.old_snapshots(machine),
             "old_snapshot_days": update_snapshots.OLD_SNAPSHOT_DAYS,
             "self_host_role": await self_host.role_of(db, machine),

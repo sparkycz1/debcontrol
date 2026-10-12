@@ -2450,6 +2450,13 @@
     "notifications.rule.ai_summary_hint": "Jen pro události „Služba selhala“ a „Běh aktualizace selhal“. Poslední řádky journalu selhané jednotky, nebo konec výstupu aktualizace, se pošlou poskytovateli AI nastavenému v Nastavení → AI a jeho krátký odhad se přidá do zprávy s označením, že není ověřený. Počítá se do limitů tokenů AI. Notifikace odejde stejně i tehdy, když není nastaven žádný model nebo poskytovatel neodpoví.",
     "monitoring.containers.image_new_build": "Pod tímto tagem je nový image: verze {new} (běží {current})",
     "monitoring.containers.image_newer_series": "Novější v této řadě: {tag}",
-    "monitoring.containers.image_newest": "Nejnovější: {tag}"
+    "monitoring.containers.image_newest": "Nejnovější: {tag}",
+    "proxmox.guest_last_backup": "Poslední záloha",
+    "proxmox.guest_backup_today": "dnes",
+    "proxmox.guest_backup_age": "před {count} d",
+    "proxmox.guest_backup_count": "uchováno {count}",
+    "proxmox.guest_backup_none": "žádná",
+    "notifications.condition_field.proxmox_oldest_guest_backup_days": "Proxmox: stáří nejstarší poslední zálohy hosta (dny)",
+    "notifications.condition_field.proxmox_guests_without_backup_count": "Proxmox: hosté bez jakékoli zálohy (počet)"
   }
 }
