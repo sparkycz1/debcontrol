@@ -28,16 +28,18 @@ from app.db.session import get_db
 # Imported as a module, not name-by-name: this file already has a route
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
-from app.services import self_host, update_batches
+from app.services import proxmox_guest_links, self_host, update_batches
+from app.ssh import proxmox_snapshots
 from app.ssh.security_advisories import is_safe_package_name
 from app.ssh.updates import PendingPackage
 from app.tasks import jobs as tasks
-from app.web.flash import sign_flash
+from app.web.flash import read_flash, sign_flash
 from app.web.messages import LocalizedText
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     _machine_tabs,
     machines_router,
+    need_power,
     need_updates,
 )
 from app.web.templating import t, templates
@@ -106,6 +108,7 @@ async def preview_machine_update(
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     strategy: UpgradeStrategy = UpgradeStrategy.DIST_UPGRADE,
+    snapshot_before: bool = False,
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """Simulate (via apt's dry-run mode — nothing is changed on the machine)
@@ -161,6 +164,7 @@ async def preview_machine_update(
             "to_install_or_upgrade": to_install_or_upgrade,
             "to_remove": to_remove,
             "csrf_token": csrf_token,
+            "snapshot_before": snapshot_before,
             "self_host_role": await self_host.role_of(db, machine),
         },
     )
@@ -175,6 +179,7 @@ async def trigger_machine_update(
     machine_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     strategy: UpgradeStrategy = Form(...),
+    snapshot_before: bool = Form(False),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
@@ -196,7 +201,9 @@ async def trigger_machine_update(
 
     # apt update/upgrade can run for a long time — this only creates the
     # record and enqueues the job, it never waits for the result.
-    run = MachineUpdateRun(machine_id=machine.id, strategy=strategy)
+    run = MachineUpdateRun(
+        machine_id=machine.id, strategy=strategy, snapshot_before=snapshot_before
+    )
     db.add(run)
     await db.commit()
     await db.refresh(run)
@@ -211,7 +218,11 @@ async def trigger_machine_update(
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
-        details={"strategy": strategy.value, "run_id": str(run.id)},
+        details={
+            "strategy": strategy.value,
+            "run_id": str(run.id),
+            "snapshot_before": snapshot_before,
+        },
     )
 
     return RedirectResponse(
@@ -430,6 +441,10 @@ async def machine_update_history(
         "machines/update_history.html",
         {
             "machine": machine,
+            # The snapshot option is only offered where one can be taken.
+            "snapshot_available": (
+                await proxmox_guest_links.host_of(db, machine)
+            ) is not None,
             "self_host_role": await self_host.role_of(db, machine),
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "updates",
@@ -487,6 +502,8 @@ async def machine_update_run_detail(
         {
             "machine": machine,
             "run": run,
+            "snapshot_notice": read_flash(request, "snapshot_notice"),
+            "snapshot_error": read_flash(request, "snapshot_error"),
             "batch_runs": batch_runs if len(batch_runs) > 1 else [],
             "batch_counts": update_batches.count_runs(batch_runs),
         },
@@ -513,3 +530,76 @@ async def machine_update_run_status(
     if run.machine_id != machine_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Update run not found.")
     return templates.TemplateResponse(request, "partials/update_run_status.html", {"run": run})
+
+
+@router.post(
+    "/{machine_id}/updates/{run_id}/snapshot-rollback",
+    dependencies=[need_updates, need_power, Depends(verify_csrf)],
+)
+async def rollback_to_snapshot_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    confirm_name: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Roll the guest back to the Proxmox snapshot taken before this run:
+    everything on the machine since then is lost, so the machine's name
+    has to be typed, the same as for a shutdown."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    run = await db.get(MachineUpdateRun, run_id)
+    if run is None or run.machine_id != machine.id or not run.snapshot_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found.")
+    run_url = f"/machines/{machine.id}/updates/{run.id}"
+    details = {"run_id": str(run.id), "snapshot": run.snapshot_name, "vmid": run.snapshot_vmid}
+    if confirm_name.strip() != machine.name:
+        await log_event(
+            db,
+            request=request,
+            action="machine.update.snapshot_rollback",
+            summary=f'Blocked rollback of "{machine.name}" to a snapshot: wrong confirmation',
+            outcome=AuditOutcome.DENIED,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details=details,
+        )
+        error = t(request, "snapshot.rollback_confirm_mismatch", name=machine.name)
+        return RedirectResponse(
+            url=f"{run_url}?snapshot_error={sign_flash(error)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    error_text: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            tasks.rollback_to_snapshot.delay(str(run.id)).get,
+            timeout=proxmox_snapshots.TASK_WAIT_SECONDS + 120,
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error_text = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error_text = str(LocalizedText(request, "common.error.command_timeout"))
+    except Exception as exc:
+        error_text = str(exc)
+    await log_event(
+        db,
+        request=request,
+        action="machine.update.snapshot_rollback",
+        summary=(
+            f'Rolled "{machine.name}" back to snapshot {run.snapshot_name}'
+            if error_text is None
+            else f'Rollback of "{machine.name}" to snapshot {run.snapshot_name} failed'
+        ),
+        outcome=AuditOutcome.SUCCESS if error_text is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={**details, **({"error": error_text} if error_text else {})},
+    )
+    query = (
+        f"snapshot_error={sign_flash(error_text)}"
+        if error_text is not None
+        else "snapshot_notice=" + sign_flash(t(request, "snapshot.rolled_back"))
+    )
+    return RedirectResponse(url=f"{run_url}?{query}", status_code=status.HTTP_303_SEE_OTHER)

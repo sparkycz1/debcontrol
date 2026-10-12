@@ -72,6 +72,10 @@
     <form method="post" action="/machines/{{ machine.id }}/updates" class="form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="strategy" value="{{ strategy.value }}">
+      {% if snapshot_before %}
+        <input type="hidden" name="snapshot_before" value="true">
+        <p class="hint">{{ t(request, "snapshot.preview_note") }}</p>
+      {% endif %}
       <button type="submit" class="button{% if to_remove %} button-danger{% endif %}">
         {{ t(request, "machine.preview.confirm_run", name=machine.name) }}
       </button>

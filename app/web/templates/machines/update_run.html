@@ -4,6 +4,8 @@
 {% block title %}{{ t(request, "machine.update_run.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 
 {% block content %}
+  {% if snapshot_notice %}<div class="alert alert-ok"><p>{{ snapshot_notice }}</p></div>{% endif %}
+  {% if snapshot_error %}<div class="alert alert-error"><p>{{ snapshot_error }}</p></div>{% endif %}
   <div class="page-header">
     <h1>{{ t(request, "machine.update_run.title") }} — {{ machine.name }}</h1>
     <div class="page-header-actions">

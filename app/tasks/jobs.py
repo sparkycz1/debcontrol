@@ -66,6 +66,7 @@ from app.services import (
     config_drift,
     disk_forecast,
     health_events,
+    update_snapshots,
 )
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import (
@@ -1188,8 +1189,58 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
             previous_pmg=previous_pmg,
         )
         await publish_machine_event(machine_id, KIND_FACTS)
+        has_snapshots = bool(machine.pve_debcontrol_snapshots)
 
-        return {"ok": True}
+    if has_snapshots:
+        check_debcontrol_snapshots.delay(machine_id)
+    return {"ok": True}
+
+
+async def _check_debcontrol_snapshots(machine_id: str) -> int:
+    """Check the snapshots debcontrol took on one Proxmox host against the
+    host: the ones removed there are forgotten here
+    (`app.services.update_snapshots`). Returns how many are left."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None or not machine.host_key_fingerprint:
+            return 0
+        return await update_snapshots.refresh_host(
+            session, machine, app_settings.ssh_connect_timeout
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.check_debcontrol_snapshots")
+def check_debcontrol_snapshots(machine_id: str) -> int:
+    return asyncio.run(_check_debcontrol_snapshots(machine_id))
+
+
+async def _rollback_to_snapshot(run_id: str) -> dict[str, Any]:
+    """Roll a guest back to the snapshot taken before one update run —
+    only ever started by a person (`app.services.update_snapshots`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
+        if run is None:
+            return {"ok": False, "error": "Update run not found."}
+        machine_id = str(run.machine_id)
+        try:
+            await update_snapshots.roll_back(session, run, app_settings.ssh_connect_timeout)
+        except update_snapshots.SnapshotFailedError as exc:
+            return {"ok": False, "error": str(exc)}
+    # The machine is now what it was before the update.
+    refresh_machine_facts.delay(machine_id)
+    refresh_machine_packages.delay(machine_id)
+    check_machine_updates.delay(machine_id)
+    return {"ok": True}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.rollback_to_snapshot",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS + 660,
+)
+def rollback_to_snapshot(run_id: str) -> dict[str, Any]:
+    return asyncio.run(_rollback_to_snapshot(run_id))
 
 
 @celery_app.task(name="app.tasks.jobs.refresh_machine_facts")
@@ -2009,6 +2060,11 @@ async def _run_machine_update(run_id: str) -> None:
             await session.commit()
 
         try:
+            if run.snapshot_before:
+                # No snapshot of a recognised guest, no update.
+                await update_snapshots.take_before_update(
+                    session, run, machine, app_settings.ssh_connect_timeout
+                )
             result = await run_system_update(
                 machine,
                 secret,
@@ -2017,7 +2073,7 @@ async def _run_machine_update(run_id: str) -> None:
                 app_settings.update_timeout_seconds,
                 on_output=_persist_partial_output,
             )
-        except (SSHConnectionError, TimeoutError) as exc:
+        except (SSHConnectionError, TimeoutError, update_snapshots.SnapshotFailedError) as exc:
             logger.warning("run_machine_update failed for %s: %s", machine.name, exc)
             run.status = UpdateRunStatus.FAILED
             run.error = str(exc)

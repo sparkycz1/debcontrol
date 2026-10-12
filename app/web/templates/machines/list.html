@@ -321,6 +321,9 @@
           <option value="upgrade">{{ strategy_label(request, 'upgrade') }}</option>
           <option value="security">{{ strategy_label(request, 'security') }}</option>
         </select>
+        <label title="{{ t(request, 'snapshot.option_hint') }}">
+          <input type="checkbox" name="snapshot_before" value="true"> {{ t(request, "snapshot.option_short") }}
+        </label>
         <button type="submit" formaction="/machines/bulk/updates" class="button">{{ t(request, 'machines.bulk.run_update') }}</button>
         {% if request.state.user.has_permission('machine.manage') %}
           <select name="group_id" class="inline-select" aria-label="{{ t(request, 'machines.bulk.group_aria') }}">

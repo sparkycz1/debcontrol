@@ -42,6 +42,7 @@ async def trigger_updates(
     *,
     reboot_if_required: bool = False,
     rolling: bool = False,
+    snapshot_before: bool = False,
 ) -> tuple[uuid.UUID, int]:
     """Create one `MachineUpdateRun` per eligible machine (must have a pinned
     host key) under a shared batch id, commit, then enqueue a task for each.
@@ -51,7 +52,9 @@ async def trigger_updates(
     left it needing one. `rolling` updates one machine at a time, in name
     order: only the first run is enqueued now, each next one once the
     previous succeeded and, after a reboot, answers again — a failure stops
-    the rest (`app.tasks.jobs._finish_update_run`).
+    the rest (`app.tasks.jobs._finish_update_run`). `snapshot_before` has
+    Proxmox snapshot each machine that is a recognised guest first
+    (`app.services.update_snapshots`).
 
     The machine debcontrol itself runs on, and the hypervisor under it, go
     last (`app.services.self_host`): updating them can stop the worker in
@@ -72,6 +75,7 @@ async def trigger_updates(
             reboot_if_required=reboot_if_required,
             rollout_position=position if rolling else None,
             hold_order=None if rolling else own.hold_order(m.id),
+            snapshot_before=snapshot_before,
         )
         for position, m in enumerate(eligible)
     ]

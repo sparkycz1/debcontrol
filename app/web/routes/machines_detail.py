@@ -35,7 +35,13 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineUpdate
-from app.services import acknowledgements, machine_timeline, proxmox_guest_links, self_host
+from app.services import (
+    acknowledgements,
+    machine_timeline,
+    proxmox_guest_links,
+    self_host,
+    update_snapshots,
+)
 from app.services import proxmox_backup_exempt as proxmox_backup_exempt_service
 from app.services.access_scope import (
     can_see_group_id,
@@ -1052,6 +1058,8 @@ async def machine_proxmox(
             ),
             "failed_tasks": proxmox.recent_failed_tasks(machine.pve_failed_tasks, now_epoch),
             "failed_task_days": proxmox.FAILED_TASK_DAYS,
+            "old_snapshots": update_snapshots.old_snapshots(machine),
+            "old_snapshot_days": update_snapshots.OLD_SNAPSHOT_DAYS,
             "self_host_role": await self_host.role_of(db, machine),
             "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
             "can_power": current_user.has_permission(Permission.ACTION_POWER),

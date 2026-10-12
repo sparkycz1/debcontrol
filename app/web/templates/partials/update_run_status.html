@@ -24,6 +24,18 @@
     {% endif %}
   </p>
 
+  {% if run.snapshot_name %}
+    <p class="hint">
+      {{ t(request, "snapshot.taken", name=run.snapshot_name, guest=(('VM ' if run.snapshot_type == 'qemu' else 'CT ') ~ run.snapshot_vmid)) }}
+      {% if run.snapshot_host_id %}<a href="/machines/{{ run.snapshot_host_id }}/proxmox">{{ t(request, "snapshot.host_link") }}</a>{% endif %}
+      {% if run.snapshot_rolled_back_at %}
+        · <span class="badge badge-warn">{{ t(request, "snapshot.rolled_back_at", when=(run.snapshot_rolled_back_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</span>
+      {% endif %}
+    </p>
+  {% elif run.snapshot_before and run.snapshot_note == 'not_a_guest' %}
+    <p class="hint">{{ t(request, "snapshot.not_a_guest") }}</p>
+  {% endif %}
+
   {% if run.rollback_of_run_id %}
     <p class="hint">
       {{ t(request, "machine.update_run.is_rollback") }}
@@ -58,6 +70,20 @@
       <button type="submit" class="button button-secondary">{{ t(request, "machine.update_run.rollback") }}</button>
     </form>
     <p class="hint">{{ t(request, "machine.update_run.rollback_hint") }}</p>
+  {% endif %}
+
+  {% if run.snapshot_name and run.snapshot_host_id and run.status.value in ('succeeded', 'failed')
+        and request.state.user.has_permission('action.updates') and request.state.user.has_permission('action.power') %}
+    <details>
+      <summary>{{ t(request, "snapshot.rollback") }}</summary>
+      <p>{{ t(request, "snapshot.rollback_warning", name=run.snapshot_name) }}</p>
+      <form method="post" action="/machines/{{ run.machine_id }}/updates/{{ run.id }}/snapshot-rollback" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+        <label for="snapshot-confirm-name">{{ t(request, "snapshot.rollback_type_name") }}</label>
+        <input type="text" id="snapshot-confirm-name" name="confirm_name" required>
+        <button type="submit" class="button button-danger">{{ t(request, "snapshot.rollback_button") }}</button>
+      </form>
+    </details>
   {% endif %}
 
   {% if run.status.value == 'failed' and request.state.user.has_permission('ai.access') %}

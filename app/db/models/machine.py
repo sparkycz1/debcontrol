@@ -207,6 +207,12 @@ class Machine(Base):
     # failed tasks of any kind (facts refresh) — Proxmox VE.
     pve_cluster: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     pve_failed_tasks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Snapshots debcontrol took of this host's guests before updating them
+    # and that are still there — `{vmid, type, node, name, machine_name}`
+    # (app.services.update_snapshots). Never deleted by debcontrol.
+    pve_debcontrol_snapshots: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
     # Proxmox Backup Server / Mail Gateway (facts refresh; app.ssh.proxmox
     # parse_pbs / parse_pmg for the shape). None on anything else.
     pbs_version: Mapped[str | None] = mapped_column(String(32), nullable=True)

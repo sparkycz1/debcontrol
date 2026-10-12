@@ -49,6 +49,7 @@ async def _run_system_update(
         strategy,
         reboot_if_required=params.get("reboot") == "if_required",
         rolling=params.get("rollout") == "one_by_one",
+        snapshot_before=params.get("snapshot") == "proxmox",
     )
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
@@ -142,6 +143,15 @@ def register_builtin_actions() -> None:
                         ("one_by_one", "One at a time, next only once the previous is back"),
                     ],
                     default="all_at_once",
+                ),
+                ScheduledActionParam(
+                    key="snapshot",
+                    label="Snapshot first",
+                    choices=[
+                        ("none", "No"),
+                        ("proxmox", "Proxmox snapshot of each machine that is a known guest"),
+                    ],
+                    default="none",
                 ),
             ],
             run=_run_system_update,

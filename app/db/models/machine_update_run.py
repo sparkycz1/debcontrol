@@ -58,7 +58,7 @@ class MachineUpdateRun(Base):
     machine_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    machine: Mapped[Machine] = relationship()
+    machine: Mapped[Machine] = relationship(foreign_keys=[machine_id])
 
     # Shared across every run triggered together from a group/"All machines"
     # action, so they can be listed as one batch. NULL for a single-machine
@@ -94,6 +94,24 @@ class MachineUpdateRun(Base):
     # the machine debcontrol runs on (1), then the hypervisor under it (2) —
     # see app.services.self_host and app.tasks.jobs._release_held_runs.
     hold_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Take a Proxmox snapshot of the guest first, when the machine is a
+    # recognised guest of a managed Proxmox host (app.services.update_snapshots).
+    snapshot_before: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    # The snapshot that was taken, and where: enough to roll back to it
+    # later without guessing. All NULL when none was taken.
+    snapshot_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    snapshot_host_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machines.id", ondelete="SET NULL"), nullable=True
+    )
+    snapshot_node: Mapped[str | None] = mapped_column(String(63), nullable=True)
+    snapshot_type: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    snapshot_vmid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Why a requested snapshot was not taken ("not_a_guest").
+    snapshot_note: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    snapshot_rolled_back_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # A JSON object of {package_name: installed_version}, captured via
     # `dpkg-query` right before the upgrade step of a real (non-rollback)

@@ -10,3 +10,12 @@
   <label><input type="radio" name="strategy" value="security"> {{ strategy_label(request, 'security') }}
     <span class="hint">{{ t(request, "updates.strategy.security_hint") }}</span></label>
 </fieldset>
+{# Offered for a batch always (it applies to the guests among the machines),
+   for one machine only when it is a recognised Proxmox guest. #}
+{% if snapshot_available is not defined or snapshot_available %}
+  <label>
+    <input type="checkbox" name="snapshot_before" value="true">
+    {{ t(request, "snapshot.option") }}
+    <span class="hint">{{ t(request, "snapshot.option_hint") }}</span>
+  </label>
+{% endif %}
