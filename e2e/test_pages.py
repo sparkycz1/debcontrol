@@ -40,6 +40,7 @@ PAGES = [
     "/checks/sla",
     "/scheduling",
     "/scheduling/maintenance",
+    "/scheduling/calendar",
     "/notifications",
     "/notifications/history",
     "/notifications/rules/new",

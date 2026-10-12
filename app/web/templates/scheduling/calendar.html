@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "calendar.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "calendar.title") }}: {{ t(request, "calendar.month." ~ calendar.month) }} {{ calendar.year }}</h1>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/scheduling/calendar?month={{ calendar.previous_key }}">← {{ t(request, "calendar.previous") }}</a>
+      {% if calendar.key != this_month %}
+        <a class="button button-secondary" href="/scheduling/calendar">{{ t(request, "calendar.today") }}</a>
+      {% endif %}
+      <a class="button button-secondary" href="/scheduling/calendar?month={{ calendar.next_key }}">{{ t(request, "calendar.next") }} →</a>
+      <a class="button button-secondary" href="/scheduling">{{ t(request, "nav.scheduling") }}</a>
+    </div>
+  </div>
+  <p class="hint">{{ t(request, "calendar.intro") }}</p>
+  <p class="calendar-legend">
+    <span class="calendar-entry calendar-task">{{ t(request, "calendar.legend_task") }}</span>
+    <span class="calendar-entry calendar-window">{{ t(request, "calendar.legend_window") }}</span>
+    <span class="calendar-entry calendar-batch">{{ t(request, "calendar.legend_batch") }}</span>
+  </p>
+
+  <div class="table-scroll">
+    <table class="calendar-grid">
+      <thead>
+        <tr>
+          {% for weekday in range(7) %}<th>{{ t(request, "calendar.weekday." ~ weekday) }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for week in calendar.weeks %}
+          <tr>
+            {% for day in week %}
+              <td class="{{ 'calendar-outside' if not day.in_month else '' }} {{ 'calendar-today' if day.is_today else '' }}">
+                <div class="calendar-day">{{ day.day.day }}</div>
+                {% if day.in_month %}
+                  {% for entry in day.entries %}
+                    <a class="calendar-entry calendar-{{ entry.kind }}{{ ' calendar-flag' if entry.flag else '' }}" href="{{ entry.href }}">
+                      {%- if entry.at %}<span class="calendar-time">{{ entry.at | local_time('%H:%M') }}</span> {% endif -%}
+                      {%- if entry.kind == 'batch' -%}
+                        {{ t(request, "calendar.batch", count=entry.label) }}{% if entry.count %} · {{ t(request, "calendar.batch_failed", count=entry.count) }}{% endif %}
+                      {%- else -%}
+                        {{ entry.label }}
+                        {%- if entry.kind == 'task' and entry.count > 1 %} ×{{ entry.count }}{% endif %}
+                        {%- if entry.kind == 'task' and entry.flag %} ({{ t(request, "calendar.task_off") }}){% endif %}
+                      {%- endif -%}
+                    </a>
+                  {% endfor %}
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
