@@ -2362,3 +2362,6 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 }
 .dashboard-arrange-name { flex: 1; }
 .dashboard-arrange-list li.is-hidden .dashboard-arrange-name { color: var(--color-muted); }
+
+/* Audit -> Terminal recordings: the player's controls. */
+.player-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0 0 var(--space-2); }

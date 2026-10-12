@@ -6,10 +6,11 @@ from __future__ import annotations
 import csv
 import io
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,9 @@ from app.audit import log_event, verify_chain
 from app.auth.dependencies import require_api_permission
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.role import Permission
+from app.db.models.terminal_recording import TerminalRecording
 from app.db.session import get_db
+from app.services import terminal_recording
 from app.web.audit_search import apply_audit_filters
 from app.web.routes.audit import _EXPORT_FIELDS, _csv_safe, _entry_to_export_row
 
@@ -148,3 +151,53 @@ async def verify_audit_chain_api(
         "broken_at_sequence": result.broken_at_sequence,
         "message": result.message,
     }
+
+
+# --- Terminal recordings (app.services.terminal_recording) -----------------
+
+recordings_router = APIRouter(prefix="/api/v1/terminal-recordings")
+
+
+@recordings_router.get("", dependencies=[_view])
+async def list_terminal_recordings_api(
+    db: AsyncSession = Depends(get_db),
+    machine_id: uuid.UUID | None = None,
+    page: int = 1,
+) -> dict[str, Any]:
+    """Recorded browser terminal sessions, newest first, 50 per page —
+    who, on which machine, when and for how long. `audit.view`."""
+    recordings, has_older = await terminal_recording.list_recordings(
+        db, machine_id=machine_id, page=page
+    )
+    return {
+        "recordings": [terminal_recording.as_dict(r) for r in recordings],
+        "page": max(page, 1),
+        "has_older": has_older,
+    }
+
+
+@recordings_router.get("/{recording_id}", dependencies=[_view])
+async def get_terminal_recording_api(
+    recording_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """One recording with its content: `cols`, `rows` and `events`, each
+    `[seconds, "o" | "r", text]` (output, or a resize as "COLSxROWS").
+    Reading it is audited as `terminal.recording.view`, like watching it."""
+    recording = await db.get(TerminalRecording, recording_id)
+    if recording is None:
+        raise HTTPException(status_code=404, detail="Recording not found.")
+    cast = terminal_recording.parse_cast(terminal_recording.unpack(recording.data_encrypted))
+    await log_event(
+        db,
+        request=request,
+        action="terminal.recording.view",
+        summary=(
+            f'Read the recording of "{recording.username}"\'s terminal session '
+            f'on "{recording.machine_name}"'
+        ),
+        target_type="machine" if recording.machine_id else None,
+        target_id=recording.machine_id,
+        target_label=recording.machine_name,
+        details={"recording_id": str(recording.id)},
+    )
+    return {**terminal_recording.as_dict(recording), **cast}

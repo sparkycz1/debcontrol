@@ -90,3 +90,21 @@
     </p>
   </section>
 
+<section class="panel">
+  <h2>{{ t(request, "settings.recording.heading") }}</h2>
+  <p class="hint">{{ t(request, "settings.recording.hint") }}</p>
+  <form method="post" action="/settings/terminal-recording" class="form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      <input type="checkbox" name="enabled" value="1" {% if app_settings.terminal_recording_enabled %}checked{% endif %}>
+      {{ t(request, "settings.recording.enable") }}
+    </label>
+    <label for="terminal_recording_retention_days">{{ t(request, "settings.recording.keep_days") }}</label>
+    <input type="number" id="terminal_recording_retention_days" name="retention_days" min="0" step="1"
+           placeholder="{{ t(request, 'settings.checks.forever') }}"
+           value="{{ app_settings.terminal_recording_retention_days if app_settings.terminal_recording_retention_days is not none else '' }}">
+    <p class="hint">{{ t(request, "settings.recording.keep_hint") }}</p>
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/audit/terminal-recordings">{{ t(request, "recordings.title") }}</a>
+  </form>
+</section>

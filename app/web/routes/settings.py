@@ -631,6 +631,47 @@ async def update_dashboard_trends_retention(
     return RedirectResponse(url="/settings?tab=checks", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/terminal-recording", dependencies=[_manage, Depends(verify_csrf)])
+async def update_terminal_recording(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    enabled: str = Form(""),
+    retention_days: str = Form(""),
+) -> Response:
+    """Settings -> Security: whether browser terminal sessions are recorded
+    and for how long the recordings are kept (empty = forever). See
+    `app.db.models.terminal_recording`."""
+    app_settings = await get_or_create_app_settings(db)
+    new_retention, error = _parse_retention_days(request, retention_days)
+    if error:
+        return await _render_settings(request, db, [error], tab="security")
+    was_enabled = app_settings.terminal_recording_enabled
+    app_settings.terminal_recording_enabled = bool(enabled)
+    app_settings.terminal_recording_retention_days = new_retention
+    await db.commit()
+
+    await log_event(
+        db,
+        request=request,
+        action="settings.terminal_recording.update",
+        summary=(
+            "Terminal session recording "
+            + ("on" if app_settings.terminal_recording_enabled else "off")
+            + (
+                f", recordings kept {new_retention} day(s)"
+                if new_retention is not None
+                else ", recordings kept forever"
+            )
+        ),
+        details={
+            "enabled": app_settings.terminal_recording_enabled,
+            "was_enabled": was_enabled,
+            "retention_days": new_retention,
+        },
+    )
+    return RedirectResponse(url="/settings?tab=security", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/update-run-retention", dependencies=[_manage, Depends(verify_csrf)])
 async def update_machine_update_run_retention(
     request: Request,

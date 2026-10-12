@@ -43,6 +43,7 @@ from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
 from app.db.models.scheduled_task_run import ScheduledTaskRun, ScheduledTaskRunStatus
 from app.db.models.ssh_identity import SSHIdentity
 from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
+from app.db.models.terminal_recording import TerminalRecording
 from app.db.models.totp_recovery_code import TotpRecoveryCode
 from app.db.models.user import AuthProvider, User
 from app.db.models.user_machine_group_access import UserMachineGroupAccess
@@ -104,6 +105,7 @@ __all__ = [
     "ScheduledTaskRunStatus",
     "Tag",
     "TemporaryPermissionGrant",
+    "TerminalRecording",
     "TotpRecoveryCode",
     "UpdateRunStatus",
     "UpgradeStrategy",

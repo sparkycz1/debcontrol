@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "recordings.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "recordings.title") }}</h1>
+    <a class="button button-secondary" href="/audit">{{ t(request, "recordings.back_to_audit") }}</a>
+  </div>
+
+  <p class="hint">{{ t(request, "recordings.intro") }}</p>
+  {% if recording_enabled %}
+    <p class="hint">
+      {{ t(request, "recordings.status_on") }}
+      {% if retention_days %}{{ t(request, "recordings.kept_days", count=retention_days) }}{% else %}{{ t(request, "recordings.kept_forever") }}{% endif %}
+      <a href="/settings?tab=security">{{ t(request, "nav.settings") }}</a>
+    </p>
+  {% else %}
+    <div class="alert alert-warn"><p>{{ t(request, "recordings.status_off") }} <a href="/settings?tab=security">{{ t(request, "nav.settings") }}</a></p></div>
+  {% endif %}
+
+  {% if machine_id %}
+    <p><a href="/audit/terminal-recordings">{{ t(request, "recordings.all_machines") }}</a></p>
+  {% endif %}
+
+  {% if recordings %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "recordings.started") }}</th>
+          <th>{{ t(request, "recordings.machine") }}</th>
+          <th>{{ t(request, "recordings.user") }}</th>
+          <th>{{ t(request, "recordings.duration") }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recordings %}
+          <tr>
+            <td>{{ r.started_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
+            <td>
+              {% if r.machine_id %}<a href="/audit/terminal-recordings?machine_id={{ r.machine_id }}">{{ r.machine_name }}</a>
+              {% else %}{{ r.machine_name }} <span class="table-muted">{{ t(request, "recordings.machine_deleted") }}</span>{% endif %}
+            </td>
+            <td>{{ r.username }}</td>
+            <td>{{ r.duration_seconds | short_duration }}{% if r.truncated %} <span class="badge badge-warn">{{ t(request, "recordings.truncated") }}</span>{% endif %}</td>
+            <td><a href="/audit/terminal-recordings/{{ r.id }}">{{ t(request, "recordings.watch") }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="page-header-actions">
+      {% set scope = ('&machine_id=' ~ machine_id) if machine_id else '' %}
+      {% if page > 1 %}<a class="button button-secondary" href="/audit/terminal-recordings?page={{ page - 1 }}{{ scope }}">{{ t(request, "audit.newer") }}</a>{% endif %}
+      {% if has_older %}<a class="button button-secondary" href="/audit/terminal-recordings?page={{ page + 1 }}{{ scope }}">{{ t(request, "audit.older") }}</a>{% endif %}
+    </div>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "recordings.none") }}</p></div>
+  {% endif %}
+{% endblock %}

@@ -59,6 +59,7 @@ from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, 
 from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
+from app.db.models.terminal_recording import TerminalRecording
 from app.services import (
     acknowledgements,
     auto_backup,
@@ -2856,6 +2857,51 @@ async def _purge_old_machine_update_runs() -> None:
 @celery_app.task(name="app.tasks.jobs.purge_old_machine_update_runs")
 def purge_old_machine_update_runs() -> None:
     asyncio.run(_purge_old_machine_update_runs())
+
+
+_TERMINAL_RECORDING_PURGE_ACTOR = "retention policy (automatic)"
+
+
+async def _purge_old_terminal_recordings() -> None:
+    """Delete `TerminalRecording` rows older than `AppSettings.
+    terminal_recording_retention_days` — the same shape as the purges above,
+    skipped when retention is unset (None = keep forever). Runs whether or
+    not recording is currently on: recordings made while it was on still
+    age out."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        retention_days = app_settings.terminal_recording_retention_days
+        if not retention_days:
+            return
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        deleted_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(TerminalRecording)
+                .where(TerminalRecording.started_at < cutoff)
+            )
+        ).scalar_one()
+        if not deleted_count:
+            return
+        await session.execute(
+            delete(TerminalRecording).where(TerminalRecording.started_at < cutoff)
+        )
+        await session.commit()
+        await log_event(
+            session,
+            actor=_TERMINAL_RECORDING_PURGE_ACTOR,
+            action="terminal_recordings.purge",
+            summary=(
+                f"Purged {deleted_count} terminal recording"
+                f"{'s' if deleted_count != 1 else ''} older than {retention_days} day(s)"
+            ),
+            details={"deleted_count": deleted_count, "retention_days": retention_days},
+        )
+
+
+@celery_app.task(name="app.tasks.jobs.purge_old_terminal_recordings")
+def purge_old_terminal_recordings() -> None:
+    asyncio.run(_purge_old_terminal_recordings())
 
 
 _NOTIFICATION_LOG_PURGE_ACTOR = "retention policy (automatic)"
