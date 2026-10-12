@@ -17,7 +17,7 @@ async def test_machines_list_defaults_to_table_view(client):
     response = await client.get("/machines")
 
     assert response.status_code == 200
-    assert '<table class="data-table">' in response.text
+    assert '<table class="data-table machine-table">' in response.text
     assert "machine-card-grid" not in response.text
     assert "machine-compact-list" not in response.text
 
@@ -51,7 +51,7 @@ async def test_cards_view_renders_after_cookie_is_set(client, db_session_factory
     assert response.status_code == 200
     assert "machine-card-grid" in response.text
     assert "card-machine" in response.text
-    assert '<table class="data-table">' not in response.text
+    assert '<table class="data-table machine-table">' not in response.text
 
 
 async def test_list_view_renders_after_cookie_is_set(client, db_session_factory):

@@ -37,6 +37,7 @@ from app.db.models.machine_change import MachineChange
 from app.db.models.machine_note import MachineNote
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
+from app.services import audit_subject
 from app.services.config_drift import SECURITY_FIELD, TRACKED_FIELDS, FieldChange
 
 # The ranges the History tab offers, in days.
@@ -186,8 +187,13 @@ _SESSION_MATCH_SECONDS = 15
 
 
 def _audit_event(entry: AuditLogEntry) -> TimelineEvent:
-    data: dict[str, Any] = {"action": entry.action, "outcome": entry.outcome.value}
     details = entry.details if isinstance(entry.details, dict) else {}
+    data: dict[str, Any] = {
+        "action": entry.action,
+        "outcome": entry.outcome.value,
+        # What it was about (a guest id, a package), for the translated label.
+        "subject": audit_subject.subject(details),
+    }
     duration = details.get("duration_seconds")
     if entry.action == _TERMINAL_CLOSE and isinstance(duration, int | float):
         data["duration_seconds"] = duration

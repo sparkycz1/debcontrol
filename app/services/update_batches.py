@@ -144,3 +144,39 @@ async def recent_batches(
             )
         )
     return summaries
+
+
+class BatchNotFinishedError(Exception):
+    """The batch still has runs waiting or running."""
+
+
+class NothingFailedError(Exception):
+    """No run of the batch failed (on a machine the account can see)."""
+
+
+async def retry_failed(db: AsyncSession, user: User, batch_id: uuid.UUID) -> tuple[uuid.UUID, int]:
+    """Start a new batch on the machines whose run in `batch_id` failed —
+    same strategy, same reboot choice, rolling again if the first one was
+    (a rolling batch that stopped marked everything after the failure as
+    failed too, so those are included). Returns what `trigger_updates`
+    does: (the new batch id, machines skipped for having no pinned key).
+
+    Raises `LookupError` for a batch the account sees nothing of."""
+    # Imported here: `machine_actions` pulls in the Celery tasks.
+    from app.services.machine_actions import trigger_updates
+
+    runs = await visible_batch_runs(db, user, batch_id)
+    if not runs:
+        raise LookupError(batch_id)
+    if count_runs(runs).unfinished:
+        raise BatchNotFinishedError(batch_id)
+    failed = [run for run in runs if run.status == UpdateRunStatus.FAILED]
+    if not failed:
+        raise NothingFailedError(batch_id)
+    return await trigger_updates(
+        db,
+        [run.machine for run in failed],
+        failed[0].strategy,
+        reboot_if_required=any(run.reboot_if_required for run in failed),
+        rolling=any(run.rollout_position is not None for run in runs),
+    )

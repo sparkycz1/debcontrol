@@ -94,7 +94,9 @@
     </table>
   {% else %}
     <div class="empty-state">
-      <p>{{ t(request, "scheduling.empty") }}</p>
+      <p><strong>{{ t(request, "scheduling.empty") }}</strong></p>
+      <p>{{ t(request, "scheduling.empty_what") }}</p>
+      <a class="button" href="/scheduling/new">{{ t(request, "scheduling.new") }}</a>
     </div>
   {% endif %}
 {% endblock %}

@@ -34,4 +34,12 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if can_retry %}
+    <form method="post" action="/machine-groups/batches/{{ batch_id }}/retry" class="form"
+          data-confirm="{{ t(request, 'batches.retry_confirm', count=counts.failed) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button">{{ t(request, "batches.retry_failed", count=counts.failed) }}</button>
+      <p class="hint">{{ t(request, "batches.retry_hint") }}</p>
+    </form>
+  {% endif %}
 </div>

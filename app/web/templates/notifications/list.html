@@ -68,6 +68,10 @@
       </tbody>
     </table>
   {% else %}
-    <div class="empty-state"><p>{{ t(request, "notifications.no_rules") }}</p></div>
+    <div class="empty-state">
+      <p><strong>{{ t(request, "notifications.no_rules") }}</strong></p>
+      <p>{{ t(request, "notifications.empty_what") }}</p>
+      <a class="button" href="/notifications/rules/new">{{ t(request, "notifications.add_rule") }}</a>
+    </div>
   {% endif %}
 {% endblock %}
