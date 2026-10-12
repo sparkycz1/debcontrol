@@ -106,6 +106,7 @@ def rule_to_portable_dict(
         **({"channel_recipient": rule.channel_recipient} if rule.channel_recipient else {}),
         **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
         **({"throttle_minutes": rule.throttle_minutes} if rule.throttle_minutes else {}),
+        **({"ai_summary": True} if rule.ai_summary else {}),
     }
 
 
@@ -156,6 +157,7 @@ async def apply_portable_rule(
                 str(data["channel_recipient"]) if data.get("channel_recipient") else None
             ),
             throttle_minutes=data.get("throttle_minutes") or None,
+            ai_summary=bool(data.get("ai_summary")),
         )
         apply_channel_settings(rule, payload)
     except ValueError as exc:
@@ -252,6 +254,7 @@ def apply_channel_settings(rule: NotificationRule, payload: NotificationRuleCrea
     rule.webhook_url = payload.webhook_url
     rule.channel_recipient = (payload.channel_recipient or "").strip() or None
     rule.throttle_minutes = payload.throttle_minutes
+    rule.ai_summary = payload.ai_summary
     token = (payload.channel_token or "").strip()
     if token:
         rule.channel_token_encrypted = encrypt_secret(token)

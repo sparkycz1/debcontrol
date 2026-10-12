@@ -62,6 +62,7 @@ from app.db.models.notification_rule import NotificationEventType, NotificationR
 from app.db.models.terminal_recording import TerminalRecording
 from app.services import (
     acknowledgements,
+    ai_cause,
     auto_backup,
     config_drift,
     disk_forecast,
@@ -2093,7 +2094,11 @@ async def _run_machine_update(run_id: str) -> None:
                 session,
                 NotificationEventType.UPDATE_RUN_FAILED,
                 machine=machine,
-                context={"details": run.error or ""},
+                context={
+                    "details": run.error or "",
+                    # For a rule that asks the AI what went wrong.
+                    ai_cause.EVIDENCE_KEY: (run.output or "")[-6000:],
+                },
             )
         elif run.status == UpdateRunStatus.SUCCEEDED:
             await notify(
