@@ -67,6 +67,7 @@ from app.services import (
     config_drift,
     disk_forecast,
     health_events,
+    image_versions,
     update_snapshots,
 )
 from app.services.condition_fields import evaluate_condition, summarize_condition
@@ -95,7 +96,7 @@ from app.ssh.exceptions import HostKeyMismatchError, SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import check_reboot_required, gather_facts
 from app.ssh.identity import get_or_create_identity
-from app.ssh.image_updates import ImageCheckError, check_image_updates
+from app.ssh.image_updates import ImageCheckError, check_images
 from app.ssh.logs import (
     LogAccessError,
     filter_own_sessions,
@@ -548,7 +549,7 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
         secret = await resolve_machine_credential(machine, session)
 
         try:
-            statuses = await check_image_updates(
+            statuses, declared = await check_images(
                 machine, secret, app_settings.ssh_connect_timeout
             )
         except ImageCheckError as exc:
@@ -558,6 +559,17 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
             return {"ok": False, "error": str(exc)}
 
         machine.docker_image_updates = dict(statuses)
+        # Which newer version exists: the versions the images declare, and
+        # the newer tags in their (public) registry. Best effort — the
+        # statuses above stand without it.
+        try:
+            machine.docker_image_versions = (
+                await image_versions.describe(
+                    {image: declared.get(image, {}) for image in statuses}
+                )
+            ) or None
+        except Exception:
+            logger.warning("Image version lookup failed for %s", machine.name, exc_info=True)
         machine.docker_images_checked_at = datetime.now(UTC)
         await session.commit()
         return {"ok": True, "updates": sum(1 for s in statuses.values() if s == "update")}

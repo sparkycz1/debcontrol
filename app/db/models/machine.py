@@ -239,6 +239,12 @@ class Machine(Base):
     # {image: "update" | "current" | "unknown"} for every running image, from
     # the daily registry-digest comparison (app.ssh.image_updates).
     docker_image_updates: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    # {image: {"local_version", "remote_version", "series", "newest"}} —
+    # which newer version exists, where that can be told
+    # (app.services.image_versions). Only the known keys are present.
+    docker_image_versions: Mapped[dict[str, dict[str, str]] | None] = mapped_column(
+        JSON, nullable=True
+    )
     docker_images_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---

@@ -323,8 +323,19 @@
                     <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
                     <td class="cell-truncate" title="{{ c.image }}">
                       {% set img_status = (machine.docker_image_updates or {}).get(c.image) %}
+                      {% set img_versions = (machine.docker_image_versions or {}).get(c.image) or {} %}
                       {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
                       {{ c.image }}
+                      {% if img_status == 'update' and img_versions.remote_version and img_versions.remote_version != img_versions.local_version %}
+                        <div class="table-summary">{{ t(request, "monitoring.containers.image_new_build", new=img_versions.remote_version, current=(img_versions.local_version or '?')) }}</div>
+                      {% endif %}
+                      {% if img_versions.series or img_versions.newest %}
+                        <div class="table-summary">
+                          {% if img_versions.series %}{{ t(request, "monitoring.containers.image_newer_series", tag=img_versions.series) }}{% endif %}
+                          {% if img_versions.series and img_versions.newest %} · {% endif %}
+                          {% if img_versions.newest %}{{ t(request, "monitoring.containers.image_newest", tag=img_versions.newest) }}{% endif %}
+                        </div>
+                      {% endif %}
                     </td>
                     <td class="cell-nowrap">
                       {% if c.health == 'unhealthy' %}{% set state_badge = 'badge-error' %}

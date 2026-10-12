@@ -2402,6 +2402,9 @@
     "scheduling.param_hint.snapshot": "A guest whose snapshot fails is not updated. Machines that are not guests of a managed Proxmox host are updated without one. Snapshots are not deleted automatically: the Proxmox tab lists the old ones.",
     "audit.action_label.machine.update.snapshot_rollback": "Machine rolled back to the snapshot from before an update",
     "notifications.rule.ai_summary_label": "Add the AI's reading of the likely cause",
-    "notifications.rule.ai_summary_hint": "Only for \"Service failed\" and \"Update run failed\". The last journal lines of the failed unit, or the end of the update's output, are sent to the AI provider set in Settings → AI, and its short guess is added to the message, marked as not verified. Counts towards the AI token limits. The notification goes out the same when no model is configured or the provider does not answer."
+    "notifications.rule.ai_summary_hint": "Only for \"Service failed\" and \"Update run failed\". The last journal lines of the failed unit, or the end of the update's output, are sent to the AI provider set in Settings → AI, and its short guess is added to the message, marked as not verified. Counts towards the AI token limits. The notification goes out the same when no model is configured or the provider does not answer.",
+    "monitoring.containers.image_new_build": "New image under this tag: version {new} (running {current})",
+    "monitoring.containers.image_newer_series": "Newer in this series: {tag}",
+    "monitoring.containers.image_newest": "Newest: {tag}"
   }
 }

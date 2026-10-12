@@ -861,6 +861,11 @@ async def get_machine_hardware_api(
         "docker_containers": machine.docker_containers,
         "disk_forecast": machine.disk_forecast,
         "docker_image_updates": machine.docker_image_updates,
+        # Which newer version exists, per image, with only the keys that
+        # are known: `local_version` / `remote_version` (what the image
+        # declares), `series` (newest tag of the same series) and `newest`
+        # (newest tag of all, when that is another one).
+        "docker_image_versions": machine.docker_image_versions,
         "docker_images_checked_at": (
             machine.docker_images_checked_at.isoformat()
             if machine.docker_images_checked_at
