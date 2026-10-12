@@ -1184,6 +1184,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.pve_storage = facts.get("pve_storage")
         machine.pve_backups = facts.get("pve_backups")
         machine.pve_failed_tasks = facts.get("pve_failed_tasks")
+        machine.pve_guest_backups = facts.get("pve_guest_backups")
         machine.pbs_version = facts.get("pbs_version")
         machine.pbs_data = facts.get("pbs_data")
         machine.pmg_version = facts.get("pmg_version")

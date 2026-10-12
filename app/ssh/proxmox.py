@@ -37,6 +37,7 @@ INVENTORY_MARKERS = (
     "PVE_BACKUP_JOBS",
     "PVE_NOT_BACKED_UP",
     "PVE_FAILED_TASKS",
+    "PVE_GUEST_BACKUPS",
     "PBS_VERSION",
     "PBS_USAGE",
     "PBS_GC",
@@ -108,6 +109,26 @@ _PMG_COMMAND = (
     "fi"
 )
 
+# The backups each guest has, on every storage of this node that holds
+# backups (a Proxmox Backup Server storage included): one line per guest,
+# `<vmid> <time of the newest> <how many>`. A storage can list thousands of
+# backups, so they are reduced on the host instead of being sent over.
+# pvesh prints keys in sorted order, so "ctime" comes before "vmid" in
+# every object; storage names are limited to what Proxmox allows.
+_GUEST_BACKUPS_COMMAND = (
+    "echo ===PVE_GUEST_BACKUPS===; "
+    "echo listed; "
+    f"for s in $({_PVESH} /nodes/localhost/storage --content backup --enabled 1 {_JSON} "
+    "| grep -Eo '\"storage\": *\"[A-Za-z0-9_.-]+\"' | cut -d'\"' -f4); do "
+    f'{_PVESH} "/nodes/localhost/storage/$s/content" --content backup {_JSON}; echo; '
+    "done "
+    "| grep -Eo '\"(ctime|vmid)\": *\"?[0-9]+' "
+    "| awk -F'[^0-9]+' '"
+    "/ctime/{c=$NF} "
+    "/vmid/{v=$NF; n[v]++; if (c+0 > m[v]+0) m[v]=c} "
+    'END{for (v in m) print v, m[v], n[v]}\'; '
+)
+
 INVENTORY_COMMAND = (
     "echo ===PVE_VERSION===; "
     "if command -v pveversion >/dev/null 2>&1; then pveversion 2>/dev/null; fi; "
@@ -119,6 +140,7 @@ INVENTORY_COMMAND = (
     f"echo ===PVE_NOT_BACKED_UP===; {_PVESH} /cluster/backup-info/not-backed-up {_JSON}; "
     "echo ===PVE_FAILED_TASKS===; "
     f"{_PVESH} /nodes/localhost/tasks --errors 1 --limit 15 {_JSON}; "
+    f"{_GUEST_BACKUPS_COMMAND}"
     "fi; "
     f"{_PBS_COMMAND}; "
     f"{_PMG_COMMAND}"
@@ -367,6 +389,85 @@ def parse_backups(
         if _int(row.get("vmid")) is not None
     ]
     return {"tasks": tasks, "jobs": jobs, "not_backed_up": not_backed_up}
+
+
+def parse_guest_backups(section: str) -> dict[str, dict[str, int]] | None:
+    """`{vmid: {"last": epoch seconds of the newest backup, "count": how
+    many}}` for every guest that has a backup on a storage of this node.
+    None when the storages were not listed at all (not Proxmox VE, or an
+    older debcontrol's facts); `{}` when they were and hold no backup."""
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    if not lines or lines[0] != "listed":
+        return None
+    found: dict[str, dict[str, int]] = {}
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) != 3 or not all(part.isascii() and part.isdigit() for part in parts):
+            continue
+        vmid, last, count = (int(part) for part in parts)
+        found[str(vmid)] = {"last": last, "count": count}
+    return found
+
+
+def guest_backup_rows(
+    guests: list[dict[str, Any]] | None,
+    guest_backups: dict[str, dict[str, int]] | None,
+    exempt: list[int] | None,
+    now_epoch: int,
+) -> dict[int, dict[str, Any]]:
+    """Per guest, for the Proxmox tab: `{"last", "count", "age_days",
+    "expected"}`. `expected` is false for a template and for a guest marked
+    as deliberately not backed up — no backup there is not a finding.
+    Empty when the backups were not listed."""
+    if guest_backups is None:
+        return {}
+    exempt_ids = set(exempt or [])
+    rows: dict[int, dict[str, Any]] = {}
+    for guest in guests or []:
+        vmid = guest.get("vmid")
+        if not isinstance(vmid, int):
+            continue
+        entry = guest_backups.get(str(vmid)) or {}
+        last = entry.get("last")
+        rows[vmid] = {
+            "last": last,
+            "count": entry.get("count") or 0,
+            "age_days": max(now_epoch - last, 0) // 86400 if isinstance(last, int) else None,
+            "expected": not guest.get("template") and vmid not in exempt_ids,
+        }
+    return rows
+
+
+def oldest_guest_backup_days(
+    guests: list[dict[str, Any]] | None,
+    guest_backups: dict[str, dict[str, int]] | None,
+    exempt: list[int] | None,
+    now_epoch: int,
+) -> int | None:
+    """How old the stalest "newest backup" is, in days, among the guests
+    that are expected to have one and do. None when there is none."""
+    ages = [
+        row["age_days"]
+        for row in guest_backup_rows(guests, guest_backups, exempt, now_epoch).values()
+        if row["expected"] and row["age_days"] is not None
+    ]
+    return max(ages) if ages else None
+
+
+def guests_without_backup(
+    guests: list[dict[str, Any]] | None,
+    guest_backups: dict[str, dict[str, int]] | None,
+    exempt: list[int] | None,
+) -> int | None:
+    """How many guests that are expected to have a backup have none on
+    any storage. None when the backups were not listed."""
+    if guest_backups is None or guests is None:
+        return None
+    return sum(
+        1
+        for row in guest_backup_rows(guests, guest_backups, exempt, 0).values()
+        if row["expected"] and row["last"] is None
+    )
 
 
 def guest_counts(guests: list[dict[str, Any]] | None) -> tuple[int, int]:

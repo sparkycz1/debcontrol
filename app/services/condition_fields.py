@@ -13,6 +13,7 @@ import/export all read this registry rather than hardcoding field names).
 from __future__ import annotations
 
 import operator as op
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from typing import Any, Literal
 from app.db.models.machine import Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.services.disk_forecast import soonest_full_days
+from app.ssh import proxmox
 from app.ssh.image_updates import count_updates
 
 ValueType = Literal["number", "string", "bool"]
@@ -177,6 +179,21 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
         "number",
         lambda m, s, mount: (
             count_updates(m.docker_image_updates) if m.docker_image_updates is not None else None
+        ),
+    ),
+    # --- Proxmox VE guest backups (Machine.pve_guest_backups, facts cadence) ---
+    "proxmox.oldest_guest_backup_days": ConditionField(
+        "proxmox_oldest_guest_backup_days",
+        "number",
+        lambda m, s, mount: proxmox.oldest_guest_backup_days(
+            m.pve_guests, m.pve_guest_backups, m.pve_backup_exempt, int(time.time())
+        ),
+    ),
+    "proxmox.guests_without_backup_count": ConditionField(
+        "proxmox_guests_without_backup_count",
+        "number",
+        lambda m, s, mount: proxmox.guests_without_backup(
+            m.pve_guests, m.pve_guest_backups, m.pve_backup_exempt
         ),
     ),
     "docker.exited_error_count": ConditionField(

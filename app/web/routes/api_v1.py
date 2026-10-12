@@ -410,6 +410,10 @@ async def machine_proxmox_api(
         "zfs_pools": machine.zfs_pools,
         "storage": machine.pve_storage,
         "backups": machine.pve_backups,
+        # Per guest (VMID): when its newest backup on this node's backup
+        # storages was made (`last`, epoch seconds) and how many it has.
+        # Null until the host's facts were refreshed by 0.105.0 or later.
+        "guest_backups": machine.pve_guest_backups,
         # VMIDs marked as deliberately not backed up: still listed in
         # `backups.not_backed_up`, no longer warned about. (Nor is a
         # template, which the web UI leaves out of the warning as well.)

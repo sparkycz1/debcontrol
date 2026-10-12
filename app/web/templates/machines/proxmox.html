@@ -87,6 +87,7 @@
                 <th data-sort="number">{{ t(request, "proxmox.memory") }}</th>
                 <th data-sort="number">{{ t(request, "proxmox.uptime") }}</th>
                 <th>{{ t(request, "proxmox.node") }}</th>
+                {% if guest_backup_rows %}<th data-sort="number">{{ t(request, "proxmox.guest_last_backup") }}</th>{% endif %}
                 <th>{{ t(request, "proxmox.tags") }}</th>
                 {% if can_power %}<th><span class="visually-hidden">{{ t(request, "proxmox.actions") }}</span></th>{% endif %}
               </tr>
@@ -107,6 +108,17 @@
                   </td>
                   <td data-sort-value="{{ g.uptime_seconds or 0 }}">{{ g.uptime_seconds | format_uptime if g.uptime_seconds else '—' }}</td>
                   <td>{{ g.node or '—' }}</td>
+                  {% if guest_backup_rows %}
+                    {% set gb = guest_backup_rows.get(g.vmid) %}
+                    <td class="cell-nowrap" data-sort-value="{{ gb.last if gb and gb.last else 0 }}">
+                      {% if gb and gb.last %}
+                        <span title="{{ gb.last | from_epoch | local_time('%Y-%m-%d %H:%M') }}">{{ t(request, "proxmox.guest_backup_today") if gb.age_days == 0 else t(request, "proxmox.guest_backup_age", count=gb.age_days) }}</span>
+                        <span class="table-muted">· {{ t(request, "proxmox.guest_backup_count", count=gb.count) }}</span>
+                      {% elif gb and gb.expected %}
+                        <span class="badge badge-warn">{{ t(request, "proxmox.guest_backup_none") }}</span>
+                      {% else %}—{% endif %}
+                    </td>
+                  {% endif %}
                   <td>{% for tag in g.tags %}<span class="badge badge-tag">{{ tag }}</span> {% endfor %}</td>
                   {% if can_power %}
                     <td class="guest-actions">
