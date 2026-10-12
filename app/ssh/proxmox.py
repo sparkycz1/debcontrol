@@ -685,18 +685,42 @@ def build_guest_action_command(guest: dict[str, Any], action: str) -> str:
 
 
 def split_not_backed_up(
-    backups: dict[str, Any] | None, exempt: list[int] | None
+    backups: dict[str, Any] | None,
+    exempt: list[int] | None,
+    guests: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(guests no backup job covers that nobody signed off, the ones marked
     as deliberately not backed up). Only guests Proxmox still reports as
     uncovered appear in either list — an exempt VMID that has since been
-    added to a job, or deleted, is in neither."""
+    added to a job, or deleted, is in neither. Nor is a template (per
+    `guests`): it holds no data of its own and is recreated, not restored."""
     exempt_ids = set(exempt or [])
+    templates = {g.get("vmid") for g in guests or [] if g.get("template")}
     uncovered: list[dict[str, Any]] = []
     signed_off: list[dict[str, Any]] = []
     for guest in (backups or {}).get("not_backed_up") or []:
+        if guest.get("vmid") in templates:
+            continue
         (signed_off if guest.get("vmid") in exempt_ids else uncovered).append(guest)
     return uncovered, signed_off
+
+
+# A failed task stays in Proxmox's own task log for weeks. Past this it is
+# history, not something to act on.
+FAILED_TASK_DAYS = 14
+
+
+def recent_failed_tasks(
+    tasks: list[dict[str, Any]] | None, now_epoch: int, days: int = FAILED_TASK_DAYS
+) -> list[dict[str, Any]]:
+    """The failed tasks that started within the last `days` days. A task
+    with no start time is kept: better shown than silently dropped."""
+    cutoff = now_epoch - days * 86400
+    return [
+        task
+        for task in tasks or []
+        if not isinstance(task.get("started_at"), int) or task["started_at"] >= cutoff
+    ]
 
 
 def with_backup_exempt(current: list[int] | None, vmids: list[int], *, exempt: bool) -> list[int]:

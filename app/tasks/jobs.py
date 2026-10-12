@@ -38,7 +38,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
@@ -1164,6 +1164,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.admin_users = facts["admin_users"]
         machine.login_users = facts["login_users"]
         machine.is_physical = facts["is_physical"]
+        machine.boot_id = facts.get("boot_id")
         machine.smart_devices = facts["smart_devices"]
         machine.pve_version = facts.get("pve_version")
         machine.pve_storage = facts.get("pve_storage")
@@ -2050,6 +2051,8 @@ async def _run_machine_update(run_id: str) -> None:
     check_machine_updates.delay(str(run.machine_id))
     if run.reboot_if_required or run.rollout_position is not None:
         finish_update_run.delay(str(run.id))
+    if run.batch_id is not None and run.rollout_position is None:
+        release_held_runs.delay(str(run.batch_id))
 
 
 @celery_app.task(
@@ -2109,10 +2112,69 @@ async def _fail_stale_update_runs() -> int:
             details={"run_ids": [str(run.id) for run in stale][:50], "count": len(stale)},
         )
         waiting_batches = [str(run.id) for run in stale if run.rollout_position is not None]
+        parallel_batches = {
+            str(run.batch_id)
+            for run in stale
+            if run.batch_id is not None and run.rollout_position is None
+        }
     # A rolling batch stops at a failed run: let it mark what was waiting.
     for run_id in waiting_batches:
         finish_update_run.delay(run_id)
+    # A parallel one may have been holding a run back for these.
+    for batch_id in sorted(parallel_batches):
+        release_held_runs.delay(batch_id)
     return len(stale)
+
+
+async def _release_held_runs(batch_id: str) -> str | None:
+    """Start the next held-back run of a parallel batch
+    (`MachineUpdateRun.hold_order`: the machine debcontrol runs on, then
+    its hypervisor) once nothing else in the batch is waiting or running.
+    Called whenever a run of the batch ends. Returns the id of the run it
+    started, if any."""
+    async with db_session.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(MachineUpdateRun).where(
+                MachineUpdateRun.batch_id == uuid.UUID(batch_id),
+                MachineUpdateRun.status.in_((UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING)),
+            )
+        )
+        open_runs = list(result.scalars().all())
+        held = sorted(
+            (
+                run
+                for run in open_runs
+                if run.hold_order is not None
+                and run.status == UpdateRunStatus.PENDING
+                and run.started_at is None
+            ),
+            key=lambda run: (run.hold_order or 0, str(run.id)),
+        )
+        if not held or len(held) != len(open_runs):
+            return None
+        chosen = held[0]
+        # Two runs of the batch can end at the same moment: only the one
+        # whose UPDATE lands gets to start it.
+        claimed = await session.execute(
+            update(MachineUpdateRun)
+            .where(
+                MachineUpdateRun.id == chosen.id,
+                MachineUpdateRun.status == UpdateRunStatus.PENDING,
+                MachineUpdateRun.started_at.is_(None),
+            )
+            .values(started_at=datetime.now(UTC))
+        )
+        await session.commit()
+        if getattr(claimed, "rowcount", 0) != 1:
+            return None
+        run_id = str(chosen.id)
+    run_machine_update.delay(run_id)
+    return run_id
+
+
+@celery_app.task(name="app.tasks.jobs.release_held_runs")
+def release_held_runs(batch_id: str) -> str | None:
+    return asyncio.run(_release_held_runs(batch_id))
 
 
 @celery_app.task(name="app.tasks.jobs.fail_stale_update_runs")

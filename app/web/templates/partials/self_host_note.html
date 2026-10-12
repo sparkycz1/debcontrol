@@ -1,0 +1,10 @@
+{# Next to anything that updates or restarts machines: debcontrol itself
+   depends on some of them (app.services.self_host). `self_host_role` is
+   set on a single machine's page, `self_host_names` next to a batch. #}
+{% if self_host_role == 'host' %}
+  <div class="alert alert-warn"><p>{{ t(request, "self_host.machine_host") }}</p></div>
+{% elif self_host_role == 'hypervisor' %}
+  <div class="alert alert-warn"><p>{{ t(request, "self_host.machine_hypervisor") }}</p></div>
+{% elif self_host_names %}
+  <p class="hint">{{ t(request, "self_host.batch_note", names=(self_host_names | join(", "))) }}</p>
+{% endif %}

@@ -1,5 +1,6 @@
 {# The three strategies offered in the forms (`dist_upgrade` — the same as
    full-upgrade under its older name — is still accepted, just not offered). #}
+{% include "partials/self_host_note.html" %}
 <fieldset class="strategy-fields">
   <legend>{{ t(request, "updates.strategy.legend") }}</legend>
   <label><input type="radio" name="strategy" value="full_upgrade" checked> {{ strategy_label(request, 'full_upgrade') }}

@@ -35,7 +35,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineUpdate
-from app.services import acknowledgements, machine_timeline
+from app.services import acknowledgements, machine_timeline, proxmox_guest_links, self_host
 from app.services import proxmox_backup_exempt as proxmox_backup_exempt_service
 from app.services.access_scope import (
     can_see_group_id,
@@ -138,6 +138,8 @@ async def machine_detail(
             "csrf_token": csrf_token,
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "overview",
+            "runs_on": await proxmox_guest_links.visible_host_of(db, current_user, machine),
+            "self_host_role": await self_host.role_of(db, machine),
             # The package *rows* themselves are deliberately not fetched
             # here — a machine can easily have several hundred installed
             # packages, and rendering them inline made this page slow and
@@ -1026,9 +1028,10 @@ async def machine_proxmox(
             url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER
         )
     csrf_token, new_cookie = get_or_create_csrf_token(request)
+    now_epoch = int(datetime.now(UTC).timestamp())
     running, total = proxmox.guest_counts(machine.pve_guests)
     uncovered, signed_off = proxmox.split_not_backed_up(
-        machine.pve_backups, machine.pve_backup_exempt
+        machine.pve_backups, machine.pve_backup_exempt, machine.pve_guests
     )
     response = templates.TemplateResponse(
         request,
@@ -1044,9 +1047,15 @@ async def machine_proxmox(
             "last_backup": proxmox.last_backup(machine.pve_backups),
             "not_backed_up": uncovered,
             "backup_exempt": signed_off,
+            "guest_machines": await proxmox_guest_links.machines_for_guests(
+                db, current_user, machine
+            ),
+            "failed_tasks": proxmox.recent_failed_tasks(machine.pve_failed_tasks, now_epoch),
+            "failed_task_days": proxmox.FAILED_TASK_DAYS,
+            "self_host_role": await self_host.role_of(db, machine),
             "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
             "can_power": current_user.has_permission(Permission.ACTION_POWER),
-            "now_epoch": int(datetime.now(UTC).timestamp()),
+            "now_epoch": now_epoch,
             "stale_seconds": proxmox.STALE_BACKUP_SECONDS,
             "queue_warn": proxmox.MAIL_QUEUE_WARN,
         },
@@ -1363,7 +1372,13 @@ async def power_confirm_form(
     response = templates.TemplateResponse(
         request,
         "machines/power_confirm.html",
-        {"machine": machine, "action": action, "error": None, "csrf_token": csrf_token},
+        {
+            "machine": machine,
+            "action": action,
+            "error": None,
+            "csrf_token": csrf_token,
+            "self_host_role": await self_host.role_of(db, machine),
+        },
     )
     if new_cookie:
         set_csrf_cookie(response, new_cookie)

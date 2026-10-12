@@ -2406,6 +2406,16 @@
     "settings.recording.keep_hint": "Prázdné znamená navždy. Starší záznamy se mažou jednou denně, i po vypnutí záznamu.",
     "audit.action_label.terminal.recording.view": "Přehrání záznamu terminálu",
     "audit.action_label.terminal_recordings.purge": "Staré záznamy terminálu promazány",
-    "audit.action_label.settings.terminal_recording.update": "Změna nastavení záznamu terminálu"
+    "audit.action_label.settings.terminal_recording.update": "Změna nastavení záznamu terminálu",
+    "self_host.machine_host": "Na tomto zařízení běží samotný debcontrol. Aktualizace nebo restart ho může zastavit uprostřed práce: aktualizace pak zůstane nedokončená a je potřeba ji ručně zkontrolovat. V hromadné aktualizaci přijde toto zařízení na řadu poslední, až budou všechna ostatní hotová.",
+    "self_host.machine_hypervisor": "Zařízení, na kterém běží debcontrol, je hostem tohoto Proxmoxu. Restart tohoto hostitele vypne i debcontrol. V hromadné aktualizaci přijde tento hostitel na řadu poslední, až budou všechna ostatní zařízení hotová.",
+    "self_host.batch_note": "Na těchto zařízeních debcontrol závisí: {names}. V hromadné aktualizaci přijdou na řadu poslední, až budou všechna ostatní hotová, protože jejich aktualizace může debcontrol přerušit.",
+    "self_host.overview_host": "Na tomto zařízení běží samotný debcontrol.",
+    "self_host.overview_hypervisor": "Zařízení, na kterém běží debcontrol, je hostem tohoto hostitele.",
+    "self_host.run_held": "Čeká, až budou ostatní zařízení hotová: na tomto debcontrol závisí.",
+    "proxmox.runs_on_vm": "Běží jako VM {vmid} na",
+    "proxmox.runs_on_ct": "Běží jako kontejner {vmid} na",
+    "proxmox.guest_is_machine": "Spravováno zde jako {name}",
+    "proxmox.failed_tasks_hint": "Za posledních {days} dní. Starší selhání zůstávají v protokolu úloh samotného Proxmoxu."
   }
 }

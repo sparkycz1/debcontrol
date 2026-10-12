@@ -306,6 +306,7 @@
 
       {# Routine actions first; the power actions sit apart at the far end.
          Until a row is ticked only the hint shows (bulk-select.js). #}
+      {% include "partials/self_host_note.html" %}
       <div class="bulk-bar" id="bulk-actions-bar" data-bulk-bar="machine_ids">
         <p class="hint bulk-when-empty">{{ t(request, 'machines.bulk.select_hint') }}</p>
         <div class="bulk-when-selected">

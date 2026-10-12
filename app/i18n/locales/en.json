@@ -2361,6 +2361,16 @@
     "settings.recording.keep_hint": "Empty keeps them forever. Older recordings are deleted once a day, also after recording is turned off.",
     "audit.action_label.terminal.recording.view": "Terminal recording watched",
     "audit.action_label.terminal_recordings.purge": "Old terminal recordings purged",
-    "audit.action_label.settings.terminal_recording.update": "Terminal recording settings changed"
+    "audit.action_label.settings.terminal_recording.update": "Terminal recording settings changed",
+    "self_host.machine_host": "debcontrol itself runs on this machine. Updating or restarting it can stop debcontrol in the middle: the update may be left unfinished and has to be checked by hand. In a batch this machine is updated last, after all the others are done.",
+    "self_host.machine_hypervisor": "The machine debcontrol runs on is a guest of this Proxmox host. Restarting this host takes debcontrol down with it. In a batch this host is updated last, after all the others are done.",
+    "self_host.batch_note": "debcontrol depends on: {names}. In a batch these are updated last, once every other machine is done, because updating them can interrupt debcontrol.",
+    "self_host.overview_host": "debcontrol itself runs on this machine.",
+    "self_host.overview_hypervisor": "The machine debcontrol runs on is a guest of this host.",
+    "self_host.run_held": "Waits until the other machines are done: debcontrol depends on this one.",
+    "proxmox.runs_on_vm": "Runs as VM {vmid} on",
+    "proxmox.runs_on_ct": "Runs as container {vmid} on",
+    "proxmox.guest_is_machine": "Managed here as {name}",
+    "proxmox.failed_tasks_hint": "From the last {days} days. Older failures stay in Proxmox's own task log."
   }
 }

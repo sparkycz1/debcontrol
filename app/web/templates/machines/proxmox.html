@@ -95,7 +95,10 @@
               {% for g in machine.pve_guests %}
                 <tr class="{{ 'row-muted' if g.template else '' }}">
                   <td data-sort-value="{{ g.vmid }}">{{ g.vmid }}</td>
-                  <td>{{ g.name or '—' }}</td>
+                  <td>
+                    {% set managed = guest_machines.get(g.vmid) %}
+                    {% if managed %}<a href="/machines/{{ managed.id }}" title="{{ t(request, 'proxmox.guest_is_machine', name=managed.name) }}">{{ g.name or managed.name }}</a>{% else %}{{ g.name or '—' }}{% endif %}
+                  </td>
                   <td>{{ 'VM' if g.type == 'qemu' else 'CT' }}{% if g.template %} · {{ t(request, "proxmox.template") }}{% endif %}</td>
                   <td><span class="badge {{ 'badge-ok' if g.status == 'running' else ('badge-warn' if g.status in ('paused', 'suspended') else '') }}">{{ g.status }}</span></td>
                   <td data-sort-value="{{ g.cpu_percent if g.cpu_percent is not none else -1 }}">{{ ('%.1f %%' % g.cpu_percent) if g.cpu_percent is not none and g.status == 'running' else '—' }}</td>
@@ -320,14 +323,15 @@
     </section>
   {% endif %}
 
-  {% if machine.pve_failed_tasks %}
+  {% if failed_tasks %}
     <section class="panel">
       <h2>{{ t(request, "proxmox.failed_tasks") }}</h2>
+      <p class="hint">{{ t(request, "proxmox.failed_tasks_hint", days=failed_task_days) }}</p>
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr><th>{{ t(request, "proxmox.started") }}</th><th>{{ t(request, "proxmox.type") }}</th><th>ID</th><th>{{ t(request, "proxmox.result") }}</th></tr></thead>
           <tbody>
-            {% for task in machine.pve_failed_tasks %}
+            {% for task in failed_tasks %}
               <tr>
                 <td>{{ task.started_at | from_epoch | local_time('%Y-%m-%d %H:%M') }}</td>
                 <td><code>{{ task.type }}</code></td>

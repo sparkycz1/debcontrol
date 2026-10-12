@@ -28,7 +28,7 @@ from app.db.session import get_db
 # Imported as a module, not name-by-name: this file already has a route
 # function called `preview_machine_update`, which would shadow the task of
 # the same name.
-from app.services import update_batches
+from app.services import self_host, update_batches
 from app.ssh.security_advisories import is_safe_package_name
 from app.ssh.updates import PendingPackage
 from app.tasks import jobs as tasks
@@ -161,6 +161,7 @@ async def preview_machine_update(
             "to_install_or_upgrade": to_install_or_upgrade,
             "to_remove": to_remove,
             "csrf_token": csrf_token,
+            "self_host_role": await self_host.role_of(db, machine),
         },
     )
     if new_cookie:
@@ -429,6 +430,7 @@ async def machine_update_history(
         "machines/update_history.html",
         {
             "machine": machine,
+            "self_host_role": await self_host.role_of(db, machine),
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "updates",
             "csrf_token": csrf_token,

@@ -28,7 +28,7 @@ async def set_exempt(
     backed up, so the list cannot fill with arbitrary numbers; un-marking
     takes any VMID that is on the list."""
     uncovered, signed_off = proxmox.split_not_backed_up(
-        machine.pve_backups, machine.pve_backup_exempt
+        machine.pve_backups, machine.pve_backup_exempt, machine.pve_guests
     )
     current = list(machine.pve_backup_exempt or [])
     if exempt:
