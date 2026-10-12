@@ -99,6 +99,7 @@ from app.services import (
     proxmox_guest_links,
     self_host,
     update_batches,
+    update_snapshots,
 )
 from app.services.access_scope import (
     can_see_group_id,
@@ -125,7 +126,7 @@ from app.services.machine_tags import (
 )
 from app.services.security_updates import load_security_overview
 from app.ssh import logs as ssh_logs
-from app.ssh import proxmox
+from app.ssh import proxmox, proxmox_snapshots
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
 from app.ssh.exceptions import SSHConnectionError
@@ -137,6 +138,7 @@ from app.tasks import jobs as tasks
 from app.tasks.jobs import (
     preview_machine_update,
     rollback_machine_update,
+    rollback_to_snapshot,
     run_machine_update,
     send_machine_power_command,
 )
@@ -260,6 +262,17 @@ def _update_run_to_dict(run: MachineUpdateRun) -> dict[str, object]:
         # whether "Roll back this update" is available for this run.
         "has_package_snapshot": run.package_snapshot is not None,
         "rollback_of_run_id": str(run.rollback_of_run_id) if run.rollback_of_run_id else None,
+        # The Proxmox snapshot taken before this run, if one was asked for
+        # and the machine is a recognised guest (`note` says why not).
+        "snapshot": {
+            "requested": run.snapshot_before,
+            "name": run.snapshot_name,
+            "host_machine_id": str(run.snapshot_host_id) if run.snapshot_host_id else None,
+            "vmid": run.snapshot_vmid,
+            "type": run.snapshot_type,
+            "note": run.snapshot_note,
+            "rolled_back_at": _isoformat(run.snapshot_rolled_back_at),
+        },
         "started_at": _isoformat(run.started_at),
         "finished_at": _isoformat(run.finished_at),
         "created_at": _isoformat(run.created_at),
@@ -401,6 +414,11 @@ async def machine_proxmox_api(
         # `backups.not_backed_up`, no longer warned about. (Nor is a
         # template, which the web UI leaves out of the warning as well.)
         "backup_exempt": machine.pve_backup_exempt or [],
+        # Snapshots debcontrol took before updates and that are still on
+        # this host; it never deletes them itself.
+        "debcontrol_snapshots": [
+            kept.as_dict() for kept in update_snapshots.kept_snapshots(machine)
+        ],
         # Guests that are managed machines themselves: VMID -> machine id.
         "guest_machines": {
             str(vmid): str(found.id)
@@ -1740,6 +1758,7 @@ class _BulkMachineIds(BaseModel):
 
 class _BulkUpdatesTrigger(_BulkMachineIds):
     strategy: UpgradeStrategy
+    snapshot_before: bool = False
 
 
 class _BulkPowerAction(_BulkMachineIds):
@@ -1790,7 +1809,9 @@ async def bulk_trigger_updates_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machines = await _get_machines_by_ids(payload.machine_ids, db, user)
-    batch_id, skipped = await trigger_updates(db, machines, payload.strategy)
+    batch_id, skipped = await trigger_updates(
+        db, machines, payload.strategy, snapshot_before=payload.snapshot_before
+    )
     await log_event(
         db,
         request=request,
@@ -1981,6 +2002,10 @@ async def preview_machine_update_api(
 
 class _UpdatesTrigger(BaseModel):
     strategy: UpgradeStrategy
+    # Have Proxmox snapshot each machine that is a recognised guest of a
+    # managed Proxmox host first; a guest whose snapshot fails is not
+    # updated. Machines that are not such guests are updated as usual.
+    snapshot_before: bool = False
 
 
 @router.post("/machines/{machine_id}/updates", dependencies=[_action_updates])
@@ -1997,7 +2022,11 @@ async def trigger_machine_update_api(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Confirm the host key fingerprint before running updates.",
         )
-    run = MachineUpdateRun(machine_id=machine.id, strategy=payload.strategy)
+    run = MachineUpdateRun(
+        machine_id=machine.id,
+        strategy=payload.strategy,
+        snapshot_before=payload.snapshot_before,
+    )
     db.add(run)
     await db.commit()
     await db.refresh(run)
@@ -2013,6 +2042,84 @@ async def trigger_machine_update_api(
         target_label=machine.name,
         details={"strategy": payload.strategy.value, "run_id": str(run.id)},
     )
+    return _update_run_to_dict(run)
+
+
+class _SnapshotRollback(BaseModel):
+    # The machine's name, typed out: the same safeguard as in the web UI.
+    confirm_name: str
+
+
+@router.post(
+    "/machines/{machine_id}/updates/{run_id}/snapshot-rollback",
+    dependencies=[_action_updates, _action_power],
+)
+async def rollback_to_snapshot_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    run_id: uuid.UUID,
+    payload: _SnapshotRollback,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Roll the guest back to the Proxmox snapshot taken before this update
+    run. Everything written on the machine since is lost and the guest is
+    restarted; the snapshot stays. Waits for Proxmox to finish. Needs both
+    the update and the power permission, and `confirm_name` equal to the
+    machine's name."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    run = await db.get(MachineUpdateRun, run_id)
+    if run is None or run.machine_id != machine.id or not run.snapshot_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found.")
+    details: dict[str, object] = {
+        "run_id": str(run.id),
+        "snapshot": run.snapshot_name,
+        "vmid": run.snapshot_vmid,
+    }
+    if payload.confirm_name.strip() != machine.name:
+        await log_event(
+            db,
+            request=request,
+            action="machine.update.snapshot_rollback",
+            summary=f'Blocked rollback of "{machine.name}" to a snapshot: wrong confirmation',
+            outcome=AuditOutcome.DENIED,
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details=details,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirm_name must be the machine's name.",
+        )
+    error: str | None = None
+    try:
+        result = await asyncio.to_thread(
+            rollback_to_snapshot.delay(str(run.id)).get,
+            timeout=proxmox_snapshots.TASK_WAIT_SECONDS + 120,
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+    except CeleryTimeoutError:
+        error = "Timed out waiting for Proxmox."
+    await log_event(
+        db,
+        request=request,
+        action="machine.update.snapshot_rollback",
+        summary=(
+            f'Rolled "{machine.name}" back to snapshot {run.snapshot_name}'
+            if error is None
+            else f'Rollback of "{machine.name}" to snapshot {run.snapshot_name} failed'
+        ),
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={**details, **({"error": error} if error else {})},
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
+    await db.refresh(run)
     return _update_run_to_dict(run)
 
 
@@ -2518,7 +2625,9 @@ async def trigger_all_machines_update_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     machines = await _visible_machines(db, user)
-    batch_id, skipped = await trigger_updates(db, machines, payload.strategy)
+    batch_id, skipped = await trigger_updates(
+        db, machines, payload.strategy, snapshot_before=payload.snapshot_before
+    )
     await log_event(
         db,
         request=request,
@@ -2597,7 +2706,9 @@ async def trigger_group_update_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     group = await _get_group_or_404(group_id, db, user)
-    batch_id, skipped = await trigger_updates(db, group.machines, payload.strategy)
+    batch_id, skipped = await trigger_updates(
+        db, group.machines, payload.strategy, snapshot_before=payload.snapshot_before
+    )
     await log_event(
         db,
         request=request,

@@ -313,10 +313,13 @@ async def trigger_all_machines_update(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     strategy: UpgradeStrategy = Form(...),
+    snapshot_before: bool = Form(False),
 ) -> Response:
     machines = await _all_visible_machines(db, current_user)
 
-    batch_id, skipped = await trigger_updates(db, machines, strategy)
+    batch_id, skipped = await trigger_updates(
+        db, machines, strategy, snapshot_before=snapshot_before
+    )
 
     await log_event(
         db,
@@ -722,9 +725,12 @@ async def trigger_group_update(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     strategy: UpgradeStrategy = Form(...),
+    snapshot_before: bool = Form(False),
 ) -> Response:
     group = await _get_group_or_404(group_id, db, current_user)
-    batch_id, skipped = await trigger_updates(db, group.machines, strategy)
+    batch_id, skipped = await trigger_updates(
+        db, group.machines, strategy, snapshot_before=snapshot_before
+    )
 
     await log_event(
         db,

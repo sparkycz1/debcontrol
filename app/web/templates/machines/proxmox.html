@@ -323,6 +323,20 @@
     </section>
   {% endif %}
 
+  {% if old_snapshots %}
+    <section class="panel">
+      <h2>{{ t(request, "snapshot.old_heading") }}</h2>
+      <div class="alert alert-warn">
+        <p>{{ t(request, "snapshot.old_hint", days=old_snapshot_days) }}</p>
+        <ul class="guest-chips">
+          {% for s in old_snapshots %}
+            <li>{{ 'VM' if s.type == 'qemu' else 'CT' }} {{ s.vmid }}{% if s.machine_name %} ({{ s.machine_name }}){% endif %}: <code>{{ s.name }}</code> — {{ t(request, "snapshot.age_days", count=s.age_days) }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+  {% endif %}
+
   {% if failed_tasks %}
     <section class="panel">
       <h2>{{ t(request, "proxmox.failed_tasks") }}</h2>

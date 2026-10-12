@@ -884,6 +884,7 @@ async def bulk_trigger_updates(
     current_user: User = Depends(get_current_user),
     machine_ids: list[uuid.UUID] = Form(default=[]),
     strategy: UpgradeStrategy = Form(...),
+    snapshot_before: bool = Form(False),
 ) -> Response:
     machines = await _get_machines_by_ids(machine_ids, db, current_user)
     if not machines:
@@ -892,7 +893,9 @@ async def bulk_trigger_updates(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    batch_id, skipped = await trigger_updates(db, machines, strategy)
+    batch_id, skipped = await trigger_updates(
+        db, machines, strategy, snapshot_before=snapshot_before
+    )
     await log_event(
         db,
         request=request,

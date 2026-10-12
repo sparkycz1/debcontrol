@@ -178,5 +178,6 @@ async def retry_failed(db: AsyncSession, user: User, batch_id: uuid.UUID) -> tup
         [run.machine for run in failed],
         failed[0].strategy,
         reboot_if_required=any(run.reboot_if_required for run in failed),
+        snapshot_before=any(run.snapshot_before for run in failed),
         rolling=any(run.rollout_position is not None for run in runs),
     )
