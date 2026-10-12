@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
+from app.services import self_host
 from app.ssh.power import PowerAction
 from app.tasks.jobs import (
     check_machine_readiness,
@@ -26,6 +27,7 @@ from app.tasks.jobs import (
     refresh_machine_facts,
     refresh_machine_packages,
     refresh_machine_services,
+    release_held_runs,
     run_machine_update,
     run_remote_ssh_command,
     sample_machine_monitoring,
@@ -49,9 +51,17 @@ async def trigger_updates(
     left it needing one. `rolling` updates one machine at a time, in name
     order: only the first run is enqueued now, each next one once the
     previous succeeded and, after a reboot, answers again — a failure stops
-    the rest (`app.tasks.jobs._finish_update_run`)."""
+    the rest (`app.tasks.jobs._finish_update_run`).
+
+    The machine debcontrol itself runs on, and the hypervisor under it, go
+    last (`app.services.self_host`): updating them can stop the worker in
+    the middle of everyone else's update. A rolling batch simply orders
+    them last; a parallel one holds their runs back until every other run
+    of the batch is over (`app.tasks.jobs._release_held_runs`)."""
+    own = await self_host.find(db)
     eligible = sorted(
-        (m for m in machines if m.host_key_fingerprint), key=lambda m: m.name.lower()
+        (m for m in machines if m.host_key_fingerprint),
+        key=lambda m: (own.hold_order(m.id) or 0, m.name.lower()),
     )
     batch_id = uuid.uuid4()
     runs = [
@@ -61,6 +71,7 @@ async def trigger_updates(
             batch_id=batch_id,
             reboot_if_required=reboot_if_required,
             rollout_position=position if rolling else None,
+            hold_order=None if rolling else own.hold_order(m.id),
         )
         for position, m in enumerate(eligible)
     ]
@@ -69,8 +80,17 @@ async def trigger_updates(
 
     # Enqueue only after commit — the worker (a separate process) must be
     # able to find the row the moment it picks the task up.
-    for run in runs[:1] if rolling else runs:
-        run_machine_update.delay(str(run.id))
+    if rolling:
+        for run in runs[:1]:
+            run_machine_update.delay(str(run.id))
+    else:
+        held = [run for run in runs if run.hold_order is not None]
+        for run in runs:
+            if run.hold_order is None:
+                run_machine_update.delay(str(run.id))
+        if held and len(held) == len(runs):
+            # Nothing to wait for.
+            release_held_runs.delay(str(batch_id))
 
     return batch_id, len(machines) - len(eligible)
 

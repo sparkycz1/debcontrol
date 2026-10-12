@@ -66,6 +66,19 @@
     </a>
   {% endif %}
 
+  {% if runs_on %}
+    <p class="hint">
+      {{ t(request, "proxmox.runs_on_ct" if runs_on.type == 'lxc' else "proxmox.runs_on_vm", vmid=runs_on.vmid) }}
+      <a href="/machines/{{ runs_on.machine_id }}/proxmox">{{ runs_on.machine_name }}</a>{% if runs_on.status %}
+      <span class="badge {{ 'badge-ok' if runs_on.status == 'running' else 'badge-warn' }}">{{ runs_on.status }}</span>{% endif %}
+    </p>
+  {% endif %}
+  {% if self_host_role == 'host' %}
+    <p class="hint"><span class="badge">debcontrol</span> {{ t(request, "self_host.overview_host") }}</p>
+  {% elif self_host_role == 'hypervisor' %}
+    <p class="hint"><span class="badge">debcontrol</span> {{ t(request, "self_host.overview_hypervisor") }}</p>
+  {% endif %}
+
   {% if machine.readiness_missing %}
     <div class="alert alert-warn">
       <p>

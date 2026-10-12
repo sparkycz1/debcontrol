@@ -90,6 +90,10 @@ class MachineUpdateRun(Base):
     # run starts only once this one succeeded and, if it rebooted, came
     # back. None = runs in parallel with the rest of its batch.
     rollout_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set on the runs of a parallel batch that must wait for all the others:
+    # the machine debcontrol runs on (1), then the hypervisor under it (2) —
+    # see app.services.self_host and app.tasks.jobs._release_held_runs.
+    hold_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # A JSON object of {package_name: installed_version}, captured via
     # `dpkg-query` right before the upgrade step of a real (non-rollback)

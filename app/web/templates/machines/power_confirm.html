@@ -16,6 +16,7 @@
     <div class="alert alert-error"><p>{{ error }}</p></div>
   {% endif %}
 
+  {% include "partials/self_host_note.html" %}
   <form method="post" action="/machines/{{ machine.id }}/power" class="form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="action" value="{{ action.value }}">

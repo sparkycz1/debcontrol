@@ -96,6 +96,8 @@ from app.services import (
     machine_timeline,
     monitoring_history,
     proxmox_backup_exempt,
+    proxmox_guest_links,
+    self_host,
     update_batches,
 )
 from app.services.access_scope import (
@@ -396,8 +398,16 @@ async def machine_proxmox_api(
         "storage": machine.pve_storage,
         "backups": machine.pve_backups,
         # VMIDs marked as deliberately not backed up: still listed in
-        # `backups.not_backed_up`, no longer warned about.
+        # `backups.not_backed_up`, no longer warned about. (Nor is a
+        # template, which the web UI leaves out of the warning as well.)
         "backup_exempt": machine.pve_backup_exempt or [],
+        # Guests that are managed machines themselves: VMID -> machine id.
+        "guest_machines": {
+            str(vmid): str(found.id)
+            for vmid, found in (
+                await proxmox_guest_links.machines_for_guests(db, user, machine)
+            ).items()
+        },
         "monitoring_updated_at": _isoformat(machine.monitoring_updated_at),
         "facts_updated_at": _isoformat(machine.facts_updated_at),
     }
@@ -726,7 +736,19 @@ async def get_machine_api(
     machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    return _machine_to_dict(await _get_machine_or_404(machine_id, db, user))
+    """One machine. On top of the list's fields: `runs_on` — the managed
+    Proxmox host it is a guest of (`machine_id`, `machine_name`, `vmid`,
+    `type`, `status`), null when debcontrol cannot tell — and
+    `debcontrol_role`: "host" for the machine debcontrol itself runs on,
+    "hypervisor" for the Proxmox host under that one, otherwise null. A
+    batch update runs those two last."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    runs_on = await proxmox_guest_links.visible_host_of(db, user, machine)
+    return {
+        **_machine_to_dict(machine),
+        "runs_on": runs_on.as_dict() if runs_on is not None else None,
+        "debcontrol_role": await self_host.role_of(db, machine),
+    }
 
 
 @router.get("/machines/{machine_id}/packages", dependencies=[_view_machines])

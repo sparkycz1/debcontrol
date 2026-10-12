@@ -25,6 +25,7 @@
           <td>{{ strategy_label(request, run.strategy.value) }}</td>
           <td>
             {{ run_status_badge(request, run) }}
+            {% if run.hold_order and run.status.value == 'pending' %}<div class="table-summary">{{ t(request, "self_host.run_held") }}</div>{% endif %}
             {% if run.error %}<div class="table-summary">{{ run.error }}</div>{% endif %}
           </td>
           <td>{{ run.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') if run.finished_at else '—' }}</td>

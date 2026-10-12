@@ -183,6 +183,9 @@ class Machine(Base):
     # meaningful, and S.M.A.R.T. in particular is actively misleading,
     # against a virtual disk.
     is_physical: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The kernel's boot id, as reported with the facts: equal to
+    # debcontrol's own on the machine it runs on (app.services.self_host).
+    boot_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     # Full per-disk S.M.A.R.T. detail (app.ssh.smart), refreshed with facts
     # — a snapshot, not a history. None = not applicable (VM / no smartctl).
     smart_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)

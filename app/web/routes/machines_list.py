@@ -33,7 +33,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate
 from app.schemas.machine_config import MachineConfigExport
-from app.services import machine_compare
+from app.services import machine_compare, self_host
 from app.services.access_scope import (
     can_see_group_id,
     is_restricted,
@@ -178,6 +178,7 @@ async def list_machines(
         "machines/list.html",
         {
             "machines": machines,
+            "self_host_names": await self_host.visible_names(db, current_user),
             "pending_machines": await _get_pending_machines(db),
             "all_tags": await _get_all_tags(db),
             "saved_views": await list_saved_views(db, current_user.id),

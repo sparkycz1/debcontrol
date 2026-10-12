@@ -23,7 +23,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine_group import MachineGroupCreate
-from app.services import update_batches
+from app.services import self_host, update_batches
 from app.services.access_scope import (
     can_see_machine,
     count_visible_machines,
@@ -292,6 +292,7 @@ async def all_machines_group(
         "machine_groups/all.html",
         {
             "machines": machines,
+            "self_host_names": await self_host.visible_names(db, current_user),
             "all_tags": await _get_all_tags(db),
             "q": q,
             "tag": tag,
@@ -622,6 +623,11 @@ async def group_updates_tab(
             "group": group,
             "tabs": _group_tabs(request, group),
             "active_tab": "updates",
+            "self_host_names": [
+                name
+                for name in await self_host.visible_names(db, current_user)
+                if name in {m.name for m in group.machines}
+            ],
             "csrf_token": csrf_token,
         },
     )

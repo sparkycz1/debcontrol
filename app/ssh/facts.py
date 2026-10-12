@@ -38,6 +38,7 @@ _SECTION_MARKERS = (
     "ADMINS",
     "LOGINS",
     "VIRT",
+    "BOOT_ID",
     "SMART",
     "REBOOT_FLAG",
     *proxmox.INVENTORY_MARKERS,
@@ -133,6 +134,10 @@ FACTS_COMMAND = (
     "if command -v systemd-detect-virt >/dev/null 2>&1; then "
     "systemd-detect-virt 2>/dev/null || true; "
     "fi; "
+    # Changes at every boot and is the same inside a container as on its
+    # host — how debcontrol recognises the machine it runs on
+    # (app.services.self_host).
+    "echo ===BOOT_ID===; cat /proc/sys/kernel/random/boot_id 2>/dev/null; "
     # Full per-disk S.M.A.R.T. detail — bare metal only, see app.ssh.smart.
     f"{SMART_FACTS_SECTION}; "
     # Debian/Ubuntu's own "a reboot is needed" flag (written by package
@@ -174,6 +179,8 @@ class MachineFacts(TypedDict):
     # be determined at all (no systemd-detect-virt) — see FACTS_COMMAND's
     # own VIRT comment.
     is_physical: bool | None
+    # The kernel's boot id (app.services.self_host); None if unreadable.
+    boot_id: str | None
     # One summary per readable disk (see app.ssh.smart.parse_smart_device);
     # None = not applicable (a VM, or no smartctl), [] = ran, nothing readable.
     smart_devices: list[dict[str, Any]] | None
@@ -219,6 +226,14 @@ def _sorted_names(section: str) -> list[str]:
     """One account name per line -> sorted unique list."""
     names = {line.strip() for line in section.splitlines() if line.strip()}
     return sorted(names)
+
+
+_BOOT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _parse_boot_id(section: str) -> str | None:
+    value = section.strip().lower()
+    return value if _BOOT_ID.fullmatch(value) else None
 
 
 def parse_facts_output(raw: str) -> MachineFacts:
@@ -328,6 +343,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
         admin_users=admin_users,
         login_users=login_users,
         is_physical=is_physical,
+        boot_id=_parse_boot_id(sections.get("BOOT_ID", "")),
         smart_devices=parse_smart_section(sections.get("SMART", "")),
         pve_version=proxmox.parse_pve_version(sections.get("PVE_VERSION", "")),
         pve_storage=proxmox.parse_storage(sections.get("PVE_STORAGE", "")),

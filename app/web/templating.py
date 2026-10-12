@@ -224,7 +224,9 @@ def proxmox_summary(machine: Any) -> dict[str, Any] | None:
         "last_backup": proxmox.last_backup(machine.pve_backups),
         # Guests marked as deliberately not backed up are not counted.
         "not_backed_up": len(
-            proxmox.split_not_backed_up(backups, machine.pve_backup_exempt)[0]
+            proxmox.split_not_backed_up(
+                backups, machine.pve_backup_exempt, machine.pve_guests
+            )[0]
         ),
     }
 
