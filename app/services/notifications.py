@@ -69,7 +69,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.user import User
 from app.i18n import DEFAULT_LOCALE_CODE
-from app.services import acknowledgements, push_channels
+from app.services import acknowledgements, ai_cause, push_channels
 from app.services.maintenance_windows import active_window_for
 
 logger = logging.getLogger(__name__)
@@ -765,6 +765,12 @@ async def notify(
             )
         ).scalar_one_or_none()
         full_context: dict[str, Any] = dict(context or {})
+        # Text for the AI only (the end of an update's output): never part
+        # of the notification itself or of a webhook's payload.
+        ai_evidence = str(full_context.pop(ai_cause.EVIDENCE_KEY, "") or "")
+        ai_note: str | None = None
+        ai_asked = False
+        full_context.setdefault("ai_summary", "")
         full_context.setdefault("event", event_type.value)
         full_context.setdefault("timestamp", datetime.now(UTC).isoformat())
         full_context.setdefault("details", "")
@@ -807,6 +813,20 @@ async def notify(
             rule_context = (
                 {**full_context, "held_back": str(held_back)} if held_back else full_context
             )
+            if rule.ai_summary and event_type in ai_cause.EVENTS:
+                # Asked once per event, however many rules want it.
+                if not ai_asked:
+                    ai_asked = True
+                    ai_note = await ai_cause.explain(
+                        db, app_settings, event_type, machine, full_context, ai_evidence
+                    )
+                if ai_note:
+                    details = str(rule_context.get("details") or "")
+                    rule_context = {
+                        **rule_context,
+                        "ai_summary": ai_note,
+                        "details": f"{details}\n\n{ai_note}" if details else ai_note,
+                    }
 
             if rule.delivery_channel in push_channels.PUSH_CHANNELS:
                 subject, body = render_template(event_type, rule_template, rule_context)

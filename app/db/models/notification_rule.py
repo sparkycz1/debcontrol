@@ -52,6 +52,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Table,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -246,6 +247,12 @@ class NotificationRule(Base):
     # `app.services.notifications.notify`. NULL (the default) sends every
     # one, as before.
     throttle_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Add the AI's short reading of the cause to a failed service or a
+    # failed update (app.services.ai_cause). Sends the log excerpt to the
+    # configured AI provider, hence off unless someone turns it on.
+    ai_summary: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
     @property
     def event_type_enums(self) -> list[NotificationEventType]:

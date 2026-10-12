@@ -2445,6 +2445,8 @@
     "scheduling.choice.snapshot.none": "Ne",
     "scheduling.choice.snapshot.proxmox": "Snapshot v Proxmoxu u každého zařízení, které je známým hostem",
     "scheduling.param_hint.snapshot": "Host, u kterého se snapshot nepovede, se neaktualizuje. Zařízení, která nejsou hosty spravovaného Proxmoxu, se aktualizují bez něj. Snapshoty se nemažou automaticky: staré vypisuje záložka Proxmox.",
-    "audit.action_label.machine.update.snapshot_rollback": "Zařízení vráceno ke snapshotu z doby před aktualizací"
+    "audit.action_label.machine.update.snapshot_rollback": "Zařízení vráceno ke snapshotu z doby před aktualizací",
+    "notifications.rule.ai_summary_label": "Přidat odhad pravděpodobné příčiny od AI",
+    "notifications.rule.ai_summary_hint": "Jen pro události „Služba selhala“ a „Běh aktualizace selhal“. Poslední řádky journalu selhané jednotky, nebo konec výstupu aktualizace, se pošlou poskytovateli AI nastavenému v Nastavení → AI a jeho krátký odhad se přidá do zprávy s označením, že není ověřený. Počítá se do limitů tokenů AI. Notifikace odejde stejně i tehdy, když není nastaven žádný model nebo poskytovatel neodpoví."
   }
 }

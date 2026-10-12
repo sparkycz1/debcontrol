@@ -180,6 +180,12 @@
              value="{{ selected_throttle_minutes or '' }}" placeholder="{{ t(request, 'notifications.rule.throttle_placeholder') }}">
       <p class="hint">{{ t(request, "notifications.rule.throttle_hint") }}</p>
 
+      <label>
+        <input type="checkbox" name="ai_summary" value="true" {{ 'checked' if selected_ai_summary else '' }}>
+        {{ t(request, "notifications.rule.ai_summary_label") }}
+      </label>
+      <p class="hint">{{ t(request, "notifications.rule.ai_summary_hint") }}</p>
+
       <label for="custom_template_id">{{ t(request, "notifications.rule.template_label") }}</label>
       <select id="custom_template_id" name="custom_template_id">
         <option value="">{{ t(request, "notifications.rule.template_default") }}</option>

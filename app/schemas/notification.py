@@ -54,6 +54,10 @@ class NotificationRuleCreate(BaseModel):
     # At most one notification per this many minutes for the same event
     # about the same machine or check (None = no limit); up to a week.
     throttle_minutes: int | None = Field(default=None, ge=1, le=10080)
+    # Add the AI's reading of the likely cause to "service failed" and
+    # "update run failed" notifications. Sends the log excerpt to the
+    # configured AI provider.
+    ai_summary: bool = False
 
     @field_validator("event_types")
     @classmethod

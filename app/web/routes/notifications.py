@@ -218,6 +218,7 @@ def _rule_form_context(
         ),
         "selected_channel_recipient": (rule.channel_recipient or "") if rule else "",
         "selected_throttle_minutes": (rule.throttle_minutes or "") if rule else "",
+        "selected_ai_summary": bool(rule and rule.ai_summary),
         "channel_token_set": bool(rule and rule.channel_token_encrypted),
         "condition_rows": _condition_rows_for_rule(rule),
         "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
@@ -438,6 +439,7 @@ async def create_rule(
     channel_token: str = Form(""),
     channel_recipient: str = Form(""),
     throttle_minutes: str = Form(""),
+    ai_summary: bool = Form(False),
 ) -> Response:
     async def _rerender(
         errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
@@ -476,6 +478,7 @@ async def create_rule(
                 "selected_webhook_url": webhook_url,
                 "selected_channel_recipient": channel_recipient,
                 "selected_throttle_minutes": throttle_minutes,
+                "selected_ai_summary": ai_summary,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -523,6 +526,7 @@ async def create_rule(
             channel_token=channel_token or None,
             channel_recipient=channel_recipient or None,
             throttle_minutes=_parse_throttle_minutes(throttle_minutes),
+            ai_summary=ai_summary,
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -686,6 +690,7 @@ async def update_rule(
     channel_token: str = Form(""),
     channel_recipient: str = Form(""),
     throttle_minutes: str = Form(""),
+    ai_summary: bool = Form(False),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
@@ -726,6 +731,7 @@ async def update_rule(
                 "selected_webhook_url": webhook_url,
                 "selected_channel_recipient": channel_recipient,
                 "selected_throttle_minutes": throttle_minutes,
+                "selected_ai_summary": ai_summary,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -771,6 +777,7 @@ async def update_rule(
             channel_token=channel_token or None,
             channel_recipient=channel_recipient or None,
             throttle_minutes=_parse_throttle_minutes(throttle_minutes),
+            ai_summary=ai_summary,
         )
     except ValueError as exc:
         rows = raw_conditions + [
