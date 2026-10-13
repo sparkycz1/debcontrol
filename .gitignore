@@ -27,6 +27,9 @@ secrets/
 
 # SSH known_hosts store (runtime data, not source)
 data/known_hosts
+# Which images this stack has used (scripts/upgrade_cleanup.sh)
+data/upgrade-images
+data/upgrade-images.tmp
 data/*.db
 
 # Editors / OS
