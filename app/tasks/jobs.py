@@ -1183,6 +1183,11 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.login_users = facts["login_users"]
         machine.is_physical = facts["is_physical"]
         machine.boot_id = facts.get("boot_id")
+        # A fact that stopped being readable keeps its last value: a serial
+        # number does not change because dmidecode failed once.
+        machine.hw_vendor = facts.get("hw_vendor") or machine.hw_vendor
+        machine.hw_model = facts.get("hw_model") or machine.hw_model
+        machine.hw_serial = facts.get("hw_serial") or machine.hw_serial
         machine.smart_devices = facts["smart_devices"]
         machine.pve_version = facts.get("pve_version")
         machine.pve_storage = facts.get("pve_storage")

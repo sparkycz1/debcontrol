@@ -33,7 +33,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.machine import MachineCreate
 from app.schemas.machine_config import MachineConfigExport
-from app.services import machine_compare, self_host
+from app.services import hardware_inventory, machine_compare, self_host
 from app.services.access_scope import (
     can_see_group_id,
     is_restricted,
@@ -797,6 +797,24 @@ async def bulk_compare(
     return RedirectResponse(
         url=f"/machines/compare?a={first.id}&b={second.id}",
         status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.get("/hardware")
+async def hardware_inventory_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Physical machines with what they are and when their warranty ends
+    (`app.services.hardware_inventory`)."""
+    return templates.TemplateResponse(
+        request,
+        "machines/hardware.html",
+        {
+            "rows": await hardware_inventory.inventory(db, current_user),
+            "serial_of": hardware_inventory.serial_of,
+        },
     )
 
 

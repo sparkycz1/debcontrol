@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     ForeignKey,
     Integer,
     LargeBinary,
@@ -183,6 +184,18 @@ class Machine(Base):
     # meaningful, and S.M.A.R.T. in particular is actively misleading,
     # against a virtual disk.
     is_physical: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # --- Hardware inventory (app.services.hardware_inventory) ---
+    # From the firmware, with the facts:
+    hw_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    hw_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    hw_serial: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Recorded by a person; `asset_serial` overrides a serial the firmware
+    # does not give or gets wrong.
+    asset_serial: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    warranty_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    asset_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # The kernel's boot id, as reported with the facts: equal to
     # debcontrol's own on the machine it runs on (app.services.self_host).
     boot_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)

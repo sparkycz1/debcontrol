@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from app.db.models.machine import Machine
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
+from app.services import hardware_inventory
 from app.services.disk_forecast import soonest_full_days
 from app.ssh import proxmox
 from app.ssh.image_updates import count_updates
@@ -180,6 +181,12 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
         lambda m, s, mount: (
             count_updates(m.docker_image_updates) if m.docker_image_updates is not None else None
         ),
+    ),
+    # --- Hardware warranty (Machine.warranty_until; physical machines only) ---
+    "hardware.warranty_days_left": ConditionField(
+        "hardware_warranty_days_left",
+        "number",
+        lambda m, s, mount: hardware_inventory.warranty_days_left(m),
     ),
     # --- Proxmox VE guest backups (Machine.pve_guest_backups, facts cadence) ---
     "proxmox.oldest_guest_backup_days": ConditionField(

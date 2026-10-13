@@ -55,7 +55,7 @@ import contextlib
 import re
 import uuid
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 # NOT the builtin `TimeoutError` — `celery.exceptions.TimeoutError` does not
 # subclass it, so catching the builtin around `AsyncResult.get(timeout=...)`
@@ -92,6 +92,7 @@ from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
 from app.services import (
     acknowledgements,
+    hardware_inventory,
     machine_compare,
     machine_timeline,
     monitoring_history,
@@ -771,6 +772,9 @@ async def get_machine_api(
     return {
         **_machine_to_dict(machine),
         "runs_on": runs_on.as_dict() if runs_on is not None else None,
+        # Vendor, model, serial, purchase and warranty; null for a machine
+        # known to be virtual.
+        "hardware": hardware_inventory.as_dict(machine),
         "debcontrol_role": await self_host.role_of(db, machine),
     }
 
@@ -2054,6 +2058,78 @@ async def trigger_machine_update_api(
         details={"strategy": payload.strategy.value, "run_id": str(run.id)},
     )
     return _update_run_to_dict(run)
+
+
+class _Asset(BaseModel):
+    purchase_date: date | None = None
+    warranty_until: date | None = None
+    serial: str | None = Field(default=None, max_length=128)
+    note: str | None = Field(default=None, max_length=255)
+
+
+@router.get("/hardware-inventory", dependencies=[_view_machines])
+async def hardware_inventory_api(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
+) -> list[dict[str, object]]:
+    """Every machine that is not known to be virtual: vendor, model and
+    serial from its firmware, the purchase and warranty dates someone
+    recorded, and `warranty_days_left` (negative once it has ended).
+    Soonest warranty end first."""
+    return [
+        {
+            "machine_id": str(row.machine.id),
+            "machine_name": row.machine.name,
+            **(hardware_inventory.as_dict(row.machine) or {}),
+        }
+        for row in await hardware_inventory.inventory(db, user)
+    ]
+
+
+@router.put("/machines/{machine_id}/asset", dependencies=[_manage_machines])
+async def set_machine_asset_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    payload: _Asset,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Record when a physical machine was bought, until when its warranty
+    runs, a serial number to use instead of the firmware's, and a note.
+    Sends the whole record: a field left out is cleared. 400 for a
+    virtual machine."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not hardware_inventory.applies(machine):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A virtual machine has no hardware record.",
+        )
+    try:
+        hardware_inventory.apply_asset(
+            machine,
+            purchase_date=payload.purchase_date,
+            warranty_until=payload.warranty_until,
+            asset_serial=payload.serial or "",
+            asset_note=payload.note or "",
+        )
+    except hardware_inventory.AssetError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.asset.update",
+        summary=f'Changed the hardware record of "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={
+            "purchase_date": str(payload.purchase_date) if payload.purchase_date else None,
+            "warranty_until": str(payload.warranty_until) if payload.warranty_until else None,
+        },
+    )
+    return hardware_inventory.as_dict(machine) or {}
 
 
 class _WatchedFiles(BaseModel):

@@ -61,6 +61,7 @@
           {# Keeps the current search/tag filter (a stray `page` is ignored). #}
           <a href="/machines/inventory.csv{% if request.url.query %}?{{ request.url.query }}{% endif %}">{{ t(request, 'machines.actions.export_inventory') }}</a>
           <a href="/machine-groups/batches">{{ t(request, 'batches.title') }}</a>
+          <a href="/machines/hardware">{{ t(request, 'hardware.title') }}</a>
           <a href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
           <a href="/backup">{{ t(request, 'backup.title') }}</a>
         </div>

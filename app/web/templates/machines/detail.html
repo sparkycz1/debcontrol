@@ -79,6 +79,49 @@
     <p class="hint"><span class="badge">debcontrol</span> {{ t(request, "self_host.overview_hypervisor") }}</p>
   {% endif %}
 
+  {% if hardware_applies %}
+    <section class="panel" id="hardware">
+      <h2>{{ t(request, "hardware.panel") }}</h2>
+      {% if asset_error %}<div class="alert alert-error"><p>{{ asset_error }}</p></div>{% endif %}
+      <dl class="detail-list">
+        <dt>{{ t(request, "hardware.vendor_model") }}</dt>
+        <dd>{{ [machine.hw_vendor, machine.hw_model] | select | join(" ") or '—' }}</dd>
+        <dt>{{ t(request, "hardware.serial") }}</dt>
+        <dd>{% if hardware_serial %}<code>{{ hardware_serial }}</code>{% else %}—{% endif %}</dd>
+        <dt>{{ t(request, "hardware.purchased") }}</dt>
+        <dd>{{ machine.purchase_date or '—' }}</dd>
+        <dt>{{ t(request, "hardware.warranty_until") }}</dt>
+        <dd>
+          {% if machine.warranty_until %}
+            {{ machine.warranty_until }}
+            {% if warranty_days_left < 0 %}<span class="badge badge-error">{{ t(request, "hardware.expired") }}</span>
+            {% elif warranty_days_left <= warranty_soon_days %}<span class="badge badge-warn">{{ t(request, "hardware.days_left", count=warranty_days_left) }}</span>{% endif %}
+          {% else %}—{% endif %}
+        </dd>
+        {% if machine.asset_note %}<dt>{{ t(request, "hardware.note") }}</dt><dd>{{ machine.asset_note }}</dd>{% endif %}
+      </dl>
+      {% if can_manage_machine %}
+        <details>
+          <summary>{{ t(request, "hardware.edit") }}</summary>
+          <form method="post" action="/machines/{{ machine.id }}/asset" class="form" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="purchase_date">{{ t(request, "hardware.purchased") }}</label>
+            <input type="date" id="purchase_date" name="purchase_date" value="{{ machine.purchase_date or '' }}">
+            <label for="warranty_until">{{ t(request, "hardware.warranty_until") }}</label>
+            <input type="date" id="warranty_until" name="warranty_until" value="{{ machine.warranty_until or '' }}">
+            <label for="asset_serial">{{ t(request, "hardware.serial") }}</label>
+            <input type="text" id="asset_serial" name="asset_serial" maxlength="128" value="{{ machine.asset_serial or '' }}"
+                   placeholder="{{ machine.hw_serial or '' }}">
+            <p class="hint">{{ t(request, "hardware.serial_hint") }}</p>
+            <label for="asset_note">{{ t(request, "hardware.note") }}</label>
+            <input type="text" id="asset_note" name="asset_note" maxlength="255" value="{{ machine.asset_note or '' }}">
+            <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+          </form>
+        </details>
+      {% endif %}
+    </section>
+  {% endif %}
+
   <p class="hint"><a href="/machines/{{ machine.id }}/files">{{ t(request, "watched_files.link") }}</a></p>
   {% if request.state.user.has_permission('runbook.run') and machine.host_key_fingerprint %}
     <p class="hint"><a href="/runbooks?machine_id={{ machine.id }}">{{ t(request, "runbooks.run_on_this") }}</a></p>

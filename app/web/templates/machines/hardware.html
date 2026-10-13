@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "hardware.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "hardware.title") }}</h1>
+    <a class="button button-secondary" href="/machines">{{ t(request, "nav.machines") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "hardware.intro") }}</p>
+
+  {% if rows %}
+    <div class="table-scroll">
+      <table class="data-table" id="hardware-inventory">
+        <thead>
+          <tr>
+            <th data-sort="text">{{ t(request, "machines.table.name") }}</th>
+            <th data-sort="text">{{ t(request, "hardware.vendor_model") }}</th>
+            <th data-sort="text">{{ t(request, "hardware.serial") }}</th>
+            <th data-sort="text">{{ t(request, "hardware.purchased") }}</th>
+            <th data-sort="number">{{ t(request, "hardware.warranty_until") }}</th>
+            <th>{{ t(request, "hardware.note") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set m = row.machine %}
+            <tr>
+              <td><a href="/machines/{{ m.id }}#hardware">{{ m.name }}</a></td>
+              <td>{{ [m.hw_vendor, m.hw_model] | select | join(" ") or '—' }}</td>
+              <td>{% if serial_of(m) %}<code>{{ serial_of(m) }}</code>{% else %}—{% endif %}</td>
+              <td>{{ m.purchase_date or '—' }}</td>
+              <td data-sort-value="{{ row.days_left if row.days_left is not none else 999999 }}">
+                {% if m.warranty_until %}
+                  {{ m.warranty_until }}
+                  {% if row.state == 'expired' %}<span class="badge badge-error">{{ t(request, "hardware.expired") }}</span>
+                  {% elif row.state == 'soon' %}<span class="badge badge-warn">{{ t(request, "hardware.days_left", count=row.days_left) }}</span>{% endif %}
+                {% else %}—{% endif %}
+              </td>
+              <td>{{ m.asset_note or '' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "hardware.none") }}</p></div>
+  {% endif %}
+{% endblock %}
