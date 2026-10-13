@@ -66,7 +66,7 @@ fi
 # this file from disk while it runs, so everything up to that point must
 # stay byte-for-byte unchanged between releases, or the copy that is doing
 # the upgrade would continue at the wrong place in the newly pulled file):
-#   --no-cleanup   keep the images the stack no longer uses (see below).
+#   --no-cleanup   remove nothing afterwards (see scripts/upgrade_cleanup.sh).
 cleanup=1
 for arg in "$@"; do
   case "$arg" in
@@ -97,13 +97,28 @@ if docker ps \
   compose_files+=(-f docker-compose.caddy.yml)
 fi
 
-# What this stack runs on *before* the upgrade. Afterwards, the previous
-# debcontrol image and any image the stack used before but no longer does
-# (e.g. `redis:8.10.1` after a bump to `redis:8.10.2`) are removed. Only
-# images this stack itself used are touched, never another project's; one
-# still in use is simply left alone.
+# What this stack runs on *before* the upgrade. Afterwards everything
+# debcontrol no longer uses is removed — see scripts/upgrade_cleanup.sh
+# for exactly what, and what is never touched.
 old_app_image="$(docker image inspect -f '{{.Id}}' debcontrol:local 2>/dev/null || true)"
 old_images="$(docker compose "${compose_files[@]}" ps -a --format '{{.Image}}' 2>/dev/null | sort -u || true)"
+
+# Postgres, Redis and Caddy are pinned to exact versions in the compose
+# files and follow those pins: when a release moved one, this is where the
+# new image arrives. Nothing is ever bumped past what the checkout says.
+new_images="$(docker compose "${compose_files[@]}" config --images 2>/dev/null | sort -u || true)"
+changed_images="$(comm -13 <(printf '%s
+' "$old_images") <(printf '%s
+' "$new_images")   | grep -vx 'debcontrol:local' | grep -v '^[[:space:]]*$' || true)"
+if [ -n "$old_images" ] && [ -n "$changed_images" ]; then
+  echo "==> This release moves these service images:"
+  while IFS= read -r image; do
+    previous="$(grep -m 1 "^${image%%:*}:" <<<"$old_images" || true)"
+    echo "    ${previous:-(new)} -> $image"
+  done <<<"$changed_images"
+fi
+echo "==> Pulling the pinned service images..."
+docker compose "${compose_files[@]}" pull --ignore-buildable --quiet 2>/dev/null   || docker compose "${compose_files[@]}" pull --ignore-buildable   || echo "    (could not pull ahead; 'up' will pull what is missing)" >&2
 
 echo "==> Building images..."
 export GIT_COMMIT="$(git rev-parse HEAD)"
@@ -113,30 +128,19 @@ echo "==> Applying migrations and restarting services..."
 docker compose "${compose_files[@]}" up -d
 
 if [ "$cleanup" -eq 1 ]; then
-  echo "==> Removing images this stack no longer uses..."
-  new_images="$(docker compose "${compose_files[@]}" config --images 2>/dev/null | sort -u || true)"
-  removed=0
-  while IFS= read -r image; do
-    [ -z "$image" ] && continue
-    [ "$image" = "debcontrol:local" ] && continue
-    if ! grep -qxF "$image" <<<"$new_images"; then
-      # Fails (and is skipped) if anything else still uses it.
-      if docker image rm "$image" >/dev/null 2>&1; then
-        echo "    removed $image"
-        removed=$((removed + 1))
-      fi
-    fi
-  done <<<"$old_images"
-  new_app_image="$(docker image inspect -f '{{.Id}}' debcontrol:local 2>/dev/null || true)"
-  if [ -n "$old_app_image" ] && [ "$old_app_image" != "$new_app_image" ]; then
-    if docker image rm "$old_app_image" >/dev/null 2>&1; then
-      echo "    removed the previous debcontrol image"
-      removed=$((removed + 1))
-    fi
+  echo "==> Cleaning up what debcontrol no longer uses..."
+  # shellcheck source=scripts/upgrade_cleanup.sh
+  . scripts/upgrade_cleanup.sh
+  mkdir -p data
+  cleaned=0
+  if cleanup_images data/upgrade-images "$old_images" "$new_images"; then cleaned=1; fi
+  cleanup_output="$(cleanup_app_builds "$old_app_image"; cleanup_leftovers)"
+  if [ -n "$cleanup_output" ]; then
+    printf '%s
+' "$cleanup_output"
+    cleaned=1
   fi
-  # Older untagged debcontrol builds left behind by earlier upgrades.
-  docker image prune -f --filter "label=io.debcontrol.image=app" >/dev/null 2>&1 || true
-  if [ "$removed" -eq 0 ]; then echo "    nothing to remove"; fi
+  if [ "$cleaned" -eq 0 ]; then echo "    nothing to remove"; fi
 fi
 
 echo "==> Status:"
