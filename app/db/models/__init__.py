@@ -36,6 +36,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.pending_machine import PendingMachine
 from app.db.models.role import Permission, Role, RolePermission
+from app.db.models.runbook import Runbook, RunbookRun, RunbookRunStatus
 from app.db.models.saved_audit_view import SavedAuditView
 from app.db.models.saved_log_view import SavedLogView
 from app.db.models.saved_machine_view import SavedMachineView
@@ -95,6 +96,9 @@ __all__ = [
     "Permission",
     "Role",
     "RolePermission",
+    "Runbook",
+    "RunbookRun",
+    "RunbookRunStatus",
     "SSHIdentity",
     "SavedAuditView",
     "SavedLogView",

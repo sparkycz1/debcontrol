@@ -79,6 +79,10 @@
     <p class="hint"><span class="badge">debcontrol</span> {{ t(request, "self_host.overview_hypervisor") }}</p>
   {% endif %}
 
+  {% if request.state.user.has_permission('runbook.run') and machine.host_key_fingerprint %}
+    <p class="hint"><a href="/runbooks?machine_id={{ machine.id }}">{{ t(request, "runbooks.run_on_this") }}</a></p>
+  {% endif %}
+
   {% if machine.readiness_missing %}
     <div class="alert alert-warn">
       <p>

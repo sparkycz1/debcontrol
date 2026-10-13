@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "nav.runbooks") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "nav.runbooks") }}</h1>
+    {% if can_edit %}<a class="button" href="/runbooks/new">{{ t(request, "runbooks.new") }}</a>{% endif %}
+  </div>
+  <p class="hint">{{ t(request, "runbooks.intro") }}</p>
+  {% if machine %}
+    <div class="alert alert-ok"><p>{{ t(request, "runbooks.for_machine", name=machine.name) }} <a href="/runbooks">{{ t(request, "runbooks.for_machine_clear") }}</a></p></div>
+  {% endif %}
+
+  {% if runbooks %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "runbooks.name") }}</th>
+          <th>{{ t(request, "runbooks.steps") }}</th>
+          <th>{{ t(request, "runbooks.params") }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for runbook in runbooks %}
+          <tr>
+            <td>
+              <strong>{{ runbook.name }}</strong>
+              {% if runbook.description %}<div class="table-summary">{{ runbook.description }}</div>{% endif %}
+            </td>
+            <td>{{ runbook.steps | length }}</td>
+            <td>{% for param in runbook.params %}<code>{{ param.key }}</code>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</td>
+            <td class="cell-nowrap">
+              {% if can_run %}<a class="button button-secondary" href="/runbooks/{{ runbook.id }}/run{% if machine %}?machine_id={{ machine.id }}{% endif %}">{{ t(request, "runbooks.run") }}</a>{% endif %}
+              {% if can_edit %}<a href="/runbooks/{{ runbook.id }}/edit">{{ t(request, "common.edit") }}</a>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state">
+      <p><strong>{{ t(request, "runbooks.empty") }}</strong></p>
+      <p>{{ t(request, "runbooks.empty_what") }}</p>
+      {% if can_edit %}<a class="button" href="/runbooks/new">{{ t(request, "runbooks.new") }}</a>{% endif %}
+    </div>
+  {% endif %}
+
+  {% if batches %}
+    <section class="panel">
+      <h2>{{ t(request, "runbooks.recent") }}</h2>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "runbooks.started") }}</th>
+            <th>{{ t(request, "runbooks.name") }}</th>
+            <th>{{ t(request, "runbooks.by") }}</th>
+            <th>{{ t(request, "runbooks.result") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for batch in batches %}
+            <tr>
+              <td><a href="/runbooks/runs/{{ batch.batch_id }}">{{ batch.started_at | local_time('%Y-%m-%d %H:%M') }}</a></td>
+              <td>{{ batch.runbook_name }}</td>
+              <td>{{ batch.started_by or '—' }}</td>
+              <td>
+                {% if batch.unfinished %}<span class="badge badge-warn">{{ t(request, "runbooks.state.running") }}</span>
+                {% elif batch.failed %}<span class="badge badge-error">{{ t(request, "runbooks.failed_of", failed=batch.failed, total=batch.total) }}</span>
+                {% else %}<span class="badge badge-ok">{{ t(request, "runbooks.ok_of", total=batch.total) }}</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+{% endblock %}

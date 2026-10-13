@@ -41,6 +41,8 @@ PAGES = [
     "/scheduling",
     "/scheduling/maintenance",
     "/scheduling/calendar",
+    "/runbooks",
+    "/runbooks/new",
     "/notifications",
     "/notifications/history",
     "/notifications/rules/new",

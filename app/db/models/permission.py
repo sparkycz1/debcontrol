@@ -41,6 +41,13 @@ class Permission(enum.StrEnum):
     # AI_ACCESS can chat, and can do nothing else. See
     # wiki/AI-Assistant's permission model section.
     AI_ACCESS = "ai.access"
+    # Run a saved runbook (`/runbooks`, app/web/routes/runbooks.py) on
+    # machines the account may see. Deliberately narrower than
+    # ACTION_TERMINAL: the commands are the ones someone with a shell
+    # wrote down, and the only thing the person running them supplies is
+    # parameter values limited to a plain character set. Writing or
+    # changing a runbook takes ACTION_TERMINAL, not this.
+    RUNBOOK_RUN = "runbook.run"
     SCHEDULING_VIEW = "scheduling.view"
     SCHEDULING_MANAGE = "scheduling.manage"
     # Notification rules, recipient user groups, and email templates

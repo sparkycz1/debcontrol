@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "runbooks.edit_title") if runbook else t(request, "runbooks.new") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <h1>{{ t(request, "runbooks.edit_title") if runbook else t(request, "runbooks.new") }}</h1>
+  {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+
+  <form method="post" action="{{ '/runbooks/' ~ runbook.id ~ '/edit' if runbook else '/runbooks' }}" class="form form-wide" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label for="name">{{ t(request, "runbooks.name") }}</label>
+    <input type="text" id="name" name="name" value="{{ form_name }}" maxlength="120" required>
+
+    <label for="description">{{ t(request, "runbooks.description") }}</label>
+    <input type="text" id="description" name="description" value="{{ form_description }}" maxlength="1024">
+
+    <label for="steps">{{ t(request, "runbooks.steps") }}</label>
+    <textarea id="steps" name="steps" rows="10" class="code-input" spellcheck="false" required>{{ form_steps }}</textarea>
+    <p class="hint">{{ t(request, "runbooks.steps_hint", max=max_steps) }}</p>
+
+    <label for="params">{{ t(request, "runbooks.params") }}</label>
+    <textarea id="params" name="params" rows="4" class="code-input" spellcheck="false">{{ form_params }}</textarea>
+    <p class="hint">{{ t(request, "runbooks.params_hint") }}</p>
+
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    <a class="button button-secondary" href="/runbooks">{{ t(request, "common.cancel") }}</a>
+  </form>
+
+  {% if runbook %}
+    <form method="post" action="/runbooks/{{ runbook.id }}/delete" class="form"
+          data-confirm="{{ t(request, 'runbooks.delete_confirm', name=runbook.name) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger">{{ t(request, "runbooks.delete") }}</button>
+    </form>
+  {% endif %}
+{% endblock %}

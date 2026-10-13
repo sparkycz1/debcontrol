@@ -55,7 +55,8 @@ async def test_overview_hides_runbook_panel_when_empty(client):
     machine_id = await _create_machine(client, csrf_token)
 
     response = await client.get(f"/machines/{machine_id}")
-    assert "Runbook" not in response.text
+    # The panel itself: "Runbooks" in the menu is another thing (0.107.0).
+    assert 'class="panel runbook"' not in response.text
 
 
 async def test_edit_machine_web_form_updates_runbook(client, db_session_factory):

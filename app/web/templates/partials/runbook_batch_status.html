@@ -1,0 +1,22 @@
+<div
+  id="runbook-batch-status"
+  {% if has_pending %}
+  hx-get="/runbooks/runs/{{ batch_id }}/status"
+  hx-trigger="every 3s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  {% for run in runs %}
+    <section class="panel">
+      <h2>
+        <a href="/machines/{{ run.machine_id }}">{{ run.machine.name }}</a>
+        {% if run.status.value == 'succeeded' %}<span class="badge badge-ok">{{ t(request, "runbooks.state.succeeded") }}</span>
+        {% elif run.status.value == 'failed' %}<span class="badge badge-error">{{ t(request, "runbooks.state.failed") }}</span>
+        {% elif run.status.value == 'running' %}<span class="badge badge-warn">{{ t(request, "runbooks.state.running") }}</span>
+        {% else %}<span class="badge badge-warn">{{ t(request, "runbooks.state.pending") }}</span>{% endif %}
+      </h2>
+      {% if run.error %}<div class="alert alert-error"><p>{{ run.error }}</p></div>{% endif %}
+      {% if run.output %}<pre class="run-output" tabindex="0">{{ run.output }}</pre>{% endif %}
+    </section>
+  {% endfor %}
+</div>
