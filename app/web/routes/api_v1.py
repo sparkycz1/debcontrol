@@ -144,6 +144,7 @@ from app.tasks.jobs import (
     rollback_to_snapshot,
     run_machine_update,
     send_machine_power_command,
+    wake_machine,
 )
 from app.web.machine_search import apply_group_filter, apply_status_filter, apply_tag_filter
 
@@ -2058,6 +2059,53 @@ async def trigger_machine_update_api(
         details={"strategy": payload.strategy.value, "run_id": str(run.id)},
     )
     return _update_run_to_dict(run)
+
+
+@router.post("/machines/{machine_id}/wake", dependencies=[_action_power])
+async def wake_machine_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Send a Wake-on-LAN packet for this machine through another managed
+    machine on its network (`relay` in the answer). 409 when there is no
+    way to: the machine's network card is not known yet, or no reachable
+    managed machine shares its network. A sent packet is not a woken
+    machine — watch `is_reachable`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    app_settings = await get_or_create_app_settings(db)
+    error: str | None = None
+    relay = ""
+    try:
+        result = await asyncio.to_thread(
+            wake_machine.delay(str(machine.id)).get,
+            timeout=app_settings.ssh_connect_timeout + 90,
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+        elif isinstance(result, dict):
+            relay = str(result.get("relay") or "")
+    except CeleryTimeoutError:
+        error = "Timed out waiting for the relay machine."
+    await log_event(
+        db,
+        request=request,
+        action="machine.power.wake",
+        summary=(
+            f'Sent a Wake-on-LAN packet for "{machine.name}"'
+            if error is None
+            else f'Could not send a Wake-on-LAN packet for "{machine.name}"'
+        ),
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"relay": relay, **({"error": error} if error else {})},
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error)
+    return {"ok": True, "relay": relay}
 
 
 class _Asset(BaseModel):

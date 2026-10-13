@@ -35,6 +35,7 @@ from app.services.machine_actions import (
     trigger_facts_refresh,
     trigger_monitoring_sample,
     trigger_updates,
+    wake_machines,
 )
 from app.ssh.power import PowerAction
 
@@ -86,6 +87,13 @@ async def _run_shutdown(
     db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
     skipped = await send_power_to_machines(machines, PowerAction.SHUTDOWN)
+    return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_wake(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    skipped = await wake_machines(machines)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
@@ -204,10 +212,22 @@ def register_builtin_actions() -> None:
             label="Shut down",
             description=(
                 "Sends `shutdown -h now`. The machine stays off until someone "
-                "powers it back on — there's no scheduled \"power on\"."
+                "powers it back on, or a scheduled \"Wake up\" does."
             ),
             run=_run_shutdown,
             destructive=True,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="wake",
+            label="Wake up (Wake-on-LAN)",
+            description=(
+                "Sends a Wake-on-LAN packet to each machine that is not answering, "
+                "through another managed machine on its network. Machines that are "
+                "up, or whose network card is not known yet, are skipped."
+            ),
+            run=_run_wake,
         )
     )
     register_action(

@@ -18,6 +18,7 @@ from app.ssh.hardware import parse_hardware
 from app.ssh.pool import machine_connection
 from app.ssh.shell import with_root_shim
 from app.ssh.smart import SMART_FACTS_SECTION, parse_smart_section
+from app.ssh.wake import parse_mac_addresses
 
 _SECTION_MARKERS = (
     "HOSTNAME",
@@ -35,6 +36,7 @@ _SECTION_MARKERS = (
     "PROCESSES",
     "FILESYSTEMS",
     "NETWORK",
+    "MACS",
     "LISTEN",
     "ADMINS",
     "LOGINS",
@@ -110,6 +112,13 @@ FACTS_COMMAND = (
     "-x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2; "
     "echo ===NETWORK===; "
     "ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}'; "
+    # The addresses of the real network cards (the ones backed by a
+    # device, so no bridges, bonds' slaves' duplicates aside, or veth) —
+    # what a Wake-on-LAN packet is addressed to (app.services.wake_on_lan).
+    "echo ===MACS===; "
+    "for i in /sys/class/net/*; do "
+    '[ -e "$i/device" ] && echo "$(basename "$i") $(cat "$i/address" 2>/dev/null)"; '
+    "done 2>/dev/null; "
     # Listening TCP sockets, local address:port only (`ss` is iproute2,
     # like `ip` above; no root needed for the addresses, only for the
     # owning process, which isn't asked for). Config-drift input — see
@@ -178,6 +187,8 @@ class MachineFacts(TypedDict):
     process_count: int | None
     filesystems: list[dict[str, Any]]
     network_interfaces: list[dict[str, Any]]
+    # [{"interface", "mac"}] of the real network cards.
+    mac_addresses: list[dict[str, str]]
     # Sorted, de-duplicated `address:port` of listening TCP sockets
     # (`0.0.0.0:22`, `[::]:443`, `127.0.0.1:5432`); None = `ss` printed
     # nothing at all (not installed), [] never happens in practice.
@@ -355,6 +366,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
         process_count=process_count,
         filesystems=filesystems,
         network_interfaces=network_interfaces,
+        mac_addresses=parse_mac_addresses(sections.get("MACS", "")),
         listening_ports=listening_ports,
         admin_users=admin_users,
         login_users=login_users,

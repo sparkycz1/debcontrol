@@ -79,6 +79,16 @@
     <p class="hint"><span class="badge">debcontrol</span> {{ t(request, "self_host.overview_hypervisor") }}</p>
   {% endif %}
 
+  {% if wake_notice %}<div class="alert alert-ok"><p>{{ wake_notice }}</p></div>{% endif %}
+  {% if wake_error %}<div class="alert alert-error"><p>{{ wake_error }}</p></div>{% endif %}
+  {% if wake_plan %}
+    <form method="post" action="/machines/{{ machine.id }}/wake" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-secondary">{{ t(request, "wake.button") }}</button>
+      <p class="hint">{{ t(request, "wake.hint", relay=wake_plan.relay_name) }}</p>
+    </form>
+  {% endif %}
+
   {% if hardware_applies %}
     <section class="panel" id="hardware">
       <h2>{{ t(request, "hardware.panel") }}</h2>

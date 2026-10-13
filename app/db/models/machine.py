@@ -184,6 +184,11 @@ class Machine(Base):
     # meaningful, and S.M.A.R.T. in particular is actively misleading,
     # against a virtual disk.
     is_physical: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # [{"interface", "mac"}] of the machine's real network cards, kept from
+    # the last facts refresh that listed any — what it is woken by
+    # (app.services.wake_on_lan).
+    mac_addresses: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)
+
     # --- Hardware inventory (app.services.hardware_inventory) ---
     # From the firmware, with the facts:
     hw_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)

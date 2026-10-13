@@ -1557,7 +1557,7 @@
     "scheduling.action.reboot.label": "Restartovat",
     "scheduling.action.reboot.description": "Pošle `shutdown -r now` na každé cílové zařízení.",
     "scheduling.action.shutdown.label": "Vypnout",
-    "scheduling.action.shutdown.description": "Pošle `shutdown -h now`. Zařízení zůstane vypnuté, dokud ho někdo nezapne — plánované „zapnutí“ neexistuje.",
+    "scheduling.action.shutdown.description": "Pošle `shutdown -h now`. Zařízení zůstane vypnuté, dokud ho někdo nezapne, nebo ho neprobudí naplánovaná akce „Probudit“.",
     "scheduling.action.run_command.label": "Spustit příkaz",
     "scheduling.action.run_command.description": "Spustí shellový příkaz na každém cílovém zařízení pod SSH uživatelem nastaveným u zařízení — účet potřebuje oprávnění, která příkaz vyžaduje (např. vlastní sudo pravidlo); nic dalšího se kvůli tomu nepřiděluje.",
     "scheduling.param.strategy": "Strategie aktualizace",
@@ -2574,6 +2574,12 @@
     "hardware.serial_hint": "Jen když firmware žádné neudává nebo udává špatné; prázdné pole použije to z firmwaru.",
     "hardware.none": "Zatím žádná fyzická zařízení.",
     "notifications.condition_field.hardware_warranty_days_left": "Hardware: zbývající dny záruky",
-    "audit.action_label.machine.asset.update": "Změněn záznam o hardwaru"
+    "audit.action_label.machine.asset.update": "Změněn záznam o hardwaru",
+    "wake.button": "Probudit",
+    "wake.hint": "Pošle paket Wake-on-LAN přes {relay}, spravované zařízení ve stejné síti. Síťová karta a firmware tohoto zařízení musí mít Wake-on-LAN zapnuté; jestli naběhlo, se tu ukáže do minuty nebo dvou.",
+    "wake.sent": "Paket Wake-on-LAN odeslán přes {relay}. Zařízení by mělo odpovědět do minuty nebo dvou.",
+    "scheduling.action.wake.label": "Probudit (Wake-on-LAN)",
+    "scheduling.action.wake.description": "Pošle paket Wake-on-LAN každému zařízení, které neodpovídá, přes jiné spravované zařízení v jeho síti. Zařízení, která běží nebo u kterých ještě není známá síťová karta, se přeskočí.",
+    "audit.action_label.machine.power.wake": "Odeslán paket Wake-on-LAN"
   }
 }

@@ -32,6 +32,7 @@ from app.tasks.jobs import (
     run_remote_ssh_command,
     sample_machine_monitoring,
     send_machine_power_command,
+    wake_machine,
 )
 
 
@@ -163,4 +164,14 @@ async def run_custom_command_on_machines(machines: list[Machine], command: str) 
     eligible = [m for m in machines if m.host_key_fingerprint]
     for machine in eligible:
         run_remote_ssh_command.delay(str(machine.id), command)
+    return len(machines) - len(eligible)
+
+
+async def wake_machines(machines: list[Machine]) -> int:
+    """Enqueue a Wake-on-LAN packet for every machine that is not
+    answering and whose network card is known. Returns how many were
+    skipped (already up, or never seen running)."""
+    eligible = [m for m in machines if not m.is_reachable and m.mac_addresses]
+    for machine in eligible:
+        wake_machine.delay(str(machine.id))
     return len(machines) - len(eligible)
