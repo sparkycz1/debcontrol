@@ -70,6 +70,7 @@ from app.services import (
     health_events,
     image_versions,
     update_snapshots,
+    wake_on_lan,
     watched_files,
 )
 from app.services.condition_fields import evaluate_condition, summarize_condition
@@ -1183,6 +1184,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.login_users = facts["login_users"]
         machine.is_physical = facts["is_physical"]
         machine.boot_id = facts.get("boot_id")
+        machine.mac_addresses = facts.get("mac_addresses") or machine.mac_addresses
         # A fact that stopped being readable keeps its last value: a serial
         # number does not change because dmidecode failed once.
         machine.hw_vendor = facts.get("hw_vendor") or machine.hw_vendor
@@ -2826,6 +2828,59 @@ async def _run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> 
 )
 def run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> dict[str, Any]:
     return asyncio.run(_run_proxmox_guest_action(machine_id, vmid, action))
+
+
+async def _wake_machine(machine_id: str) -> dict[str, Any]:
+    """Send a Wake-on-LAN packet for one machine through another managed
+    machine on its network (`app.services.wake_on_lan`). Whether the
+    machine comes up shows in the reachability check over the next
+    minutes; this only reports that the packet went out."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        plan = await wake_on_lan.plan_for(session, machine)
+        if plan is None:
+            return {
+                "ok": False,
+                "error": (
+                    "No way to wake this machine: its network card is not known yet, or no "
+                    "reachable managed machine is on the same network."
+                ),
+            }
+        relay = await session.get(Machine, plan.relay_id)
+        if relay is None:
+            return {"ok": False, "error": "The relay machine is gone."}
+        secret = await resolve_machine_credential(relay, session)
+        try:
+            result = await run_command(
+                relay,
+                secret,
+                wake_on_lan.build_command(plan),
+                app_settings.ssh_connect_timeout,
+                app_settings.ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+            )
+        except (SSHConnectionError, TimeoutError, ValueError) as exc:
+            return {"ok": False, "error": f"Could not send through {relay.name}: {exc}"}
+        if wake_on_lan.NO_TOOL_MARKER in result.output:
+            return {
+                "ok": False,
+                "error": (
+                    f"{relay.name} has neither python3 nor wakeonlan/etherwake to send the packet."
+                ),
+            }
+        if result.exit_status != 0:
+            return {
+                "ok": False,
+                "error": f"{relay.name} could not send the packet: {result.output[-300:]}",
+            }
+        return {"ok": True, "relay": relay.name}
+
+
+@celery_app.task(name="app.tasks.jobs.wake_machine", time_limit=_SSH_TASK_TIME_LIMIT_SECONDS)
+def wake_machine(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_wake_machine(machine_id))
 
 
 async def _run_runbook(run_id: str) -> None:

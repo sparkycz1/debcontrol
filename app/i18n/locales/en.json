@@ -1527,7 +1527,7 @@
     "scheduling.action.reboot.label": "Reboot",
     "scheduling.action.reboot.description": "Sends `shutdown -r now` to every targeted machine.",
     "scheduling.action.shutdown.label": "Shut down",
-    "scheduling.action.shutdown.description": "Sends `shutdown -h now`. The machine stays off until someone powers it back on — there's no scheduled \"power on\".",
+    "scheduling.action.shutdown.description": "Sends `shutdown -h now`. The machine stays off until someone powers it back on, or a scheduled \"Wake up\" does.",
     "scheduling.action.run_command.label": "Run command",
     "scheduling.action.run_command.description": "Runs a shell command on each targeted machine, as that machine's own configured SSH user — the account needs whatever permission the command itself requires (e.g. its own sudo rule for a privileged command); nothing extra is granted for this.",
     "scheduling.param.command": "Command",
@@ -2529,6 +2529,12 @@
     "hardware.serial_hint": "Only when the firmware gives none or a wrong one; empty uses the firmware's.",
     "hardware.none": "No physical machines yet.",
     "notifications.condition_field.hardware_warranty_days_left": "Hardware: days of warranty left",
-    "audit.action_label.machine.asset.update": "Hardware record changed"
+    "audit.action_label.machine.asset.update": "Hardware record changed",
+    "wake.button": "Wake up",
+    "wake.hint": "Sends a Wake-on-LAN packet through {relay}, a managed machine on the same network. The network card and firmware of this machine must have Wake-on-LAN turned on; whether it came up shows here within a minute or two.",
+    "wake.sent": "Wake-on-LAN packet sent through {relay}. The machine should answer within a minute or two.",
+    "scheduling.action.wake.label": "Wake up (Wake-on-LAN)",
+    "scheduling.action.wake.description": "Sends a Wake-on-LAN packet to each machine that is not answering, through another managed machine on its network. Machines that are up, or whose network card is not known yet, are skipped.",
+    "audit.action_label.machine.power.wake": "Wake-on-LAN packet sent"
   }
 }

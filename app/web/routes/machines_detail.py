@@ -42,6 +42,7 @@ from app.services import (
     proxmox_guest_links,
     self_host,
     update_snapshots,
+    wake_on_lan,
 )
 from app.services import proxmox_backup_exempt as proxmox_backup_exempt_service
 from app.services.access_scope import (
@@ -146,6 +147,16 @@ async def machine_detail(
             "tabs": _machine_tabs(request, machine, current_user),
             "active_tab": "overview",
             "runs_on": await proxmox_guest_links.visible_host_of(db, current_user, machine),
+            # Offered for a machine that is not answering, when there is a
+            # way to send the packet.
+            "wake_plan": (
+                await wake_on_lan.plan_for(db, machine)
+                if machine.is_reachable is False
+                and current_user.has_permission(Permission.ACTION_POWER)
+                else None
+            ),
+            "wake_notice": read_flash(request, "wake_notice"),
+            "wake_error": read_flash(request, "wake_error"),
             "hardware_applies": hardware_inventory.applies(machine),
             "hardware_serial": hardware_inventory.serial_of(machine),
             "warranty_days_left": hardware_inventory.warranty_days_left(machine),
@@ -1608,3 +1619,52 @@ async def save_machine_asset(
         },
     )
     return RedirectResponse(url=f"{base}#hardware", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{machine_id}/wake", dependencies=[need_power, Depends(verify_csrf)])
+async def wake_machine_endpoint(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Send a Wake-on-LAN packet for this machine through another managed
+    machine on its network. Same permission as reboot and shutdown."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    app_settings = await get_or_create_app_settings(db)
+    error: str | None = None
+    relay = ""
+    try:
+        result = await asyncio.to_thread(
+            tasks.wake_machine.delay(str(machine.id)).get,
+            timeout=app_settings.ssh_connect_timeout + 90,
+        )
+        if isinstance(result, dict) and not result.get("ok"):
+            error = str(result.get("error") or "Unknown error.")
+        elif isinstance(result, dict):
+            relay = str(result.get("relay") or "")
+    except CeleryTimeoutError:
+        error = str(LocalizedText(request, "common.error.command_timeout"))
+    await log_event(
+        db,
+        request=request,
+        action="machine.power.wake",
+        summary=(
+            f'Sent a Wake-on-LAN packet for "{machine.name}"'
+            if error is None
+            else f'Could not send a Wake-on-LAN packet for "{machine.name}"'
+        ),
+        outcome=AuditOutcome.SUCCESS if error is None else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"relay": relay, **({"error": error} if error else {})},
+    )
+    query = (
+        f"wake_error={sign_flash(error)}"
+        if error is not None
+        else "wake_notice=" + sign_flash(t(request, "wake.sent", relay=relay))
+    )
+    return RedirectResponse(
+        url=f"/machines/{machine.id}?{query}", status_code=status.HTTP_303_SEE_OTHER
+    )
