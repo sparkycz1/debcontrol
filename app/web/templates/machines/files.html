@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "watched_files.title") }} — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <section class="panel">
+    <h2>{{ t(request, "watched_files.title") }}</h2>
+    <p class="hint">{{ t(request, "watched_files.intro", kib=max_kib) }}</p>
+    {% if notice %}<div class="alert alert-ok"><p>{{ notice }}</p></div>{% endif %}
+    {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+
+    {% if files %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "watched_files.path") }}</th>
+            <th>{{ t(request, "watched_files.state") }}</th>
+            <th>{{ t(request, "watched_files.last_change") }}</th>
+            <th>{{ t(request, "watched_files.checked") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for file in files %}
+            <tr>
+              <td><code>{{ file.path }}</code></td>
+              <td>
+                {% if file.state == 'ok' %}<span class="badge badge-ok">{{ t(request, "watched_files.state_ok") }}</span>
+                {% elif file.state == 'pending' %}<span class="badge">{{ t(request, "watched_files.state_pending") }}</span>
+                {% elif file.state == 'missing' %}<span class="badge badge-error">{{ t(request, "watched_files.state_missing") }}</span>
+                {% elif file.state == 'too_large' %}<span class="badge badge-warn">{{ t(request, "watched_files.state_too_large") }}</span>
+                {% else %}<span class="badge badge-warn">{{ t(request, "watched_files.state_unreadable") }}</span>{% endif %}
+              </td>
+              <td>
+                {% if file.changed_at %}
+                  {{ file.changed_at | local_time('%Y-%m-%d %H:%M') }}
+                  {% if file.lines_added is not none and file.state == 'ok' %}
+                    <span class="table-muted">+{{ file.lines_added }} / −{{ file.lines_removed }}</span>
+                    {% if can_manage and file.previous_content_encrypted %}
+                      <a href="/machines/{{ machine.id }}/files?diff={{ file.id }}#diff">{{ t(request, "watched_files.show_diff") }}</a>
+                    {% endif %}
+                  {% endif %}
+                {% else %}—{% endif %}
+              </td>
+              <td>{{ file.checked_at | local_time('%Y-%m-%d %H:%M') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if can_manage %}
+        <form method="post" action="/machines/{{ machine.id }}/files/check" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-secondary" {% if not machine.host_key_fingerprint %}disabled{% endif %}>{{ t(request, "watched_files.check_now") }}</button>
+        </form>
+      {% endif %}
+    {% else %}
+      <div class="empty-state"><p>{{ t(request, "watched_files.none") }}</p></div>
+    {% endif %}
+  </section>
+
+  {% if diff_file %}
+    <section class="panel" id="diff">
+      <h2>{{ t(request, "watched_files.diff_title", path=diff_file.path) }}</h2>
+      {% if diff_lines %}
+        <pre class="run-output file-diff" tabindex="0">{% for line in diff_lines %}<span class="{{ 'diff-add' if line.startswith('+') and not line.startswith('+++') else ('diff-del' if line.startswith('-') and not line.startswith('---') else ('diff-hunk' if line.startswith('@@') else '')) }}">{{ line }}</span>
+{% endfor %}</pre>
+      {% else %}
+        <p class="hint">{{ t(request, "watched_files.no_diff") }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if can_manage %}
+    <section class="panel">
+      <h2>{{ t(request, "watched_files.edit_title") }}</h2>
+      <form method="post" action="/machines/{{ machine.id }}/files" class="form form-wide" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="paths">{{ t(request, "watched_files.paths_label") }}</label>
+        <textarea id="paths" name="paths" rows="6" spellcheck="false">{{ paths_text }}</textarea>
+        <p class="hint">{{ t(request, "watched_files.paths_hint", max=max_files) }}</p>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

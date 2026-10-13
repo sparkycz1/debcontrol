@@ -70,6 +70,7 @@ from app.services import (
     health_events,
     image_versions,
     update_snapshots,
+    watched_files,
 )
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import (
@@ -1207,10 +1208,61 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         )
         await publish_machine_event(machine_id, KIND_FACTS)
         has_snapshots = bool(machine.pve_debcontrol_snapshots)
+        has_watched_files = bool(await watched_files.list_files(session, machine.id))
 
     if has_snapshots:
         check_debcontrol_snapshots.delay(machine_id)
+    if has_watched_files:
+        check_watched_files.delay(machine_id)
     return {"ok": True}
+
+
+async def _check_watched_files(machine_id: str) -> dict[str, Any]:
+    """Read one machine's watched files and record what changed since the
+    last reading (`app.services.watched_files`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        if not machine.host_key_fingerprint:
+            return {"ok": False, "error": "No pinned host key fingerprint yet."}
+        rows = await watched_files.list_files(session, machine.id)
+        if not rows:
+            return {"ok": True, "changed": 0}
+        secret = await resolve_machine_credential(machine, session)
+        try:
+            result = await run_command(
+                machine,
+                secret,
+                watched_files.build_command([row.path for row in rows]),
+                app_settings.ssh_connect_timeout,
+                app_settings.ssh_connect_timeout + _SSH_COMMAND_EXTRA_SECONDS,
+            )
+        except (SSHConnectionError, TimeoutError, ValueError) as exc:
+            logger.warning("check_watched_files failed for %s: %s", machine.name, exc)
+            return {"ok": False, "error": str(exc)}
+        readings = watched_files.parse_output(result.output, len(rows))
+        now = datetime.now(UTC)
+        changes = []
+        for index, row in enumerate(rows):
+            if index not in readings:
+                continue
+            state, content = readings[index]
+            change = watched_files.apply_reading(row, state, content, now)
+            if change is not None:
+                changes.append(change)
+        await session.commit()
+        await watched_files.record_changes(session, machine, changes)
+        return {"ok": True, "changed": len(changes)}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.check_watched_files",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def check_watched_files(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_check_watched_files(machine_id))
 
 
 async def _check_debcontrol_snapshots(machine_id: str) -> int:

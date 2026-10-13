@@ -22,6 +22,7 @@ from fastapi import APIRouter
 
 from app.web.routes import (
     machines_detail,
+    machines_files,
     machines_list,
     machines_logs,
     machines_monitoring,
@@ -34,5 +35,6 @@ router = APIRouter()
 router.include_router(machines_list.router)
 router.include_router(machines_detail.router)
 router.include_router(machines_updates.router)
+router.include_router(machines_files.router)
 router.include_router(machines_monitoring.router)
 router.include_router(machines_logs.router)
