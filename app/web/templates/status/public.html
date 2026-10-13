@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="{{ request.state.locale.code if request.state.locale is defined else 'en' }}" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="refresh" content="60">
+  <title>{{ status.title }}</title>
+  <link rel="stylesheet" href="{{ static_url('css/style.css') }}">
+</head>
+<body class="status-public">
+  <main class="container status-container">
+    <h1>{{ status.title }}</h1>
+    {% if status.overall == 'up' %}
+      <div class="alert alert-ok"><p>{{ t(request, "status_page.all_up") }}</p></div>
+    {% elif status.overall == 'down' %}
+      <div class="alert alert-error"><p>{{ t(request, "status_page.some_down", count=status.down_count) }}</p></div>
+    {% else %}
+      <div class="alert alert-warn"><p>{{ t(request, "status_page.nothing_known") }}</p></div>
+    {% endif %}
+
+    {% if status.items %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "status_page.service") }}</th>
+            <th>{{ t(request, "status_page.now") }}</th>
+            <th>{{ t(request, "status_page.uptime", days=window_days) }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in status.items %}
+            <tr>
+              <td>{{ item.name }}</td>
+              <td>
+                {% if item.state == 'up' %}<span class="badge badge-ok">{{ t(request, "status_page.state_up") }}</span>
+                {% elif item.state == 'down' %}<span class="badge badge-error">{{ t(request, "status_page.state_down") }}</span>
+                {% else %}<span class="badge">{{ t(request, "status_page.state_unknown") }}</span>{% endif %}
+              </td>
+              <td>{{ ('%.2f %%' % item.uptime_percent) if item.uptime_percent is not none else '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    <p class="hint">{{ t(request, "status_page.updated", when=(status.generated_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</p>
+  </main>
+</body>
+</html>

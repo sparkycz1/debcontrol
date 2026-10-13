@@ -38,6 +38,8 @@ PAGES = [
     "/security/updates",
     "/checks",
     "/checks/sla",
+    "/checks/status-page",
+    "/status/e2e-status-page-token",
     "/scheduling",
     "/scheduling/maintenance",
     "/scheduling/calendar",

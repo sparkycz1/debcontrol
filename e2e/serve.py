@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.auth.sessions import create_session
+from app.core.app_settings import get_or_create_app_settings
 from app.db.base import Base
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
@@ -59,6 +60,7 @@ from app.services import terminal_recording
 from tests.conftest import FakeRedis
 
 DEFAULT_PORT = 8765
+STATUS_PAGE_TOKEN = "e2e-status-page-token"
 
 engine = create_async_engine(
     "sqlite+aiosqlite:///:memory:",
@@ -168,6 +170,12 @@ async def seed() -> str:
             )
         )
         await db.flush()
+        # The status page, at a fixed address the smoke test can open.
+        app_settings = await get_or_create_app_settings(db)
+        app_settings.status_page_enabled = True
+        app_settings.status_page_token = STATUS_PAGE_TOKEN
+        app_settings.status_page_check_ids = [str(check.id)]
+        app_settings.status_page_machine_ids = [str(web.id), str(db_host.id)]
         _session, token = await create_session(db, user, ip_address=None, user_agent=None)
         # One recorded terminal session, so the player page has something
         # to load (Audit -> Terminal recordings).

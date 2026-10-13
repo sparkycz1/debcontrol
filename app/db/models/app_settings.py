@@ -27,7 +27,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, Text, false, func
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, LargeBinary, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -165,6 +165,17 @@ class AppSettings(Base):
     terminal_recording_retention_days: Mapped[int | None] = mapped_column(
         Integer, nullable=True, default=30, server_default="30"
     )
+
+    # --- Status page (app.services.status_page) ---
+    # Off by default. The token is the unguessable part of its address;
+    # the two lists are the checks and machines it shows.
+    status_page_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    status_page_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status_page_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status_page_check_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    status_page_machine_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     # Same idea again, for `NotificationLog` rows (app.tasks.jobs.
     # purge_old_notification_logs) — one row per actual send attempt (per

@@ -74,6 +74,7 @@ from app.auth.dependencies import get_api_token_user, require_api_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.security import encrypt_secret
+from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
@@ -99,6 +100,7 @@ from app.services import (
     proxmox_backup_exempt,
     proxmox_guest_links,
     self_host,
+    status_page,
     update_batches,
     update_snapshots,
     watched_files,
@@ -2059,6 +2061,75 @@ async def trigger_machine_update_api(
         details={"strategy": payload.strategy.value, "run_id": str(run.id)},
     )
     return _update_run_to_dict(run)
+
+
+class _StatusPage(BaseModel):
+    enabled: bool = False
+    title: str | None = Field(default=None, max_length=120)
+    check_ids: list[uuid.UUID] = Field(default_factory=list, max_length=status_page.MAX_ITEMS)
+    machine_ids: list[uuid.UUID] = Field(default_factory=list, max_length=status_page.MAX_ITEMS)
+    # Replace the page's address; the old link stops working at once.
+    new_link: bool = False
+
+
+def _status_page_dict(app_settings: AppSettings) -> dict[str, object]:
+    return {
+        "enabled": app_settings.status_page_enabled,
+        "title": app_settings.status_page_title,
+        "path": (
+            f"/status/{app_settings.status_page_token}"
+            if app_settings.status_page_enabled and app_settings.status_page_token
+            else None
+        ),
+        "check_ids": [str(i) for i in status_page.chosen_check_ids(app_settings)],
+        "machine_ids": [str(i) for i in status_page.chosen_machine_ids(app_settings)],
+    }
+
+
+@router.get("/status-page", dependencies=[_manage_machines])
+async def get_status_page_api(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
+    """The status page's setup: whether it is on, its `path` (the public
+    address, with the token), and the checks and machines it shows. The
+    page itself is `GET <path>` (HTML) or `<path>.json`, without a token
+    header."""
+    return _status_page_dict(await get_or_create_app_settings(db))
+
+
+@router.put("/status-page", dependencies=[_manage_machines])
+async def set_status_page_api(
+    request: Request,
+    payload: _StatusPage,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Set the status page up. Machines outside the account's scope are
+    dropped. Turning it on creates its address; `new_link` replaces it."""
+    app_settings = await get_or_create_app_settings(db)
+    machines = await visible_machines_by_ids(db, user, payload.machine_ids)
+    app_settings.status_page_enabled = payload.enabled
+    app_settings.status_page_title = (payload.title or "").strip()[:120] or None
+    app_settings.status_page_check_ids = [str(i) for i in payload.check_ids]
+    app_settings.status_page_machine_ids = [str(m.id) for m in machines]
+    replaced = bool(payload.new_link and app_settings.status_page_token)
+    if payload.enabled and (payload.new_link or not app_settings.status_page_token):
+        app_settings.status_page_token = status_page.new_token()
+    await db.commit()
+    status_page.invalidate()
+    await log_event(
+        db,
+        request=request,
+        action="status_page.update",
+        summary=(
+            "Status page turned on or changed" if payload.enabled else "Status page turned off"
+        ),
+        details={
+            "enabled": payload.enabled,
+            "checks": len(payload.check_ids),
+            "machine_count": len(machines),
+            "link_replaced": replaced,
+        },
+    )
+    return _status_page_dict(app_settings)
 
 
 @router.post("/machines/{machine_id}/wake", dependencies=[_action_power])

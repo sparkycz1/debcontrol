@@ -2459,3 +2459,7 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .file-diff .diff-add { color: var(--color-ok); }
 .file-diff .diff-del { color: var(--color-danger); }
 .file-diff .diff-hunk { color: var(--color-muted); }
+
+/* --- The public status page (/status/<token>) --- */
+
+.status-container { max-width: 720px; padding-top: var(--space-7); }

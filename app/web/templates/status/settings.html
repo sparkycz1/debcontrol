@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, "status_page.title") }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "status_page.title") }}</h1>
+    <a class="button button-secondary" href="/checks">{{ t(request, "checks.title") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "status_page.intro", days=window_days) }}</p>
+  {% if saved %}<div class="alert alert-ok"><p>{{ t(request, "status_page.saved") }}</p></div>{% endif %}
+
+  {% if enabled and token %}
+    <section class="panel">
+      <h2>{{ t(request, "status_page.link") }}</h2>
+      <p><a href="/status/{{ token }}" target="_blank" rel="noopener"><code>{{ request.base_url }}status/{{ token }}</code></a></p>
+      <p class="hint">{{ t(request, "status_page.link_hint") }}</p>
+    </section>
+  {% endif %}
+
+  <form method="post" action="/checks/status-page" class="form form-wide" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label>
+      <input type="checkbox" name="enabled" value="true" {{ 'checked' if enabled else '' }}>
+      {{ t(request, "status_page.enable") }}
+    </label>
+    <p class="hint">{{ t(request, "status_page.enable_hint") }}</p>
+
+    <label for="status-title">{{ t(request, "status_page.page_title") }}</label>
+    <input type="text" id="status-title" name="title" maxlength="120" value="{{ title }}"
+           placeholder="{{ t(request, 'status_page.default_title') }}">
+
+    <fieldset class="strategy-fields">
+      <legend>{{ t(request, "status_page.checks") }}</legend>
+      {% for check in checks %}
+        <label><input type="checkbox" name="check_ids" value="{{ check.id }}" {{ 'checked' if check.id in chosen_checks else '' }}> {{ check.name }}</label>
+      {% else %}
+        <p class="hint">{{ t(request, "checks.empty") }}</p>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="strategy-fields">
+      <legend>{{ t(request, "status_page.machines") }}</legend>
+      {% for machine_id, name in machines %}
+        <label><input type="checkbox" name="machine_ids" value="{{ machine_id }}" {{ 'checked' if machine_id in chosen_machines else '' }}> {{ name }}</label>
+      {% endfor %}
+    </fieldset>
+    <p class="hint">{{ t(request, "status_page.names_hint", max=max_items) }}</p>
+
+    {% if token %}
+      <label>
+        <input type="checkbox" name="new_link" value="true">
+        {{ t(request, "status_page.new_link") }}
+      </label>
+      <p class="hint">{{ t(request, "status_page.new_link_hint") }}</p>
+    {% endif %}
+
+    <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+  </form>
+{% endblock %}
