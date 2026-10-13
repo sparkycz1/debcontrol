@@ -60,6 +60,7 @@ from app.web.routes import (
     scheduling,
     search,
     security,
+    status_page,
     terminal_recordings,
     terminal_ws,
     theme,
@@ -270,6 +271,8 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(dashboard.router)
     app.include_router(fleet.router)
+    app.include_router(status_page.router)
+    app.include_router(status_page.public_router)
     app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)

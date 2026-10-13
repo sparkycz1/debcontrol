@@ -10,6 +10,7 @@
     <h1>{{ t(request, "checks.title") }}</h1>
     <div class="page-header-actions">
       <a class="button button-secondary" href="/checks/sla">{{ t(request, "checks.sla.title") }}</a>
+      {% if can_manage %}<a class="button button-secondary" href="/checks/status-page">{{ t(request, "status_page.title") }}</a>{% endif %}
       {% if can_manage %}<a class="button" href="/checks/new">{{ t(request, "checks.add") }}</a>{% endif %}
     </div>
   </div>

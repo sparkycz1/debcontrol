@@ -71,7 +71,10 @@ _PUBLIC_PATHS = frozenset(
 # authenticated with their own bearer token, not a user session at all.
 # `/branding/`: a deployer's custom logo/favicon (app.web.routes.branding) —
 # same reasoning as `/static/`, the login page needs these too.
-_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/")
+# `/status/<token>`: the status page for people without an account — off
+# unless turned on, and guarded by the token in its own address
+# (app.services.status_page).
+_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/", "/status/")
 
 
 # Reachable with a valid session even while a role's `require_totp` block is
@@ -101,7 +104,7 @@ def _is_public(path: str) -> bool:
 # (machine-to-machine, token-authenticated, typically from networks an
 # operator never signs in from).
 _NETWORK_EXEMPT_PATHS = frozenset({"/healthz", "/api/inform"})
-_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/")
+_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/", "/status/")
 
 
 async def _network_allowed(request: Request) -> bool:
