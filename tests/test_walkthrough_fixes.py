@@ -1,4 +1,4 @@
-"""Small fixes from a walk through a live instance: update runs abandoned
+"""Small fixes from a walk through a live instance: rollback runs abandoned
 by a stopped worker are closed, run states are translated, look-ups stay
 off the History tab, and a firmware pseudo-filesystem is not a disk."""
 
@@ -26,35 +26,44 @@ async def _run(
     *,
     started_hours_ago: float,
     status: UpdateRunStatus = UpdateRunStatus.RUNNING,
-    rollout_position: int | None = None,
+    rollback: bool = True,
 ) -> uuid.UUID:
     async with db_session_factory() as db:
+        source: uuid.UUID | None = None
+        if rollback:
+            original = MachineUpdateRun(
+                machine_id=machine_id,
+                strategy=UpgradeStrategy.FULL_UPGRADE,
+                status=UpdateRunStatus.SUCCEEDED,
+            )
+            db.add(original)
+            await db.flush()
+            source = original.id
         run = MachineUpdateRun(
             machine_id=machine_id,
             strategy=UpgradeStrategy.FULL_UPGRADE,
             status=status,
             started_at=datetime.now(UTC) - timedelta(hours=started_hours_ago),
-            rollout_position=rollout_position,
             batch_id=uuid.uuid4(),
+            rollback_of_run_id=source,
         )
         db.add(run)
         await db.commit()
         return run.id
 
 
-async def test_abandoned_runs_are_closed_and_fresh_ones_left_alone(
+async def test_abandoned_rollbacks_are_closed_and_fresh_ones_left_alone(
     db_session_factory: Any, monkeypatch: Any
 ) -> None:
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
     machine_id = await _add_machine(db_session_factory)
     stale = await _run(db_session_factory, machine_id, started_hours_ago=30)
-    rolling = await _run(db_session_factory, machine_id, started_hours_ago=30, rollout_position=0)
     fresh = await _run(db_session_factory, machine_id, started_hours_ago=0.1)
     done = await _run(
         db_session_factory, machine_id, started_hours_ago=30, status=UpdateRunStatus.SUCCEEDED
     )
-    released: list[str] = []
-    monkeypatch.setattr(jobs.finish_update_run, "delay", lambda run_id: released.append(run_id))
+    # An update run is resumed and read instead (tests/test_detached_updates.py).
+    update_run = await _run(db_session_factory, machine_id, started_hours_ago=30, rollback=False)
 
     closed = await jobs._fail_stale_update_runs()
     again = await jobs._fail_stale_update_runs()
@@ -62,15 +71,13 @@ async def test_abandoned_runs_are_closed_and_fresh_ones_left_alone(
     async with db_session_factory() as db:
         runs = {r.id: r for r in (await db.execute(select(MachineUpdateRun))).scalars().all()}
         actions = list((await db.execute(select(AuditLogEntry.action))).scalars().all())
-    assert (closed, again) == (2, 0)
-    for run_id in (stale, rolling):
-        assert runs[run_id].status == UpdateRunStatus.FAILED
-        assert runs[run_id].error == jobs.STALE_RUN_ERROR
-        assert runs[run_id].finished_at is not None
+    assert (closed, again) == (1, 0)
+    assert runs[stale].status == UpdateRunStatus.FAILED
+    assert runs[stale].error == jobs.STALE_RUN_ERROR
+    assert runs[stale].finished_at is not None
     assert runs[fresh].status == UpdateRunStatus.RUNNING
     assert runs[done].status == UpdateRunStatus.SUCCEEDED
-    # Only the rolling batch has anything waiting on it.
-    assert released == [str(rolling)]
+    assert runs[update_run].status == UpdateRunStatus.RUNNING
     assert actions.count("machine_update_runs.reap") == 1
 
 
