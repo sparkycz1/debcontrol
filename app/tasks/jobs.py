@@ -29,21 +29,24 @@ keep pointing at the parent's connection pool.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import shlex
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.core.timezones import display_zone
 from app.db import session as db_session
+from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
@@ -92,6 +95,7 @@ from app.services.live_updates import (
 )
 from app.services.notifications import _rule_matches_scope, notify
 from app.services.remote_probes import probe_from_machine
+from app.ssh import detached_updates
 from app.ssh.client import test_connection
 from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
@@ -125,7 +129,6 @@ from app.ssh.updates import (
     fetch_changelog,
     preview_update,
     run_rollback,
-    run_system_update,
     set_package_hold,
 )
 from app.tasks.celery_app import celery_app
@@ -2069,9 +2072,16 @@ async def _run_machine_update(run_id: str) -> None:
     strategy, autoremove/autoclean, then flatpak/snap if installed — see
     `app.ssh.updates`.
 
-    Given a long, dedicated `time_limit` on its Celery task below
-    (`UPDATE_TIMEOUT_SECONDS`), separate from the default task time limit
-    used by every other job here.
+    The update runs **detached on the machine** (`app.ssh.detached_updates`):
+    this task starts it, then reads its log until it ends. If the task
+    stops first — the worker restarts, or the machine being updated is the
+    one debcontrol runs on — the update carries on regardless, and
+    `_reconcile_update_runs` picks the run up again (`_resume_machine_update`)
+    to read how it ended.
+
+    Only a still-pending run is started, and only by whoever moves it to
+    "running" first, so the same run queued twice (after a restart, see
+    `_reconcile_update_runs`) runs once.
 
     Once the run finishes (success or failure — the machine's packages and
     update counts may have changed either way, e.g. apt failed but flatpak/
@@ -2083,88 +2093,331 @@ async def _run_machine_update(run_id: str) -> None:
         app_settings = await get_or_create_app_settings(session)
 
         run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
-        if run is None:
+        if run is None or run.rollback_of_run_id is not None:
             return
+
+        now = datetime.now(UTC)
+        claimed = await session.execute(
+            update(MachineUpdateRun)
+            .where(
+                MachineUpdateRun.id == run.id,
+                MachineUpdateRun.status == UpdateRunStatus.PENDING,
+            )
+            .values(status=UpdateRunStatus.RUNNING, started_at=now, heartbeat_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+        if getattr(claimed, "rowcount", 0) != 1:
+            return  # Already started (or over) — someone else has it.
+        await session.refresh(run)
 
         machine = await session.get(Machine, run.machine_id)
         if machine is None:
-            run.status = UpdateRunStatus.FAILED
-            run.error = "Machine not found."
-            run.finished_at = datetime.now(UTC)
-            await session.commit()
+            await _close_update_run(
+                session, run, None, UpdateRunStatus.FAILED, "Machine not found."
+            )
             return
-
-        run.status = UpdateRunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
-        await session.commit()
 
         secret = await resolve_machine_credential(machine, session)
 
-        # Captured before the upgrade itself starts — the "before" picture
-        # "Roll back this update" (`_rollback_machine_update` below) later
-        # diffs against. A failure here (unreachable machine, timeout) is
-        # logged and never fails the update run itself — it only means
-        # rollback won't be offered for this particular run, same as a run
-        # from before this feature existed.
-        try:
-            snapshot = await capture_package_snapshot(
-                machine, secret, app_settings.ssh_connect_timeout
-            )
-            run.package_snapshot = json.dumps(snapshot)
-        except (SSHConnectionError, TimeoutError) as exc:
-            logger.warning(
-                "Package snapshot capture failed for %s before update run %s: %s",
-                machine.name,
-                run.id,
-                exc,
-            )
-
-        # Persists apt's output as it arrives, so the update-run page (which
-        # polls `partials/update_run_status.html` every 3s) shows it live
-        # instead of only once the whole run has finished. Throttled to at
-        # most once per _PROGRESS_COMMIT_INTERVAL_SECONDS — apt can emit
-        # output far faster than that, and every call here is a DB write.
-        last_progress_commit = 0.0
-
-        async def _persist_partial_output(text: str) -> None:
-            nonlocal last_progress_commit
-            now = time.monotonic()
-            if now - last_progress_commit < _PROGRESS_COMMIT_INTERVAL_SECONDS:
-                return
-            last_progress_commit = now
-            run.output = _truncate_output(text)
-            await session.commit()
-
-        try:
-            if run.snapshot_before:
-                # No snapshot of a recognised guest, no update.
-                await update_snapshots.take_before_update(
-                    session, run, machine, app_settings.ssh_connect_timeout
+        async with _heartbeat(run.id):
+            # Captured before the upgrade itself starts — the "before" picture
+            # "Roll back this update" (`_rollback_machine_update` below) later
+            # diffs against. A failure here (unreachable machine, timeout) is
+            # logged and never fails the update run itself — it only means
+            # rollback won't be offered for this particular run, same as a run
+            # from before this feature existed.
+            try:
+                snapshot = await capture_package_snapshot(
+                    machine, secret, app_settings.ssh_connect_timeout
                 )
-            result = await run_system_update(
-                machine,
-                secret,
-                run.strategy,
-                app_settings.ssh_connect_timeout,
-                app_settings.update_timeout_seconds,
-                on_output=_persist_partial_output,
-            )
-        except (SSHConnectionError, TimeoutError, update_snapshots.SnapshotFailedError) as exc:
-            logger.warning("run_machine_update failed for %s: %s", machine.name, exc)
-            run.status = UpdateRunStatus.FAILED
-            run.error = str(exc)
-        else:
-            run.output = _truncate_output(result.output)
-            if result.exit_status == 0:
-                run.status = UpdateRunStatus.SUCCEEDED
-            else:
-                run.status = UpdateRunStatus.FAILED
-                run.error = f"apt exited with status {result.exit_status}."
+                run.package_snapshot = json.dumps(snapshot)
+            except (SSHConnectionError, TimeoutError) as exc:
+                logger.warning(
+                    "Package snapshot capture failed for %s before update run %s: %s",
+                    machine.name,
+                    run.id,
+                    exc,
+                )
+            try:
+                if run.snapshot_before:
+                    # No snapshot of a recognised guest, no update.
+                    await update_snapshots.take_before_update(
+                        session, run, machine, app_settings.ssh_connect_timeout
+                    )
+                # Recorded before starting: from here on, a run nobody follows
+                # any more is resumed by reading the job, not guessed at.
+                run.remote_job = str(run.id)
+                await session.commit()
+                await detached_updates.start(
+                    machine, secret, run.remote_job, run.strategy, app_settings.ssh_connect_timeout
+                )
+            except (SSHConnectionError, TimeoutError, update_snapshots.SnapshotFailedError) as exc:
+                logger.warning("run_machine_update failed for %s: %s", machine.name, exc)
+                await _close_update_run(session, run, machine, UpdateRunStatus.FAILED, str(exc))
+                return
+            await _follow_update_run(session, run, machine, secret, app_settings)
 
-        run.finished_at = datetime.now(UTC)
+
+async def _resume_machine_update(run_id: str, claimed_at: str | None = None) -> None:
+    """Pick up a run left "running" by a task that stopped
+    (`_reconcile_update_runs`): read how its detached job ended, or follow
+    it on if it is still going.
+
+    A run with no job to read — started before updates ran detached, or
+    stopped before its job was started — is settled by looking at the
+    machine instead (`_settle_by_checking`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        run = await session.get(MachineUpdateRun, uuid.UUID(run_id))
+        if run is None or run.status != UpdateRunStatus.RUNNING:
+            return
+        # Only the task of the sweep that claimed the run last goes on: one
+        # left waiting in the queue past a later sweep finds a newer claim.
+        if claimed_at is not None and (
+            run.heartbeat_at is None
+            or _as_utc(run.heartbeat_at) != datetime.fromisoformat(claimed_at)
+        ):
+            return
+        taken = await session.execute(
+            update(MachineUpdateRun)
+            .where(
+                MachineUpdateRun.id == run.id,
+                MachineUpdateRun.status == UpdateRunStatus.RUNNING,
+                MachineUpdateRun.heartbeat_at == run.heartbeat_at,
+            )
+            .values(heartbeat_at=datetime.now(UTC))
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+        if getattr(taken, "rowcount", 0) != 1:
+            return
+        machine = await session.get(Machine, run.machine_id)
+        if machine is None:
+            await _close_update_run(
+                session, run, None, UpdateRunStatus.FAILED, "Machine not found."
+            )
+            return
+        secret = await resolve_machine_credential(machine, session)
+        async with _heartbeat(run.id):
+            if run.remote_job is None:
+                await _settle_by_checking(
+                    session,
+                    run,
+                    machine,
+                    secret,
+                    app_settings,
+                    "debcontrol stopped while this update was running and could not read "
+                    "how it ended.",
+                )
+                return
+            await _note_on_run(session, run, "Reconnected after debcontrol restarted.")
+            await _follow_update_run(session, run, machine, secret, app_settings)
+
+
+# How often a run being followed says so (`MachineUpdateRun.heartbeat_at`),
+# and how long without that before `_reconcile_update_runs` treats it as
+# abandoned and resumes it.
+_HEARTBEAT_SECONDS = 20
+_HEARTBEAT_STALE_SECONDS = 120
+
+
+@contextlib.asynccontextmanager
+async def _heartbeat(run_id: uuid.UUID) -> AsyncIterator[None]:
+    """Keep `heartbeat_at` fresh while the body runs, from a session of its
+    own (the body's session is busy with the run itself)."""
+
+    async def beat() -> None:
+        while True:
+            await asyncio.sleep(_HEARTBEAT_SECONDS)
+            try:
+                async with db_session.AsyncSessionLocal() as beat_session:
+                    await beat_session.execute(
+                        update(MachineUpdateRun)
+                        .where(
+                            MachineUpdateRun.id == run_id,
+                            MachineUpdateRun.status == UpdateRunStatus.RUNNING,
+                        )
+                        .values(heartbeat_at=datetime.now(UTC))
+                        .execution_options(synchronize_session=False)
+                    )
+                    await beat_session.commit()
+            except Exception as exc:  # a missed beat must not stop the update
+                logger.warning("Update run %s heartbeat failed: %s", run_id, exc)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+def _run_deadline_seconds(run: MachineUpdateRun, timeout_seconds: int) -> float:
+    """Seconds left of the time the run may take, counted from its start."""
+    started = run.started_at or datetime.now(UTC)
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    elapsed = (datetime.now(UTC) - started).total_seconds()
+    return max(timeout_seconds, 0) - elapsed
+
+
+async def _follow_update_run(
+    session: AsyncSession,
+    run: MachineUpdateRun,
+    machine: Machine,
+    secret: str | None,
+    app_settings: AppSettings,
+) -> None:
+    """Read the run's detached job until it ends, showing its output live,
+    then record the result."""
+    assert run.remote_job is not None
+    earlier = run.output or ""
+    # Persists apt's output as it arrives, so the update-run page (which
+    # polls `partials/update_run_status.html` every 3s) shows it live
+    # instead of only once the whole run has finished. Throttled to at
+    # most once per _PROGRESS_COMMIT_INTERVAL_SECONDS — apt can emit
+    # output far faster than that, and every call here is a DB write.
+    last_progress_commit = 0.0
+
+    async def _persist_partial_output(text: str) -> None:
+        nonlocal last_progress_commit
+        now = time.monotonic()
+        if now - last_progress_commit < _PROGRESS_COMMIT_INTERVAL_SECONDS:
+            return
+        last_progress_commit = now
+        run.output = _truncate_output(text)
         await session.commit()
 
-        if run.status == UpdateRunStatus.FAILED:
+    result = await detached_updates.follow(
+        machine,
+        secret,
+        run.remote_job,
+        app_settings.ssh_connect_timeout,
+        _run_deadline_seconds(run, app_settings.update_timeout_seconds),
+        on_output=_persist_partial_output,
+    )
+    # A resumed run's notes (and nothing else) came before the job's log.
+    notes = "\n".join(line for line in earlier.splitlines() if line.startswith(_NOTE_PREFIX))
+    output = f"{notes}\n{result.output}" if notes else result.output
+    run.output = _truncate_output(output)
+    if result.state == "finished":
+        if result.exit_status == 0:
+            await _close_update_run(session, run, machine, UpdateRunStatus.SUCCEEDED, None)
+        else:
+            await _close_update_run(
+                session,
+                run,
+                machine,
+                UpdateRunStatus.FAILED,
+                f"apt exited with status {result.exit_status}.",
+            )
+    elif result.state == "timeout":
+        await _close_update_run(
+            session,
+            run,
+            machine,
+            UpdateRunStatus.FAILED,
+            f"The update did not finish within {app_settings.update_timeout_seconds // 60} "
+            "minutes. It may still be running on the machine — check it before running "
+            "it again.",
+        )
+    elif result.state == "unreachable":
+        await _close_update_run(
+            session,
+            run,
+            machine,
+            UpdateRunStatus.FAILED,
+            STALE_RUN_ERROR + (f" ({result.error})" if result.error else ""),
+        )
+    else:
+        await _settle_by_checking(
+            session,
+            run,
+            machine,
+            secret,
+            app_settings,
+            "The update stopped on the machine before it finished (was the machine restarted?)."
+            if result.state == "lost"
+            else "The update's log on the machine is gone.",
+        )
+
+
+_NOTE_PREFIX = "[debcontrol] "
+
+
+async def _note_on_run(session: AsyncSession, run: MachineUpdateRun, note: str) -> None:
+    run.output = _truncate_output(f"{run.output or ''}\n{_NOTE_PREFIX}{note}".lstrip("\n"))
+    await session.commit()
+
+
+async def _settle_by_checking(
+    session: AsyncSession,
+    run: MachineUpdateRun,
+    machine: Machine,
+    secret: str | None,
+    app_settings: AppSettings,
+    why: str,
+) -> None:
+    """Close a run whose own result is lost by looking at the machine: it
+    succeeded if nothing is left for its strategy to upgrade and dpkg has
+    nothing half-installed, and failed otherwise — with what was found."""
+    try:
+        verification = await detached_updates.verify(
+            machine, secret, run.strategy, app_settings.ssh_connect_timeout
+        )
+    except (SSHConnectionError, TimeoutError) as exc:
+        if _run_deadline_seconds(run, app_settings.update_timeout_seconds) > 0:
+            # Try again on the next sweep; the heartbeat goes stale on its own.
+            logger.warning("Could not check %s after a lost update: %s", machine.name, exc)
+            raise _TryLaterError from exc
+        await _close_update_run(
+            session, run, machine, UpdateRunStatus.FAILED, f"{STALE_RUN_ERROR} ({exc})"
+        )
+        return
+    await _note_on_run(session, run, f"{why} Checked the machine: {verification.detail}")
+    if verification.ok:
+        await _close_update_run(session, run, machine, UpdateRunStatus.SUCCEEDED, None)
+    else:
+        await _close_update_run(
+            session, run, machine, UpdateRunStatus.FAILED, f"{why} {verification.detail}"
+        )
+
+
+class _TryLaterError(Exception):
+    """The run stays "running"; `_reconcile_update_runs` comes back to it."""
+
+
+async def _close_update_run(
+    session: AsyncSession,
+    run: MachineUpdateRun,
+    machine: Machine | None,
+    status: UpdateRunStatus,
+    error: str | None,
+) -> None:
+    """Record how a run ended — once: only the first to close a still
+    running run notifies and starts what comes after it."""
+    finished_at = datetime.now(UTC)
+    closed = await session.execute(
+        update(MachineUpdateRun)
+        .where(MachineUpdateRun.id == run.id, MachineUpdateRun.status == UpdateRunStatus.RUNNING)
+        .values(
+            status=status,
+            error=error[:1024] if error else None,
+            output=run.output,
+            package_snapshot=run.package_snapshot,
+            finished_at=finished_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    await session.commit()
+    if getattr(closed, "rowcount", 0) != 1:
+        return
+    await session.refresh(run)
+
+    if machine is not None:
+        if status == UpdateRunStatus.FAILED:
             await notify(
                 session,
                 NotificationEventType.UPDATE_RUN_FAILED,
@@ -2175,16 +2428,15 @@ async def _run_machine_update(run_id: str) -> None:
                     ai_cause.EVIDENCE_KEY: (run.output or "")[-6000:],
                 },
             )
-        elif run.status == UpdateRunStatus.SUCCEEDED:
+        else:
             await notify(
                 session,
                 NotificationEventType.UPDATE_RUN_SUCCEEDED,
                 machine=machine,
                 context={"details": run.output or ""},
             )
-
-    refresh_machine_packages.delay(str(run.machine_id))
-    check_machine_updates.delay(str(run.machine_id))
+        refresh_machine_packages.delay(str(run.machine_id))
+        check_machine_updates.delay(str(run.machine_id))
     if run.reboot_if_required or run.rollout_position is not None:
         finish_update_run.delay(str(run.id))
     if run.batch_id is not None and run.rollout_position is None:
@@ -2196,13 +2448,21 @@ async def _run_machine_update(run_id: str) -> None:
     time_limit=_UPDATE_TASK_TIME_LIMIT_SECONDS,
 )
 def run_machine_update(run_id: str) -> None:
-    asyncio.run(_run_machine_update(run_id))
+    with contextlib.suppress(_TryLaterError):
+        asyncio.run(_run_machine_update(run_id))
 
 
-# A run still "running" this long after the longest an update may take was
-# abandoned by its worker (the worker, or the whole debcontrol host, was
-# restarted mid-run — easy to do when debcontrol updates the machine it
-# runs on). Nothing will ever finish it.
+@celery_app.task(
+    name="app.tasks.jobs.resume_machine_update",
+    time_limit=_UPDATE_TASK_TIME_LIMIT_SECONDS,
+)
+def resume_machine_update(run_id: str, claimed_at: str | None = None) -> None:
+    with contextlib.suppress(_TryLaterError):
+        asyncio.run(_resume_machine_update(run_id, claimed_at))
+
+
+# What a run reads when debcontrol lost it and could not find out more
+# (the machine stayed unreachable past the time an update may take).
 _STALE_RUN_GRACE_SECONDS = 15 * 60
 _STALE_RUN_ACTOR = "update watchdog (automatic)"
 STALE_RUN_ERROR = (
@@ -2212,10 +2472,136 @@ STALE_RUN_ERROR = (
 )
 
 
+async def _reconcile_update_runs(*, after_restart: bool = False) -> dict[str, int]:
+    """Get every update run that lost its task going again.
+
+    - A "running" run whose heartbeat stopped is resumed
+      (`resume_machine_update`): its job on the machine is read again.
+    - `after_restart` (the worker just started, see
+      `app.tasks.celery_app`): runs that were waiting to start may have
+      been lost from the queue with it, so whatever should be under way is
+      queued again — the next run of a rolling batch, the held-back runs
+      of a parallel one, everything else still pending. Queuing a run that
+      was not lost is harmless: only the first task to start it does.
+
+    Returns how many runs were resumed and re-queued."""
+    async with db_session.AsyncSessionLocal() as session:
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(seconds=_HEARTBEAT_STALE_SECONDS)
+        last_sign = func.coalesce(
+            MachineUpdateRun.heartbeat_at, MachineUpdateRun.started_at, MachineUpdateRun.created_at
+        )
+        result = await session.execute(
+            select(MachineUpdateRun.id).where(
+                MachineUpdateRun.status == UpdateRunStatus.RUNNING,
+                MachineUpdateRun.rollback_of_run_id.is_(None),
+                last_sign < cutoff,
+            )
+        )
+        resumed: list[str] = []
+        for run_id in result.scalars().all():
+            # Claimed by moving its heartbeat: two sweeps never resume one run twice.
+            claimed = await session.execute(
+                update(MachineUpdateRun)
+                .where(
+                    MachineUpdateRun.id == run_id,
+                    MachineUpdateRun.status == UpdateRunStatus.RUNNING,
+                    last_sign < cutoff,
+                )
+                .values(heartbeat_at=now)
+                .execution_options(synchronize_session=False)
+            )
+            if getattr(claimed, "rowcount", 0) == 1:
+                resumed.append(str(run_id))
+        await session.commit()
+
+        requeue: list[str] = []
+        finish: list[str] = []
+        release: set[str] = set()
+        if after_restart:
+            open_result = await session.execute(
+                select(MachineUpdateRun).where(
+                    MachineUpdateRun.status.in_((UpdateRunStatus.PENDING, UpdateRunStatus.RUNNING)),
+                    MachineUpdateRun.rollback_of_run_id.is_(None),
+                )
+            )
+            open_runs = list(open_result.scalars().all())
+            rolling: dict[uuid.UUID, list[MachineUpdateRun]] = {}
+            for run in open_runs:
+                if run.status != UpdateRunStatus.PENDING:
+                    continue
+                if run.rollout_position is not None and run.batch_id is not None:
+                    rolling.setdefault(run.batch_id, []).append(run)
+                elif run.hold_order is not None and run.batch_id is not None:
+                    if run.started_at is not None:
+                        requeue.append(str(run.id))  # released, never started
+                    release.add(str(run.batch_id))
+                else:
+                    requeue.append(str(run.id))
+            running_batches = {
+                run.batch_id for run in open_runs if run.status == UpdateRunStatus.RUNNING
+            }
+            for batch_id, waiting in rolling.items():
+                if batch_id in running_batches:
+                    continue  # its running run moves the batch on
+                first = min(waiting, key=lambda run: run.rollout_position or 0)
+                before = await session.execute(
+                    select(MachineUpdateRun.id)
+                    .where(
+                        MachineUpdateRun.batch_id == batch_id,
+                        MachineUpdateRun.rollout_position < (first.rollout_position or 0),
+                    )
+                    .order_by(MachineUpdateRun.rollout_position.desc())
+                    .limit(1)
+                )
+                previous = before.scalar_one_or_none()
+                if previous is None:
+                    requeue.append(str(first.id))
+                else:
+                    # Decides, as it would have, whether the batch goes on.
+                    finish.append(str(previous))
+
+        if resumed or requeue or finish:
+            await log_event(
+                session,
+                actor=_STALE_RUN_ACTOR,
+                action="machine_update_runs.resume",
+                summary=(
+                    f"Picked up {len(resumed) + len(requeue) + len(finish)} update run"
+                    f"{'s' if len(resumed) + len(requeue) + len(finish) != 1 else ''} "
+                    "debcontrol had lost track of"
+                ),
+                outcome=AuditOutcome.SUCCESS,
+                details={
+                    "resumed": resumed[:50],
+                    "requeued": requeue[:50],
+                    "continued_batches_after": finish[:50],
+                    "after_restart": after_restart,
+                },
+            )
+    for resumed_id in resumed:
+        resume_machine_update.delay(resumed_id, now.isoformat())
+    for queued_id in requeue:
+        run_machine_update.delay(queued_id)
+    for previous_id in finish:
+        finish_update_run.delay(previous_id)
+    for held_batch in sorted(release):
+        release_held_runs.delay(held_batch)
+    return {"resumed": len(resumed), "requeued": len(requeue) + len(finish)}
+
+
+@celery_app.task(name="app.tasks.jobs.reconcile_update_runs")
+def reconcile_update_runs(after_restart: bool = False) -> dict[str, int]:
+    return asyncio.run(_reconcile_update_runs(after_restart=after_restart))
+
+
 async def _fail_stale_update_runs() -> int:
-    """Mark update runs nobody is running any more as failed, so they do not
-    show as "running" for ever and a rolling batch waiting on one is
-    released. Returns how many were closed."""
+    """Mark rollback runs nobody is running any more as failed, so they do
+    not show as "running" for ever. Returns how many were closed.
+
+    Update runs are not closed here: their job runs on the machine
+    whatever happens to debcontrol, and `_reconcile_update_runs` reads how
+    it ended instead of guessing."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         limit = max(app_settings.update_timeout_seconds, 0) + _STALE_RUN_GRACE_SECONDS
@@ -2223,6 +2609,7 @@ async def _fail_stale_update_runs() -> int:
         result = await session.execute(
             select(MachineUpdateRun).where(
                 MachineUpdateRun.status == UpdateRunStatus.RUNNING,
+                MachineUpdateRun.rollback_of_run_id.is_not(None),
                 MachineUpdateRun.started_at.is_not(None),
                 MachineUpdateRun.started_at < cutoff,
             )
@@ -2247,18 +2634,6 @@ async def _fail_stale_update_runs() -> int:
             outcome=AuditOutcome.FAILURE,
             details={"run_ids": [str(run.id) for run in stale][:50], "count": len(stale)},
         )
-        waiting_batches = [str(run.id) for run in stale if run.rollout_position is not None]
-        parallel_batches = {
-            str(run.batch_id)
-            for run in stale
-            if run.batch_id is not None and run.rollout_position is None
-        }
-    # A rolling batch stops at a failed run: let it mark what was waiting.
-    for run_id in waiting_batches:
-        finish_update_run.delay(run_id)
-    # A parallel one may have been holding a run back for these.
-    for batch_id in sorted(parallel_batches):
-        release_held_runs.delay(batch_id)
     return len(stale)
 
 
@@ -2365,7 +2740,12 @@ async def _finish_update_run(run_id: str) -> dict[str, Any]:
         if machine is None:
             return {"ok": False, "error": "Machine not found."}
 
-        if run.status == UpdateRunStatus.SUCCEEDED and run.reboot_if_required:
+        # Not twice: this can run again for the same run after a restart.
+        if (
+            run.status == UpdateRunStatus.SUCCEEDED
+            and run.reboot_if_required
+            and run.reboot_outcome is None
+        ):
             secret = await resolve_machine_credential(machine, session)
             try:
                 needed = await check_reboot_required(

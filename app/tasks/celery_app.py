@@ -63,7 +63,7 @@ from typing import Any
 
 from celery import Celery
 from celery.schedules import crontab, schedstate, schedule
-from celery.signals import worker_process_init
+from celery.signals import worker_process_init, worker_ready
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -366,6 +366,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.purge_old_fleet_snapshots",
         "schedule": crontab(hour=3, minute=5),
     },
+    # Update runs whose task stopped (a worker restart, or debcontrol's own
+    # host being the one updated) are picked up again: their job carries on
+    # on the machine and is read again (`_reconcile_update_runs`).
+    "reconcile-update-runs": {
+        "task": "app.tasks.jobs.reconcile_update_runs",
+        "schedule": timedelta(seconds=60),
+    },
     "fail-stale-update-runs": {
         "task": "app.tasks.jobs.fail_stale_update_runs",
         "schedule": crontab(minute="*/10"),
@@ -472,3 +479,20 @@ def _init_worker_process(**kwargs: Any) -> None:
     register_builtin_actions()
 
     logger.info("Celery worker process initialised (fresh DB engine).")
+
+
+# After the worker starts, whatever was waiting in the queue may have gone
+# with the old one (Redis restarted along with it when debcontrol's own host
+# was updated): update runs that should be under way are queued again. A
+# little later than at once, so runs a stopped task was following have gone
+# quiet long enough to count as abandoned (`_HEARTBEAT_STALE_SECONDS`).
+_RECONCILE_AFTER_START_SECONDS = 150
+
+
+@worker_ready.connect
+def _reconcile_after_start(**kwargs: Any) -> None:
+    celery_app.send_task(
+        "app.tasks.jobs.reconcile_update_runs",
+        kwargs={"after_restart": True},
+        countdown=_RECONCILE_AFTER_START_SECONDS,
+    )

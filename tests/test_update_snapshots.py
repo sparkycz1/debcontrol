@@ -18,7 +18,7 @@ from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
 from app.scheduling.builtin_actions import _run_system_update
 from app.services import update_snapshots
-from app.ssh import proxmox, proxmox_snapshots
+from app.ssh import detached_updates, proxmox, proxmox_snapshots
 from app.tasks import jobs
 from tests.test_homelab_round import _add_machine
 from tests.test_update_history import _api_token
@@ -96,14 +96,12 @@ async def _run_update(
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
     done: list[str] = []
 
-    async def fake_update(*_args: Any, **_kwargs: Any) -> Any:
+    async def fake_start(*_args: Any, **_kwargs: Any) -> bool:
         done.append("update")
+        return True
 
-        class _Result:
-            output = "ok"
-            exit_status = 0
-
-        return _Result()
+    async def fake_follow(*_args: Any, **_kwargs: Any) -> Any:
+        return detached_updates.FollowResult("finished", 0, "ok")
 
     async def fake_packages(*_args: Any, **_kwargs: Any) -> dict[str, str]:
         return {}
@@ -112,7 +110,8 @@ async def _run_update(
         done.append(f"snapshot {guest['vmid']}")
         await snapshot(name)
 
-    monkeypatch.setattr(jobs, "run_system_update", fake_update)
+    monkeypatch.setattr(detached_updates, "start", fake_start)
+    monkeypatch.setattr(detached_updates, "follow", fake_follow)
     monkeypatch.setattr(jobs, "capture_package_snapshot", fake_packages)
     monkeypatch.setattr(proxmox_snapshots, "create_snapshot", fake_create)
     async with db_session_factory() as db:
