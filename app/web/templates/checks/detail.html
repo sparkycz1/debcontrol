@@ -29,12 +29,33 @@
   {% if check.source_machine %}
     <p class="hint">{{ t(request, "checks.from_machine", machine=check.source_machine.name) }} · <a href="/machines/{{ check.source_machine_id }}">{{ t(request, "checks.open_source_machine") }}</a></p>
   {% endif %}
-  <p class="hint"><span class="badge">{{ check.kind | upper }}</span> <code>{{ check.target }}</code>
+  <p class="hint"><span class="badge">{{ check.kind | upper }}</span> {% if check.target %}<code>{{ check.target }}</code>{% endif %}
     {% if check.expected_body %} · {{ t(request, "checks.expected_body") }}: <code>{{ check.expected_body }}</code>{% endif %}
     {% if check.unexpected_body %} · {{ t(request, "checks.unexpected_body") }}: <code>{{ check.unexpected_body }}</code>{% endif %}
     {% if check.json_path %} · JSON: <code>{{ check.json_path }}{% if check.json_expected %} = {{ check.json_expected }}{% endif %}</code>{% endif %}
     {% if check.max_latency_ms %} · {{ t(request, "checks.max_latency") }}: {{ check.max_latency_ms }} ms{% endif %}
     {% if check.sla_target_percent %} · SLA {{ check.sla_target_percent }} %{% endif %}</p>
+
+  {% if check.kind == 'push' %}
+    <section class="panel">
+      <h2>{{ t(request, "checks.push.title") }}</h2>
+      <p>{{ t(request, "checks.push.expected", interval=check.interval_seconds, grace=push_grace) }}
+        {{ t(request, "checks.push.last", when=(check.last_push_at | local_time('%Y-%m-%d %H:%M:%S %Z'))) if check.last_push_at else t(request, "checks.push.none_yet") }}</p>
+      {% if can_manage and check.push_token %}
+        {% set push_url = request.base_url ~ "push/" ~ check.push_token %}
+        <p><code>{{ push_url }}</code></p>
+        <p class="hint">{{ t(request, "checks.push.how") }}</p>
+        <pre>curl -fsS -m 10 --retry 3 {{ push_url }}
+curl -fsS -m 10 "{{ push_url }}?status=down&amp;msg=disk+full"</pre>
+        <p class="hint">{{ t(request, "checks.push.secret_hint") }}</p>
+        <form method="post" action="/checks/{{ check.id }}/push-token" class="inline-form"
+              data-confirm="{{ t(request, 'checks.push.rotate_confirm') }}">
+          <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+          <button type="submit" class="button button-secondary">{{ t(request, "checks.push.rotate") }}</button>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
 
   {{ ack_panel(request, check, "/checks/" ~ check.id, can_manage) }}
 

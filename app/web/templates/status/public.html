@@ -11,6 +11,9 @@
 <body class="status-public">
   <main class="container status-container">
     <h1>{{ status.title }}</h1>
+    {% if status.message %}
+      <div class="alert alert-warn status-message"><p>{{ status.message }}</p></div>
+    {% endif %}
     {% if status.overall == 'up' %}
       <div class="alert alert-ok"><p>{{ t(request, "status_page.all_up") }}</p></div>
     {% elif status.overall == 'down' %}
@@ -25,6 +28,7 @@
           <tr>
             <th>{{ t(request, "status_page.service") }}</th>
             <th>{{ t(request, "status_page.now") }}</th>
+            {% if status.show_latency %}<th>{{ t(request, "status_page.response_time") }}</th>{% endif %}
             <th>{{ t(request, "status_page.uptime", days=window_days) }}</th>
           </tr>
         </thead>
@@ -37,11 +41,37 @@
                 {% elif item.state == 'down' %}<span class="badge badge-error">{{ t(request, "status_page.state_down") }}</span>
                 {% else %}<span class="badge">{{ t(request, "status_page.state_unknown") }}</span>{% endif %}
               </td>
+              {% if status.show_latency %}
+                <td>
+                  {{ item.latency_ms | chart_value('ms') if item.latency_ms is number else '—' }}
+                  {% if item.avg_latency_ms is number %}<div class="table-summary">{{ t(request, "status_page.avg_24h", value=(item.avg_latency_ms | chart_value('ms'))) }}</div>{% endif %}
+                </td>
+              {% endif %}
               <td>{{ ('%.2f %%' % item.uptime_percent) if item.uptime_percent is not none else '—' }}</td>
             </tr>
+            {% if status.show_history %}
+              <tr class="status-days-row">
+                <td colspan="{{ 4 if status.show_latency else 3 }}">
+                  <div class="status-days" role="img" aria-label="{{ t(request, 'status_page.history_label', name=item.name, days=window_days) }}">
+                    {% for day in item.days %}
+                      <span class="status-day status-day-{{ day.level }}"
+                            title="{{ day.day.isoformat() }}: {{ ('%.2f %%' % day.uptime_percent) if day.uptime_percent is not none else t(request, 'status_page.no_data') }}"></span>
+                    {% endfor %}
+                  </div>
+                </td>
+              </tr>
+            {% endif %}
           {% endfor %}
         </tbody>
       </table>
+    {% endif %}
+    {% if status.show_history %}
+      <p class="hint status-legend">
+        <span class="status-day status-day-ok"></span> {{ t(request, "status_page.legend_ok") }}
+        <span class="status-day status-day-warn"></span> {{ t(request, "status_page.legend_warn") }}
+        <span class="status-day status-day-down"></span> {{ t(request, "status_page.legend_down") }}
+        <span class="status-day status-day-none"></span> {{ t(request, "status_page.no_data") }}
+      </p>
     {% endif %}
     <p class="hint">{{ t(request, "status_page.updated", when=(status.generated_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</p>
   </main>

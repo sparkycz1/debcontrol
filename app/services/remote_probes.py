@@ -92,7 +92,19 @@ def _ping_command(check: EndpointCheck) -> str:
 
 def _tcp_command(check: EndpointCheck) -> str:
     host, port = network_probes.split_host_port(check.target)
-    inner = shlex.quote(f"exec 3<>/dev/tcp/{host}/{port}")
+    inner = shlex.quote(f"exec 3<>/dev/tcp/{shlex.quote(host)}/{port}")
+    return _timed(f"timeout {int(check.timeout_seconds)} bash -c {inner} 2>&1")
+
+
+def _ssh_command(check: EndpointCheck) -> str:
+    host, port = network_probes.host_and_port("ssh", check.target)
+    # The server's first lines, up to and including its "SSH-" banner
+    # (bash reads a socket byte by byte, so nothing after it is waited for).
+    inner = shlex.quote(
+        f"exec 3<>/dev/tcp/{shlex.quote(host)}/{port} || exit 1; "
+        "for _ in 1 2 3 4 5 6 7 8 9 10; do IFS= read -r line <&3 || break; "
+        "printf '%s\\n' \"$line\"; case $line in SSH-*) exit 0;; esac; done; exit 1"
+    )
     return _timed(f"timeout {int(check.timeout_seconds)} bash -c {inner} 2>&1")
 
 
@@ -112,8 +124,16 @@ _COMMANDS = {
     "ping": _ping_command,
     "tcp": _tcp_command,
     "dns": _dns_command,
+    "ssh": _ssh_command,
 }
-_TOOLS = {"http": "curl", "tls": "openssl", "ping": "ping", "tcp": "bash", "dns": "getent/dig"}
+_TOOLS = {
+    "http": "curl",
+    "tls": "openssl",
+    "ping": "ping",
+    "tcp": "bash",
+    "dns": "getent/dig",
+    "ssh": "bash",
+}
 
 
 def build_command(check: EndpointCheck) -> str:
@@ -196,6 +216,18 @@ def _parse_dns(check: EndpointCheck, body: str) -> ProbeResult:
     return ProbeResult(ok=True)
 
 
+def _parse_ssh(check: EndpointCheck, body: str) -> ProbeResult:
+    banner = network_probes.ssh_banner(body.encode())
+    if banner is None:
+        return ProbeResult(ok=False, error=_last_line(body) or "No SSH banner.")
+    wanted = (check.expected_body or "").strip()
+    if wanted and wanted not in banner:
+        return ProbeResult(
+            ok=False, error=f'The SSH banner "{banner}" doesn\'t contain "{wanted}"'
+        )
+    return ProbeResult(ok=True)
+
+
 def parse_output(check: EndpointCheck, output: str) -> ProbeResult:
     """The result of `build_command(check)`'s output. Pure function."""
     body, status, elapsed = _split(output)
@@ -211,6 +243,8 @@ def parse_output(check: EndpointCheck, output: str) -> ProbeResult:
         result = _parse_tls(body)
     elif check.kind == "dns":
         result = _parse_dns(check, body)
+    elif check.kind == "ssh":
+        result = _parse_ssh(check, body)
     elif status == 0:
         result = ProbeResult(ok=True)
     else:

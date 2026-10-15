@@ -11,7 +11,7 @@ is missing.
 
 **Root.** Lynis is run as `sudo -n <lynis>` when the account has a grant
 for that exact path (`/usr/sbin/lynis` and `/usr/bin/lynis` are in
-`app.ssh.onboarding.SUDO_COMMANDS` from 0.113.0), else as the account
+`app.ssh.onboarding.SUDO_COMMANDS` from 0.114.0), else as the account
 itself: Lynis then skips the tests that need root and says so, and the
 audit is stored as not privileged, so its hardening index is not compared
 with a full one. Connected as root, the root shim (`app.ssh.shell`) makes

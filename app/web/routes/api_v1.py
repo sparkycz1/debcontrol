@@ -2068,6 +2068,10 @@ async def trigger_machine_update_api(
 class _StatusPage(BaseModel):
     enabled: bool = False
     title: str | None = Field(default=None, max_length=120)
+    # A notice at the top of the page; null/empty = none.
+    message: str | None = Field(default=None, max_length=500)
+    show_latency: bool = False
+    show_history: bool = False
     check_ids: list[uuid.UUID] = Field(default_factory=list, max_length=status_page.MAX_ITEMS)
     machine_ids: list[uuid.UUID] = Field(default_factory=list, max_length=status_page.MAX_ITEMS)
     # Replace the page's address; the old link stops working at once.
@@ -2078,6 +2082,9 @@ def _status_page_dict(app_settings: AppSettings) -> dict[str, object]:
     return {
         "enabled": app_settings.status_page_enabled,
         "title": app_settings.status_page_title,
+        "message": app_settings.status_page_message,
+        "show_latency": app_settings.status_page_show_latency,
+        "show_history": app_settings.status_page_show_history,
         "path": (
             f"/status/{app_settings.status_page_token}"
             if app_settings.status_page_enabled and app_settings.status_page_token
@@ -2110,6 +2117,9 @@ async def set_status_page_api(
     machines = await visible_machines_by_ids(db, user, payload.machine_ids)
     app_settings.status_page_enabled = payload.enabled
     app_settings.status_page_title = (payload.title or "").strip()[:120] or None
+    app_settings.status_page_message = (payload.message or "").strip()[:500] or None
+    app_settings.status_page_show_latency = payload.show_latency
+    app_settings.status_page_show_history = payload.show_history
     app_settings.status_page_check_ids = [str(i) for i in payload.check_ids]
     app_settings.status_page_machine_ids = [str(m.id) for m in machines]
     replaced = bool(payload.new_link and app_settings.status_page_token)
@@ -2129,6 +2139,9 @@ async def set_status_page_api(
             "checks": len(payload.check_ids),
             "machine_count": len(machines),
             "link_replaced": replaced,
+            "show_latency": payload.show_latency,
+            "show_history": payload.show_history,
+            "message": bool(app_settings.status_page_message),
         },
     )
     return _status_page_dict(app_settings)

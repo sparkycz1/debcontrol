@@ -1,7 +1,7 @@
 """Lynis security audits
 
 Revision ID: b8d1f3a5c7e9
-Revises: d7e1a3c5b9f2
+Revises: a7c3e5f1b9d2
 Create Date: 2026-10-15
 
 A new table only; nothing existing changes.
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b8d1f3a5c7e9"
-down_revision: str | None = "d7e1a3c5b9f2"
+down_revision: str | None = "a7c3e5f1b9d2"
 branch_labels: Sequence[str] | str | None = None
 depends_on: Sequence[str] | str | None = None
 
