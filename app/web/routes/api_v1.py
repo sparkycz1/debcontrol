@@ -99,6 +99,7 @@ from app.services import (
     monitoring_history,
     proxmox_backup_exempt,
     proxmox_guest_links,
+    security_audit,
     self_host,
     status_page,
     update_batches,
@@ -117,6 +118,7 @@ from app.services.fleet_overview import build_fleet_overview
 from app.services.machine_actions import (
     send_power_to_machines,
     trigger_check_updates,
+    trigger_security_audits,
     trigger_updates,
 )
 from app.services.machine_config import export_machine_config, import_machine_config
@@ -3132,3 +3134,89 @@ async def clear_machine_acknowledgement_api(
         target_label=machine.name,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/security-audits", dependencies=[_view_machines])
+async def security_audits_api(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
+) -> list[dict[str, object]]:
+    """Every visible machine with its newest successful Lynis audit
+    (`audit`: hardening index and counts, no findings; null when never
+    audited) and its newest audit of any outcome (`latest`, e.g. one still
+    running or one that failed)."""
+    visible = await machines_visible_to(db, user)
+    machines = list((await db.execute(visible.order_by(Machine.name))).scalars().all())
+    ids = visible.with_only_columns(Machine.id)
+    latest = await security_audit.latest_by_machine(db, ids)
+    succeeded = await security_audit.latest_by_machine(db, ids, succeeded_only=True)
+    return [
+        {
+            "machine_id": str(m.id),
+            "machine_name": m.name,
+            "audit": security_audit.audit_to_dict(succeeded[m.id], findings=False)
+            if m.id in succeeded
+            else None,
+            "latest": security_audit.audit_to_dict(latest[m.id], findings=False)
+            if m.id in latest
+            else None,
+        }
+        for m in machines
+    ]
+
+
+@router.get("/machines/{machine_id}/security-audits", dependencies=[_view_machines])
+async def machine_security_audits_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """The machine's kept Lynis audits, newest first, each with its
+    warnings and suggestions (`test`, `text`, `detail`, `solution`)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return [security_audit.audit_to_dict(a) for a in await security_audit.history(db, machine.id)]
+
+
+class _SecurityAuditRequest(BaseModel):
+    install_if_missing: bool = False
+
+
+@router.post(
+    "/machines/{machine_id}/security-audits",
+    dependencies=[_action_updates],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_machine_security_audit_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    payload: _SecurityAuditRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Start a Lynis audit of the machine; `install_if_missing` installs
+    Lynis with apt-get first where it is missing. Returns the pending
+    audit; poll `GET .../security-audits` for the result. 409 when the
+    machine has no confirmed host key or an audit is already under way."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    install_if_missing = payload.install_if_missing if payload else False
+    audits, _skipped = await trigger_security_audits(
+        db, [machine], install_if_missing=install_if_missing, started_by=user.username
+    )
+    await log_event(
+        db,
+        request=request,
+        action="machine.security_audit.run",
+        summary=f'Started a security audit (Lynis) of "{machine.name}"'
+        if audits
+        else f'Could not start a security audit (Lynis) of "{machine.name}"',
+        outcome=AuditOutcome.SUCCESS if audits else AuditOutcome.FAILURE,
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"install_if_missing": install_if_missing},
+    )
+    if not audits:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The machine has no confirmed host key, or an audit is already under way.",
+        )
+    return security_audit.audit_to_dict(audits[0])

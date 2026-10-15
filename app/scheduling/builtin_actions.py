@@ -34,6 +34,7 @@ from app.services.machine_actions import (
     trigger_check_updates,
     trigger_facts_refresh,
     trigger_monitoring_sample,
+    trigger_security_audits,
     trigger_updates,
     wake_machines,
 )
@@ -94,6 +95,18 @@ async def _run_wake(
     db: AsyncSession, machines: list[Machine], params: dict[str, str]
 ) -> ActionRunResult:
     skipped = await wake_machines(machines)
+    return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_security_audit(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    _audits, skipped = await trigger_security_audits(
+        db,
+        machines,
+        install_if_missing=params.get("install") == "yes",
+        started_by="schedule",
+    )
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
@@ -228,6 +241,29 @@ def register_builtin_actions() -> None:
                 "up, or whose network card is not known yet, are skipped."
             ),
             run=_run_wake,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="security_audit",
+            label="Security audit (Lynis)",
+            description=(
+                "Runs `lynis audit system` on each targeted machine and keeps the "
+                "hardening index, warnings and suggestions (Security -> Audit). "
+                "Machines with an audit still running are skipped."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="install",
+                    label="Install Lynis where missing",
+                    choices=[
+                        ("no", "No"),
+                        ("yes", "Yes, with apt-get"),
+                    ],
+                    default="no",
+                ),
+            ],
+            run=_run_security_audit,
         )
     )
     register_action(

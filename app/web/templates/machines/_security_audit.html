@@ -1,0 +1,109 @@
+{#- A machine's Lynis audits — re-fetched every few seconds while one is
+    under way (see `machine_security`). -#}
+{% macro index_badge(index) -%}
+  <span class="badge {{ 'badge-ok' if index >= 75 else ('badge-warn' if index >= 60 else 'badge-error') }}">{{ index }}</span>
+{%- endmacro %}
+{% macro status_badge(audit) -%}
+  {%- set st = display_status(audit) -%}
+  <span class="badge {{ 'badge-ok' if st == 'succeeded' else ('badge-warn' if st in ('pending', 'running') else 'badge-error') }}">{{ t(request, "security_audit.status." ~ st) }}</span>
+{%- endmacro %}
+{% macro findings_table(findings) %}
+  <div class="monitoring-table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "security_audit.test") }}</th>
+          <th>{{ t(request, "security_audit.finding") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in findings %}
+          <tr>
+            <td><a href="{{ control_url.format(test=f.test) }}" rel="noopener noreferrer" target="_blank"><code>{{ f.test }}</code></a></td>
+            <td>
+              {{ f.text }}
+              {% if f.detail %}<div class="table-summary"><code>{{ f.detail }}</code></div>{% endif %}
+              {% if f.solution %}<div class="table-summary">{{ f.solution }}</div>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+
+<div id="security-audit"
+  {% if active %}hx-get="/machines/{{ machine.id }}/security" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+
+  {% if current and (current is not sameas shown) %}
+    <section class="panel">
+      <p>
+        {{ t(request, "security_audit.latest_run") }} {{ status_badge(current) }}
+        <span class="table-muted">{{ current.created_at | local_time('%Y-%m-%d %H:%M') }}</span>
+      </p>
+      {% if active %}<p class="hint">{{ t(request, "security_audit.running_hint") }}</p>{% endif %}
+      {% if display_status(current) == 'interrupted' %}<p class="hint">{{ t(request, "security_audit.interrupted_hint") }}</p>{% endif %}
+      {% if current.error %}<div class="alert alert-error"><p>{{ current.error }}</p></div>{% endif %}
+      {% if display_status(current) == 'failed' and current.lynis_version is none %}<p class="hint">{{ t(request, "security_audit.missing_hint") }}</p>{% endif %}
+    </section>
+  {% endif %}
+
+  {% if shown %}
+    <section class="panel">
+      <h2>{{ t(request, "security_audit.hardening_index") }} {{ index_badge(shown.hardening_index) }}</h2>
+      <p class="hint">
+        {{ shown.finished_at | local_time('%Y-%m-%d %H:%M') }}
+        · Lynis {{ shown.lynis_version or '?' }}
+        {% if shown.tests_done %}· {{ t(request, "security_audit.tests_done", count=shown.tests_done) }}{% endif %}
+        {% if shown.started_by %}· {{ shown.started_by }}{% endif %}
+      </p>
+      {% if shown.privileged is sameas false %}
+        <div class="alert alert-warn"><p>{{ t(request, "security_audit.unprivileged") }}</p></div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>{{ t(request, "security_audit.warnings", count=(shown.warnings or [])|length) }}</h2>
+      {% if shown.warnings %}{{ findings_table(shown.warnings) }}
+      {% else %}<p class="table-muted">{{ t(request, "security_audit.no_warnings") }}</p>{% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>{{ t(request, "security_audit.suggestions", count=(shown.suggestions or [])|length) }}</h2>
+      {% if shown.suggestions %}{{ findings_table(shown.suggestions) }}
+      {% else %}<p class="table-muted">{{ t(request, "security_audit.no_suggestions") }}</p>{% endif %}
+    </section>
+  {% elif not current %}
+    <div class="empty-state"><p>{{ t(request, "security_audit.never_run") }}</p></div>
+  {% endif %}
+
+  {% if audits | length > 1 %}
+    <section class="panel">
+      <h2>{{ t(request, "security_audit.history") }}</h2>
+      <div class="monitoring-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t(request, "security_audit.when") }}</th>
+              <th>{{ t(request, "security_audit.status") }}</th>
+              <th>{{ t(request, "security_audit.hardening_index") }}</th>
+              <th>{{ t(request, "security_audit.warnings_short") }}</th>
+              <th>{{ t(request, "security_audit.suggestions_short") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in audits %}
+              <tr>
+                <td>{{ a.created_at | local_time('%Y-%m-%d %H:%M') }}</td>
+                <td>{{ status_badge(a) }}{% if a.privileged is sameas false %} <span class="table-muted">{{ t(request, "security_audit.unprivileged_short") }}</span>{% endif %}</td>
+                <td>{% if a.hardening_index is not none %}{{ index_badge(a.hardening_index) }}{% else %}—{% endif %}</td>
+                <td>{{ (a.warnings or []) | length if a.hardening_index is not none else '—' }}</td>
+                <td>{{ (a.suggestions or []) | length if a.hardening_index is not none else '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+</div>

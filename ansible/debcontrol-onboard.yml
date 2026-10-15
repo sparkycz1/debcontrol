@@ -4,7 +4,7 @@
 #   1. installs/enables sshd
 #   2. creates a dedicated non-root user with debcontrol's SSH public key
 #   3. grants that user passwordless sudo, scoped to exactly what
-#      debcontrol needs (apt-get, shutdown, and flatpak/snap if present)
+#      debcontrol needs (apt-get, shutdown, ..., lynis; flatpak/snap if present)
 #   4. self-registers the machine via POST /api/inform, so it shows up as
 #      "pending" in the Machines tab for a human to review and approve
 #
@@ -81,11 +81,12 @@
         key: "{{ debcontrol_ssh_public_key }}"
         state: present
 
-    - name: Grant passwordless sudo for apt-get, shutdown, and dmidecode
+    # The same list as SUDO_COMMANDS in app/ssh/onboarding.py.
+    - name: Grant passwordless sudo for what debcontrol runs as root
       ansible.builtin.copy:
         dest: "/etc/sudoers.d/{{ debcontrol_user }}"
         content: |
-          {{ debcontrol_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode
+          {{ debcontrol_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/sbin/shutdown, /usr/sbin/dmidecode, /usr/sbin/smartctl, /usr/bin/apt-mark, /usr/bin/pvesh, /usr/bin/proxmox-backup-debug, /usr/sbin/proxmox-backup-debug, /usr/bin/proxmox-backup-manager, /usr/sbin/proxmox-backup-manager, /usr/bin/pmgsh, /usr/sbin/postqueue, /usr/sbin/lynis, /usr/bin/lynis
         owner: root
         group: root
         mode: "0440"

@@ -63,6 +63,7 @@ from app.db.models.notification_condition import NotificationConditionState
 from app.db.models.notification_log import NotificationLog
 from app.db.models.notification_rule import NotificationEventType, NotificationRule
 from app.db.models.runbook import RunbookRun, RunbookRunStatus
+from app.db.models.security_audit import SecurityAudit, SecurityAuditStatus
 from app.db.models.terminal_recording import TerminalRecording
 from app.services import (
     acknowledgements,
@@ -72,6 +73,7 @@ from app.services import (
     disk_forecast,
     health_events,
     image_versions,
+    security_audit,
     update_snapshots,
     wake_on_lan,
     watched_files,
@@ -116,6 +118,7 @@ from app.ssh.logs import (
     view_file,
     view_journal,
 )
+from app.ssh.lynis import run_audit as run_lynis_audit
 from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
@@ -3300,6 +3303,69 @@ async def _wake_machine(machine_id: str) -> dict[str, Any]:
 @celery_app.task(name="app.tasks.jobs.wake_machine", time_limit=_SSH_TASK_TIME_LIMIT_SECONDS)
 def wake_machine(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_wake_machine(machine_id))
+
+
+async def _run_security_audit(audit_id: str) -> None:
+    """Run one pending `SecurityAudit`: Lynis on its machine
+    (`app.ssh.lynis`), installing it first when the audit asks to and the
+    machine has none, then keep the parsed report and drop the machine's
+    oldest audits beyond `security_audit.KEEP_PER_MACHINE`."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        audit = await session.get(SecurityAudit, uuid.UUID(audit_id))
+        if audit is None or audit.status != SecurityAuditStatus.PENDING:
+            return
+        machine = await session.get(Machine, audit.machine_id)
+        if machine is None:
+            return
+        audit.status = SecurityAuditStatus.RUNNING
+        audit.started_at = datetime.now(UTC)
+        await session.commit()
+
+        error: str | None = None
+        try:
+            secret = await resolve_machine_credential(machine, session)
+            result = await run_lynis_audit(
+                machine,
+                secret,
+                install_if_missing=audit.install_if_missing,
+                connect_timeout_seconds=app_settings.ssh_connect_timeout,
+                run_timeout_seconds=security_audit.RUN_TIMEOUT_SECONDS,
+            )
+        except (SSHConnectionError, TimeoutError, ValueError) as exc:
+            error = str(exc)
+        else:
+            audit.lynis_version = result.version
+            audit.privileged = result.privileged
+            audit.hardening_index = result.hardening_index
+            audit.tests_done = result.tests_done
+            audit.warnings = result.warnings
+            audit.suggestions = result.suggestions
+            if result.missing:
+                error = (
+                    "Lynis could not be installed on this machine."
+                    if result.install_failed
+                    else "Lynis is not installed on this machine."
+                )
+            elif not result.usable:
+                error = (
+                    f"Lynis exited with status {result.exit_status} without a report: "
+                    f"{result.output[-500:]}"
+                ).strip()
+        audit.error = error[:1024] if error else None
+        audit.status = SecurityAuditStatus.FAILED if error else SecurityAuditStatus.SUCCEEDED
+        audit.finished_at = datetime.now(UTC)
+        await session.flush()
+        await security_audit.prune(session, machine.id)
+        await session.commit()
+
+
+@celery_app.task(
+    name="app.tasks.jobs.run_security_audit",
+    time_limit=security_audit.TASK_TIME_LIMIT_SECONDS,
+)
+def run_security_audit(audit_id: str) -> None:
+    asyncio.run(_run_security_audit(audit_id))
 
 
 async def _run_runbook(run_id: str) -> None:

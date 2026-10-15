@@ -58,6 +58,7 @@ def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[
     tabs += [
         ("monitoring", t(request, "machine.tab.monitoring"), f"{base}/monitoring"),
         ("updates", t(request, "machine.tab.updates"), f"{base}/updates"),
+        ("security", t(request, "machine.tab.security"), f"{base}/security"),
     ]
     if user.has_permission(Permission.ACTION_TERMINAL):
         tabs.append(("terminal", t(request, "machine.tab.terminal"), f"{base}/terminal"))

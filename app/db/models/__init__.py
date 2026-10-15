@@ -43,6 +43,7 @@ from app.db.models.saved_log_view import SavedLogView
 from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
 from app.db.models.scheduled_task_run import ScheduledTaskRun, ScheduledTaskRunStatus
+from app.db.models.security_audit import SecurityAudit, SecurityAuditStatus
 from app.db.models.ssh_identity import SSHIdentity
 from app.db.models.temporary_permission_grant import TemporaryPermissionGrant
 from app.db.models.terminal_recording import TerminalRecording
@@ -109,6 +110,8 @@ __all__ = [
     "ScheduledTask",
     "ScheduledTaskRun",
     "ScheduledTaskRunStatus",
+    "SecurityAudit",
+    "SecurityAuditStatus",
     "Tag",
     "TemporaryPermissionGrant",
     "TerminalRecording",

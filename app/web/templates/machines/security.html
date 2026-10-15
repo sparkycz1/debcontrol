@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "security_audit.title") }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <p class="hint">{{ t(request, "security_audit.intro") }}</p>
+
+  {% if audit_error %}<div class="alert alert-error"><p>{{ audit_error }}</p></div>{% endif %}
+
+  {% if can_run %}
+    <form method="post" action="/machines/{{ machine.id }}/security/audit" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label><input type="checkbox" name="install"> {{ t(request, "security_audit.install_if_missing") }}</label>
+      <button type="submit" class="button">{{ t(request, "security_audit.run_now") }}</button>
+      <p class="hint">{{ t(request, "security_audit.run_hint") }}</p>
+    </form>
+  {% endif %}
+
+  {% include "machines/_security_audit.html" %}
+{% endblock %}

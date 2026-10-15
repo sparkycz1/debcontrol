@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+
+{% block title %}{{ t(request, "security_audit.tab") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro index_badge(index) -%}
+  <span class="badge {{ 'badge-ok' if index >= 75 else ('badge-warn' if index >= 60 else 'badge-error') }}">{{ index }}</span>
+{%- endmacro %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "nav.security") }}</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "security_audit.fleet_intro") }}</p>
+
+  {% if started is not none %}
+    <div class="alert alert-ok"><p>{{ t(request, "security_audit.started", count=(started | int), skipped=(skipped | int)) }}</p></div>
+  {% endif %}
+
+  {% if can_run %}
+    <form method="post" action="/security/audit/run" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label><input type="checkbox" name="install"> {{ t(request, "security_audit.install_if_missing") }}</label>
+      <button type="submit" class="button">{{ t(request, "security_audit.run_all") }}</button>
+      <p class="hint">{{ t(request, "security_audit.run_all_hint") }}</p>
+    </form>
+  {% endif %}
+
+  <div id="audit-table"
+    {% if any_active %}hx-get="/security/audit" hx-select="#audit-table" hx-trigger="every 10s" hx-swap="outerHTML"{% endif %}>
+  {% if rows %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "security.machines") }}</th>
+            <th>{{ t(request, "security_audit.hardening_index") }}</th>
+            <th>{{ t(request, "security_audit.warnings_short") }}</th>
+            <th>{{ t(request, "security_audit.suggestions_short") }}</th>
+            <th>{{ t(request, "security_audit.last_audit") }}</th>
+            <th>{{ t(request, "security_audit.latest_run") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set a = row.audit %}
+            <tr>
+              <td><a href="/machines/{{ row.machine.id }}/security">{{ row.machine.name }}</a></td>
+              <td>{% if a %}{{ index_badge(a.hardening_index) }}{% if a.privileged is sameas false %} <span class="table-muted">{{ t(request, "security_audit.unprivileged_short") }}</span>{% endif %}{% else %}—{% endif %}</td>
+              <td>{{ (a.warnings or []) | length if a else '—' }}</td>
+              <td>{{ (a.suggestions or []) | length if a else '—' }}</td>
+              <td>{% if a %}{{ a.finished_at | local_time('%Y-%m-%d %H:%M') }}{% else %}<span class="table-muted">{{ t(request, "security_audit.never") }}</span>{% endif %}</td>
+              <td>
+                {% if row.latest and row.latest is not sameas a %}
+                  {% set st = display_status(row.latest) %}
+                  <span class="badge {{ 'badge-warn' if st in ('pending', 'running') else 'badge-error' }}">{{ t(request, "security_audit.status." ~ st) }}</span>
+                  {% if row.latest.error %}<div class="table-summary">{{ row.latest.error | truncate(120) }}</div>{% endif %}
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "security_audit.no_machines") }}</p></div>
+  {% endif %}
+  </div>
+{% endblock %}
