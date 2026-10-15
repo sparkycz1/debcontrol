@@ -1,7 +1,7 @@
 """Push (heartbeat) checks and status page extras
 
 Revision ID: a7c3e5f1b9d2
-Revises: c9f25da0b706
+Revises: d7e1a3c5b9f2
 Create Date: 2026-10-15
 
 Two nullable columns on `endpoint_checks` (only push checks fill them), and
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a7c3e5f1b9d2"
-down_revision: str | None = "c9f25da0b706"
+down_revision: str | None = "d7e1a3c5b9f2"
 branch_labels: Sequence[str] | str | None = None
 depends_on: Sequence[str] | str | None = None
 
