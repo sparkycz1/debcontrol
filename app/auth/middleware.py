@@ -73,8 +73,10 @@ _PUBLIC_PATHS = frozenset(
 # same reasoning as `/static/`, the login page needs these too.
 # `/status/<token>`: the status page for people without an account — off
 # unless turned on, and guarded by the token in its own address
-# (app.services.status_page).
-_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/", "/status/")
+# (app.services.status_page). `/push/<token>`: a push check's heartbeat,
+# called by scripts and cron jobs, guarded the same way
+# (app/web/routes/check_push.py).
+_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/", "/status/", "/push/")
 
 
 # Reachable with a valid session even while a role's `require_totp` block is
@@ -102,9 +104,10 @@ def _is_public(path: str) -> bool:
 # Outside Settings -> Security's network allowlist: assets the block page
 # itself needs, the container health check, and machine self-registration
 # (machine-to-machine, token-authenticated, typically from networks an
-# operator never signs in from).
+# operator never signs in from) — and push-check heartbeats, for the same
+# reason.
 _NETWORK_EXEMPT_PATHS = frozenset({"/healthz", "/api/inform"})
-_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/", "/status/")
+_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/", "/status/", "/push/")
 
 
 async def _network_allowed(request: Request) -> bool:

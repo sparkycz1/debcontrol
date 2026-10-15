@@ -26,7 +26,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.endpoint_check import EndpointCheckSave
-from app.services import acknowledgements, monitoring_history
+from app.services import acknowledgements, endpoint_checks, monitoring_history
 from app.services.access_scope import machines_visible_to, visible_machines_by_ids
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import (
@@ -96,6 +96,7 @@ async def _parse_form(request: Request) -> tuple[EndpointCheckSave | None, dict[
 def _apply(check: EndpointCheck, payload: EndpointCheckSave) -> None:
     for field, value in payload.model_dump().items():
         setattr(check, field, value)
+    endpoint_checks.sync_push_token(check)
 
 
 async def _get_check_or_404(check_id: uuid.UUID, db: AsyncSession) -> EndpointCheck:
@@ -270,6 +271,9 @@ async def create_check(
         target_id=check.id,
         target_label=check.name,
     )
+    if check.kind == "push":
+        # Nothing to probe; its page shows the address to call.
+        return RedirectResponse(url=f"/checks/{check.id}", status_code=status.HTTP_303_SEE_OTHER)
     tasks.run_endpoint_check.delay(str(check.id))
     return RedirectResponse(url="/checks", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -381,12 +385,35 @@ async def check_detail(
         "checks/detail.html",
         {
             "check": check,
+            "push_grace": endpoint_checks.push_grace_seconds(check),
             "history": history,
             "range_key": window.range_key,
             "window": window,
             "time_ranges": monitoring_history.TIME_RANGES,
         },
     )
+
+
+@router.post("/{check_id}/push-token", dependencies=[_manage, Depends(verify_csrf)])
+async def rotate_push_token(
+    request: Request, check_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """A new heartbeat address for a push check; the old one stops working."""
+    check = await _get_check_or_404(check_id, db)
+    if check.kind != "push":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+    check.push_token = endpoint_checks.new_push_token()
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="endpoint_check.push_token.rotate",
+        summary=f'Replaced the heartbeat address of check "{check.name}"',
+        target_type="endpoint_check",
+        target_id=check.id,
+        target_label=check.name,
+    )
+    return RedirectResponse(url=f"/checks/{check.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Acknowledging a problem (app.services.acknowledgements) ---------------

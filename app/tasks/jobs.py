@@ -39,6 +39,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
@@ -75,9 +76,12 @@ from app.services import (
 )
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import (
+    ProbeResult,
     apply_latency_limit,
     apply_result,
+    evaluate_push,
     is_due,
+    push_result,
     run_probe,
 )
 from app.services.fleet_stats import compute_fleet_stats
@@ -617,6 +621,13 @@ async def _run_endpoint_check(check_id: str) -> dict[str, Any]:
         check = await session.get(EndpointCheck, uuid.UUID(check_id))
         if check is None:
             return {"ok": False, "error": "Check not found."}
+        now = datetime.now(UTC)
+        if check.kind == "push":
+            # Not probed: whether a heartbeat is overdue.
+            pending = evaluate_push(check, now)
+            if pending is None:
+                return {"ok": True, "up": None}
+            return await _record_endpoint_result(session, check, pending, now)
         if check.source_machine is not None:
             # From a managed machine, over its SSH connection.
             app_settings = await get_or_create_app_settings(session)
@@ -631,27 +642,56 @@ async def _run_endpoint_check(check_id: str) -> dict[str, Any]:
             )
         else:
             result = await run_probe(check)
-        now = datetime.now(UTC)
-        events = apply_result(check, result, now)
-        session.add(
-            EndpointCheckResult(
-                check_id=check.id,
-                checked_at=now,
-                ok=result.ok,
-                status_code=result.status_code,
-                latency_ms=result.latency_ms,
-                error=(result.error or None) and result.error[:500],
-            )
+        return await _record_endpoint_result(session, check, result, datetime.now(UTC))
+
+
+async def _record_endpoint_result(
+    session: AsyncSession, check: EndpointCheck, result: ProbeResult, now: datetime
+) -> dict[str, Any]:
+    """Store one result of `check` (latest state and history row), commit,
+    then send whatever notifications the transition calls for."""
+    events = apply_result(check, result, now)
+    session.add(
+        EndpointCheckResult(
+            check_id=check.id,
+            checked_at=now,
+            ok=result.ok,
+            status_code=result.status_code,
+            latency_ms=result.latency_ms,
+            error=(result.error or None) and result.error[:500],
         )
-        await session.commit()
-        for event_type, context in events:
-            await notify(session, event_type, context=context, check=check)
-        return {"ok": True, "up": result.ok}
+    )
+    await session.commit()
+    for event_type, context in events:
+        await notify(session, event_type, context=context, check=check)
+    return {"ok": True, "up": result.ok}
 
 
 @celery_app.task(name="app.tasks.jobs.run_endpoint_check", time_limit=180)
 def run_endpoint_check(check_id: str) -> dict[str, Any]:
     return asyncio.run(_run_endpoint_check(check_id))
+
+
+async def _receive_endpoint_push(
+    check_id: str, ok: bool, message: str | None, received_at: str
+) -> dict[str, Any]:
+    """One heartbeat of a push check (`app/web/routes/check_push.py`),
+    recorded like any probe result — the route only enqueues it, so a slow
+    notification channel never holds up the caller's script."""
+    async with db_session.AsyncSessionLocal() as session:
+        check = await session.get(EndpointCheck, uuid.UUID(check_id))
+        if check is None or check.kind != "push" or not check.enabled:
+            return {"ok": False, "error": "Check not found."}
+        at = datetime.fromisoformat(received_at)
+        check.last_push_at = at
+        return await _record_endpoint_result(session, check, push_result(ok, message), at)
+
+
+@celery_app.task(name="app.tasks.jobs.receive_endpoint_push", time_limit=120)
+def receive_endpoint_push(
+    check_id: str, ok: bool, message: str | None, received_at: str
+) -> dict[str, Any]:
+    return asyncio.run(_receive_endpoint_push(check_id, ok, message, received_at))
 
 
 async def _run_due_endpoint_checks() -> None:

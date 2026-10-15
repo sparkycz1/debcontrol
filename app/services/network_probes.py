@@ -12,6 +12,11 @@ debcontrol server (Celery worker), like the HTTP/TLS ones in
   specific server with `name@server` (`nas.lan@192.168.1.53`) to check
   that exact resolver (a Pi-hole, AdGuard Home, a router). The expected
   text, when set, must be one of the addresses returned.
+- **ssh** connects to `host[:port]` (22 by default) and reads the server's
+  identification line (`SSH-2.0-OpenSSH_9.6 ...`), which an SSH server
+  sends before anything else — so a hung sshd that still accepts TCP
+  connections counts as down. The expected text, when set, must appear in
+  that line (`OpenSSH_9`). No authentication is attempted.
 
 Every probe returns an `endpoint_checks.ProbeResult`-shaped tuple through
 `run(...)` and never raises.
@@ -59,9 +64,28 @@ def _valid_hostname(value: str) -> bool:
     return all(label and len(label) <= 63 for label in value.rstrip(".").split("."))
 
 
+# The port an SSH / SMTP check uses when the target names none.
+DEFAULT_PORTS = {"ssh": 22, "smtp": 25}
+
+
+def host_and_port(kind: str, target: str) -> tuple[str, int]:
+    """`host[:port]` with the kind's default port (`DEFAULT_PORTS`)."""
+    host, port = split_host_port(target)
+    return host, port if port is not None else DEFAULT_PORTS[kind]
+
+
 def validate_target(kind: str, target: str) -> str | None:
     """An error message, or None when `target` fits `kind`."""
     value = target.strip()
+    if kind in DEFAULT_PORTS:
+        if "://" in value or "/" in value:
+            return f"A {kind.upper()} check needs host or host:port, not a URL."
+        host, port = split_host_port(value)
+        if not _valid_hostname(host) or (port is not None and not 0 < port < 65536):
+            return f"A {kind.upper()} check needs host or host:port."
+        if port is None and value.count(":") == 1:
+            return "Invalid port."
+        return None
     if kind == "ping":
         return None if _valid_hostname(value) else "A ping check needs a host name or IP address."
     if kind == "tcp":
@@ -177,6 +201,58 @@ async def probe_tcp(target: str, timeout_seconds: float) -> tuple[bool, str | No
     writer.close()
     with contextlib.suppress(OSError):
         await writer.wait_closed()
+    return True, None, latency
+
+
+# --- ssh -----------------------------------------------------------------------
+
+# RFC 4253: the identification line is at most 255 characters; a server
+# may send other lines before it.
+_SSH_BANNER_LIMIT = 4096
+
+
+def ssh_banner(data: bytes) -> str | None:
+    """The `SSH-` identification line in what a server sent first."""
+    for raw in data.split(b"\n"):
+        line = raw.rstrip(b"\r").decode("utf-8", "replace").strip()
+        if line.startswith("SSH-"):
+            return line[:255]
+    return None
+
+
+async def probe_ssh(
+    target: str, timeout_seconds: float, expected: str | None
+) -> tuple[bool, str | None, float | None]:
+    host, port = host_and_port("ssh", target)
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            reader, writer = await asyncio.open_connection(host, port)
+            try:
+                data = b""
+                # Until the line starting with "SSH-" is complete; what
+                # follows it (a key exchange) is not read.
+                while (start := data.find(b"SSH-")) < 0 or b"\n" not in data[start:]:
+                    chunk = await reader.read(1024)
+                    if not chunk:
+                        break
+                    data += chunk
+                    if len(data) >= _SSH_BANNER_LIMIT:
+                        break
+            finally:
+                writer.close()
+                with contextlib.suppress(OSError):
+                    await writer.wait_closed()
+    except TimeoutError:
+        return False, f"No SSH banner from {target} within {timeout_seconds:g} s", None
+    except OSError as exc:
+        return False, f"Connection to {target} failed: {exc}", None
+    latency = (time.monotonic() - started) * 1000
+    banner = ssh_banner(data)
+    if banner is None:
+        return False, f"{target} answered, but not with an SSH banner", latency
+    if expected and expected.strip() not in banner:
+        return False, f'The SSH banner "{banner}" doesn\'t contain "{expected.strip()}"', latency
     return True, None, latency
 
 

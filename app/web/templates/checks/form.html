@@ -24,12 +24,16 @@
       <option value="ping" {% if values.kind == 'ping' %}selected{% endif %}>Ping — {{ t(request, "checks.kind_ping") }}</option>
       <option value="tcp" {% if values.kind == 'tcp' %}selected{% endif %}>TCP — {{ t(request, "checks.kind_tcp") }}</option>
       <option value="dns" {% if values.kind == 'dns' %}selected{% endif %}>DNS — {{ t(request, "checks.kind_dns") }}</option>
+      <option value="smtp" {% if values.kind == 'smtp' %}selected{% endif %}>SMTP — {{ t(request, "checks.kind_smtp") }}</option>
+      <option value="ssh" {% if values.kind == 'ssh' %}selected{% endif %}>SSH — {{ t(request, "checks.kind_ssh") }}</option>
+      <option value="push" {% if values.kind == 'push' %}selected{% endif %}>Push — {{ t(request, "checks.kind_push") }}</option>
     </select>
 
     <label for="target">{{ t(request, "checks.target") }}</label>
-    <input type="text" id="target" name="target" value="{{ values.target }}" maxlength="500" required spellcheck="false"
+    <input type="text" id="target" name="target" value="{{ values.target }}" maxlength="500" spellcheck="false"
            placeholder="https://example.com/health  ·  example.com:443  ·  nas.lan@192.168.1.53">
     <p class="hint">{{ t(request, "checks.target_hint") }}</p>
+    <p class="hint">{{ t(request, "checks.target_hint_more") }}</p>
 
     <label for="expected_status">{{ t(request, "checks.expected_status") }}</label>
     <input type="number" id="expected_status" name="expected_status" value="{{ values.expected_status }}" min="100" max="599">
@@ -59,6 +63,7 @@
 
     <label for="interval_seconds">{{ t(request, "checks.interval") }}</label>
     <input type="number" id="interval_seconds" name="interval_seconds" value="{{ values.interval_seconds }}" min="30" max="86400" required>
+    <p class="hint">{{ t(request, "checks.interval_hint_push") }}</p>
 
     <label for="timeout_seconds">{{ t(request, "checks.timeout") }}</label>
     <input type="number" id="timeout_seconds" name="timeout_seconds" value="{{ values.timeout_seconds }}" min="1" max="60" required>

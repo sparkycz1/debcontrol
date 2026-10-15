@@ -44,6 +44,7 @@ from app.web.routes import (
     auth,
     backup,
     branding,
+    check_push,
     checks,
     dashboard,
     fleet,
@@ -273,6 +274,7 @@ def create_app() -> FastAPI:
     app.include_router(fleet.router)
     app.include_router(status_page.router)
     app.include_router(status_page.public_router)
+    app.include_router(check_push.router)
     app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)

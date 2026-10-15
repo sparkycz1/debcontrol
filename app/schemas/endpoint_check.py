@@ -8,14 +8,15 @@ import uuid
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.db.models.endpoint_check import CHECK_KINDS
+from app.db.models.endpoint_check import CHECK_KINDS, SERVER_ONLY_KINDS
 from app.services.endpoint_checks import validate_target
 
 
 class EndpointCheckSave(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     kind: str
-    target: str = Field(min_length=1, max_length=500)
+    # Required for every kind but "push", which has no target.
+    target: str = Field(default="", max_length=500)
     expected_status: int | None = Field(default=None, ge=100, le=599)
     expected_body: str | None = Field(default=None, max_length=200)
     unexpected_body: str | None = Field(default=None, max_length=200)
@@ -37,9 +38,15 @@ class EndpointCheckSave(BaseModel):
         self.target = self.target.strip()
         if self.kind not in CHECK_KINDS:
             raise ValueError("Unknown check type.")
+        if self.kind == "push":
+            self.target = ""
         error = validate_target(self.kind, self.target)
         if error:
             raise ValueError(error)
+        if self.kind in SERVER_ONLY_KINDS and self.source_machine_id is not None:
+            raise ValueError(
+                f"A {self.kind.upper()} check runs from the debcontrol server only."
+            )
         self.expected_body = (self.expected_body or "").strip() or None
         self.unexpected_body = (self.unexpected_body or "").strip() or None
         self.json_path = (self.json_path or "").strip() or None
@@ -48,9 +55,10 @@ class EndpointCheckSave(BaseModel):
             self.json_expected = None
         if self.kind != "http":
             # Body/status assertions only mean something for HTTP — except
-            # a DNS check's expected address, kept in `expected_body`.
+            # a DNS check's expected address and the text an SSH banner must
+            # contain, both kept in `expected_body`.
             self.expected_status = None
-            if self.kind != "dns":
+            if self.kind not in ("dns", "ssh"):
                 self.expected_body = None
             self.unexpected_body = None
             self.json_path = None

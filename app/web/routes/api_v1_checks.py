@@ -23,7 +23,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.acknowledgement import AcknowledgeRequest
 from app.schemas.endpoint_check import EndpointCheckSave
-from app.services import acknowledgements, monitoring_history
+from app.services import acknowledgements, endpoint_checks, monitoring_history
 from app.services.access_scope import machines_visible_to, visible_machines_by_ids
 from app.services.endpoint_check_history import load_check_history
 from app.services.endpoint_sla import load_sla_report
@@ -34,11 +34,14 @@ _view = Depends(require_api_permission(Permission.MACHINE_VIEW))
 _manage = Depends(require_api_permission(Permission.MACHINE_MANAGE))
 
 
-def _to_dict(check: EndpointCheck) -> dict[str, Any]:
+def _to_dict(check: EndpointCheck, *, with_push_path: bool = False) -> dict[str, Any]:
+    """`with_push_path` adds a push check's heartbeat address — a secret,
+    returned only to `machine.manage` callers (create, update, new token)."""
+
     def iso(value: Any) -> str | None:
         return value.isoformat() if value else None
 
-    return {
+    data = {
         "id": str(check.id),
         "name": check.name,
         "kind": check.kind,
@@ -64,7 +67,11 @@ def _to_dict(check: EndpointCheck) -> dict[str, Any]:
         "last_latency_ms": check.last_latency_ms,
         "cert_expires_at": iso(check.cert_expires_at),
         "acknowledgement": acknowledgements.as_dict(check),
+        "last_push_at": iso(check.last_push_at),
     }
+    if with_push_path:
+        data["push_path"] = f"/push/{check.push_token}" if check.push_token else None
+    return data
 
 
 async def _require_visible_source(
@@ -131,6 +138,7 @@ async def create_check_api(
 ) -> dict[str, Any]:
     await _require_visible_source(db, user, payload.source_machine_id)
     check = EndpointCheck(**payload.model_dump())
+    endpoint_checks.sync_push_token(check)
     db.add(check)
     await db.commit()
     await log_event(
@@ -142,8 +150,9 @@ async def create_check_api(
         target_id=check.id,
         target_label=check.name,
     )
-    tasks.run_endpoint_check.delay(str(check.id))
-    return _to_dict(check)
+    if check.kind != "push":
+        tasks.run_endpoint_check.delay(str(check.id))
+    return _to_dict(check, with_push_path=True)
 
 
 @router.put("/{check_id}", dependencies=[_manage])
@@ -159,6 +168,7 @@ async def update_check_api(
         await _require_visible_source(db, user, payload.source_machine_id)
     for field, value in payload.model_dump().items():
         setattr(check, field, value)
+    endpoint_checks.sync_push_token(check)
     await db.commit()
     await log_event(
         db,
@@ -169,7 +179,35 @@ async def update_check_api(
         target_id=check.id,
         target_label=check.name,
     )
-    return _to_dict(check)
+    return _to_dict(check, with_push_path=True)
+
+
+@router.post("/{check_id}/push-token", dependencies=[_manage])
+async def rotate_push_token_api(
+    check_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Give a push check a new heartbeat address; the old one stops
+    working at once. The new one is `push_path` in the answer."""
+    check = await _get_or_404(check_id, db)
+    if check.kind != "push":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Not a push check."
+        )
+    check.push_token = endpoint_checks.new_push_token()
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="endpoint_check.push_token.rotate",
+        summary=f'Replaced the heartbeat address of check "{check.name}"',
+        target_type="endpoint_check",
+        target_id=check.id,
+        target_label=check.name,
+    )
+    return _to_dict(check, with_push_path=True)
 
 
 @router.delete("/{check_id}", dependencies=[_manage], status_code=status.HTTP_204_NO_CONTENT)

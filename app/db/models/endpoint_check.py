@@ -1,4 +1,5 @@
-"""One endpoint check (HTTP, TLS certificate, ping, TCP, DNS), run from
+"""One endpoint check (HTTP, TLS certificate, ping, TCP, DNS, SMTP, SSH,
+or a push heartbeat), run from
 the debcontrol server itself or, with `source_machine_id`, from a managed
 machine — see
 `app.services.endpoint_checks` for the probes and the notification
@@ -20,7 +21,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.db.models.machine import Machine
 
-CHECK_KINDS = ("http", "tls", "ping", "tcp", "dns")
+CHECK_KINDS = ("http", "tls", "ping", "tcp", "dns", "smtp", "ssh", "push")
+# Kinds that cannot be run from a managed machine (`source_machine_id`):
+# SMTP talks the protocol itself, and a push check is not probed at all.
+SERVER_ONLY_KINDS = ("smtp", "push")
 
 
 class EndpointCheck(Base):
@@ -33,7 +37,13 @@ class EndpointCheck(Base):
     # `target` as `host:port` (443 when no port), certificate expiry only.
     # "ping" (a host), "tcp" (`host:port`), "dns" (`name` or `name@server`,
     # `expected_body` = an address it must resolve to) — see
-    # app.services.network_probes.
+    # app.services.network_probes. "smtp" (`host[:port]`, 25 by default;
+    # 465 = implicit TLS) — the greeting, EHLO and STARTTLS, reporting the
+    # certificate's expiry like "tls". "ssh" (`host[:port]`, 22 by default)
+    # — the server's `SSH-` banner, `expected_body` = text it must contain.
+    # "push" (no target) — a heartbeat: something else calls
+    # `/push/<push_token>` at least every `interval_seconds`, and the check
+    # is down when it doesn't (see `app.services.endpoint_checks.push_overdue`).
     kind: Mapped[str] = mapped_column(String(8), nullable=False)
     target: Mapped[str] = mapped_column(String(500), nullable=False)
     # HTTP only: the exact status code that counts as up; None = any < 400.
@@ -73,6 +83,11 @@ class EndpointCheck(Base):
     # Warn this many days before the certificate expires.
     cert_warn_days: Mapped[int] = mapped_column(Integer, nullable=False, default=14)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Push checks only: the secret in the address that reports a heartbeat
+    # (`/push/<token>`); None for every other kind. Replaceable at any time.
+    push_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    # Push checks only: when the last heartbeat arrived.
+    last_push_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Latest result ---
     last_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)

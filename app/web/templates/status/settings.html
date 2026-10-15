@@ -31,6 +31,20 @@
     <input type="text" id="status-title" name="title" maxlength="120" value="{{ title }}"
            placeholder="{{ t(request, 'status_page.default_title') }}">
 
+    <label for="status-message">{{ t(request, "status_page.message") }}</label>
+    <textarea id="status-message" name="message" maxlength="500" rows="2">{{ message }}</textarea>
+    <p class="hint">{{ t(request, "status_page.message_hint") }}</p>
+
+    <label>
+      <input type="checkbox" name="show_latency" value="true" {{ 'checked' if show_latency else '' }}>
+      {{ t(request, "status_page.show_latency") }}
+    </label>
+    <label>
+      <input type="checkbox" name="show_history" value="true" {{ 'checked' if show_history else '' }}>
+      {{ t(request, "status_page.show_history", days=window_days) }}
+    </label>
+    <p class="hint">{{ t(request, "status_page.extras_hint") }}</p>
+
     <fieldset class="strategy-fields">
       <legend>{{ t(request, "status_page.checks") }}</legend>
       {% for check in checks %}

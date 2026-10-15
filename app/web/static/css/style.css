@@ -2463,3 +2463,14 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 /* --- The public status page (/status/<token>) --- */
 
 .status-container { max-width: 720px; padding-top: var(--space-7); }
+/* The status page's optional per-day history: one small bar per day,
+   coloured by that day's availability (app.services.status_page.Day.level). */
+.status-days-row td { padding-top: 0; border-top: none; }
+.data-table tr:has(+ .status-days-row) td { border-bottom: none; }
+.status-days { display: flex; gap: 2px; align-items: stretch; height: 1.5rem; }
+.status-day { flex: 1 1 0; min-width: 3px; border-radius: 2px; background: var(--color-border-strong); }
+.status-day-ok { background: var(--color-ok); }
+.status-day-warn { background: var(--color-warn); }
+.status-day-down { background: var(--color-danger); }
+.status-legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.status-legend .status-day { display: inline-block; flex: none; width: 0.75rem; height: 0.75rem; }
