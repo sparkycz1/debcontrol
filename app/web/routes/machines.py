@@ -11,6 +11,7 @@ The routes themselves live in one module per area, each with its own
 - `machines_updates` — the Updates tab: check, preview, run, roll back,
   holds, changelog, run history.
 - `machines_monitoring` — the Monitoring tab and its "Refresh now".
+- `machines_security` — the Security tab: Lynis security audits.
 - `machines_logs` — the Logs tab, saved log views, the file browser, and
   the Terminal page.
 
@@ -26,6 +27,7 @@ from app.web.routes import (
     machines_list,
     machines_logs,
     machines_monitoring,
+    machines_security,
     machines_updates,
 )
 
@@ -37,4 +39,5 @@ router.include_router(machines_detail.router)
 router.include_router(machines_updates.router)
 router.include_router(machines_files.router)
 router.include_router(machines_monitoring.router)
+router.include_router(machines_security.router)
 router.include_router(machines_logs.router)

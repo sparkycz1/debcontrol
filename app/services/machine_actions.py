@@ -14,12 +14,14 @@ handler and from inside a background task.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.machine import Machine
 from app.db.models.machine_update_run import MachineUpdateRun, UpgradeStrategy
-from app.services import self_host
+from app.db.models.security_audit import SecurityAudit
+from app.services import security_audit, self_host
 from app.ssh.power import PowerAction
 from app.tasks.jobs import (
     check_machine_readiness,
@@ -30,6 +32,7 @@ from app.tasks.jobs import (
     release_held_runs,
     run_machine_update,
     run_remote_ssh_command,
+    run_security_audit,
     sample_machine_monitoring,
     send_machine_power_command,
     wake_machine,
@@ -175,3 +178,35 @@ async def wake_machines(machines: list[Machine]) -> int:
     for machine in eligible:
         wake_machine.delay(str(machine.id))
     return len(machines) - len(eligible)
+
+
+async def trigger_security_audits(
+    db: AsyncSession,
+    machines: list[Machine],
+    *,
+    install_if_missing: bool = False,
+    started_by: str | None = None,
+) -> tuple[list[SecurityAudit], int]:
+    """Create one pending Lynis `SecurityAudit` per eligible machine (a
+    pinned host key, no audit already under way), commit, then enqueue a
+    task for each. Returns (the new audits, skipped count)."""
+    eligible = [
+        m
+        for m in machines
+        if m.host_key_fingerprint and not await security_audit.has_active(db, m.id)
+    ]
+    now = datetime.now(UTC)
+    audits = [
+        SecurityAudit(
+            machine_id=m.id,
+            install_if_missing=install_if_missing,
+            started_by=started_by,
+            created_at=now,
+        )
+        for m in eligible
+    ]
+    db.add_all(audits)
+    await db.commit()
+    for audit in audits:
+        run_security_audit.delay(str(audit.id))
+    return audits, len(machines) - len(eligible)

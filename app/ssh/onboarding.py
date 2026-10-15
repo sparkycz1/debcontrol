@@ -49,6 +49,8 @@ ONBOARD_USERNAME = "debcontrol"
 # differ. A path that doesn't exist on a machine is simply unused (sudoers
 # accepts it), and a grant missing on a machine onboarded before it existed
 # is harmless — `sudo -n ...` just fails and that one reading is skipped.
+# lynis — the security audit (app.ssh.lynis, 0.112.0+); without the grant
+# it runs unprivileged and skips the tests that need root.
 SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/apt-get",
     "/usr/sbin/shutdown",
@@ -62,6 +64,8 @@ SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/sbin/proxmox-backup-manager",
     "/usr/bin/pmgsh",
     "/usr/sbin/postqueue",
+    "/usr/sbin/lynis",
+    "/usr/bin/lynis",
 )
 SUDO_COMMAND_LIST = ", ".join(SUDO_COMMANDS)
 
