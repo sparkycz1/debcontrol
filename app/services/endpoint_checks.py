@@ -14,8 +14,20 @@ Probes:
   when verification fails (expired/self-signed), via a second, unverified
   handshake, so an expired certificate still reports *when* it expired.
 
-Plus ICMP ping, TCP port and DNS checks (`app.services.network_probes`).
-Every kind also fails when it answered slower than `max_latency_ms`.
+- `probe_smtp` — an SMTP conversation up to STARTTLS (or implicit TLS on
+  port 465): the greeting and EHLO must be answered, and when the server
+  offers TLS its certificate's expiry is reported like a TLS check's.
+  Nothing is sent beyond EHLO, STARTTLS and QUIT.
+
+Plus ICMP ping, TCP port, DNS and SSH banner checks
+(`app.services.network_probes`). Every kind also fails when it answered
+slower than `max_latency_ms`.
+
+A **push** check is the one kind nothing probes: something else (a backup
+script, a cron job) calls `/push/<token>` (`app/web/routes/check_push.py`)
+at least every `interval_seconds`, and `push_overdue` says when it hasn't —
+`app.tasks.jobs` then records a failure, once per interval, and a single
+missed heartbeat is already an outage (`failures_before_down`).
 
 Targets are admin-configured (`machine.manage`) and requested from the
 debcontrol host, the same trust level as a notification webhook URL.
@@ -26,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import secrets
 import ssl
 import time
 from dataclasses import dataclass
@@ -86,6 +99,8 @@ def parse_tls_target(target: str) -> tuple[str, int]:
 def validate_target(kind: str, target: str) -> str | None:
     """An error message, or None if `target` fits `kind`."""
     value = target.strip()
+    if kind == "push":
+        return None  # no target: the check is told, not probed
     if not value:
         return "Target is required."
     if kind == "http":
@@ -103,7 +118,7 @@ def validate_target(kind: str, target: str) -> str | None:
         if not host or not 0 < port < 65536:
             return "Invalid host or port."
         return None
-    if kind in ("ping", "tcp", "dns"):
+    if kind in ("ping", "tcp", "dns", "ssh", "smtp"):
         return network_probes.validate_target(kind, value)
     return "Unknown check type."
 
@@ -115,10 +130,7 @@ def _not_after(der: bytes | None) -> datetime | None:
 
 
 async def _handshake(host: str, port: int, timeout_seconds: float, verify: bool) -> bytes | None:
-    context = ssl.create_default_context()
-    if not verify:
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+    context = _tls_context(verify)
     _reader, writer = await asyncio.wait_for(
         asyncio.open_connection(host, port, ssl=context, server_hostname=host), timeout_seconds
     )
@@ -149,6 +161,184 @@ async def probe_tls(target: str, timeout_seconds: float, verify: bool = True) ->
         return ProbeResult(ok=False, error="Timed out.")
     except (OSError, ssl.SSLError, ValueError) as exc:
         return ProbeResult(ok=False, error=str(exc) or exc.__class__.__name__)
+
+
+# --- SMTP ---------------------------------------------------------------------
+
+# Port 465 is SMTP over TLS from the first byte ("submissions"); every other
+# port starts in plain text and may offer STARTTLS.
+SMTP_IMPLICIT_TLS_PORT = 465
+_SMTP_MAX_REPLY_LINES = 100
+
+
+async def _smtp_reply(reader: asyncio.StreamReader) -> tuple[int, list[str]]:
+    """One (possibly multi-line) SMTP reply: its code and the text of each
+    line."""
+    lines: list[str] = []
+    while len(lines) < _SMTP_MAX_REPLY_LINES:
+        raw = await reader.readline()
+        if not raw:
+            raise ConnectionError("The server closed the connection.")
+        line = raw.decode("utf-8", "replace").rstrip("\r\n")
+        if len(line) < 3 or not line[:3].isdigit():
+            raise ValueError(f"Not an SMTP reply: {line[:100]}")
+        lines.append(line[4:])
+        if len(line) == 3 or line[3] != "-":
+            return int(line[:3]), lines
+    raise ValueError("The SMTP reply is too long.")
+
+
+async def _smtp_command(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, command: str
+) -> tuple[int, list[str]]:
+    writer.write(command.encode() + b"\r\n")
+    await writer.drain()
+    return await _smtp_reply(reader)
+
+
+def _tls_context(verify: bool) -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    if not verify:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def _peer_der(writer: asyncio.StreamWriter) -> bytes | None:
+    ssl_object = writer.get_extra_info("ssl_object")
+    return ssl_object.getpeercert(binary_form=True) if ssl_object else None
+
+
+async def _smtp_session(
+    host: str, port: int, timeout_seconds: float, verify: bool
+) -> tuple[bytes | None, str | None]:
+    """(the certificate, if the server offered TLS; a problem, or None).
+    Raises on a connection or TLS failure."""
+    implicit = port == SMTP_IMPLICIT_TLS_PORT
+    context = _tls_context(verify)
+    async with asyncio.timeout(timeout_seconds):
+        reader, writer = await asyncio.open_connection(
+            host,
+            port,
+            ssl=context if implicit else None,
+            server_hostname=host if implicit else None,
+        )
+        try:
+            code, lines = await _smtp_reply(reader)
+            if code != 220:
+                return None, f"SMTP greeting {code} {lines[-1][:200]}".strip()
+            code, lines = await _smtp_command(reader, writer, "EHLO debcontrol")
+            if code != 250:
+                return None, f"EHLO answered {code} {lines[-1][:200]}".strip()
+            der: bytes | None = None
+            if implicit:
+                der = _peer_der(writer)
+            elif any(line.strip().upper() == "STARTTLS" for line in lines[1:]):
+                code, lines = await _smtp_command(reader, writer, "STARTTLS")
+                if code != 220:
+                    return None, f"STARTTLS answered {code} {lines[-1][:200]}".strip()
+                await writer.start_tls(context, server_hostname=host)
+                der = _peer_der(writer)
+            with contextlib.suppress(Exception):
+                await _smtp_command(reader, writer, "QUIT")
+            return der, None
+        finally:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+
+async def probe_smtp(target: str, timeout_seconds: float, verify: bool = True) -> ProbeResult:
+    host, port = network_probes.host_and_port("smtp", target)
+    started = time.perf_counter()
+    try:
+        der, problem = await _smtp_session(host, port, timeout_seconds, verify)
+    except ssl.SSLCertVerificationError as exc:
+        expires: datetime | None = None
+        with contextlib.suppress(Exception):
+            expires = _not_after((await _smtp_session(host, port, timeout_seconds, False))[0])
+        return ProbeResult(
+            ok=False, error=f"Certificate: {exc.verify_message}", cert_expires_at=expires
+        )
+    except TimeoutError:
+        return ProbeResult(ok=False, error="Timed out.")
+    except (OSError, ssl.SSLError, ValueError) as exc:
+        return ProbeResult(ok=False, error=str(exc) or exc.__class__.__name__)
+    latency = round((time.perf_counter() - started) * 1000, 1)
+    return ProbeResult(
+        ok=problem is None, error=problem, latency_ms=latency, cert_expires_at=_not_after(der)
+    )
+
+
+# --- Push (heartbeat) ----------------------------------------------------------
+
+# How late a heartbeat may be before the check is down: a tenth of the
+# interval, at least a minute — a job that runs every 5 minutes and took a
+# little longer this time is not an outage.
+PUSH_MIN_GRACE_SECONDS = 60
+
+
+def new_push_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def sync_push_token(check: EndpointCheck) -> None:
+    """A push check has a token; every other kind has none (and forgets
+    its heartbeats when it stops being a push check)."""
+    if check.kind == "push":
+        if not check.push_token:
+            check.push_token = new_push_token()
+    else:
+        check.push_token = None
+        check.last_push_at = None
+
+
+def push_grace_seconds(check: EndpointCheck) -> int:
+    return max(PUSH_MIN_GRACE_SECONDS, check.interval_seconds // 10)
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def push_overdue(check: EndpointCheck, now: datetime) -> bool:
+    """Whether the next heartbeat should have arrived by `now` — counted
+    from the last one, or from when the check was created."""
+    last = check.last_push_at or check.created_at
+    if last is None:
+        return False
+    limit = timedelta(seconds=check.interval_seconds + push_grace_seconds(check))
+    return now - _aware(last) > limit
+
+
+def evaluate_push(check: EndpointCheck, now: datetime) -> ProbeResult | None:
+    """A push check's state at `now`: a failure when a heartbeat is
+    overdue, the last heartbeat's own verdict while it is still fresh, or
+    None when none has arrived yet and none is due — nothing to record."""
+    if push_overdue(check, now):
+        if check.last_push_at is None:
+            return ProbeResult(ok=False, error="No heartbeat has arrived yet.")
+        since = _aware(check.last_push_at).strftime("%Y-%m-%d %H:%M UTC")
+        return ProbeResult(ok=False, error=f"No heartbeat since {since}.")
+    if check.last_push_at is None:
+        return None
+    if check.last_ok is False:
+        return ProbeResult(ok=False, error=check.last_error)
+    return ProbeResult(ok=True)
+
+
+def push_result(ok: bool, message: str | None) -> ProbeResult:
+    """What one heartbeat reports: up, or down with its own message."""
+    text = (message or "").strip()[:200]
+    if ok:
+        return ProbeResult(ok=True)
+    return ProbeResult(ok=False, error=f"Reported down: {text}" if text else "Reported down.")
+
+
+def failures_before_down(check: EndpointCheck) -> int:
+    """A missed or failed heartbeat is not a blip to wait out — the job
+    either ran or it didn't."""
+    return 1 if check.kind == "push" else FAILURES_BEFORE_DOWN
 
 
 async def _read_body_prefix(response: httpx2.Response) -> str:
@@ -285,6 +475,13 @@ async def run_probe(check: EndpointCheck) -> ProbeResult:
         )
     elif check.kind == "tls":
         result = await probe_tls(check.target, check.timeout_seconds, check.verify_tls)
+    elif check.kind == "smtp":
+        result = await probe_smtp(check.target, check.timeout_seconds, check.verify_tls)
+    elif check.kind == "push":
+        # Not probed; "Run now" re-evaluates the heartbeat instead.
+        result = evaluate_push(check, datetime.now(UTC)) or ProbeResult(
+            ok=False, error="No heartbeat has arrived yet."
+        )
     else:
         if check.kind == "ping":
             ok, error, latency = await network_probes.probe_ping(
@@ -292,6 +489,10 @@ async def run_probe(check: EndpointCheck) -> ProbeResult:
             )
         elif check.kind == "tcp":
             ok, error, latency = await network_probes.probe_tcp(check.target, check.timeout_seconds)
+        elif check.kind == "ssh":
+            ok, error, latency = await network_probes.probe_ssh(
+                check.target, check.timeout_seconds, check.expected_body
+            )
         else:
             ok, error, latency = await network_probes.probe_dns(
                 check.target, check.timeout_seconds, check.expected_body
@@ -304,7 +505,7 @@ def apply_result(
     check: EndpointCheck, result: ProbeResult, now: datetime
 ) -> list[tuple[NotificationEventType, dict[str, str]]]:
     """Store `result` on `check` and return the notification events it
-    triggers: ENDPOINT_DOWN on reaching `FAILURES_BEFORE_DOWN` consecutive
+    triggers: ENDPOINT_DOWN on reaching `failures_before_down` consecutive
     failures, ENDPOINT_RECOVERED on the first success after an announced
     outage, CERT_EXPIRING once per certificate when it's within
     `cert_warn_days` of expiry (or already expired)."""
@@ -331,7 +532,7 @@ def apply_result(
         acknowledgements.clear(check)
     else:
         check.consecutive_failures += 1
-        if check.consecutive_failures >= FAILURES_BEFORE_DOWN and not check.down_notified:
+        if check.consecutive_failures >= failures_before_down(check) and not check.down_notified:
             check.down_notified = True
             events.append((NotificationEventType.ENDPOINT_DOWN, context))
 
@@ -356,6 +557,10 @@ def apply_result(
 
 def is_due(check: EndpointCheck, now: datetime) -> bool:
     if not check.enabled:
+        return False
+    if check.kind == "push" and not push_overdue(check, now):
+        # Nothing to look at while heartbeats arrive on time; an overdue
+        # one is recorded once per interval for as long as it stays away.
         return False
     if check.last_checked_at is None:
         return True

@@ -87,6 +87,9 @@ async def status_page_settings(
         {
             "enabled": app_settings.status_page_enabled,
             "title": app_settings.status_page_title or "",
+            "message": app_settings.status_page_message or "",
+            "show_latency": app_settings.status_page_show_latency,
+            "show_history": app_settings.status_page_show_history,
             "token": app_settings.status_page_token,
             "checks": list(checks.scalars().all()),
             "machines": [(row[0], row[1]) for row in machine_rows.all()],
@@ -122,6 +125,9 @@ async def save_status_page(
     current_user: User = Depends(get_current_user),
     enabled: bool = Form(False),
     title: str = Form(""),
+    message: str = Form(""),
+    show_latency: bool = Form(False),
+    show_history: bool = Form(False),
     check_ids: list[str] = Form(default=[]),
     machine_ids: list[str] = Form(default=[]),
     new_link: bool = Form(False),
@@ -142,6 +148,9 @@ async def save_status_page(
 
     app_settings.status_page_enabled = enabled
     app_settings.status_page_title = title.strip()[:120] or None
+    app_settings.status_page_message = message.strip()[:500] or None
+    app_settings.status_page_show_latency = show_latency
+    app_settings.status_page_show_history = show_history
     app_settings.status_page_check_ids = _uuids(check_ids)
     app_settings.status_page_machine_ids = (kept + chosen)[: status_page.MAX_ITEMS]
     replaced = bool(new_link and app_settings.status_page_token)
@@ -159,6 +168,9 @@ async def save_status_page(
             "checks": len(app_settings.status_page_check_ids or []),
             "machine_count": len(app_settings.status_page_machine_ids or []),
             "link_replaced": replaced,
+            "show_latency": show_latency,
+            "show_history": show_history,
+            "message": bool(app_settings.status_page_message),
         },
     )
     return RedirectResponse(

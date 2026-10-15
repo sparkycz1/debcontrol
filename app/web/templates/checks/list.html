@@ -48,7 +48,9 @@
               <td><a href="/checks/{{ c.id }}"><strong>{{ c.name }}</strong></a>{% if c.last_ok is sameas false and c.last_error %}<div class="table-summary">{{ c.last_error }}</div>{% endif %}</td>
               <td><span class="badge">{{ c.kind | upper }}</span></td>
               <td class="cell-truncate" title="{{ c.target }}">
-                <code>{{ c.target }}</code>
+                {% if c.kind == 'push' %}
+                  <span class="table-muted">{{ t(request, "checks.push.last", when=(c.last_push_at | local_time('%Y-%m-%d %H:%M'))) if c.last_push_at else t(request, "checks.push.none_yet") }}</span>
+                {% else %}<code>{{ c.target }}</code>{% endif %}
                 {% if c.source_machine %}<div class="table-summary">{{ t(request, "checks.from_machine", machine=c.source_machine.name) }}</div>{% endif %}
               </td>
               <td>

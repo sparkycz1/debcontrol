@@ -176,6 +176,18 @@ class AppSettings(Base):
     status_page_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status_page_check_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     status_page_machine_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # What else the page shows, both off by default: each item's response
+    # time (latest and 24-hour average), and a bar per day of the last
+    # `status_page.WINDOW_DAYS` days with that day's availability.
+    status_page_show_latency: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    status_page_show_history: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # A notice at the top of the page ("Planned maintenance on Saturday
+    # 22:00-23:00"); None = none.
+    status_page_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Same idea again, for `NotificationLog` rows (app.tasks.jobs.
     # purge_old_notification_logs) — one row per actual send attempt (per
