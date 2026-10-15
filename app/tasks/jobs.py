@@ -2250,8 +2250,8 @@ async def _heartbeat(run_id: uuid.UUID) -> AsyncIterator[None]:
         yield
     finally:
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        # Wait for the cancellation to land (never raises).
+        await asyncio.wait({task})
 
 
 def _run_deadline_seconds(run: MachineUpdateRun, timeout_seconds: int) -> float:
