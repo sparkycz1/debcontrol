@@ -9,7 +9,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, false, func
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, false, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -51,7 +51,16 @@ class MachineUpdateRun(Base):
     (see `app.ssh.updates.build_update_command`)."""
 
     __tablename__ = "machine_update_runs"
-    __table_args__ = (Index("ix_machine_update_runs_batch_id", "batch_id"),)
+    __table_args__ = (
+        Index("ix_machine_update_runs_batch_id", "batch_id"),
+        # The few runs not over yet — what `_reconcile_update_runs` looks
+        # at every minute, however long the history grows.
+        Index(
+            "ix_machine_update_runs_open",
+            "status",
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
@@ -135,6 +144,15 @@ class MachineUpdateRun(Base):
     rollback_of_run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("machine_update_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # The update's detached job on the machine (app.ssh.detached_updates),
+    # named after this run — set right before it is started, so a run
+    # whose task stopped can read how its job ended. NULL for a run started
+    # before updates ran detached, or stopped before its job started.
+    remote_job: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Refreshed every few seconds by the task following the run; one gone
+    # quiet is resumed by app.tasks.jobs._reconcile_update_runs.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)

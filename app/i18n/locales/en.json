@@ -2324,6 +2324,7 @@
     "machine.update_run.state.failed": "failed",
     "machine.connection_heading": "Connection",
     "audit.action_label.machine_update_runs.reap": "Abandoned update runs closed",
+    "audit.action_label.machine_update_runs.resume": "Lost update runs picked up again",
     "recordings.title": "Terminal recordings",
     "recordings.intro": "Recorded browser terminal sessions: what each session printed, replayed as it happened. Keystrokes are never recorded, so a password typed at a prompt is not here. Watching a recording is written to the audit log.",
     "recordings.status_on": "Recording is on.",

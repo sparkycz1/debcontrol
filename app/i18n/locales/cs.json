@@ -2369,6 +2369,7 @@
     "machine.update_run.state.failed": "selhalo",
     "machine.connection_heading": "Připojení",
     "audit.action_label.machine_update_runs.reap": "Uzavřeny opuštěné běhy aktualizací",
+    "audit.action_label.machine_update_runs.resume": "Ztracené běhy aktualizací znovu převzaty",
     "recordings.title": "Záznamy terminálu",
     "recordings.intro": "Zaznamenané relace terminálu v prohlížeči: co která relace vypsala, přehrané tak, jak to proběhlo. Stisky kláves se nikdy nezaznamenávají, takže heslo zadané na výzvu tu není. Přehrání záznamu se zapisuje do auditního logu.",
     "recordings.status_on": "Záznam je zapnutý.",
