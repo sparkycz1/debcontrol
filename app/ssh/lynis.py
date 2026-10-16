@@ -226,8 +226,8 @@ def parse_audit_output(text: str) -> LynisResult:
             continue
         if section == "head":
             if line in _HEAD_FLAGS:
-                attr, value = _HEAD_FLAGS[line]
-                setattr(result, attr, value)
+                attr, flag = _HEAD_FLAGS[line]
+                setattr(result, attr, flag)
             elif line.startswith(EXIT_MARKER):
                 result.exit_status = _int(line[len(EXIT_MARKER) :])
             continue
