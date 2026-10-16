@@ -2593,7 +2593,7 @@
     "security_audit.title": "Security audit",
     "security_audit.intro": "A security audit with Lynis (lynis audit system), run on the machine itself: a hardening index from 0 to 100, warnings to look at first, and suggestions for hardening the system. Nothing is changed on the machine; Lynis only reads.",
     "security_audit.fleet_intro": "The newest Lynis security audit of every machine you can see, lowest hardening index first. A warning is something to fix; a suggestion is a hardening step worth considering.",
-    "security_audit.install_if_missing": "Install Lynis with apt-get where it is missing",
+    "security_audit.install_if_missing": "Install or update Lynis from CISOfy's repository first",
     "security_audit.run_now": "Run audit now",
     "security_audit.run_hint": "Lynis usually needs one to five minutes. It runs as root through the sudo rule for lynis (or as root itself); without it, it runs unprivileged and skips the tests that need root.",
     "security_audit.run_all": "Audit all machines",
@@ -2602,7 +2602,7 @@
     "security_audit.latest_run": "Latest run",
     "security_audit.running_hint": "The audit is running; this page updates by itself.",
     "security_audit.interrupted_hint": "This audit never finished (the worker was restarted, or the machine debcontrol runs on was being upgraded). Run it again.",
-    "security_audit.missing_hint": "Lynis has to be installed on the machine: tick “Install Lynis with apt-get where it is missing”, or install it yourself (package lynis, or CISOfy's own repository for the newest version).",
+    "security_audit.missing_hint": "Lynis has to be installed on the machine: tick “Install or update Lynis from CISOfy's repository first”, or install it yourself (CISOfy's repository for the newest version, or the distribution's lynis package).",
     "security_audit.hardening_index": "Hardening index",
     "security_audit.tests_done": "{count} tests",
     "security_audit.unprivileged": "Lynis ran without root (the machine's account has no sudo rule for lynis), so the tests that need root were skipped and the index is not comparable with a full audit. Re-run onboarding, or add /usr/sbin/lynis to the account's sudo rule.",
@@ -2633,8 +2633,8 @@
     "audit.action_label.machines.bulk.security_audit.run": "Security audit started (all machines)",
     "scheduling.action.security_audit.label": "Security audit (Lynis)",
     "scheduling.action.security_audit.description": "Runs lynis audit system on each targeted machine and keeps the hardening index, warnings and suggestions (Security → Audit). Machines with an audit still running are skipped.",
-    "scheduling.param.install": "Install Lynis where missing",
+    "scheduling.param.install": "Install or update Lynis first",
     "scheduling.choice.install.no": "No",
-    "scheduling.choice.install.yes": "Yes, with apt-get"
+    "scheduling.choice.install.yes": "Yes, from CISOfy's repository"
   }
 }

@@ -68,6 +68,35 @@
         name: ncurses-term
         state: present
 
+    - name: Add CISOfy's Lynis repository (current Lynis for security audits)
+      # The distributions ship old Lynis releases; from CISOfy's signed
+      # repository the newest arrives with ordinary updates. Best effort,
+      # like the built-in onboarding: a machine that cannot reach
+      # packages.cisofy.com gets the repository removed again, so it never
+      # breaks later apt updates.
+      block:
+        - name: Add the repository
+          ansible.builtin.deb822_repository:
+            name: cisofy-lynis
+            types: deb
+            uris: https://packages.cisofy.com/community/lynis/deb/
+            suites: stable
+            components: main
+            signed_by: https://packages.cisofy.com/keys/cisofy-software-public.key
+        - name: Fetch its package list
+          ansible.builtin.apt:
+            update_cache: true
+        - name: Check that Lynis is offered from it
+          ansible.builtin.command: apt-cache policy lynis
+          register: cisofy_lynis_policy
+          changed_when: false
+          failed_when: "'packages.cisofy.com' not in cisofy_lynis_policy.stdout"
+      rescue:
+        - name: Remove the unreachable repository again
+          ansible.builtin.deb822_repository:
+            name: cisofy-lynis
+            state: absent
+
     - name: Create the dedicated debcontrol user
       ansible.builtin.user:
         name: "{{ debcontrol_user }}"

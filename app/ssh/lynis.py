@@ -2,12 +2,17 @@
 the one shell script that runs `lynis audit system` there, and the parser
 for the report it leaves behind.
 
-**Which Lynis.** The one installed on the machine (the distribution's
-`lynis` package, or CISOfy's own repository): debcontrol uploads nothing
-and runs no code of its own as root. When there is none and the run asks
-for it, `apt-get install lynis` first (apt-get is already in the
-onboarding sudoers grant); a machine without apt just reports that Lynis
-is missing.
+**Which Lynis.** The one installed on the machine: debcontrol uploads
+nothing and runs no code of its own as root. The distributions ship old
+releases, so debcontrol prefers CISOfy's own signed apt repository
+(`CISOFY_REPO_SETUP`, added by onboarding from 0.115.0, which runs as
+root): from there the newest Lynis arrives with ordinary system updates.
+A run that asks to install (`install_if_missing`) runs `apt-get install
+lynis` first, which installs it or upgrades an older one; connected as
+root it also adds that repository when missing. A scoped sudo account may
+run apt-get but not write apt's sources, so there it uses whatever
+repositories the machine has (CISOfy's, once onboarding added it). A
+machine without apt just reports that Lynis is missing.
 
 **Root.** Lynis is run as `sudo -n <lynis>` when the account has a grant
 for that exact path (`/usr/sbin/lynis` and `/usr/bin/lynis` are in
@@ -39,6 +44,7 @@ from app.ssh.exceptions import SSHConnectionError
 
 MISSING_MARKER = "DEBCONTROL_LYNIS_MISSING"
 INSTALL_FAILED_MARKER = "DEBCONTROL_LYNIS_INSTALL_FAILED"
+CISOFY_FAILED_MARKER = "DEBCONTROL_LYNIS_CISOFY_FAILED"
 PRIVILEGED_MARKER = "DEBCONTROL_LYNIS_PRIVILEGED"
 UNPRIVILEGED_MARKER = "DEBCONTROL_LYNIS_UNPRIVILEGED"
 EXIT_MARKER = "DEBCONTROL_LYNIS_EXIT="
@@ -49,6 +55,42 @@ OUTPUT_DELIMITER = "===DEBCONTROL_LYNIS_OUTPUT==="
 # non-login SSH session often has no /usr/sbin in its PATH, and the sudo
 # grant names exact paths.
 _LYNIS_PATHS = ("/usr/sbin/lynis", "/usr/bin/lynis", "/usr/local/bin/lynis")
+
+CISOFY_KEY_URL = "https://packages.cisofy.com/keys/cisofy-software-public.key"
+CISOFY_REPO_URL = "https://packages.cisofy.com/community/lynis/deb/"
+_CISOFY_LIST = "/etc/apt/sources.list.d/cisofy-lynis.list"
+
+# Adds CISOfy's Lynis repository, as root, on an apt machine that does not
+# have it yet: the signing key (armored or binary, named to match, as apt's
+# `signed-by` requires) and a source restricted to that key. The new source
+# is fetched once on its own; if that fails (no route to packages.cisofy.com,
+# a proxy) the key and source are removed again, so a repository the
+# machine cannot reach never makes every later `apt-get update` (and so
+# every update run) fail. Exits non-zero when the repository is not usable;
+# idempotent (a repository already configured is left as it is).
+CISOFY_REPO_SETUP = (
+    "("
+    "command -v apt-get >/dev/null 2>&1 || exit 1; "
+    # Already configured, by us, by the Ansible playbook (a .sources file)
+    # or by hand: a second entry with another key would break apt.
+    "grep -rqs packages.cisofy.com /etc/apt/sources.list /etc/apt/sources.list.d/ && exit 0; "
+    "K=/etc/apt/keyrings/cisofy-software-public; "
+    "install -d -m 755 /etc/apt/keyrings || exit 1; "
+    f'{{ curl -fsSL "{CISOFY_KEY_URL}" -o "$K.tmp" 2>/dev/null '
+    f'|| wget -qO "$K.tmp" "{CISOFY_KEY_URL}" 2>/dev/null; }}; '
+    '[ -s "$K.tmp" ] || { rm -f "$K.tmp"; exit 1; }; '
+    'if grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$K.tmp"; then KF="$K.asc"; else KF="$K.gpg"; fi; '
+    'mv "$K.tmp" "$KF" && chmod 644 "$KF" || exit 1; '
+    f'echo "deb [signed-by=$KF] {CISOFY_REPO_URL} stable main" > {_CISOFY_LIST}; '
+    # `apt-get update` exits 0 also when a source failed to download or
+    # verify; only Lynis showing up from that source proves it works.
+    "apt-get -q update "
+    f"-o Dir::Etc::sourcelist={_CISOFY_LIST} -o Dir::Etc::sourceparts=- "
+    "-o APT::Get::List-Cleanup=0 >/dev/null 2>&1; "
+    "apt-cache policy lynis 2>/dev/null | grep -q packages.cisofy.com && exit 0; "
+    f'rm -f {_CISOFY_LIST} "$KF"; exit 1'
+    ")"
+)
 
 # The report lines that leave the machine (an extended regex for `grep -E`).
 _REPORT_LINES = r"^(lynis_version|hardening_index|lynis_tests_done|warning\[\]|suggestion\[\])="
@@ -71,12 +113,21 @@ def build_audit_command(*, install_if_missing: bool) -> str:
     install = ""
     if install_if_missing:
         install = (
-            'if [ -z "$L" ] && command -v apt-get >/dev/null 2>&1; then '
             "export DEBIAN_FRONTEND=noninteractive; "
-            "(sudo -n apt-get -q update >/dev/null 2>&1 || apt-get -q update >/dev/null 2>&1); "
-            "(sudo -n apt-get -y -q install lynis >/dev/null 2>&1 "
-            "|| apt-get -y -q install lynis >/dev/null 2>&1) "
-            f"|| echo {INSTALL_FAILED_MARKER}; "
+            # Root: CISOfy's repository, then install or upgrade from it.
+            'if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then '
+            f"{CISOFY_REPO_SETUP} || echo {CISOFY_FAILED_MARKER}; "
+            "apt-get -q update >/dev/null 2>&1; "
+            "apt-get -y -q install lynis >/dev/null 2>&1 "
+            f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
+            f"{find}"
+            # A scoped sudo account: install or upgrade from the
+            # repositories the machine already has (CISOfy's, once
+            # onboarding added it).
+            "elif command -v apt-get >/dev/null 2>&1; then "
+            "sudo -n apt-get -q update >/dev/null 2>&1; "
+            "sudo -n apt-get -y -q install lynis >/dev/null 2>&1 "
+            f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
             f"{find}"
             "fi; "
         )
@@ -121,6 +172,9 @@ def _finding(value: str) -> dict[str, str] | None:
 class LynisResult:
     missing: bool = False
     install_failed: bool = False
+    # Connected as root and asked to install, but CISOfy's repository could
+    # not be added (Lynis may still have come from the distribution).
+    cisofy_failed: bool = False
     privileged: bool | None = None
     exit_status: int | None = None
     version: str | None = None
@@ -144,6 +198,16 @@ def _int(value: str) -> int | None:
         return None
 
 
+# A head marker line → the `LynisResult` field it sets, and to what.
+_HEAD_FLAGS: dict[str, tuple[str, bool]] = {
+    MISSING_MARKER: ("missing", True),
+    INSTALL_FAILED_MARKER: ("install_failed", True),
+    CISOFY_FAILED_MARKER: ("cisofy_failed", True),
+    PRIVILEGED_MARKER: ("privileged", True),
+    UNPRIVILEGED_MARKER: ("privileged", False),
+}
+
+
 def parse_audit_output(text: str) -> LynisResult:
     result = LynisResult()
     section = "head"
@@ -161,14 +225,9 @@ def parse_audit_output(text: str) -> LynisResult:
             output_lines.append(line)
             continue
         if section == "head":
-            if line == MISSING_MARKER:
-                result.missing = True
-            elif line == INSTALL_FAILED_MARKER:
-                result.install_failed = True
-            elif line == PRIVILEGED_MARKER:
-                result.privileged = True
-            elif line == UNPRIVILEGED_MARKER:
-                result.privileged = False
+            if line in _HEAD_FLAGS:
+                attr, value = _HEAD_FLAGS[line]
+                setattr(result, attr, value)
             elif line.startswith(EXIT_MARKER):
                 result.exit_status = _int(line[len(EXIT_MARKER) :])
             continue

@@ -3341,12 +3341,19 @@ async def _run_security_audit(audit_id: str) -> None:
             audit.tests_done = result.tests_done
             audit.warnings = result.warnings
             audit.suggestions = result.suggestions
+            if result.cisofy_failed:
+                logger.info(
+                    "Security audit of %s: CISOfy's Lynis repository could not be added",
+                    machine.name,
+                )
             if result.missing:
                 error = (
                     "Lynis could not be installed on this machine."
                     if result.install_failed
                     else "Lynis is not installed on this machine."
                 )
+                if result.cisofy_failed:
+                    error += " CISOfy's repository (packages.cisofy.com) was not reachable."
             elif not result.usable:
                 error = (
                     f"Lynis exited with status {result.exit_status} without a report: "
