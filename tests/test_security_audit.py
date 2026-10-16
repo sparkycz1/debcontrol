@@ -20,7 +20,7 @@ from app.scheduling.builtin_actions import register_builtin_actions
 from app.services import security_audit
 from app.ssh import lynis
 from app.ssh.lynis import LynisResult, build_audit_command, parse_audit_output
-from app.ssh.onboarding import SUDO_COMMANDS
+from app.ssh.onboarding import SUDO_COMMANDS, build_onboarding_command
 from app.tasks import jobs
 from tests.test_homelab_round import _add_machine
 from tests.test_update_history import _api_token
@@ -87,8 +87,20 @@ def test_the_script_is_valid_shell_and_installs_only_when_asked() -> None:
         assert 'sudo -n -l "$L"' in command and "--report-file" in command
     assert "apt-get" not in plain
     assert "sudo -n apt-get -y -q install lynis" in install
+    # Connected as root, CISOfy's repository is added first.
+    assert lynis.CISOFY_REPO_SETUP in install and lynis.CISOFY_REPO_URL in install
     # Lynis can only run as root through a grant for its exact path.
     assert "/usr/sbin/lynis" in SUDO_COMMANDS
+
+
+def test_onboarding_adds_cisofy_repository_best_effort() -> None:
+    command = build_onboarding_command("ssh-ed25519 AAAA test")
+
+    subprocess.run(["sh", "-n", "-c", command], check=True)  # noqa: S603, S607
+    assert f"{lynis.CISOFY_REPO_SETUP} || true" in command
+    # Not reachable → the source and key are removed again.
+    assert "rm -f /etc/apt/sources.list.d/cisofy-lynis.list" in lynis.CISOFY_REPO_SETUP
+    assert parse_audit_output(f"{lynis.CISOFY_FAILED_MARKER}\n").cisofy_failed
 
 
 def _fake_result(**kw: Any) -> LynisResult:

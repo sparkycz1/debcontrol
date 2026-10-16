@@ -16,6 +16,10 @@ Ansible from their own machine, run here instead directly over SSH (see
    and box-drawing (see that same wiki page) without a separate manual
    step. Its failure (no network, offline apt cache) must never fail
    onboarding itself — only steps 1-3 are load-bearing.
+5. Best-effort add CISOfy's signed Lynis repository
+   (`app.ssh.lynis.CISOFY_REPO_SETUP`), so a security audit gets a current
+   Lynis instead of the distribution's old one. Not load-bearing either;
+   it removes itself again when the machine cannot reach it.
 
 Deliberately **not** an actual `ansible-playbook` invocation: that would
 need Ansible (and its own dependency tree) added to the worker image just
@@ -33,6 +37,8 @@ if the connecting account isn't already root.
 from __future__ import annotations
 
 import shlex
+
+from app.ssh.lynis import CISOFY_REPO_SETUP
 
 # The account debcontrol connects as afterwards — matches
 # `debcontrol_user` in ansible/debcontrol-onboard.yml.
@@ -119,6 +125,10 @@ def build_onboarding_command(public_key: str) -> str:
         f"chmod 440 /etc/sudoers.d/{user}-docker; "
         f"visudo -cf /etc/sudoers.d/{user}-docker; "
         "fi; "
+        # CISOfy's own Lynis repository (security audits), so Lynis arrives
+        # current and stays so with ordinary updates; it removes itself
+        # again when the machine cannot reach it.
+        f"{CISOFY_REPO_SETUP} || true; "
         "(apt-get update -q >/dev/null 2>&1 && "
         "apt-get install -y ncurses-term >/dev/null 2>&1) || true; "
         f"echo {ONBOARD_SUCCESS_MARKER}"

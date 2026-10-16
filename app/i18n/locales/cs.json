@@ -2638,7 +2638,7 @@
     "security_audit.title": "Bezpečnostní audit",
     "security_audit.intro": "Bezpečnostní audit nástrojem Lynis (lynis audit system), spuštěný přímo na zařízení: index zabezpečení od 0 do 100, varování, na která se podívat nejdřív, a doporučení, jak systém zabezpečit lépe. Na zařízení se nic nemění; Lynis jen čte.",
     "security_audit.fleet_intro": "Nejnovější bezpečnostní audit Lynis každého zařízení, které vidíte, od nejnižšího indexu zabezpečení. Varování je potřeba opravit; doporučení je krok, který stojí za zvážení.",
-    "security_audit.install_if_missing": "Kde Lynis chybí, nainstalovat ho přes apt-get",
+    "security_audit.install_if_missing": "Nejdřív Lynis nainstalovat nebo aktualizovat z repozitáře CISOfy",
     "security_audit.run_now": "Spustit audit",
     "security_audit.run_hint": "Lynis obvykle běží jednu až pět minut. Spouští se jako root přes pravidlo sudo pro lynis (nebo rovnou jako root); bez něj běží bez oprávnění a testy, které root potřebují, vynechá.",
     "security_audit.run_all": "Auditovat všechna zařízení",
@@ -2647,7 +2647,7 @@
     "security_audit.latest_run": "Poslední běh",
     "security_audit.running_hint": "Audit běží; stránka se aktualizuje sama.",
     "security_audit.interrupted_hint": "Tento audit nedoběhl (worker se restartoval, nebo se zrovna aktualizovalo zařízení, na kterém debcontrol běží). Spusťte ho znovu.",
-    "security_audit.missing_hint": "Na zařízení musí být Lynis nainstalovaný: zaškrtněte „Kde Lynis chybí, nainstalovat ho přes apt-get“, nebo ho nainstalujte sami (balíček lynis, nebo repozitář CISOfy pro nejnovější verzi).",
+    "security_audit.missing_hint": "Na zařízení musí být Lynis nainstalovaný: zaškrtněte „Nejdřív Lynis nainstalovat nebo aktualizovat z repozitáře CISOfy“, nebo ho nainstalujte sami (repozitář CISOfy pro nejnovější verzi, nebo balíček lynis z distribuce).",
     "security_audit.hardening_index": "Index zabezpečení",
     "security_audit.tests_done": "{count} testů",
     "security_audit.unprivileged": "Lynis běžel bez roota (účet na zařízení nemá pravidlo sudo pro lynis), takže testy, které root potřebují, vynechal a index nejde srovnávat s plným auditem. Spusťte znovu onboarding, nebo do pravidla sudo účtu přidejte /usr/sbin/lynis.",
@@ -2678,8 +2678,8 @@
     "audit.action_label.machines.bulk.security_audit.run": "Spuštěn bezpečnostní audit (všechna zařízení)",
     "scheduling.action.security_audit.label": "Bezpečnostní audit (Lynis)",
     "scheduling.action.security_audit.description": "Spustí lynis audit system na každém cílovém zařízení a uloží index zabezpečení, varování a doporučení (Bezpečnost → Audit). Zařízení, kde audit ještě běží, se přeskočí.",
-    "scheduling.param.install": "Kde Lynis chybí, nainstalovat ho",
+    "scheduling.param.install": "Nejdřív Lynis nainstalovat nebo aktualizovat",
     "scheduling.choice.install.no": "Ne",
-    "scheduling.choice.install.yes": "Ano, přes apt-get"
+    "scheduling.choice.install.yes": "Ano, z repozitáře CISOfy"
   }
 }
