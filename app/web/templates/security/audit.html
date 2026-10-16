@@ -5,7 +5,9 @@
 {% block main_class %}container-wide{% endblock %}
 
 {% macro index_badge(index) -%}
+  {%- if index is none -%}—{%- else -%}
   <span class="badge {{ 'badge-ok' if index >= 75 else ('badge-warn' if index >= 60 else 'badge-error') }}">{{ index }}</span>
+  {%- endif -%}
 {%- endmacro %}
 
 {% block content %}
@@ -37,6 +39,7 @@
           <tr>
             <th>{{ t(request, "security.machines") }}</th>
             <th>{{ t(request, "security_audit.hardening_index") }}</th>
+            <th>{{ t(request, "security_audit.failed_checks") }}</th>
             <th>{{ t(request, "security_audit.warnings_short") }}</th>
             <th>{{ t(request, "security_audit.suggestions_short") }}</th>
             <th>{{ t(request, "security_audit.last_audit") }}</th>
@@ -49,8 +52,10 @@
             <tr>
               <td><a href="/machines/{{ row.machine.id }}/security">{{ row.machine.name }}</a></td>
               <td>{% if a %}{{ index_badge(a.hardening_index) }}{% if a.privileged is sameas false %} <span class="table-muted">{{ t(request, "security_audit.unprivileged_short") }}</span>{% endif %}{% else %}—{% endif %}</td>
-              <td>{{ (a.warnings or []) | length if a else '—' }}</td>
-              <td>{{ (a.suggestions or []) | length if a else '—' }}</td>
+              {% set c = row.counts %}
+              <td>{% if c and a.checks %}<span class="{{ 'badge badge-error' if c.failed_checks else '' }}">{{ c.failed_checks }}</span>{% else %}—{% endif %}</td>
+              <td>{{ c.warnings if c and a.lynis_version else '—' }}</td>
+              <td>{{ c.suggestions if c and a.lynis_version else '—' }}{% if c and c.suppressed %} <span class="table-muted">{{ t(request, "security_audit.n_marked_ok", count=c.suppressed) }}</span>{% endif %}</td>
               <td>{% if a %}{{ a.finished_at | local_time('%Y-%m-%d %H:%M') }}{% else %}<span class="table-muted">{{ t(request, "security_audit.never") }}</span>{% endif %}</td>
               <td>
                 {% if row.latest and row.latest is not sameas a %}

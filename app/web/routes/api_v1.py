@@ -3140,20 +3140,24 @@ async def clear_machine_acknowledgement_api(
 async def security_audits_api(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
 ) -> list[dict[str, object]]:
-    """Every visible machine with its newest successful Lynis audit
+    """Every visible machine with its newest successful security audit
     (`audit`: hardening index and counts, no findings; null when never
     audited) and its newest audit of any outcome (`latest`, e.g. one still
-    running or one that failed)."""
+    running or one that failed). `audit.active` counts the findings not
+    marked OK on that machine."""
     visible = await machines_visible_to(db, user)
     machines = list((await db.execute(visible.order_by(Machine.name))).scalars().all())
     ids = visible.with_only_columns(Machine.id)
     latest = await security_audit.latest_by_machine(db, ids)
     succeeded = await security_audit.latest_by_machine(db, ids, succeeded_only=True)
+    suppressed = await security_audit.suppressed_keys_by_machine(db, [m.id for m in machines])
     return [
         {
             "machine_id": str(m.id),
             "machine_name": m.name,
-            "audit": security_audit.audit_to_dict(succeeded[m.id], findings=False)
+            "audit": security_audit.audit_to_dict(
+                succeeded[m.id], findings=False, suppressed=suppressed.get(m.id, set())
+            )
             if m.id in succeeded
             else None,
             "latest": security_audit.audit_to_dict(latest[m.id], findings=False)
@@ -3170,10 +3174,112 @@ async def machine_security_audits_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> list[dict[str, object]]:
-    """The machine's kept Lynis audits, newest first, each with its
-    warnings and suggestions (`test`, `text`, `detail`, `solution`)."""
+    """The machine's kept security audits, newest first, each with
+    debcontrol's own `checks` (`id`, `status`, `value`), Lynis's
+    `warnings` and `suggestions` (`test`, `text`, `detail`, `solution`),
+    `details` (a setting's current and recommended value) and `facts`.
+    Every finding has the `key` it is marked OK by; `active` counts those
+    not marked OK on this machine."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    return [security_audit.audit_to_dict(a) for a in await security_audit.history(db, machine.id)]
+    suppressed = set(await security_audit.suppressions(db, machine.id))
+    return [
+        security_audit.audit_to_dict(a, suppressed=suppressed)
+        for a in await security_audit.history(db, machine.id)
+    ]
+
+
+@router.get("/machines/{machine_id}/security-audits/ok", dependencies=[_view_machines])
+async def machine_security_findings_ok_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, object]]:
+    """The findings marked OK on this machine."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    rows = await security_audit.suppressions(db, machine.id)
+    return [security_audit.suppression_to_dict(r) for r in rows.values()]
+
+
+class _FindingOkRequest(BaseModel):
+    key: str = Field(max_length=security_audit.KEY_MAX)
+    label: str = Field(default="", max_length=500)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post(
+    "/machines/{machine_id}/security-audits/ok",
+    dependencies=[_action_updates],
+    status_code=status.HTTP_201_CREATED,
+)
+async def mark_security_finding_ok_api(
+    request: Request,
+    payload: _FindingOkRequest,
+    machine_id: uuid.UUID,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Mark a finding OK on this machine by its `key` (from
+    `GET .../security-audits`): it no longer counts, on this audit and
+    later ones. 200 when it already was; 400 for a key no finding has."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not security_audit.valid_key(payload.key):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown finding key.")
+    added = await security_audit.suppress(
+        db,
+        machine.id,
+        payload.key,
+        label=payload.label,
+        note=payload.note,
+        created_by=user.username,
+    )
+    await db.commit()
+    if added:
+        await log_event(
+            db,
+            request=request,
+            action="machine.security_audit.mark_ok",
+            summary=f'Marked a security audit finding OK on "{machine.name}" (REST API): '
+            f"{(payload.label or payload.key)[:200]}",
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details={"key": payload.key, "label": payload.label, "note": payload.note},
+        )
+    else:
+        response.status_code = status.HTTP_200_OK
+    rows = await security_audit.suppressions(db, machine.id)
+    return security_audit.suppression_to_dict(rows[payload.key])
+
+
+@router.delete(
+    "/machines/{machine_id}/security-audits/ok",
+    dependencies=[_action_updates],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def unmark_security_finding_ok_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    key: str = Query(max_length=security_audit.KEY_MAX),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    """Take an "OK" back (`?key=...`); 404 when that finding isn't marked."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not await security_audit.unsuppress(db, machine.id, key):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not marked OK.")
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.security_audit.unmark_ok",
+        summary=f'Security audit finding counts again on "{machine.name}" (REST API): {key}',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"key": key},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class _SecurityAuditRequest(BaseModel):
@@ -3192,8 +3298,9 @@ async def run_machine_security_audit_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    """Start a Lynis audit of the machine; `install_if_missing` installs
-    Lynis with apt-get first where it is missing. Returns the pending
+    """Start a security audit of the machine (debcontrol's own checks and
+    Lynis); `install_if_missing` installs or updates Lynis first (from
+    CISOfy's repository where the machine has it). Returns the pending
     audit; poll `GET .../security-audits` for the result. 409 when the
     machine has no confirmed host key or an audit is already under way."""
     machine = await _get_machine_or_404(machine_id, db, user)

@@ -4,9 +4,11 @@ the REST API and the scheduled action."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from httpx2 import AsyncClient
@@ -14,11 +16,15 @@ from sqlalchemy import select
 
 from app.db.models.audit_log import AuditLogEntry
 from app.db.models.machine import Machine
-from app.db.models.security_audit import SecurityAudit, SecurityAuditStatus
+from app.db.models.security_audit import (
+    SecurityAudit,
+    SecurityAuditStatus,
+    SecurityAuditSuppression,
+)
 from app.scheduling.actions import get_action
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.services import security_audit
-from app.ssh import lynis
+from app.ssh import lynis, security_checks
 from app.ssh.lynis import LynisResult, build_audit_command, parse_audit_output
 from app.ssh.onboarding import SUDO_COMMANDS, build_onboarding_command
 from app.tasks import jobs
@@ -275,3 +281,230 @@ async def test_auditing_from_the_pages_the_api_and_a_schedule(
     assert actions.count("machines.bulk.security_audit.run") == 1
     assert (result.attempted, result.skipped) == (1, 1)
     assert celery_calls.names.count("app.tasks.jobs.run_security_audit") == 2
+
+
+# --- debcontrol's own checks, Lynis details, findings marked OK ---------
+
+
+def test_the_checks_script_is_valid_shell_and_covers_every_check() -> None:
+    subprocess.run(["sh", "-n", "-c", security_checks.SCRIPT], check=True)  # noqa: S603, S607
+    for check_id in security_checks.CHECK_IDS:
+        assert f"dc_check {check_id} " in security_checks.SCRIPT, check_id
+    en = json.loads(Path("app/i18n/locales/en.json").read_text(encoding="utf-8"))["strings"]
+    cs = json.loads(Path("app/i18n/locales/cs.json").read_text(encoding="utf-8"))["strings"]
+    for check_id in security_checks.CHECK_IDS:
+        for part in ("title", "why", "fix"):
+            key = f"security_audit.check.{check_id}.{part}"
+            assert key in en and key in cs, key
+
+
+def test_check_lines_are_parsed_in_order_and_junk_is_ignored() -> None:
+    checks = security_checks.parse_output(
+        "noise\n"
+        "DEBCONTROL_CHECK|ssh_port|info|2222\n"
+        "DEBCONTROL_CHECK|firewall|fail|\n"
+        "DEBCONTROL_CHECK|firewall|pass|ufw\n"
+        "DEBCONTROL_CHECK|bogus|fail|x\n"
+        "DEBCONTROL_CHECK|reboot_required|maybe|x\n"
+        "DEBCONTROL_CHECK|listening_ports|warn|22/tcp 80/tcp|extra\n"
+    )
+    assert checks == [
+        {"id": "firewall", "status": "fail", "value": ""},
+        {"id": "listening_ports", "status": "warn", "value": "22/tcp 80/tcp|extra"},
+        {"id": "ssh_port", "status": "info", "value": "2222"},
+    ]
+
+
+def test_lynis_details_and_facts_are_kept() -> None:
+    result = parse_audit_output(
+        f"{lynis.PRIVILEGED_MARKER}\n{lynis.EXIT_MARKER}0\n{lynis.REPORT_DELIMITER}\n"
+        "hardening_index=61\n"
+        "os_fullname=Debian GNU/Linux 12\n"
+        "malware_scanner_installed=0\n"
+        "firewall_software[]=nftables\n"
+        "vulnerable_package[]=curl\n"
+        "vulnerable_package[]=curl\n"
+        "details[]=KRNL-6000|sysctl|desc:Restrict access to kernel symbols;"
+        "field:kernel.kptr_restrict;prefval:2;value:0;|\n"
+        "details[]=SSH-7408|sshd|desc:No description;field:X11Forwarding;prefval:NO;value:YES;|\n"
+        "details[]=BROKEN|x|nofield|\n"
+        f"{lynis.OUTPUT_DELIMITER}\n"
+    )
+
+    assert result.details == [
+        {
+            "test": "KRNL-6000",
+            "service": "sysctl",
+            "desc": "Restrict access to kernel symbols",
+            "field": "kernel.kptr_restrict",
+            "prefval": "2",
+            "value": "0",
+        },
+        {
+            "test": "SSH-7408",
+            "service": "sshd",
+            "desc": "",
+            "field": "X11Forwarding",
+            "prefval": "NO",
+            "value": "YES",
+        },
+    ]
+    assert result.facts == {
+        "os": "Debian GNU/Linux 12",
+        "malware_scanner": False,
+        "firewall_software": ["nftables"],
+        "vulnerable_packages": ["curl"],
+    }
+
+
+async def test_the_checks_alone_make_a_successful_audit(
+    db_session_factory: Any, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
+    machine_id = await _add_machine(db_session_factory, name="nolynis")
+    async with db_session_factory() as db:
+        audit = SecurityAudit(machine_id=machine_id, created_at=datetime.now(UTC))
+        db.add(audit)
+        await db.commit()
+
+    checks = [{"id": "firewall", "status": "fail", "value": ""}]
+    await _run_job(monkeypatch, LynisResult(missing=True, checks=checks), audit.id)
+
+    async with db_session_factory() as db:
+        stored = await db.get(SecurityAudit, audit.id)
+    assert stored is not None and stored.status == SecurityAuditStatus.SUCCEEDED
+    assert stored.checks == checks and stored.hardening_index is None
+    assert stored.error == "Lynis is not installed on this machine."
+
+
+def test_finding_keys_are_stable_and_validated() -> None:
+    a = {"test": "AUTH-9286", "text": "Configure minimum password age", "detail": ""}
+    b = {"test": "AUTH-9286", "text": "Configure maximum password age", "detail": ""}
+    key_a = security_audit.finding_key(security_audit.LYNIS, a)
+
+    assert key_a == security_audit.finding_key(security_audit.LYNIS, dict(a))
+    assert key_a != security_audit.finding_key(security_audit.LYNIS, b)
+    assert security_audit.valid_key(key_a)
+    assert security_audit.valid_key("check:firewall")
+    assert not security_audit.valid_key("check:nope")
+    assert not security_audit.valid_key("lynis:SSH-7408:short")
+    assert not security_audit.valid_key("other:x")
+
+
+async def test_marking_findings_ok_from_the_page_and_the_api(
+    client: AsyncClient, db_session_factory: Any
+) -> None:
+    machine_id = await _add_machine(db_session_factory, name="okhost")
+    warning = {
+        "test": "FIRE-4512",
+        "text": "iptables loaded, no rules",
+        "detail": "",
+        "solution": "",
+    }
+    suggestion = {"test": "KRNL-6000", "text": "sysctl values differ", "detail": "", "solution": ""}
+    async with db_session_factory() as db:
+        db.add(
+            SecurityAudit(
+                machine_id=machine_id,
+                status=SecurityAuditStatus.SUCCEEDED,
+                hardening_index=58,
+                lynis_version="3.1.6",
+                privileged=True,
+                warnings=[warning],
+                suggestions=[suggestion],
+                details=[
+                    {
+                        "test": "KRNL-6000",
+                        "service": "sysctl",
+                        "desc": "",
+                        "field": "kernel.kptr_restrict",
+                        "prefval": "2",
+                        "value": "0",
+                    }
+                ],
+                facts={"os": "Debian GNU/Linux 12", "vulnerable_packages": ["curl"]},
+                checks=[
+                    {"id": "firewall", "status": "fail", "value": ""},
+                    {"id": "ssh_password_auth", "status": "pass", "value": "no"},
+                    {"id": "pending_updates", "status": "warn", "value": "3/0"},
+                ],
+                created_at=datetime.now(UTC) - timedelta(hours=1),
+                finished_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        await db.commit()
+    fire_key = security_audit.finding_key(security_audit.LYNIS, warning)
+
+    before = await client.get(f"/machines/{machine_id}/security")
+    csrf = client.cookies.get("csrftoken")
+    marked = await client.post(
+        f"/machines/{machine_id}/security/ok",
+        data={"csrf_token": csrf, "key": fire_key, "label": "FIRE-4512", "note": "router"},
+        follow_redirects=False,
+    )
+    bad = await client.post(
+        f"/machines/{machine_id}/security/ok",
+        data={"csrf_token": csrf, "key": "check:nope"},
+        follow_redirects=False,
+    )
+    after = await client.get(f"/machines/{machine_id}/security")
+    fleet = await client.get("/security/audit")
+    headers = await _api_token(client)
+    api_marked = await client.post(
+        f"/api/v1/machines/{machine_id}/security-audits/ok",
+        headers=headers,
+        json={"key": "check:firewall", "label": "Firewall"},
+    )
+    api_again = await client.post(
+        f"/api/v1/machines/{machine_id}/security-audits/ok",
+        headers=headers,
+        json={"key": "check:firewall"},
+    )
+    api_list = await client.get(
+        f"/api/v1/machines/{machine_id}/security-audits/ok", headers=headers
+    )
+    history = await client.get(f"/api/v1/machines/{machine_id}/security-audits", headers=headers)
+    removed = await client.post(
+        f"/machines/{machine_id}/security/ok/remove",
+        data={"csrf_token": csrf, "key": fire_key},
+        follow_redirects=False,
+    )
+    api_removed = await client.delete(
+        f"/api/v1/machines/{machine_id}/security-audits/ok",
+        headers=headers,
+        params={"key": "check:firewall"},
+    )
+    api_gone = await client.delete(
+        f"/api/v1/machines/{machine_id}/security-audits/ok",
+        headers=headers,
+        params={"key": "check:firewall"},
+    )
+
+    assert before.status_code == 200
+    assert "Firewall" in before.text and "kernel.kptr_restrict" in before.text
+    assert "3 updates, 0 of them security" in before.text
+    assert "lynis show details FIRE-4512" in before.text and "Mark OK" in before.text
+    assert marked.status_code == 303 and bad.status_code == 400
+    assert "Marked OK (1)" in after.text and "router" in after.text
+    assert "Warnings (0)" in after.text
+    assert "+1 OK" in fleet.text
+    assert api_marked.status_code == 201 and api_again.status_code == 200
+    assert {r["key"] for r in api_list.json()} == {fire_key, "check:firewall"}
+    newest = history.json()[0]
+    assert newest["active"] == {
+        "failed_checks": 0,
+        "warned_checks": 1,
+        "warnings": 0,
+        "suggestions": 1,
+        "marked_ok": 2,
+    }
+    assert newest["warnings"][0]["key"] == fire_key
+    assert removed.status_code == 303
+    assert api_removed.status_code == 204 and api_gone.status_code == 404
+
+    async with db_session_factory() as db:
+        left = list((await db.execute(select(SecurityAuditSuppression))).scalars().all())
+        actions = list((await db.execute(select(AuditLogEntry.action))).scalars().all())
+    assert left == []
+    assert actions.count("machine.security_audit.mark_ok") == 2
+    assert actions.count("machine.security_audit.unmark_ok") == 2

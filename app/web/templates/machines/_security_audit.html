@@ -1,35 +1,99 @@
-{#- A machine's Lynis audits — re-fetched every few seconds while one is
-    under way (see `machine_security`). -#}
+{#- A machine's security audits: debcontrol's own checks and Lynis, the
+    findings marked OK, and the history. Re-fetched every few seconds while
+    an audit is under way (see `machine_security`). -#}
 {% macro index_badge(index) -%}
+  {%- if index is none -%}—{%- else -%}
   <span class="badge {{ 'badge-ok' if index >= 75 else ('badge-warn' if index >= 60 else 'badge-error') }}">{{ index }}</span>
+  {%- endif -%}
 {%- endmacro %}
 {% macro status_badge(audit) -%}
   {%- set st = display_status(audit) -%}
   <span class="badge {{ 'badge-ok' if st == 'succeeded' else ('badge-warn' if st in ('pending', 'running') else 'badge-error') }}">{{ t(request, "security_audit.status." ~ st) }}</span>
 {%- endmacro %}
-{% macro findings_table(findings) %}
-  <div class="monitoring-table-wrap">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>{{ t(request, "security_audit.test") }}</th>
-          <th>{{ t(request, "security_audit.finding") }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for f in findings %}
-          <tr>
-            <td><a href="{{ control_url.format(test=f.test) }}" rel="noopener noreferrer" target="_blank"><code>{{ f.test }}</code></a></td>
-            <td>
-              {{ f.text }}
-              {% if f.detail %}<div class="table-summary"><code>{{ f.detail }}</code></div>{% endif %}
-              {% if f.solution %}<div class="table-summary">{{ f.solution }}</div>{% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{% macro check_badge(st) -%}
+  <span class="badge {{ {'fail': 'badge-error', 'warn': 'badge-warn', 'pass': 'badge-ok'}.get(st, 'badge-tag') }}">{{ t(request, "security_audit.check_status." ~ st) }}</span>
+{%- endmacro %}
+{% macro check_value(ch) -%}
+  {%- set vk = "security_audit.check_value." ~ ch.value -%}
+  {%- if ch.status == 'skip' or not ch.value -%}
+    <span class="table-muted">—</span>
+  {%- elif ch.id == 'pending_updates' and '/' in ch.value -%}
+    {%- set parts = ch.value.split('/') -%}
+    {{ t(request, "security_audit.check_value.pending_updates", all=parts[0], security=parts[1]) }}
+  {%- elif t(request, vk) != vk -%}
+    {{ t(request, vk) }}
+  {%- else -%}
+    <code>{{ ch.value }}</code>
+  {%- endif -%}
+{%- endmacro %}
+{% macro ok_form(key, label) %}
+  {% if can_run %}
+    <details class="form-advanced finding-ok">
+      <summary>{{ t(request, "security_audit.mark_ok") }}</summary>
+      <form method="post" action="/machines/{{ machine.id }}/security/ok" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="key" value="{{ key }}">
+        <input type="hidden" name="label" value="{{ label }}">
+        <label>{{ t(request, "security_audit.mark_ok_note") }}
+          <input type="text" name="note" maxlength="500" placeholder="{{ t(request, 'security_audit.mark_ok_note_placeholder') }}">
+        </label>
+        <button type="submit" class="button button-secondary">{{ t(request, "security_audit.mark_ok_confirm") }}</button>
+        <p class="hint">{{ t(request, "security_audit.mark_ok_hint") }}</p>
+      </form>
+    </details>
+  {% endif %}
+{% endmacro %}
+{% macro lynis_finding(f) %}
+  {%- set howto_key = "security_audit.howto." ~ f.test -%}
+  {%- set howto = t(request, howto_key) -%}
+  <div class="finding">
+    <div class="finding-head">
+      <a href="{{ control_url.format(test=f.test) }}" rel="noopener noreferrer" target="_blank"><code>{{ f.test }}</code></a>
+      <span class="finding-text">{{ f.text }}</span>
+    </div>
+    {% if f.detail %}<div class="table-summary">{{ t(request, "security_audit.detail") }}: <code>{{ f.detail }}</code></div>{% endif %}
+    {% if f.details %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table finding-details">
+          <thead>
+            <tr>
+              <th>{{ t(request, "security_audit.setting") }}</th>
+              <th>{{ t(request, "security_audit.current_value") }}</th>
+              <th>{{ t(request, "security_audit.recommended_value") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in f.details %}
+              <tr>
+                <td><code>{{ d.field }}</code>{% if d.desc %}<div class="table-summary">{{ d.desc }}</div>{% endif %}</td>
+                <td><code>{{ d.value or '—' }}</code></td>
+                <td><code>{{ d.prefval or '—' }}</code></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+    <details>
+      <summary>{{ t(request, "security_audit.how_to_fix") }}</summary>
+      {% if howto != howto_key %}<p>{{ howto }}</p>{% endif %}
+      {% if f.solution %}<p><strong>Lynis:</strong> {{ f.solution }}</p>{% endif %}
+      {% if f.details and f.details[0].service in ('sysctl', 'sshd') %}
+        <p>{{ t(request, "security_audit.details_fix." ~ f.details[0].service) }}</p>
+      {% endif %}
+      <p>{{ t(request, "security_audit.show_details_cmd") }} <code>lynis show details {{ f.test }}</code></p>
+      <p><a href="{{ control_url.format(test=f.test) }}" rel="noopener noreferrer" target="_blank">{{ t(request, "security_audit.control_link", test=f.test) }}</a></p>
+    </details>
+    {{ ok_form(f.key, f.test ~ ": " ~ f.text) }}
   </div>
+{% endmacro %}
+{% macro lynis_groups(groups) %}
+  {% for g in groups %}
+    {%- set cat_key = "security_audit.category." ~ g.category -%}
+    {%- set cat = t(request, cat_key) -%}
+    <h3 class="finding-group">{{ cat if cat != cat_key else g.category }} <span class="table-muted">({{ g.findings | length }})</span></h3>
+    {% for f in g.findings %}{{ lynis_finding(f) }}{% endfor %}
+  {% endfor %}
 {% endmacro %}
 
 <div id="security-audit"
@@ -49,32 +113,160 @@
   {% endif %}
 
   {% if shown %}
+    {% set c = view.counts %}
+    {% set facts = shown.facts or {} %}
     <section class="panel">
-      <h2>{{ t(request, "security_audit.hardening_index") }} {{ index_badge(shown.hardening_index) }}</h2>
+      <h2>{{ t(request, "security_audit.summary") }}</h2>
       <p class="hint">
         {{ shown.finished_at | local_time('%Y-%m-%d %H:%M') }}
-        · Lynis {{ shown.lynis_version or '?' }}
+        {% if shown.lynis_version %}· Lynis {{ shown.lynis_version }}{% endif %}
         {% if shown.tests_done %}· {{ t(request, "security_audit.tests_done", count=shown.tests_done) }}{% endif %}
         {% if shown.started_by %}· {{ shown.started_by }}{% endif %}
       </p>
+      <div class="stat-grid">
+        <div class="stat-card {{ 'stat-card-danger' if shown.hardening_index is not none and shown.hardening_index < 60 else ('stat-card-warn' if shown.hardening_index is not none and shown.hardening_index < 75 else '') }}">
+          <span class="stat-value">{{ shown.hardening_index if shown.hardening_index is not none else '—' }}</span>
+          <span class="stat-label">{{ t(request, "security_audit.hardening_index") }}</span>
+        </div>
+        <a class="stat-card stat-card-link {{ 'stat-card-danger' if c.failed_checks else '' }}" href="#checks">
+          <span class="stat-value">{{ c.failed_checks }}</span>
+          <span class="stat-label">{{ t(request, "security_audit.failed_checks") }}</span>
+        </a>
+        <a class="stat-card stat-card-link {{ 'stat-card-warn' if c.warned_checks else '' }}" href="#checks">
+          <span class="stat-value">{{ c.warned_checks }}</span>
+          <span class="stat-label">{{ t(request, "security_audit.warned_checks") }}</span>
+        </a>
+        <a class="stat-card stat-card-link {{ 'stat-card-danger' if c.warnings else '' }}" href="#lynis-warnings">
+          <span class="stat-value">{{ c.warnings }}</span>
+          <span class="stat-label">{{ t(request, "security_audit.warnings_short") }}</span>
+        </a>
+        <a class="stat-card stat-card-link" href="#lynis-suggestions">
+          <span class="stat-value">{{ c.suggestions }}</span>
+          <span class="stat-label">{{ t(request, "security_audit.suggestions_short") }}</span>
+        </a>
+        <a class="stat-card stat-card-link" href="#marked-ok">
+          <span class="stat-value">{{ marked | length }}</span>
+          <span class="stat-label">{{ t(request, "security_audit.marked_ok_short") }}</span>
+        </a>
+      </div>
+      <p class="hint">{{ t(request, "security_audit.summary_hint") }}</p>
+      {% if shown.error %}<div class="alert alert-warn"><p>{{ shown.error }}</p></div>
+        {% if shown.lynis_version is none %}<p class="hint">{{ t(request, "security_audit.missing_hint") }}</p>{% endif %}
+      {% endif %}
       {% if shown.privileged is sameas false %}
         <div class="alert alert-warn"><p>{{ t(request, "security_audit.unprivileged") }}</p></div>
       {% endif %}
+      {% if facts %}
+        <dl class="audit-facts">
+          {% if facts.os %}<dt>{{ t(request, "security_audit.fact.os") }}</dt><dd>{{ facts.os }}</dd>{% endif %}
+          {% if facts.firewall_software is defined %}<dt>{{ t(request, "security_audit.fact.firewall_software") }}</dt><dd>{{ facts.firewall_software | join(', ') or '—' }}</dd>{% endif %}
+          {% if facts.malware_scanner is defined %}<dt>{{ t(request, "security_audit.fact.malware_scanner") }}</dt><dd>{{ t(request, "security_audit.yes") if facts.malware_scanner else t(request, "security_audit.no") }}</dd>{% endif %}
+          {% if facts.auditd is defined %}<dt>{{ t(request, "security_audit.fact.auditd") }}</dt><dd>{{ t(request, "security_audit.yes") if facts.auditd else t(request, "security_audit.no") }}</dd>{% endif %}
+          {% if facts.lynis_update_available %}<dt>Lynis</dt><dd>{{ t(request, "security_audit.fact.lynis_update_available") }}</dd>{% endif %}
+        </dl>
+        {% if facts.vulnerable_packages %}
+          <details>
+            <summary>{{ t(request, "security_audit.fact.vulnerable_packages", count=facts.vulnerable_packages | length) }}</summary>
+            <p class="hint">{{ t(request, "security_audit.fact.vulnerable_packages_hint") }}</p>
+            <p>{% for p in facts.vulnerable_packages %}<code>{{ p }}</code>{{ ' ' if not loop.last }}{% endfor %}</p>
+          </details>
+        {% endif %}
+      {% endif %}
     </section>
 
-    <section class="panel">
-      <h2>{{ t(request, "security_audit.warnings", count=(shown.warnings or [])|length) }}</h2>
-      {% if shown.warnings %}{{ findings_table(shown.warnings) }}
-      {% else %}<p class="table-muted">{{ t(request, "security_audit.no_warnings") }}</p>{% endif %}
-    </section>
+    {% if view.checks %}
+      <section class="panel" id="checks">
+        <h2>{{ t(request, "security_audit.checks") }}</h2>
+        <p class="hint">{{ t(request, "security_audit.checks_intro") }}</p>
+        <div class="monitoring-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>{{ t(request, "security_audit.status") }}</th>
+                <th>{{ t(request, "security_audit.check") }}</th>
+                <th>{{ t(request, "security_audit.found") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ch in view.checks %}
+                {% set base = "security_audit.check." ~ ch.id %}
+                <tr>
+                  <td>{{ check_badge(ch.status) }}</td>
+                  <td>
+                    <strong>{{ t(request, base ~ ".title") }}</strong>
+                    {% if ch.status in ('fail', 'warn') %}
+                      <details>
+                        <summary>{{ t(request, "security_audit.how_to_fix") }}</summary>
+                        <p>{{ t(request, base ~ ".why") }}</p>
+                        <p>{{ t(request, base ~ ".fix") }}</p>
+                      </details>
+                      {{ ok_form(ch.key, t(request, base ~ ".title")) }}
+                    {% elif ch.status == 'skip' %}
+                      <div class="table-summary">{{ t(request, "security_audit.check_skipped") }}</div>
+                    {% endif %}
+                  </td>
+                  <td>{{ check_value(ch) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
 
-    <section class="panel">
-      <h2>{{ t(request, "security_audit.suggestions", count=(shown.suggestions or [])|length) }}</h2>
-      {% if shown.suggestions %}{{ findings_table(shown.suggestions) }}
-      {% else %}<p class="table-muted">{{ t(request, "security_audit.no_suggestions") }}</p>{% endif %}
-    </section>
+    {% if shown.lynis_version %}
+      <section class="panel" id="lynis-warnings">
+        <h2>{{ t(request, "security_audit.warnings", count=c.warnings) }}</h2>
+        {% if view.warnings %}{{ lynis_groups(view.warnings) }}
+        {% else %}<p class="table-muted">{{ t(request, "security_audit.no_warnings") }}</p>{% endif %}
+      </section>
+
+      <section class="panel" id="lynis-suggestions">
+        <h2>{{ t(request, "security_audit.suggestions", count=c.suggestions) }}</h2>
+        {% if view.suggestions %}{{ lynis_groups(view.suggestions) }}
+        {% else %}<p class="table-muted">{{ t(request, "security_audit.no_suggestions") }}</p>{% endif %}
+      </section>
+    {% endif %}
   {% elif not current %}
     <div class="empty-state"><p>{{ t(request, "security_audit.never_run") }}</p></div>
+  {% endif %}
+
+  {% if marked %}
+    <section class="panel" id="marked-ok">
+      <h2>{{ t(request, "security_audit.marked_ok", count=marked | length) }}</h2>
+      <p class="hint">{{ t(request, "security_audit.marked_ok_intro") }}</p>
+      <div class="monitoring-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t(request, "security_audit.finding") }}</th>
+              <th>{{ t(request, "security_audit.marked_by") }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key, row in marked.items() %}
+              <tr>
+                <td>
+                  {{ row.label or key }}
+                  {% if row.note %}<div class="table-summary">{{ row.note }}</div>{% endif %}
+                </td>
+                <td>{{ row.created_by or '—' }} <span class="table-muted">{{ row.created_at | local_time('%Y-%m-%d') }}</span></td>
+                <td>
+                  {% if can_run %}
+                    <form method="post" action="/machines/{{ machine.id }}/security/ok/remove" class="inline-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="key" value="{{ key }}">
+                      <button type="submit" class="button button-secondary">{{ t(request, "security_audit.unmark_ok") }}</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   {% endif %}
 
   {% if audits | length > 1 %}
@@ -87,18 +279,22 @@
               <th>{{ t(request, "security_audit.when") }}</th>
               <th>{{ t(request, "security_audit.status") }}</th>
               <th>{{ t(request, "security_audit.hardening_index") }}</th>
+              <th>{{ t(request, "security_audit.failed_checks") }}</th>
               <th>{{ t(request, "security_audit.warnings_short") }}</th>
               <th>{{ t(request, "security_audit.suggestions_short") }}</th>
             </tr>
           </thead>
           <tbody>
             {% for a in audits %}
+              {% set ok = a.status == 'succeeded' %}
+              {% set ac = counts_of(a) %}
               <tr>
                 <td>{{ a.created_at | local_time('%Y-%m-%d %H:%M') }}</td>
                 <td>{{ status_badge(a) }}{% if a.privileged is sameas false %} <span class="table-muted">{{ t(request, "security_audit.unprivileged_short") }}</span>{% endif %}</td>
-                <td>{% if a.hardening_index is not none %}{{ index_badge(a.hardening_index) }}{% else %}—{% endif %}</td>
-                <td>{{ (a.warnings or []) | length if a.hardening_index is not none else '—' }}</td>
-                <td>{{ (a.suggestions or []) | length if a.hardening_index is not none else '—' }}</td>
+                <td>{{ index_badge(a.hardening_index) }}</td>
+                <td>{{ ac.failed_checks if ok and a.checks else '—' }}</td>
+                <td>{{ ac.warnings if ok and a.lynis_version else '—' }}</td>
+                <td>{{ ac.suggestions if ok and a.lynis_version else '—' }}</td>
               </tr>
             {% endfor %}
           </tbody>

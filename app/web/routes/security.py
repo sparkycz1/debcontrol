@@ -132,6 +132,8 @@ class _AuditRow:
     # The newest audit of any outcome, and the newest that succeeded.
     latest: SecurityAudit | None
     audit: SecurityAudit | None
+    # The findings that still count (not marked OK on this machine).
+    counts: security_audit.Counts | None = None
 
 
 @router.get("/audit")
@@ -140,19 +142,26 @@ async def security_audit_overview(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    """Every visible machine with its newest Lynis audit: hardening index,
-    warnings and suggestions, lowest index first, machines never audited
-    last."""
+    """Every visible machine with its newest security audit: hardening
+    index, failed checks, warnings and suggestions (findings marked OK not
+    counted), lowest index first, machines never audited last."""
     visible = await machines_visible_to(db, current_user)
     machines = list((await db.execute(visible.order_by(Machine.name))).scalars().all())
     ids = visible.with_only_columns(Machine.id)
     latest = await security_audit.latest_by_machine(db, ids)
     succeeded = await security_audit.latest_by_machine(db, ids, succeeded_only=True)
-    rows = [_AuditRow(m, latest.get(m.id), succeeded.get(m.id)) for m in machines]
+    suppressed = await security_audit.suppressed_keys_by_machine(db, [m.id for m in machines])
+    rows = []
+    for m in machines:
+        audit = succeeded.get(m.id)
+        counts = security_audit.counts(audit, suppressed.get(m.id, set())) if audit else None
+        rows.append(_AuditRow(m, latest.get(m.id), audit, counts))
     rows.sort(
         key=lambda r: (
             r.audit is None,
+            r.audit is not None and r.audit.hardening_index is None,
             r.audit.hardening_index or 0 if r.audit is not None else 0,
+            -(r.counts.failed_checks if r.counts else 0),
             r.machine.name.lower(),
         )
     )
