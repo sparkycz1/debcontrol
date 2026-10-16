@@ -22,6 +22,10 @@ audit is stored as not privileged, so its hardening index is not compared
 with a full one. Connected as root, the root shim (`app.ssh.shell`) makes
 `sudo` a no-op.
 
+**debcontrol's own checks** (`app.ssh.security_checks`, based on
+vps-audit) run over the same connection first, as their own `sh -s`; Lynis
+missing or failing doesn't lose them.
+
 **The report.** Written to a file in a fresh `mktemp -d` directory that the
 account owns, created empty (mode 600) before Lynis starts: Lynis running
 as root truncates and appends to it, which keeps the owner and mode, so
@@ -34,11 +38,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 import asyncssh
 
 from app.db.models.machine import Machine
-from app.ssh import shell
+from app.ssh import security_checks, shell
 from app.ssh.client import open_connection
 from app.ssh.exceptions import SSHConnectionError
 
@@ -92,13 +97,25 @@ CISOFY_REPO_SETUP = (
     ")"
 )
 
-# The report lines that leave the machine (an extended regex for `grep -E`).
-_REPORT_LINES = r"^(lynis_version|hardening_index|lynis_tests_done|warning\[\]|suggestion\[\])="
+# The report lines that leave the machine (an extended regex for `grep -E`):
+# the findings, the per-setting details behind some of them (`details[]`:
+# current and recommended value), and a few facts shown next to them.
+_REPORT_LINES = (
+    r"^(lynis_version|hardening_index|lynis_tests_done|warning\[\]|suggestion\[\]|details\[\]"
+    r"|os_fullname|lynis_update_available|firewall_software\[\]|malware_scanner_installed"
+    r"|linux_auditd_running|vulnerable_package\[\])="
+)
 
 # A busy machine with many findings is still far below this; it only guards
 # the stored row against a pathological report.
 MAX_FINDINGS = 400
+MAX_DETAILS = 400
+MAX_VULNERABLE = 200
 _MAX_TEXT = 500
+
+# The checks walk the root file system for SUID programs (capped at five
+# minutes on the machine itself); this is the limit on top of that.
+CHECKS_TIMEOUT_SECONDS = 6 * 60
 
 _LINE = re.compile(r"^([a-z_]+)(\[\])?=(.*)$")
 
@@ -182,6 +199,13 @@ class LynisResult:
     tests_done: int | None = None
     warnings: list[dict[str, str]] = field(default_factory=list)
     suggestions: list[dict[str, str]] = field(default_factory=list)
+    # `details[]`: {"test", "service", "desc", "field", "prefval", "value"}.
+    details: list[dict[str, str]] = field(default_factory=list)
+    # A few report facts: os, lynis_update_available, firewall_software,
+    # malware_scanner, auditd, vulnerable_packages.
+    facts: dict[str, Any] = field(default_factory=dict)
+    # debcontrol's own checks (`app.ssh.security_checks`), run next to Lynis.
+    checks: list[dict[str, str]] = field(default_factory=list)
     # The tail of Lynis's own output when it exited non-zero.
     output: str = ""
 
@@ -189,6 +213,52 @@ class LynisResult:
     def usable(self) -> bool:
         """A report with a hardening index — what makes an audit a success."""
         return self.hardening_index is not None
+
+
+# `details[]=KRNL-6000|sysctl|desc:...;field:kernel.kptr_restrict;prefval:2;value:0;|`
+_DETAIL_FIELDS = ("desc", "field", "prefval", "value")
+
+
+def _detail(value: str) -> dict[str, str] | None:
+    parts = value.split("|")
+    if len(parts) < 3 or not parts[0].strip():
+        return None
+    detail = {"test": parts[0].strip()[:32], "service": _clean(parts[1])[:64]}
+    for item in parts[2].split(";"):
+        name, sep, val = item.partition(":")
+        if sep and name in _DETAIL_FIELDS:
+            detail[name] = _clean(val)[:200]
+    if not detail.get("field"):
+        return None
+    if detail.get("desc") == "No description":
+        detail["desc"] = ""
+    return detail
+
+
+# Report key → (fact name, kind): text, flag (0/1) or list.
+_FACTS: dict[str, tuple[str, str]] = {
+    "os_fullname": ("os", "text"),
+    "lynis_update_available": ("lynis_update_available", "flag"),
+    "firewall_software": ("firewall_software", "list"),
+    "malware_scanner_installed": ("malware_scanner", "flag"),
+    "linux_auditd_running": ("auditd", "flag"),
+    "vulnerable_package": ("vulnerable_packages", "list"),
+}
+
+
+def _add_fact(facts: dict[str, Any], key: str, value: str) -> None:
+    name, kind = _FACTS[key]
+    value = _clean(value)[:128]
+    if kind == "text":
+        if value:
+            facts[name] = value
+    elif kind == "flag":
+        if value in ("0", "1"):
+            facts[name] = value == "1"
+    else:
+        items: list[str] = facts.setdefault(name, [])
+        if value and value not in items and len(items) < MAX_VULNERABLE:
+            items.append(value)
 
 
 def _int(value: str) -> int | None:
@@ -242,6 +312,12 @@ def parse_audit_output(text: str) -> LynisResult:
             result.hardening_index = index if index is not None and 0 <= index <= 100 else None
         elif key == "lynis_tests_done":
             result.tests_done = _int(value)
+        elif key == "details":
+            detail = _detail(value)
+            if detail is not None and len(result.details) < MAX_DETAILS:
+                result.details.append(detail)
+        elif key in _FACTS:
+            _add_fact(result.facts, key, value)
         elif key in seen:
             finding = _finding(value)
             if finding is None:
@@ -273,7 +349,26 @@ async def run_audit(
     command = build_audit_command(install_if_missing=install_if_missing)
     try:
         async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
+            checks = await _run_checks(conn)
             result = await shell.run(conn, command, check=False, timeout=run_timeout_seconds)
     except (asyncssh.Error, OSError, TimeoutError) as exc:
         raise SSHConnectionError(f"Security audit failed on {machine.name}: {exc}") from exc
-    return parse_audit_output(shell.output_text(result))
+    parsed = parse_audit_output(shell.output_text(result))
+    parsed.checks = checks
+    return parsed
+
+
+async def _run_checks(conn: asyncssh.SSHClientConnection) -> list[dict[str, str]]:
+    """debcontrol's own checks (`app.ssh.security_checks`), fed to `sh -s`
+    on stdin. A run that times out only loses the checks, not the audit."""
+    try:
+        result = await shell.run(
+            conn,
+            "sh -s",
+            input=security_checks.SCRIPT,
+            check=False,
+            timeout=CHECKS_TIMEOUT_SECONDS,
+        )
+    except (asyncssh.ProcessError, TimeoutError):
+        return []
+    return security_checks.parse_output(shell.output_text(result))

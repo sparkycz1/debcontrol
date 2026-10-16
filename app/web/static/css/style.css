@@ -2474,3 +2474,24 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .status-day-down { background: var(--color-danger); }
 .status-legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .status-legend .status-day { display: inline-block; flex: none; width: 0.75rem; height: 0.75rem; }
+
+/* --- Security audit findings (machines/_security_audit.html) --- */
+
+.finding {
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-3) 0;
+}
+.finding:first-of-type { border-top: none; }
+.finding-head { display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap; }
+.finding-text { font-weight: 500; }
+.finding-group { margin: var(--space-4) 0 var(--space-1); font-size: 1rem; }
+.finding-details { margin: var(--space-2) 0; }
+.finding-ok { display: inline-block; margin-top: var(--space-1); }
+.audit-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-3) 0;
+}
+.audit-facts dt { color: var(--color-muted); }
+.audit-facts dd { margin: 0; }

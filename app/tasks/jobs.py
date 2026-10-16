@@ -3306,10 +3306,12 @@ def wake_machine(machine_id: str) -> dict[str, Any]:
 
 
 async def _run_security_audit(audit_id: str) -> None:
-    """Run one pending `SecurityAudit`: Lynis on its machine
-    (`app.ssh.lynis`), installing it first when the audit asks to and the
-    machine has none, then keep the parsed report and drop the machine's
-    oldest audits beyond `security_audit.KEEP_PER_MACHINE`."""
+    """Run one pending `SecurityAudit`: debcontrol's own checks and Lynis
+    on its machine (`app.ssh.lynis`), installing or updating Lynis first
+    when the audit asks to, then keep the parsed report and drop the
+    machine's oldest audits beyond `security_audit.KEEP_PER_MACHINE`.
+    Either half is enough for a successful audit; `error` then says what
+    the other one couldn't do."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         audit = await session.get(SecurityAudit, uuid.UUID(audit_id))
@@ -3323,6 +3325,7 @@ async def _run_security_audit(audit_id: str) -> None:
         await session.commit()
 
         error: str | None = None
+        succeeded = False
         try:
             secret = await resolve_machine_credential(machine, session)
             result = await run_lynis_audit(
@@ -3341,6 +3344,9 @@ async def _run_security_audit(audit_id: str) -> None:
             audit.tests_done = result.tests_done
             audit.warnings = result.warnings
             audit.suggestions = result.suggestions
+            audit.details = result.details
+            audit.facts = result.facts
+            audit.checks = result.checks
             if result.cisofy_failed:
                 logger.info(
                     "Security audit of %s: CISOfy's Lynis repository could not be added",
@@ -3359,8 +3365,15 @@ async def _run_security_audit(audit_id: str) -> None:
                     f"Lynis exited with status {result.exit_status} without a report: "
                     f"{result.output[-500:]}"
                 ).strip()
+            # debcontrol's own checks stand on their own: with them the
+            # audit succeeded, and `error` says what Lynis couldn't do.
+            succeeded = result.usable or bool(result.checks)
         audit.error = error[:1024] if error else None
-        audit.status = SecurityAuditStatus.FAILED if error else SecurityAuditStatus.SUCCEEDED
+        audit.status = (
+            SecurityAuditStatus.SUCCEEDED
+            if error is None or succeeded
+            else SecurityAuditStatus.FAILED
+        )
         audit.finished_at = datetime.now(UTC)
         await session.flush()
         await security_audit.prune(session, machine.id)
