@@ -339,7 +339,17 @@ async def test_scan_already_queued_returns_only_within_the_tab(
         data={"csrf_token": csrf, "scope": "all", "back": f"/machines/{machine_id}/docker/stacks"},
     )
 
+    sneaky = await client.post(
+        f"/machines/{machine_id}/docker/images/scan",
+        data={
+            "csrf_token": csrf,
+            "scope": "all",
+            "back": f"/machines/{machine_id}/docker/\\evil.example",
+        },
+    )
+
     assert elsewhere.headers["location"].startswith(f"/machines/{machine_id}/docker/images?")
+    assert sneaky.headers["location"].startswith(f"/machines/{machine_id}/docker/images?")
     assert within.headers["location"].startswith(f"/machines/{machine_id}/docker/stacks?")
     assert celery_calls == []
 

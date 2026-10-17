@@ -395,8 +395,10 @@ def build_recreate_script(
     lines += [
         f"backup={q(backup)}",
         f"was_running={'1' if plan.running else '0'}",
-        'restore() { echo "@@DC_RESTORE"; $D rm -f "$name" >/dev/null 2>&1; '
-        '$D rename "$backup" "$name" && { [ "$was_running" = 0 ] || $D start "$name"; }; }',
+        (
+            'restore() { echo "@@DC_RESTORE"; $D rm -f "$name" >/dev/null 2>&1; '
+            '$D rename "$backup" "$name" && { [ "$was_running" = 0 ] || $D start "$name"; }; }'
+        ),
         "$D rm -f \"$backup\" >/dev/null 2>&1 || true",
         "echo '@@DC_STEP stop'",
         f'[ "$was_running" = 0 ] || $D stop -t {STOP_TIMEOUT_SECONDS} "$name" || exit 1',

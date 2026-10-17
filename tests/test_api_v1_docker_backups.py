@@ -189,7 +189,8 @@ async def test_backup_write_permissions(client, login_as, db_session_factory):
     )
     assert (await create_backup(client, machine_id, updates, name="x")).status_code == 403
     assert (await client.put(url, json={"name": "x"}, headers=updates)).status_code == 403
-    assert (await client.delete(url, headers=updates)).status_code == 403
+    deleted = await client.delete(url, headers=updates)
+    assert deleted.status_code == 403
     restore = await client.post(
         f"{url}/restore", json={"snapshot": "latest", "confirm": "dock"}, headers=updates
     )
@@ -352,7 +353,8 @@ async def test_backup_delete_and_other_machines(client, db_session_factory):
 
     assert (await client.get(url, headers=headers)).status_code == 404
     assert (await client.put(url, json={"name": "x"}, headers=headers)).status_code == 404
-    assert (await client.delete(url, headers=headers)).status_code == 404
+    deleted = await client.delete(url, headers=headers)
+    assert deleted.status_code == 404
     assert (await client.get(f"{url}/snapshots", headers=headers)).status_code == 404
     assert (await client.post(f"{url}/run", headers=headers)).status_code == 404
     restore = await client.post(
@@ -440,8 +442,10 @@ async def test_files_validation(client, db_session_factory, celery_calls):
     assert (
         await client.get(f"{base(machine_id)}/containers/-x/files", headers=headers)
     ).status_code == 404
-    assert (await client.delete(f"{files}?path=/", headers=headers)).status_code == 400
-    assert (await client.delete(f"{files}?path=/tmp/..", headers=headers)).status_code == 400
+    deleted = await client.delete(f"{files}?path=/", headers=headers)
+    assert deleted.status_code == 400
+    deleted = await client.delete(f"{files}?path=/tmp/..", headers=headers)
+    assert deleted.status_code == 400
     assert (
         await client.post(f"{files}/mkdir", json={"path": "/"}, headers=headers)
     ).status_code == 400
@@ -499,4 +503,5 @@ async def test_files_need_terminal_and_host_key(client, login_as, db_session_fac
     assert (
         await client.post(f"{files}/mkdir", json={"path": "/d"}, headers=limited)
     ).status_code == 403
-    assert (await client.delete(f"{files}?path=/a", headers=limited)).status_code == 403
+    deleted = await client.delete(f"{files}?path=/a", headers=limited)
+    assert deleted.status_code == 403

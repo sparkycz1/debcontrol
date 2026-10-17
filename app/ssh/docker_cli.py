@@ -39,8 +39,18 @@ from app.ssh.logs import (
 from app.ssh.shell import with_root_shim
 
 __all__ = [
+    "BUSYBOX_IMAGE",
+    "CURL_IMAGE",
     "DOCKER_ACCESS_PROBE",
     "DOCKER_NO_ACCESS_MARKER",
+    "DOCKER_SOCKET",
+    "GIT_IMAGE",
+    "GRYPE_CACHE_VOLUME",
+    "GRYPE_IMAGE",
+    "HELPER_LABEL",
+    "RESTIC_IMAGE",
+    "TRIVY_CACHE_VOLUME",
+    "TRIVY_IMAGE",
     "DockerAccessError",
     "DockerCommandError",
     "is_container_name_valid",

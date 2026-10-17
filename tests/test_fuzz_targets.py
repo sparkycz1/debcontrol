@@ -41,6 +41,8 @@ _SEEDS: list[bytes] = [
     # The documented "can't reach Docker" answer (not a crash).
     b"\n@@NOACCESS\n",
     b"/var/log/../../etc/shadow",
+    # A compose path that is a file name made of dots, not "..".
+    b"...",
     # JSON from a machine (journal, pvesh, sensors) nested far too deep.
     b"[" * 5000,
     b'{"MESSAGE": "x"}\n' + b"[" * 5000 + b"\n",

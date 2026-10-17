@@ -273,7 +273,8 @@ def compose_input(data: bytes) -> None:
     docker_compose.failed_step(text)
     path = docker_compose.normalize_compose_path(text)
     if path is not None:
-        assert not path.startswith(("/", "..")) and ".." not in path.split("/")
+        # "..." or "..hidden" are file names, not the parent directory.
+        assert not path.startswith("/") and ".." not in path.split("/")
     if docker_compose.is_git_url_valid(text):
         assert text.startswith("https://") and not any(ch.isspace() for ch in text)
 

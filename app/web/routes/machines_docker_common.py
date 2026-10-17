@@ -33,6 +33,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.web.flash import sign_flash
 from app.web.messages import LocalizedText
+from app.web.redirects import safe_local_path
 from app.web.routes.machines_common import _machine_tabs
 from app.web.templating import t, templates
 
@@ -128,7 +129,9 @@ async def wait_task(
 
 
 def redirect(url: str, **flash: str | None) -> RedirectResponse:
-    """303 to `url`, carrying each given message signed (`app.web.flash`)."""
+    """303 to `url` (a same-site path, else the machine list), carrying each
+    given message signed (`app.web.flash`)."""
+    url = safe_local_path(url, "/machines")
     query = {key: sign_flash(value) for key, value in flash.items() if value}
     if query:
         url += ("&" if "?" in url else "?") + urlencode(query)

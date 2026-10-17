@@ -190,7 +190,8 @@ async def test_stack_write_permissions(client, login_as, db_session_factory):
         assert (
             await client.put(url, json={"compose": COMPOSE}, headers=limited)
         ).status_code == 403
-        assert (await client.delete(url, headers=limited)).status_code == 403
+        deleted = await client.delete(url, headers=limited)
+        assert deleted.status_code == 403
         assert (await client.post(f"{url}/webhook", headers=limited)).status_code == 403
 
     viewer = await headers_for(client, login_as, {Permission.MACHINE_VIEW}, username="dk-v2")
@@ -283,7 +284,8 @@ async def test_stacks_of_other_machines_are_404(client, db_session_factory):
 
     assert (await client.get(url, headers=headers)).status_code == 404
     assert (await client.put(url, json={"compose": COMPOSE}, headers=headers)).status_code == 404
-    assert (await client.delete(url, headers=headers)).status_code == 404
+    deleted = await client.delete(url, headers=headers)
+    assert deleted.status_code == 404
     assert (await client.post(f"{url}/deploy", headers=headers)).status_code == 404
     assert (await client.post(f"{url}/sync", headers=headers)).status_code == 404
     assert (await client.post(f"{url}/webhook", headers=headers)).status_code == 404

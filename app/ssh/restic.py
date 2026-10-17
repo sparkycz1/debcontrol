@@ -187,8 +187,10 @@ def _prelude(config: ResticConfig, *, mounts: str) -> list[str]:
         'renv="$(mktemp)"',
         "stopped=",
         # Containers stopped for the job are started again however it ends.
-        'cleanup() { rm -f "$renv"; [ -z "$stopped" ] || { echo "@@DC_STEP start"; '
-        "$D start $stopped >/dev/null; }; }",
+        (
+            'cleanup() { rm -f "$renv"; [ -z "$stopped" ] || { echo "@@DC_STEP start"; '
+            "$D start $stopped >/dev/null; }; }"
+        ),
         "trap cleanup EXIT",
         f"cat > \"$renv\" <<'DC_RESTIC_ENV_END'\n{_env_file(config)}DC_RESTIC_ENV_END",
         f"$D pull -q {RESTIC_IMAGE} >/dev/null 2>&1 || true",

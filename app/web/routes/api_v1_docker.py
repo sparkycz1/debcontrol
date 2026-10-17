@@ -64,7 +64,6 @@ from app.web.routes.machines_docker_common import wait_task
 
 router = APIRouter(prefix="/api/v1/machines/{machine_id}/docker")
 _view = Depends(require_api_permission(Permission.MACHINE_VIEW))
-_power = Depends(require_api_permission(Permission.ACTION_POWER))
 _updates = Depends(require_api_permission(Permission.ACTION_UPDATES))
 _terminal = Depends(require_api_permission(Permission.ACTION_TERMINAL))
 

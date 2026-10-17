@@ -39,6 +39,7 @@ from app.ssh.docker_cli import (
 from app.ssh.docker_prune import PruneOptions
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
+from app.web.redirects import safe_local_path
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     machines_router,
@@ -540,9 +541,12 @@ async def docker_images_scan(
             )
     except DockerCommandError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    target_back = f"{docker_base(machine)}/images"
-    if back.startswith(f"{docker_base(machine)}/") and "\n" not in back:
-        target_back = back
+    # Back to the page the scan was started from, if it is one of this
+    # machine's Docker pages.
+    default_back = f"{docker_base(machine)}/images"
+    target_back = safe_local_path(back, default_back)
+    if not target_back.startswith(f"{docker_base(machine)}/"):
+        target_back = default_back
     if job is None:
         return redirect(target_back, error=LocalizedText(request, "docker.job.already_queued"))
     await _audit(
