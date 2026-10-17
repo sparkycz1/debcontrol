@@ -184,7 +184,7 @@ async def security_audit_overview(
         },
     )
     if new_cookie:
-        set_csrf_cookie(response, csrf_token)
+        set_csrf_cookie(response, new_cookie)
     return response
 
 
