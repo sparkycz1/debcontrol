@@ -1,0 +1,106 @@
+{#- Images, disk usage and clean-up as the machine reports them right now
+    (machines_docker.docker_images_panel). -#}
+{% from "machines/docker/_macros.html" import severity_counts %}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% else %}
+  {% set ready = machine.host_key_fingerprint %}
+  {% if df %}
+    <div class="stat-grid">
+      {% for key in ('images', 'containers', 'volumes', 'build_cache') %}
+        {% set row = df.get(key) %}
+        {% if row %}
+          <div class="stat-card">
+            <div class="stat-value">{{ row.size_bytes | bytes if row.size_bytes is number else '—' }}
+              <small>{{ t(request, "docker.df.reclaimable", size=(row.reclaimable_bytes | bytes if row.reclaimable_bytes is number else '—')) }}</small>
+            </div>
+            <div class="stat-label">{{ t(request, "docker.df." ~ key, total=(row.total if row.total is not none else '—'), active=(row.active if row.active is not none else '—')) }}</div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <section class="chart-card chart-card-wide monitoring-section">
+    <header class="chart-card-header">
+      <div><h3 class="chart-card-title">{{ t(request, "docker.images.list", count=(images | length)) }}</h3></div>
+      {% if images %}
+        <input type="search" class="chart-filter" data-table-filter="images-table"
+               placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+      {% endif %}
+    </header>
+    {% if images %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="images-table">
+          <thead><tr>
+            <th data-sort="text">{{ t(request, "docker.images.ref") }}</th>
+            <th data-sort="text">{{ t(request, "docker.images.id") }}</th>
+            <th data-sort="number">{{ t(request, "docker.images.size") }}</th>
+            <th data-sort="text">{{ t(request, "docker.images.created") }}</th>
+            <th data-sort="text">{{ t(request, "docker.images.used") }}</th>
+            <th data-sort="text">{{ t(request, "docker.vulnerabilities") }}</th>
+            {% if can_updates and ready %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
+          </tr></thead>
+          <tbody>
+            {% for i in images %}
+              {% set scan = scans.get(i.id) %}
+              <tr>
+                <td class="cell-truncate" title="{{ i.ref }}">{% if i.ref %}<code>{{ i.ref }}</code>{% else %}<span class="table-muted">{{ t(request, "docker.images.dangling") }}</span>{% endif %}</td>
+                <td class="cell-nowrap"><code>{{ i.id[7:19] }}</code></td>
+                <td class="cell-nowrap" data-sort-value="{{ i.size_bytes if i.size_bytes is number else -1 }}">{{ i.size_bytes | bytes if i.size_bytes is number else '—' }}</td>
+                <td class="cell-nowrap">{{ i.created[:16] }}</td>
+                <td>{% if i.in_use %}<span class="badge badge-ok">{{ t(request, "docker.images.in_use") }}</span>{% else %}<span class="badge">{{ t(request, "docker.images.unused") }}</span>{% endif %}</td>
+                <td class="cell-nowrap" data-sort-value="{{ ((scan.counts or {}).get('critical', 0) * 1000 + (scan.counts or {}).get('high', 0)) if scan else -1 }}">
+                  {% if scan %}{{ severity_counts(request, scan.counts, docker_base ~ "/images/" ~ i.id ~ "/vulnerabilities") }}
+                  {% else %}<span class="table-muted">{{ t(request, "docker.scan.not_scanned") }}</span>{% endif %}
+                </td>
+                {% if can_updates and ready %}
+                  <td class="container-actions">
+                    {% if i.ref %}
+                      <form method="post" action="{{ docker_base }}/images/scan" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="image" value="{{ i.ref }}">
+                        <input type="hidden" name="image_id" value="{{ i.id }}">
+                        <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.scan.rescan" if scan else "docker.scan.now") }}</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="hint">{{ t(request, "docker.images.none") }}</p>
+    {% endif %}
+  </section>
+
+  {% if can_updates and ready %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.prune.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.prune.hint") }}</p>
+      <form method="post" action="{{ docker_base }}/prune" class="form form-wide" autocomplete="off"
+            data-confirm="{{ t(request, 'docker.prune.confirm') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label><input type="checkbox" name="containers" value="1"> {{ t(request, "docker.prune.containers", count=(prune_preview.stopped | length)) }}</label>
+        <label><input type="checkbox" name="images" value="1" checked> {{ t(request, "docker.prune.images", count=(prune_preview.dangling | length)) }}</label>
+        <label><input type="checkbox" name="all_images" value="1"> {{ t(request, "docker.prune.all_images", count=(prune_preview.unused | length)) }}</label>
+        <label><input type="checkbox" name="networks" value="1"> {{ t(request, "docker.prune.networks") }}</label>
+        <label><input type="checkbox" name="build_cache" value="1" checked> {{ t(request, "docker.prune.build_cache") }}</label>
+        <label><input type="checkbox" name="volumes" value="1"> {{ t(request, "docker.prune.volumes") }}</label>
+        <label><input type="checkbox" name="all_volumes" value="1"> {{ t(request, "docker.prune.all_volumes") }}</label>
+        <p class="hint">{{ t(request, "docker.prune.all_volumes_hint") }}</p>
+        <label for="prune-confirm">{{ t(request, "docker.prune.confirm_name", name=machine.name) }}</label>
+        <input id="prune-confirm" type="text" name="confirm_name" spellcheck="false">
+        {% if prune_preview.stopped %}
+          <details>
+            <summary>{{ t(request, "docker.prune.stopped_list", count=(prune_preview.stopped | length)) }}</summary>
+            <ul>{% for c in prune_preview.stopped %}<li><code>{{ c.name }}</code></li>{% endfor %}</ul>
+          </details>
+        {% endif %}
+        <button type="submit" class="button button-danger">{{ t(request, "docker.prune.button") }}</button>
+      </form>
+    </section>
+  {% endif %}
+{% endif %}

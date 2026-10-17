@@ -1,0 +1,50 @@
+{#- A backup's snapshots in its restic repository, with restore
+    (machines_docker_backups.docker_backup_snapshots). -#}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif snapshots %}
+  {% set ready = machine.host_key_fingerprint %}
+  <div class="monitoring-table-wrap">
+    <table class="data-table">
+      <thead><tr>
+        <th>{{ t(request, "docker.backup.snapshot") }}</th>
+        <th>{{ t(request, "docker.jobs.when") }}</th>
+        <th>{{ t(request, "docker.images.size") }}</th>
+        <th>{{ t(request, "docker.backup.sources") }}</th>
+      </tr></thead>
+      <tbody>
+        {% for s in snapshots %}
+          <tr>
+            <td class="cell-nowrap"><code>{{ s.short_id }}</code></td>
+            <td class="cell-nowrap">{{ s.time[:19] | replace('T', ' ') }}</td>
+            <td class="cell-nowrap">{{ s.size_bytes | bytes if s.size_bytes is number else '—' }}</td>
+            <td class="cell-truncate">{{ s.paths | join(', ') }}</td>
+          </tr>
+          {% if can_terminal and ready %}
+            <tr class="docker-restore-row">
+              <td colspan="4">
+                <details>
+                  <summary>{{ t(request, "docker.backup.restore_this", id=s.short_id) }}</summary>
+                  <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/restore" class="form" autocomplete="off"
+                        data-confirm="{{ t(request, 'docker.backup.restore_confirm', id=s.short_id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="snapshot" value="{{ s.id }}">
+                    <div class="alert alert-warn"><p>{{ t(request, "docker.backup.restore_warning") }}</p></div>
+                    {% for v in backup.volumes %}<label><input type="checkbox" name="volume" value="{{ v }}" checked> {{ t(request, "docker.backup.volume") }} <code>{{ v }}</code></label>{% endfor %}
+                    {% for p in backup.paths %}<label><input type="checkbox" name="path" value="{{ p }}" checked> {{ t(request, "docker.backup.path") }} <code>{{ p }}</code></label>{% endfor %}
+                    <label><input type="checkbox" name="delete" value="1"> {{ t(request, "docker.backup.restore_delete") }}</label>
+                    <label for="restore-confirm-{{ loop.index }}">{{ t(request, "docker.prune.confirm_name", name=machine.name) }}</label>
+                    <input id="restore-confirm-{{ loop.index }}" name="confirm_name" required spellcheck="false">
+                    <button type="submit" class="button button-danger">{{ t(request, "docker.backup.restore") }}</button>
+                  </form>
+                </details>
+              </td>
+            </tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="hint">{{ t(request, "docker.backup.no_snapshots") }}</p>
+{% endif %}

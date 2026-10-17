@@ -32,6 +32,7 @@ from app.web.routes import (
     api_v1_backup,
     api_v1_checks,
     api_v1_dashboard,
+    api_v1_docker,
     api_v1_metrics,
     api_v1_notifications,
     api_v1_roles,
@@ -47,6 +48,7 @@ from app.web.routes import (
     check_push,
     checks,
     dashboard,
+    docker_hooks,
     fleet,
     impersonation,
     inform,
@@ -275,6 +277,7 @@ def create_app() -> FastAPI:
     app.include_router(status_page.router)
     app.include_router(status_page.public_router)
     app.include_router(check_push.router)
+    app.include_router(docker_hooks.router)
     app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(machine_groups.router)
@@ -306,6 +309,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_notifications.router)
     app.include_router(api_v1_search.router)
     app.include_router(api_v1_metrics.router)
+    app.include_router(api_v1_docker.router)
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)

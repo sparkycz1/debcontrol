@@ -77,6 +77,7 @@ from app.services import terminal_recording
 from app.services.access_scope import can_see_machine
 from app.ssh.client import open_shell_session
 from app.ssh.credentials import resolve_machine_credential
+from app.ssh.docker_cli import build_shell_command, is_container_name_valid
 from app.ssh.exceptions import SSHConnectionError
 
 router = APIRouter()
@@ -249,10 +250,22 @@ async def _log_terminal_event(
 
 @router.websocket("/machines/{machine_id}/terminal/ws")
 async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> None:
+    """The machine's shell — or, with `?container=<name>`, a shell inside
+    that Docker container (`docker exec -it`, the Docker tab's "Shell"):
+    same permission, same limits, same recording, audited as
+    `machine.container.shell.open`/`.close`."""
+    container = websocket.query_params.get("container") or None
+    if container is not None and not is_container_name_valid(container):
+        await websocket.close(code=_POLICY_VIOLATION, reason="Invalid container.")
+        return
     authenticated = await _authenticate(websocket, machine_id)
     if authenticated is None:
         return
     user, machine = authenticated
+    where = f'container "{container}" on "{machine.name}"' if container else f'"{machine.name}"'
+    open_action = "machine.container.shell.open" if container else "machine.terminal.open"
+    close_action = "machine.container.shell.close" if container else "machine.terminal.close"
+    audit_details: dict[str, object] = {"container": container} if container else {}
 
     db_session_factory = websocket.app.state.db_session_factory
     async with db_session_factory() as db:
@@ -278,6 +291,7 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
                 app_settings.ssh_connect_timeout,
                 term_type=_TERM_TYPE,
                 term_size=_DEFAULT_TERM_SIZE,
+                command=build_shell_command(container) if container else None,
             )
         except SSHConnectionError as exc:
             await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}))
@@ -286,11 +300,11 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
         session_opened = True
         await _log_terminal_event(
             db_session_factory,
-            action="machine.terminal.open",
-            summary=f'Opened terminal to "{machine.name}"',
+            action=open_action,
+            summary=f"Opened terminal to {where}",
             machine=machine,
             user=user,
-            details=None,
+            details=audit_details or None,
         )
 
         # Only the output is recorded, never what is typed — see
@@ -329,7 +343,10 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
 
         if session_opened:
             duration_seconds = (datetime.now(UTC) - started_at).total_seconds()
-            close_details: dict[str, object] = {"duration_seconds": round(duration_seconds, 1)}
+            close_details: dict[str, object] = {
+                **audit_details,
+                "duration_seconds": round(duration_seconds, 1),
+            }
             if recorder is not None:
                 # Storing the recording must never keep the session from
                 # being closed and logged.
@@ -347,8 +364,8 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
                         close_details["recording_id"] = str(recording.id)
             await _log_terminal_event(
                 db_session_factory,
-                action="machine.terminal.close",
-                summary=f'Closed terminal to "{machine.name}" after {duration_seconds:.0f}s',
+                action=close_action,
+                summary=f"Closed terminal to {where} after {duration_seconds:.0f}s",
                 machine=machine,
                 user=user,
                 details=close_details,

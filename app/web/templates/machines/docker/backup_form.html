@@ -1,0 +1,143 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel %}
+
+{% block docker_title %}{{ backup.name if backup else t(request, "docker.backups.new") }}{% endblock %}
+
+{% block docker_content %}
+  {% set ready = machine.host_key_fingerprint %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.backup.heading", name=backup.name) if backup else t(request, "docker.backups.new") }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/backups">{{ t(request, "docker.back_to_backups") }}</a>
+  </div>
+
+  {% if errors %}
+    <div class="alert alert-error">{% for e in errors %}<p>{{ t(request, e) }}</p>{% endfor %}</div>
+  {% endif %}
+
+  {% if backup %}
+    <section class="panel">
+      <dl class="detail-list">
+        <dt>{{ t(request, "docker.backup.repository") }}</dt><dd><code>{{ backup.repository_display }}</code></dd>
+        <dt>{{ t(request, "docker.backup.last") }}</dt>
+        <dd>
+          {% if backup.last_backup_at %}{{ backup.last_backup_at | local_time }} · {{ t(request, "docker.job.status." ~ ('succeeded' if backup.last_backup_status == 'ok' else 'failed')) }}{% else %}{{ t(request, "docker.backup.never") }}{% endif %}
+          {% if backup.last_success_at and backup.last_backup_status != 'ok' %}<div class="table-summary">{{ t(request, "docker.backup.last_success", when=(backup.last_success_at | local_time)) }}</div>{% endif %}
+        </dd>
+        {% if backup.last_snapshot_id %}<dt>{{ t(request, "docker.backup.snapshot") }}</dt><dd><code>{{ backup.last_snapshot_id[:12] }}</code>{% if backup.last_backup_bytes is number %} · {{ t(request, "docker.backup.added", size=(backup.last_backup_bytes | bytes)) }}{% endif %}</dd>{% endif %}
+        <dt>{{ t(request, "docker.backup.last_check") }}</dt><dd>{{ backup.last_check_at | local_time }}{% if backup.last_check_status %} · {{ t(request, "docker.job.status." ~ ('succeeded' if backup.last_check_status == 'ok' else 'failed')) }}{% endif %}</dd>
+        <dt>{{ t(request, "docker.backup.retention") }}</dt>
+        <dd>{% if has_retention %}{% for key in ('last', 'daily', 'weekly', 'monthly') %}{% if backup['keep_' ~ key] %}{{ t(request, "docker.backup.keep_" ~ key) }}: {{ backup['keep_' ~ key] }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}{% else %}{{ t(request, "docker.backup.keep_all") }}{% endif %}</dd>
+      </dl>
+      {% if backup.last_backup_status == 'failed' and backup.last_error %}<div class="alert alert-error"><p>{{ backup.last_error }}</p></div>{% endif %}
+      {% if can_updates and ready %}
+        <div class="page-header-actions">
+          <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/run" class="inline-form"
+                {% if backup.stop_containers %}data-confirm="{{ t(request, 'docker.backup.run_confirm_stop') }}"{% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button">{{ t(request, "docker.backup.run") }}</button>
+          </form>
+          <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/check" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.backup.check") }}</button>
+          </form>
+          <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/check" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="read_data_percent" value="10">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.backup.check_data") }}</button>
+          </form>
+          {% if has_retention %}
+            <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/forget" class="inline-form"
+                  data-confirm="{{ t(request, 'docker.backup.forget_confirm') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-secondary">{{ t(request, "docker.backup.forget") }}</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>{{ t(request, "docker.backup.snapshots") }}</h2>
+      {{ lazy_panel(request, docker_base ~ "/backups/" ~ backup.id ~ "/snapshots", "snapshots-panel") }}
+    </section>
+  {% endif %}
+
+  {% if can_terminal %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.backup.settings") }}</h2>
+      <form method="post" action="{{ docker_base }}/backups{% if backup %}/{{ backup.id }}{% endif %}" class="form form-wide" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="b-name">{{ t(request, "docker.backup.name") }}</label>
+        <input id="b-name" name="name" required maxlength="64" value="{{ form.name if form else (backup.name if backup else '') }}">
+
+        <label for="b-repo">{{ t(request, "docker.backup.repository") }}</label>
+        <input id="b-repo" name="repository" {% if not backup %}required{% endif %} spellcheck="false"
+               placeholder="{{ t(request, 'docker.backup.repository_keep') if backup else '/srv/restic' }}" value="{{ form.repository if form else '' }}">
+        <p class="hint">{{ t(request, "docker.backup.repository_hint") }}</p>
+
+        <label for="b-password">{{ t(request, "docker.backup.password") }}</label>
+        <input id="b-password" name="password" type="password" autocomplete="new-password" {% if not backup %}required{% endif %}
+               placeholder="{{ t(request, 'docker.backup.secret_keep') if backup else '' }}">
+        <p class="hint">{{ t(request, "docker.backup.password_hint") }}</p>
+
+        <label for="b-env">{{ t(request, "docker.backup.env") }}</label>
+        <textarea id="b-env" name="env" rows="3" class="code-input" spellcheck="false" placeholder="{{ t(request, 'docker.backup.secret_keep') if backup and backup.env_encrypted else 'AWS_ACCESS_KEY_ID=...' }}"></textarea>
+        <p class="hint">{{ t(request, "docker.backup.env_hint") }}</p>
+        {% if backup and backup.env_encrypted %}
+        <label class="checkbox"><input type="checkbox" name="clear_env" value="1"> {{ t(request, "docker.backup.env_clear") }}</label>
+        {% endif %}
+
+        <label for="b-volumes">{{ t(request, "docker.backup.volumes") }}</label>
+        <textarea id="b-volumes" name="volumes" rows="4" class="code-input" spellcheck="false">
+{{ form.volumes if form else (backup.volumes | join('\n') if backup else '') }}</textarea>
+        <p class="hint">{{ t(request, "docker.backup.volumes_hint") }} <a href="{{ docker_base }}/volumes">{{ t(request, "docker.nav.volumes") }}</a></p>
+
+        <label for="b-paths">{{ t(request, "docker.backup.paths") }}</label>
+        <textarea id="b-paths" name="paths" rows="3" class="code-input" spellcheck="false">
+{{ form.paths if form else (backup.paths | join('\n') if backup else '') }}</textarea>
+        <p class="hint">{{ t(request, "docker.backup.paths_hint") }}</p>
+
+        <label for="b-excludes">{{ t(request, "docker.backup.excludes") }}</label>
+        <textarea id="b-excludes" name="excludes" rows="3" class="code-input" spellcheck="false">
+{{ form.excludes if form else (backup.excludes | join('\n') if backup else '') }}</textarea>
+
+        <label><input type="checkbox" name="stop_containers" value="1" {% if (form.stop_containers if form else (backup.stop_containers if backup else false)) %}checked{% endif %}> {{ t(request, "docker.backup.stop_containers") }}</label>
+        <p class="hint">{{ t(request, "docker.backup.stop_containers_hint") }}</p>
+
+        <fieldset class="docker-fieldset">
+          <legend>{{ t(request, "docker.backup.retention") }}</legend>
+          <p class="hint">{{ t(request, "docker.backup.retention_hint") }}</p>
+          <div class="docker-keep-grid">
+            {% for key in ('last', 'daily', 'weekly', 'monthly') %}
+              <label>{{ t(request, "docker.backup.keep_" ~ key) }}
+                <input type="number" min="0" max="10000" name="keep_{{ key }}" value="{{ form['keep_' ~ key] if form else (backup['keep_' ~ key] if backup and backup['keep_' ~ key] is not none else '') }}">
+              </label>
+            {% endfor %}
+          </div>
+        </fieldset>
+
+        <label><input type="checkbox" name="enabled" value="1" {% if (form.enabled if form else (backup.enabled if backup else true)) %}checked{% endif %}> {{ t(request, "docker.backup.enabled") }}</label>
+        <p class="hint">{{ t(request, "docker.backup.enabled_hint") }}</p>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if backup %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.jobs.heading") }}</h2>
+      {% if jobs %}{% include "machines/docker/_jobs_table.html" %}{% else %}<p class="hint">{{ t(request, "docker.jobs.none") }}</p>{% endif %}
+    </section>
+    {% if can_terminal %}
+      <section class="panel panel-danger">
+        <h2>{{ t(request, "docker.backup.delete") }}</h2>
+        <p class="hint">{{ t(request, "docker.backup.delete_hint") }}</p>
+        <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/delete" class="inline-form"
+              data-confirm="{{ t(request, 'docker.backup.delete_confirm', name=backup.name) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-danger">{{ t(request, "docker.backup.delete") }}</button>
+        </form>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}

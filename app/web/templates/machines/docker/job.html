@@ -1,0 +1,17 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import job_title %}
+
+{% block docker_title %}{{ t(request, "docker.job.kind." ~ job.kind) }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ job_title(request, job) }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/jobs">{{ t(request, "docker.back_to_jobs") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "docker.job.hint") }}</p>
+  {% include "machines/docker/_job_status.html" %}
+{% endblock %}
+
+{% block docker_scripts %}
+  <script src="{{ static_url('js/run-output.js') }}" defer></script>
+{% endblock %}

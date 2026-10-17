@@ -1,0 +1,124 @@
+{#- One container as `docker inspect` describes it right now
+    (machines_docker.docker_container_panel). -#}
+{% from "machines/docker/_macros.html" import severity_counts, container_state %}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif container is none %}
+  <div class="alert alert-warn"><p>{{ t(request, "docker.container.not_found") }}</p></div>
+{% else %}
+  {% set c = container %}
+  {% set ready = machine.host_key_fingerprint %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>{{ t(request, "docker.container.state") }} {{ container_state(request, c) }}</h2>
+      {% if can_power and ready %}
+        <div class="page-header-actions">
+          {% set actions = ('restart', 'stop') if c.running else ('start',) %}
+          {% for a in actions %}
+            <form method="post" action="/machines/{{ machine.id }}/containers/{{ c.name | urlencode }}/{{ a }}?from=container" class="inline-form"
+                  data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button {{ 'button-danger' if a == 'stop' else 'button-secondary' }} log-small-button">{{ t(request, "monitoring.containers.action_" ~ a) }}</button>
+            </form>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+    {% if c.privileged %}
+      <div class="alert alert-warn"><p>{{ t(request, "docker.container.privileged") }}</p></div>
+    {% endif %}
+    <dl class="detail-list">
+      <dt>{{ t(request, "docker.container.image") }}</dt>
+      <dd><code>{{ c.image }}</code><div class="table-summary"><code>{{ c.image_id[:19] }}</code></div></dd>
+      {% if c.compose_project %}
+        <dt>{{ t(request, "docker.container.stack") }}</dt>
+        <dd><a href="{{ docker_base }}/stacks">{{ c.compose_project }}</a>{% if c.compose_service %} · {{ t(request, "docker.container.service", name=c.compose_service) }}{% endif %}</dd>
+      {% endif %}
+      <dt>{{ t(request, "docker.container.created") }}</dt><dd>{{ c.created[:19] | replace('T', ' ') or '—' }}</dd>
+      {% if c.running %}
+        <dt>{{ t(request, "docker.container.started") }}</dt><dd>{{ c.started_at[:19] | replace('T', ' ') or '—' }}</dd>
+      {% elif c.exit_code is not none %}
+        <dt>{{ t(request, "docker.container.exit_code") }}</dt><dd>{{ c.exit_code }}</dd>
+      {% endif %}
+      <dt>{{ t(request, "docker.container.restart_policy") }}</dt>
+      <dd>{{ c.restart_policy or 'no' }}{% if c.restart_count %} · {{ t(request, "docker.container.restarts", count=c.restart_count) }}{% endif %}</dd>
+      {% if c.command %}<dt>{{ t(request, "docker.container.command") }}</dt><dd><code>{{ c.command }}</code></dd>{% endif %}
+      <dt>{{ t(request, "docker.container.network_mode") }}</dt><dd>{{ c.network_mode or '—' }}</dd>
+      {% if c.networks %}<dt>{{ t(request, "docker.container.networks") }}</dt><dd>{{ c.networks | join(', ') }}</dd>{% endif %}
+      <dt>{{ t(request, "monitoring.containers.ports") }}</dt><dd>{{ c.ports | join(', ') if c.ports else '—' }}</dd>
+      {% if c.env_names %}
+        <dt>{{ t(request, "docker.container.env") }}</dt>
+        <dd><span class="hint">{{ t(request, "docker.container.env_hint") }}</span><br>{% for n in c.env_names %}<code>{{ n }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+      {% endif %}
+    </dl>
+  </section>
+
+  {% if c.mounts %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.container.mounts") }}</h2>
+      <div class="monitoring-table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>{{ t(request, "docker.container.mount_type") }}</th>
+            <th>{{ t(request, "docker.container.mount_source") }}</th>
+            <th>{{ t(request, "docker.container.mount_destination") }}</th>
+            <th>{{ t(request, "docker.container.mount_mode") }}</th>
+          </tr></thead>
+          <tbody>
+            {% for m in c.mounts %}
+              <tr>
+                <td>{{ m.type }}</td>
+                <td class="cell-truncate" title="{{ m.source }}">
+                  {% if m.type == 'volume' and m.name %}
+                    {% if can_terminal and ready %}<a href="{{ docker_base }}/volumes/{{ m.name | urlencode }}/files">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}
+                  {% else %}<code>{{ m.source }}</code>{% endif %}
+                </td>
+                <td><code>{{ m.destination }}</code></td>
+                <td>{{ 'rw' if m.rw else 'ro' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>{{ t(request, "docker.vulnerabilities") }}</h2>
+      {% if can_updates and ready and c.image and c.image_id %}
+        <form method="post" action="{{ docker_base }}/images/scan" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="image" value="{{ c.image }}">
+          <input type="hidden" name="image_id" value="{{ c.image_id }}">
+          <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.scan.rescan" if scan else "docker.scan.now") }}</button>
+        </form>
+      {% endif %}
+    </div>
+    {% if scan %}
+      <p>{{ severity_counts(request, scan.counts, docker_base ~ "/images/" ~ scan.image_id ~ "/vulnerabilities") }}</p>
+      <p class="hint">
+        {{ t(request, "docker.scan.scanned_at", when=(scan.scanned_at | local_time)) }}
+        {% for name, version in (scan.scanners or {}).items() %} · {{ name }} {{ version }}{% endfor %}
+      </p>
+    {% else %}
+      <p class="hint">{{ t(request, "docker.scan.not_scanned_hint") }}</p>
+    {% endif %}
+    {% if image %}
+      <dl class="detail-list">
+        <dt>{{ t(request, "docker.images.size") }}</dt><dd>{{ image.size_bytes | bytes if image.size_bytes is number else '—' }}</dd>
+        <dt>{{ t(request, "docker.images.created") }}</dt><dd>{{ image.created[:19] or '—' }}</dd>
+        {% if image.digest %}<dt>{{ t(request, "docker.images.digest") }}</dt><dd><code>{{ image.digest[:30] }}…</code></dd>{% endif %}
+      </dl>
+    {% endif %}
+  </section>
+
+  {% if c.labels %}
+    <details class="panel">
+      <summary>{{ t(request, "docker.container.labels", count=(c.labels | length)) }}</summary>
+      <dl class="detail-list">
+        {% for k, v in c.labels.items() %}<dt><code>{{ k }}</code></dt><dd class="cell-truncate" title="{{ v }}">{{ v }}</dd>{% endfor %}
+      </dl>
+    </details>
+  {% endif %}
+{% endif %}

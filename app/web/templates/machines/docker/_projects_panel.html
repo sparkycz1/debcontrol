@@ -1,0 +1,71 @@
+{#- Every Compose project on the machine right now, deployed by debcontrol
+    or not (machines_docker_stacks.docker_stacks_panel). -#}
+{% from "machines/docker/_macros.html" import container_state %}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif projects %}
+  {% set ready = machine.host_key_fingerprint %}
+  <div class="monitoring-table-wrap">
+    <table class="data-table" id="projects-table">
+      <thead><tr>
+        <th>{{ t(request, "docker.stacks.name") }}</th>
+        <th>{{ t(request, "docker.projects.containers") }}</th>
+        <th>{{ t(request, "docker.projects.files") }}</th>
+        {% if ready and (can_power or can_updates or can_terminal) %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for p in projects %}
+          {% set stack = managed.get(p.name) %}
+          {% set is_own = protected_project and p.name == protected_project %}
+          <tr>
+            <td class="cell-nowrap">
+              {% if stack %}<a href="{{ docker_base }}/stacks/{{ stack.id }}"><strong>{{ p.name }}</strong></a> <span class="badge badge-tag">{{ t(request, "docker.projects.managed") }}</span>
+              {% else %}<strong>{{ p.name }}</strong>{% endif %}
+              {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
+              {% if p.status %}<div class="table-summary">{{ p.status }}</div>{% endif %}
+            </td>
+            <td>
+              {% for c in p.containers %}
+                <div><a href="{{ docker_base }}/containers/{{ c.name | urlencode }}">{{ c.compose_service or c.name }}</a> {{ container_state(request, c) }}</div>
+              {% else %}<span class="table-muted">—</span>{% endfor %}
+            </td>
+            <td class="cell-truncate">
+              {% for f in p.config_files %}<div title="{{ f }}"><code>{{ f }}</code></div>{% else %}<span class="table-muted">{{ t(request, "docker.projects.files_unknown") }}</span>{% endfor %}
+            </td>
+            {% if ready and (can_power or can_updates or can_terminal) %}
+              <td class="container-actions">
+                {% if not is_own %}
+                  {% if can_updates %}
+                    {% for a in ('update', 'up') %}
+                      {% if stack or p.config_files %}
+                        <form method="post" action="{{ docker_base }}/projects/{{ p.name }}/{{ a }}" class="inline-form"
+                              data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=p.name) }}">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                          <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.projects.action_" ~ a) }}</button>
+                        </form>
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
+                  {% if can_power %}
+                    {% for a in ('restart', 'stop', 'start', 'down') %}
+                      <form method="post" action="{{ docker_base }}/projects/{{ p.name }}/{{ a }}" class="inline-form"
+                            data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=p.name) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="button {{ 'button-danger' if a in ('stop', 'down') else 'button-secondary' }} log-small-button">{{ t(request, "docker.projects.action_" ~ a) }}</button>
+                      </form>
+                    {% endfor %}
+                  {% endif %}
+                {% endif %}
+                {% if can_terminal and p.config_files and not stack %}
+                  <a class="button button-secondary log-small-button" href="{{ docker_base }}/projects/{{ p.name }}/compose">{{ t(request, "docker.projects.view_compose") }}</a>
+                {% endif %}
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="hint">{{ t(request, "docker.projects.none") }}</p>
+{% endif %}

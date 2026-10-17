@@ -1,0 +1,85 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ t(request, "docker.files.title", name=target.name) }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.files.title_" ~ target.kind, name=target.name) }}</h2>
+    {% if target.kind == 'container' %}
+      <a class="button button-secondary log-small-button" href="{{ docker_base }}/containers/{{ target.name | urlencode }}">{{ t(request, "docker.back_to_container") }}</a>
+    {% else %}
+      <a class="button button-secondary log-small-button" href="{{ docker_base }}/volumes">{{ t(request, "docker.back_to_volumes") }}</a>
+    {% endif %}
+  </div>
+  <p class="hint">{{ t(request, "docker.files.hint_" ~ target.kind) }}</p>
+  {% include "machines/docker/_file_crumbs.html" %}
+
+  {% if error %}
+    <div class="alert alert-error"><p>{{ error }}</p></div>
+  {% else %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="files-table">
+        <thead><tr>
+          <th data-sort="text">{{ t(request, "docker.files.name") }}</th>
+          <th data-sort="number">{{ t(request, "docker.images.size") }}</th>
+          <th data-sort="text">{{ t(request, "docker.files.modified") }}</th>
+          <th>{{ t(request, "docker.files.mode") }}</th>
+          <th>{{ t(request, "docker.files.owner") }}</th>
+          <th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>
+        </tr></thead>
+        <tbody>
+          {% if parent is not none %}
+            <tr><td colspan="6"><a href="{{ files_url(parent) }}">..</a></td></tr>
+          {% endif %}
+          {% for e in entries %}
+            {% set full = join(path, e.name) %}
+            <tr>
+              <td class="cell-truncate" title="{{ e.name }}">
+                {% if e.kind == 'dir' %}<a href="{{ files_url(full) }}"><strong>{{ e.name }}/</strong></a>
+                {% elif e.kind == 'file' %}<a href="{{ files_url(full, 'edit') }}">{{ e.name }}</a>
+                {% else %}{{ e.name }} <span class="badge">{{ t(request, "docker.files.kind_" ~ e.kind) }}</span>{% endif %}
+              </td>
+              <td class="cell-nowrap" data-sort-value="{{ e.size if e.size is not none and e.kind == 'file' else -1 }}">{{ e.size | bytes if e.size is not none and e.kind == 'file' else '' }}</td>
+              <td class="cell-nowrap">{{ e.mtime | from_epoch | local_time if e.mtime is not none else '—' }}</td>
+              <td><code>{{ e.mode }}</code></td>
+              <td>{{ e.owner }}</td>
+              <td class="container-actions">
+                {% if e.kind == 'file' %}
+                  <a class="button button-secondary log-small-button" href="{{ files_url(full, 'download') }}">{{ t(request, "docker.files.download") }}</a>
+                {% endif %}
+                {% if e.kind in ('file', 'link', 'dir') %}
+                  <form method="post" action="{{ files_url(path, 'delete') }}" class="inline-form"
+                        data-confirm="{{ t(request, 'docker.files.delete_confirm_dir' if e.kind == 'dir' else 'docker.files.delete_confirm', name=e.name) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="path" value="{{ full }}">
+                    <button type="submit" class="button button-danger log-small-button">{{ t(request, "docker.files.delete") }}</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="table-muted">{{ t(request, "docker.files.empty") }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="docker-file-forms">
+      <form method="post" action="{{ files_url(path, 'upload') }}" enctype="multipart/form-data" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="path" value="{{ path }}">
+        <label for="file-upload">{{ t(request, "docker.files.upload_label") }}</label>
+        <input id="file-upload" type="file" name="upload" required>
+        <p class="hint">{{ t(request, "docker.files.upload_hint", size=(max_upload | bytes)) }}</p>
+        <button type="submit" class="button button-secondary">{{ t(request, "docker.files.upload") }}</button>
+      </form>
+      <form method="post" action="{{ files_url(path, 'mkdir') }}" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="path" value="{{ path }}">
+        <label for="file-mkdir">{{ t(request, "docker.files.mkdir_label") }}</label>
+        <input id="file-mkdir" name="folder" required maxlength="255" spellcheck="false">
+        <button type="submit" class="button button-secondary">{{ t(request, "docker.files.mkdir") }}</button>
+      </form>
+    </div>
+  {% endif %}
+{% endblock %}

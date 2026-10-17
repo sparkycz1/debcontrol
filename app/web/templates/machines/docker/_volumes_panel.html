@@ -1,0 +1,46 @@
+{#- Volumes as the machine reports them right now
+    (machines_docker.docker_volumes_panel). -#}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif volumes %}
+  {% set ready = machine.host_key_fingerprint %}
+  <section class="chart-card chart-card-wide monitoring-section">
+    <header class="chart-card-header">
+      <div><h3 class="chart-card-title">{{ t(request, "docker.volumes.list", count=(volumes | length)) }}</h3></div>
+      <input type="search" class="chart-filter" data-table-filter="volumes-table"
+             placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+    </header>
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="volumes-table">
+        <thead><tr>
+          <th data-sort="text">{{ t(request, "docker.volumes.name") }}</th>
+          <th data-sort="text">{{ t(request, "docker.volumes.driver") }}</th>
+          <th data-sort="text">{{ t(request, "docker.volumes.stack") }}</th>
+          {% if with_sizes %}<th data-sort="number">{{ t(request, "docker.images.size") }}</th>{% endif %}
+          <th data-sort="text">{{ t(request, "docker.volumes.used_by") }}</th>
+          {% if can_terminal and ready %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for v in volumes %}
+            <tr>
+              <td class="cell-truncate" title="{{ v.name }}"><code>{{ v.name if not v.anonymous else v.name[:12] ~ '…' }}</code>{% if v.anonymous %} <span class="badge">{{ t(request, "docker.volumes.anonymous") }}</span>{% endif %}</td>
+              <td>{{ v.driver }}</td>
+              <td>{{ v.compose_project or '—' }}</td>
+              {% if with_sizes %}<td data-sort-value="{{ v.size_bytes if v.size_bytes is number else -1 }}">{{ v.size_bytes | bytes if v.size_bytes is number else '—' }}</td>{% endif %}
+              <td>{% if v.used_by %}{{ v.used_by | join(', ') }}{% else %}<span class="badge">{{ t(request, "docker.images.unused") }}</span>{% endif %}</td>
+              {% if can_terminal and ready %}
+                <td class="container-actions">
+                  {% if v.driver == 'local' %}
+                    <a class="button button-secondary log-small-button" href="{{ docker_base }}/volumes/{{ v.name | urlencode }}/files">{{ t(request, "docker.container.files") }}</a>
+                  {% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% else %}
+  <p class="hint">{{ t(request, "docker.volumes.none") }}</p>
+{% endif %}

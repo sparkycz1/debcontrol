@@ -1,0 +1,7 @@
+{#- Where in the container or volume: "/ › etc › nginx". -#}
+<nav class="docker-crumbs" aria-label="{{ t(request, 'docker.files.path') }}">
+  {% for label, p in crumbs %}
+    {% if not loop.first %}<span aria-hidden="true">›</span>{% endif %}
+    {% if loop.last %}<strong>{{ label }}</strong>{% else %}<a href="{{ files_url(p) }}">{{ label }}</a>{% endif %}
+  {% endfor %}
+</nav>

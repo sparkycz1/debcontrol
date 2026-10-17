@@ -1,0 +1,89 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import job_status, job_title, lazy_panel %}
+
+{% block docker_title %}{{ name }}{% endblock %}
+
+{% block docker_content %}
+  {% set base = docker_base ~ "/containers/" ~ (name | urlencode) %}
+  {% set ready = machine.host_key_fingerprint %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.container.heading", name=name) }}</h2>
+    <div class="page-header-actions">
+      {% if can_terminal and ready %}
+        <a class="button button-secondary log-small-button" href="{{ base }}/shell">{{ t(request, "docker.container.shell") }}</a>
+        <a class="button button-secondary log-small-button" href="{{ base }}/files">{{ t(request, "docker.container.files") }}</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% include "machines/docker/_action_flash.html" %}
+  {% if is_protected %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.protected") }}</p></div>
+  {% endif %}
+
+  {{ lazy_panel(request, base ~ "/panel", "container-panel") }}
+
+  {% if can_updates and ready and not is_protected %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.update.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.update.hint") }}</p>
+      <form method="post" action="{{ base }}/update" class="form"
+            data-confirm="{{ t(request, 'docker.update.confirm', name=name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="update-gate">{{ t(request, "docker.gate.label_once") }}</label>
+        <select id="update-gate" name="gate">
+          <option value="">{{ t(request, "docker.gate.use_setting") }}</option>
+          {% for g in gates %}<option value="{{ g }}">{{ t(request, "docker.gate." ~ g) }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="button">{{ t(request, "docker.update.now") }}</button>
+      </form>
+      {% if rollback_image %}
+        <form method="post" action="{{ base }}/rollback" class="form"
+              data-confirm="{{ t(request, 'docker.rollback.confirm', name=name) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <p class="hint">{{ t(request, "docker.rollback.hint", image=rollback_image[:19]) }}</p>
+          <button type="submit" class="button button-secondary">{{ t(request, "docker.rollback.button") }}</button>
+        </form>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>{{ t(request, "docker.container.settings") }}</h2>
+      <form method="post" action="{{ base }}/settings" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>
+          <input type="checkbox" name="auto_update" value="1" {% if setting and setting.auto_update %}checked{% endif %}>
+          {{ t(request, "docker.auto_update_label") }}
+        </label>
+        <p class="hint">{{ t(request, "docker.auto_update_hint") }}</p>
+        <label for="setting-gate">{{ t(request, "docker.gate.label") }}</label>
+        <select id="setting-gate" name="gate">
+          {% set current_gate = setting.vulnerability_gate if setting else 'off' %}
+          {% for g in gates %}<option value="{{ g }}" {% if g == current_gate %}selected{% endif %}>{{ t(request, "docker.gate." ~ g) }}</option>{% endfor %}
+        </select>
+        <p class="hint">{{ t(request, "docker.gate.hint") }}</p>
+        {% if setting and setting.updated_by %}
+          <p class="hint">{{ t(request, "docker.changed_by", who=setting.updated_by, when=(setting.updated_at | local_time)) }}</p>
+        {% endif %}
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    </section>
+  {% elif setting %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.container.settings") }}</h2>
+      <dl class="detail-list">
+        <dt>{{ t(request, "docker.auto_update_label") }}</dt><dd>{{ t(request, "docker.yes") if setting.auto_update else t(request, "docker.no") }}</dd>
+        <dt>{{ t(request, "docker.gate.label") }}</dt><dd>{{ t(request, "docker.gate." ~ setting.vulnerability_gate) }}</dd>
+      </dl>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>{{ t(request, "docker.jobs.heading") }}</h2>
+    {% if jobs %}
+      {% include "machines/docker/_jobs_table.html" %}
+    {% else %}
+      <p class="hint">{{ t(request, "docker.jobs.none") }}</p>
+    {% endif %}
+  </section>
+{% endblock %}

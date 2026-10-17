@@ -1,0 +1,10 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel %}
+
+{% block docker_title %}{{ t(request, "docker.nav.networks") }}{% endblock %}
+
+{% block docker_content %}
+  <h2>{{ t(request, "docker.networks.heading") }}</h2>
+  <p class="hint">{{ t(request, "docker.networks.hint") }}</p>
+  {{ lazy_panel(request, docker_base ~ "/networks/panel", "networks-panel") }}
+{% endblock %}

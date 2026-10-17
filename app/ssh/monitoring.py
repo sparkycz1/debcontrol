@@ -644,6 +644,11 @@ def _parse_size(value: str) -> int | None:
         return None
 
 
+def parse_docker_size(value: str) -> int | None:
+    """Public name for Docker's human-readable sizes (`_parse_size`)."""
+    return _parse_size(value)
+
+
 def _parse_percent(value: str | None) -> float | None:
     if not value:
         return None
@@ -659,6 +664,30 @@ def _container_health(status: str) -> str | None:
     if "health: starting" in lowered:
         return "starting"
     return None
+
+
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
+_LABEL_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def parse_label_string(raw: Any) -> dict[str, str]:
+    """`docker ps --format json`'s `Labels` — `key=value,key=value` in one
+    string. A value may itself contain commas (Compose's `config_files`
+    lists several files), so a piece that does not start with a label key
+    belongs to the value before it."""
+    labels: dict[str, str] = {}
+    if not isinstance(raw, str) or not raw:
+        return labels
+    last: str | None = None
+    for piece in raw.split(","):
+        key, sep, value = piece.partition("=")
+        if sep and _LABEL_KEY_RE.match(key):
+            labels[key] = value
+            last = key
+        elif last is not None:
+            labels[last] += "," + piece
+    return labels
 
 
 def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
@@ -716,9 +745,13 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
                 net_parts = str(stats.get("NetIO", "")).split("/")
                 if len(net_parts) == 2:
                     net_rx, net_tx = _parse_size(net_parts[0]), _parse_size(net_parts[1])
+        labels = parse_label_string(row.get("Labels"))
         containers.append(
             {
                 "name": name,
+                "id": str(row.get("ID", ""))[:64],
+                "compose_project": labels.get(COMPOSE_PROJECT_LABEL, "")[:255],
+                "compose_service": labels.get(COMPOSE_SERVICE_LABEL, "")[:255],
                 "image": str(row.get("Image", "")),
                 "state": str(row.get("State", "")),
                 "status": status,

@@ -55,8 +55,12 @@ def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[
     if machine.has_proxmox_tab:
         label = "Proxmox" if machine.proxmox_product or machine.pve_guests is not None else "ZFS"
         tabs.append(("proxmox", label, f"{base}/proxmox"))
+    tabs.append(("monitoring", t(request, "machine.tab.monitoring"), f"{base}/monitoring"))
+    # Docker — wherever the docker CLI was found (`docker_status` is set),
+    # including "no access", so the tab can say how to fix that.
+    if machine.docker_status is not None:
+        tabs.append(("docker", t(request, "machine.tab.docker"), f"{base}/docker"))
     tabs += [
-        ("monitoring", t(request, "machine.tab.monitoring"), f"{base}/monitoring"),
         ("updates", t(request, "machine.tab.updates"), f"{base}/updates"),
         ("security", t(request, "machine.tab.security"), f"{base}/security"),
     ]

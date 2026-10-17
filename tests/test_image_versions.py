@@ -134,7 +134,7 @@ async def test_the_check_stores_and_shows_the_newer_version(
     monkeypatch.setattr(image_versions, "describe", fake_describe)
 
     result = await jobs._check_machine_image_updates(str(machine_id))
-    page = await client.get(f"/machines/{machine_id}/monitoring")
+    page = await client.get(f"/machines/{machine_id}/docker")
     headers = await _api_token(client)
     api = (
         await client.get(f"/api/v1/machines/{machine_id}/hardware", headers=headers)

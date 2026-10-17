@@ -1,0 +1,40 @@
+{#- One Docker job's state and output, re-fetched every 3 s while it runs
+    (machines_docker.docker_job_status). run-output.js keeps the output
+    box's scroll position across the refresh (`data-run-status`). -#}
+{% from "machines/docker/_macros.html" import job_status, severity_counts %}
+{% set active = job.status in ('pending', 'running') %}
+{% set r = job.result or {} %}
+<div id="docker-job-status" data-run-status
+  {% if active %}hx-get="{{ docker_base }}/jobs/{{ job.id }}/status" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <p>{{ t(request, "docker.jobs.status") }}: {{ job_status(request, job) }}
+    {% if job.started_by %}· {{ t(request, "docker.job.started_by", who=job.started_by) }}{% endif %}
+  </p>
+  <dl class="detail-list">
+    <dt>{{ t(request, "docker.job.created") }}</dt><dd>{{ job.created_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</dd>
+    {% if job.started_at %}<dt>{{ t(request, "docker.job.started") }}</dt><dd>{{ job.started_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</dd>{% endif %}
+    {% if job.finished_at %}<dt>{{ t(request, "docker.job.finished") }}</dt><dd>{{ job.finished_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</dd>{% endif %}
+    {% if r.ref %}<dt>{{ t(request, "docker.container.image") }}</dt><dd><code>{{ r.ref }}</code></dd>{% endif %}
+    {% if r.previous_image_id %}<dt>{{ t(request, "docker.job.previous_image") }}</dt><dd><code>{{ r.previous_image_id[:19] }}</code></dd>{% endif %}
+    {% if r.new_image_id %}<dt>{{ t(request, "docker.job.new_image") }}</dt><dd><code>{{ r.new_image_id[:19] }}</code></dd>{% endif %}
+    {% if r.commit %}<dt>{{ t(request, "docker.job.commit") }}</dt><dd><code>{{ r.commit[:12] }}</code></dd>{% endif %}
+    {% if r.reclaimed_bytes is number %}<dt>{{ t(request, "docker.job.reclaimed") }}</dt><dd>{{ r.reclaimed_bytes | bytes }}</dd>{% endif %}
+    {% if r.removed %}<dt>{{ t(request, "docker.job.removed") }}</dt><dd>{% for k, v in r.removed.items() %}{{ t(request, "docker.job.removed_" ~ k, count=v) }}{% if not loop.last %} · {% endif %}{% endfor %}</dd>{% endif %}
+    {% if r.snapshot_id %}<dt>{{ t(request, "docker.backup.snapshot") }}</dt><dd><code>{{ r.snapshot_id[:12] }}</code>{% if r.bytes_added is number %} · {{ t(request, "docker.backup.added", size=(r.bytes_added | bytes)) }}{% endif %}</dd>{% endif %}
+    {% if r.scanned is number %}<dt>{{ t(request, "docker.job.scanned") }}</dt><dd>{{ t(request, "docker.job.scanned_count", scanned=r.scanned, failed=(r.failed or 0)) }}</dd>{% endif %}
+  </dl>
+  {% if r.note %}<div class="alert alert-ok"><p>{{ t(request, "docker.job.note." ~ r.note) }}</p></div>{% endif %}
+  {% if r.gate %}
+    <div class="alert {{ 'alert-ok' if r.gate.allowed else 'alert-error' }}">
+      <p>{{ t(request, "docker.gate.verdict." ~ r.gate.reason) }}</p>
+      {% if r.gate.new_counts is not none %}<p>{{ t(request, "docker.gate.new_image") }} {{ severity_counts(request, r.gate.new_counts) }}</p>{% endif %}
+      {% if r.gate.old_counts is not none %}<p>{{ t(request, "docker.gate.old_image") }} {{ severity_counts(request, r.gate.old_counts) }}</p>{% endif %}
+    </div>
+  {% endif %}
+  {% if r.restored %}<div class="alert alert-warn"><p>{{ t(request, "docker.job.restored") }}</p></div>{% endif %}
+  {% if job.error %}<div class="alert alert-error"><p>{{ job.error }}</p></div>{% endif %}
+  {% if job.output %}
+    <pre class="run-output" data-run-output tabindex="0">{{ job.output }}</pre>
+  {% elif active %}
+    <p class="hint">{{ t(request, "docker.job.waiting") }}</p>
+  {% endif %}
+</div>

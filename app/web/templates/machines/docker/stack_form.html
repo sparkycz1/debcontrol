@@ -1,0 +1,178 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ stack.name if stack else t(request, "docker.stacks.new") }}{% endblock %}
+
+{% block docker_content %}
+  {% set ready = machine.host_key_fingerprint %}
+  {% set v_source = form.source if form else (stack.source if stack else 'editor') %}
+  {% set v_compose = form.compose if form else (stack.compose_content or '' if stack else '') %}
+  {% set v_env = (form.env if form and form.env is not none else env_text) if stack else (form.env or '' if form else '') %}
+  {% set v_git_url = form.git_url if form else (stack.git_url or '' if stack else '') %}
+  {% set v_git_branch = form.git_branch if form else (stack.git_branch or 'main' if stack else 'main') %}
+  {% set v_git_path = form.git_compose_path if form else (stack.git_compose_path or 'compose.yaml' if stack else 'compose.yaml') %}
+  {% set v_auto_sync = form.auto_sync if form else (stack.auto_sync if stack else false) %}
+
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.stack.heading", name=stack.name) if stack else t(request, "docker.stacks.new") }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/stacks">{{ t(request, "docker.back_to_stacks") }}</a>
+  </div>
+
+  {% if errors %}
+    <div class="alert alert-error">{% for e in errors %}<p>{{ t(request, e) }}</p>{% endfor %}</div>
+  {% endif %}
+
+  {% if webhook_url %}
+    <div class="alert alert-warn">
+      <p>{{ t(request, "docker.stack.webhook_created") }}</p>
+      <p><code class="copy-once">{{ webhook_url }}</code></p>
+    </div>
+  {% endif %}
+
+  {% if stack %}
+    <section class="panel">
+      <dl class="detail-list">
+        <dt>{{ t(request, "docker.stacks.source") }}</dt>
+        <dd>{% if stack.source == 'git' %}Git · <code>{{ stack.git_url }}</code> ({{ stack.git_branch }}, {{ stack.git_compose_path }}){% else %}{{ t(request, "docker.stacks.source_editor") }}{% endif %}</dd>
+        <dt>{{ t(request, "docker.stacks.deployed") }}</dt>
+        <dd>{% if stack.deployed_at %}{{ stack.deployed_at | local_time }}{% if stack.deployed_commit %} · <code>{{ stack.deployed_commit[:12] }}</code>{% endif %}{% else %}{{ t(request, "docker.stacks.never_deployed") }}{% endif %}
+          {% if changed %} <span class="badge badge-warn">{{ t(request, "docker.stacks.changed") }}</span>{% endif %}</dd>
+        {% if stack.source == 'git' %}
+          <dt>{{ t(request, "docker.stack.last_checked") }}</dt><dd>{{ stack.last_checked_at | local_time }}</dd>
+          <dt>{{ t(request, "docker.stack.auto_sync") }}</dt><dd>{{ t(request, "docker.yes") if stack.auto_sync else t(request, "docker.no") }}</dd>
+          <dt>{{ t(request, "docker.stack.webhook") }}</dt><dd>{{ t(request, "docker.stack.webhook_set", when=(stack.webhook_last_at | local_time)) if stack.webhook_token_hash else t(request, "docker.no") }}</dd>
+        {% endif %}
+        {% if stack.created_by %}<dt>{{ t(request, "docker.stack.created_by") }}</dt><dd>{{ stack.created_by }} · {{ stack.created_at | local_time }}</dd>{% endif %}
+      </dl>
+      {% if stack.last_status == 'failed' and stack.last_error %}
+        <div class="alert alert-error"><p>{{ stack.last_error }}</p></div>
+      {% endif %}
+      {% if can_updates and ready %}
+        <div class="page-header-actions">
+          <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/deploy" class="inline-form"
+                data-confirm="{{ t(request, 'docker.stack.deploy_confirm', name=stack.name) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="pull" value="1">
+            <button type="submit" class="button">{{ t(request, "docker.stack.deploy_pull") }}</button>
+          </form>
+          <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/deploy" class="inline-form"
+                data-confirm="{{ t(request, 'docker.stack.deploy_confirm', name=stack.name) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="pull" value="0">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.stack.deploy") }}</button>
+          </form>
+          {% if stack.source == 'git' %}
+            <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/sync" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-secondary">{{ t(request, "docker.stack.sync") }}</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if can_terminal %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.stack.settings") }}</h2>
+      <form method="post" action="{{ docker_base }}/stacks{% if stack %}/{{ stack.id }}{% endif %}" class="form form-wide" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if not stack %}
+          <label for="stack-name">{{ t(request, "docker.stacks.name") }}</label>
+          <input id="stack-name" name="name" required maxlength="64" pattern="[a-z0-9][a-z0-9_\-]*" value="{{ form.name if form else '' }}" spellcheck="false">
+          <p class="hint">{{ t(request, "docker.stack.name_hint") }}</p>
+        {% endif %}
+
+        <label for="stack-source">{{ t(request, "docker.stacks.source") }}</label>
+        <select id="stack-source" name="source">
+          <option value="editor" {% if v_source == 'editor' %}selected{% endif %}>{{ t(request, "docker.stacks.source_editor") }}</option>
+          <option value="git" {% if v_source == 'git' %}selected{% endif %}>{{ t(request, "docker.stacks.source_git") }}</option>
+        </select>
+
+        <fieldset class="docker-fieldset">
+          <legend>{{ t(request, "docker.stack.editor_legend") }}</legend>
+          <label for="stack-compose">{{ t(request, "docker.stack.compose") }}</label>
+          <textarea id="stack-compose" name="compose" rows="18" class="code-input" spellcheck="false">
+{{ v_compose }}</textarea>
+          <p class="hint">{{ t(request, "docker.stack.compose_hint") }}</p>
+        </fieldset>
+
+        <fieldset class="docker-fieldset">
+          <legend>{{ t(request, "docker.stack.git_legend") }}</legend>
+          <label for="stack-git-url">{{ t(request, "docker.stack.git_url") }}</label>
+          <input id="stack-git-url" name="git_url" type="url" value="{{ v_git_url }}" placeholder="https://github.com/owner/repo.git" spellcheck="false">
+          <label for="stack-git-branch">{{ t(request, "docker.stack.git_branch") }}</label>
+          <input id="stack-git-branch" name="git_branch" value="{{ v_git_branch }}" spellcheck="false">
+          <label for="stack-git-path">{{ t(request, "docker.stack.git_path") }}</label>
+          <input id="stack-git-path" name="git_compose_path" value="{{ v_git_path }}" spellcheck="false">
+          <label for="stack-git-token-action">{{ t(request, "docker.stack.git_token") }}</label>
+          <select id="stack-git-token-action" name="git_token_action">
+            {% if stack and stack.git_token_encrypted %}<option value="keep" selected>{{ t(request, "docker.stack.token_keep") }}</option>{% else %}<option value="keep" selected>{{ t(request, "docker.stack.token_none") }}</option>{% endif %}
+            <option value="set">{{ t(request, "docker.stack.token_set") }}</option>
+            {% if stack and stack.git_token_encrypted %}<option value="remove">{{ t(request, "docker.stack.token_remove") }}</option>{% endif %}
+          </select>
+          <input name="git_token" type="password" autocomplete="new-password" aria-label="{{ t(request, 'docker.stack.git_token') }}">
+          <p class="hint">{{ t(request, "docker.stack.git_token_hint") }}</p>
+          <label><input type="checkbox" name="auto_sync" value="1" {% if v_auto_sync %}checked{% endif %}> {{ t(request, "docker.stack.auto_sync") }}</label>
+          <p class="hint">{{ t(request, "docker.stack.auto_sync_hint") }}</p>
+        </fieldset>
+
+        <label for="stack-env">{{ t(request, "docker.stack.env") }}</label>
+        <input type="hidden" name="env_action" value="set">
+        <textarea id="stack-env" name="env" rows="6" class="code-input" spellcheck="false">
+{{ v_env }}</textarea>
+        <p class="hint">{{ t(request, "docker.stack.env_hint") }}</p>
+
+        {% if not stack and can_updates %}
+          <label><input type="checkbox" name="deploy" value="1" checked> {{ t(request, "docker.stack.deploy_now") }}</label>
+        {% endif %}
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+        {% if stack %}<p class="hint">{{ t(request, "docker.stack.save_hint") }}</p>{% endif %}
+      </form>
+    </section>
+
+    {% if stack and stack.source == 'git' %}
+      <section class="panel">
+        <h2>{{ t(request, "docker.stack.webhook") }}</h2>
+        <p class="hint">{{ t(request, "docker.stack.webhook_hint") }}</p>
+        <div class="page-header-actions">
+          <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/webhook" class="inline-form"
+                {% if stack.webhook_token_hash %}data-confirm="{{ t(request, 'docker.stack.webhook_regenerate_confirm') }}"{% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.stack.webhook_regenerate" if stack.webhook_token_hash else "docker.stack.webhook_create") }}</button>
+          </form>
+          {% if stack.webhook_token_hash %}
+            <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/webhook" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="remove" value="1">
+              <button type="submit" class="button button-danger">{{ t(request, "docker.stack.webhook_remove") }}</button>
+            </form>
+          {% endif %}
+        </div>
+      </section>
+    {% endif %}
+  {% elif stack and stack.source == 'editor' %}
+    <p class="hint">{{ t(request, "docker.stack.compose_hidden") }}</p>
+  {% endif %}
+
+  {% if stack %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.jobs.heading") }}</h2>
+      {% if jobs %}{% include "machines/docker/_jobs_table.html" %}{% else %}<p class="hint">{{ t(request, "docker.jobs.none") }}</p>{% endif %}
+    </section>
+
+    {% if can_terminal %}
+      <section class="panel panel-danger">
+        <h2>{{ t(request, "docker.stack.delete") }}</h2>
+        <p class="hint">{{ t(request, "docker.stack.delete_hint") }}</p>
+        <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/delete" class="form" autocomplete="off"
+              data-confirm="{{ t(request, 'docker.stack.delete_confirm', name=stack.name) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label><input type="checkbox" name="remove_volumes" value="1"> {{ t(request, "docker.stack.remove_volumes") }}</label>
+          <label for="stack-confirm">{{ t(request, "docker.stack.confirm_name", name=stack.name) }}</label>
+          <input id="stack-confirm" name="confirm_name" spellcheck="false">
+          <button type="submit" class="button button-danger">{{ t(request, "docker.stack.delete") }}</button>
+        </form>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}

@@ -23,8 +23,10 @@ UI" section — each one is either a secret/credential surface or carries a
 lock-out/blast-radius risk that's meant to be handled deliberately, by a
 human, not scriptable. (Notifications, endpoint checks, and the
 operational part of Settings have their own routers —
-`api_v1_notifications.py`, `api_v1_checks.py`, `api_v1_settings.py`.)
-The interactive SSH terminal
+`api_v1_notifications.py`, `api_v1_checks.py`, `api_v1_settings.py`; the
+machine's Docker tab has `api_v1_docker.py`.)
+The interactive SSH terminal (and the Docker tab's shell inside a
+container, which runs over the same WebSocket terminal)
 (`app/web/routes/terminal_ws.py`, and likewise the Logs tab's live-follow
 stream in `logs_ws.py`) and the AI assistant's chat
 (`app/web/routes/ai.py`) are excluded for a different reason: both are

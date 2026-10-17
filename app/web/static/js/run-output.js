@@ -1,6 +1,7 @@
-// Update run page: the apt output is a fixed-height scroll box. While the
-// run is live, the whole status panel is re-fetched every 3 s
-// (partials/update_run_status.html), which would reset the box to the
+// Update run and Docker job pages: the output is a fixed-height scroll box.
+// While the run is live, the whole status panel is re-fetched every 3 s
+// (partials/update_run_status.html, machines/docker/_job_status.html, both
+// marked `data-run-status`), which would reset the box to the
 // top each time. This keeps following the end of the output while you're
 // at the bottom, and keeps your place once you scroll up to read.
 (function () {
@@ -25,7 +26,10 @@
   }
 
   document.addEventListener("htmx:beforeSwap", (event) => {
-    if (event.target && event.target.id === "update-run-status") remember();
+    const target = event.target;
+    if (target && (target.id === "update-run-status" || target.hasAttribute("data-run-status"))) {
+      remember();
+    }
   });
   document.addEventListener("htmx:afterSettle", restore);
   restore();

@@ -1,0 +1,29 @@
+{% extends "machines/docker/_layout.html" %}
+{% set js_keys = ["terminal.status.connecting", "terminal.status.connected", "terminal.status.error", "terminal.status.disconnected_reason", "terminal.status.disconnected", "terminal.status.connection_error", "terminal.clipboard.need_https", "terminal.clipboard.unsupported", "terminal.clipboard.copy_failed", "terminal.clipboard.use_ctrl_v", "terminal.clipboard.read_failed"] %}
+
+{% block docker_title %}{{ t(request, "docker.shell.title", name=name) }}{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ static_url('css/xterm.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/xterm-csp.css') }}">
+{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.shell.title", name=name) }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/containers/{{ name | urlencode }}">{{ t(request, "docker.back_to_container") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "docker.shell.hint") }}</p>
+  {% if recording %}
+    <div class="alert alert-warn"><p>{{ t(request, "machine.terminal.recorded") }}</p></div>
+  {% endif %}
+  <div id="terminal-status" class="hint" role="status"></div>
+  <div id="terminal-container" class="terminal-shell" data-ws-path="{{ ws_path }}"></div>
+{% endblock %}
+
+{% block docker_scripts %}
+  <script src="{{ static_url('js/xterm.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-fit.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-webgl.min.js') }}"></script>
+  <script src="{{ static_url('js/terminal.js') }}" defer></script>
+{% endblock %}

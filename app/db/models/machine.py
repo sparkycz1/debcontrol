@@ -269,6 +269,13 @@ class Machine(Base):
         JSON, nullable=True
     )
     docker_images_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Vulnerabilities in the images the machine's containers run, from their
+    # latest scans (app.services.docker_scans.summarize):
+    # {"critical", "high", "medium", "low", "images", "unscanned", "scanned_at"}.
+    docker_vulnerabilities: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # When any of the machine's restic backups (app.db.models.docker.
+    # DockerBackup) last succeeded; None = never.
+    docker_backup_ok_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

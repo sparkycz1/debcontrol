@@ -22,12 +22,15 @@ from app.db.models.machine import Machine
 from app.db.models.machine_update_run import UpgradeStrategy
 from app.db.models.role import Permission
 from app.scheduling.actions import (
+    ActionRunFunc,
     ActionRunResult,
     ScheduledActionParam,
     ScheduledActionSpec,
     get_action,
     register_action,
 )
+from app.services import docker_actions
+from app.services.docker_gate import GATES
 from app.services.machine_actions import (
     run_custom_command_on_machines,
     send_power_to_machines,
@@ -38,6 +41,7 @@ from app.services.machine_actions import (
     trigger_updates,
     wake_machines,
 )
+from app.ssh.docker_prune import PruneOptions
 from app.ssh.power import PowerAction
 
 
@@ -117,6 +121,74 @@ async def _run_custom_command(
         return ActionRunResult(attempted=0, skipped=len(machines))
     skipped = await run_custom_command_on_machines(machines, command)
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_docker_update(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    # "every", not "all": the task form keeps the bare value "all" for its
+    # own "All machines" target option.
+    scope = params.get("docker_scope") or "auto"
+    scope = "all" if scope == "every" else scope
+    if scope not in docker_actions.UPDATE_SCOPES:
+        scope = "auto"
+    gate = params.get("docker_gate") or "setting"
+    attempted, skipped = await docker_actions.trigger_container_updates(
+        db,
+        machines,
+        scope=scope,
+        gate=gate if gate in GATES else None,
+        started_by="schedule",
+    )
+    return ActionRunResult(attempted=attempted, skipped=skipped)
+
+
+async def _run_docker_scan(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    scope = params.get("docker_scan_scope") or "in_use"
+    scope = "all" if scope == "every" else scope
+    if scope not in docker_actions.SCAN_SCOPES:
+        scope = "in_use"
+    attempted, skipped = await docker_actions.trigger_scans(
+        db, machines, scope=scope, started_by="schedule"
+    )
+    return ActionRunResult(attempted=attempted, skipped=skipped)
+
+
+# What a scheduled clean-up removes. Named volumes (data) never: removing
+# them takes a person typing the machine's name on the Docker tab.
+_PRUNE_LEVELS = {
+    "safe": PruneOptions(containers=True, images=True, networks=True, build_cache=True),
+    "images": PruneOptions(
+        containers=True, images=True, all_images=True, networks=True, build_cache=True
+    ),
+    "volumes": PruneOptions(
+        containers=True, images=True, networks=True, volumes=True, build_cache=True
+    ),
+}
+
+
+async def _run_docker_prune(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    options = _PRUNE_LEVELS.get(params.get("docker_prune_level") or "", _PRUNE_LEVELS["safe"])
+    attempted, skipped = await docker_actions.trigger_prune(
+        db, machines, options, started_by="schedule"
+    )
+    return ActionRunResult(attempted=attempted, skipped=skipped)
+
+
+def _docker_backup_runner(what: str) -> ActionRunFunc:
+    async def run(
+        db: AsyncSession, machines: list[Machine], params: dict[str, str]
+    ) -> ActionRunResult:
+        attempted, skipped = await docker_actions.trigger_backups(
+            db, machines, what, started_by="schedule"
+        )
+        return ActionRunResult(attempted=attempted, skipped=skipped)
+
+    return run
 
 
 def register_builtin_actions() -> None:
@@ -283,5 +355,120 @@ def register_builtin_actions() -> None:
             # everywhere else in this app (the interactive terminal, the AI
             # assistant's confirm step) — see app.web.routes.scheduling.
             extra_permission=Permission.ACTION_TERMINAL,
+        )
+    )
+
+    register_action(
+        ScheduledActionSpec(
+            key="docker_update",
+            label="Update Docker containers",
+            description=(
+                "Pulls each chosen container's newest image and recreates it with "
+                "the same settings, one container after another per machine; a "
+                "container that doesn't come back up is put back. Optionally "
+                "stopped by a vulnerability scan of the new image."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="docker_scope",
+                    label="Containers",
+                    choices=[
+                        ("auto", "Those set to update automatically"),
+                        ("with_update", "Those the image check found a newer image for"),
+                        ("every", "Every container"),
+                    ],
+                    default="auto",
+                ),
+                ScheduledActionParam(
+                    key="docker_gate",
+                    label="Vulnerability gate",
+                    choices=[
+                        ("setting", "As set for each container"),
+                        ("off", "Don't check"),
+                        ("critical", "Stop on a critical vulnerability"),
+                        ("high", "Stop on a critical or high vulnerability"),
+                        ("worse", "Stop when worse than the running image"),
+                    ],
+                    default="setting",
+                ),
+            ],
+            run=_run_docker_update,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="docker_scan",
+            label="Scan Docker images",
+            description=(
+                "Scans images for vulnerabilities with Trivy and Grype (both pulled "
+                "fresh each time, so findings published since the last scan show "
+                "up too). Choose which images: those containers use, only those "
+                "never scanned, or every image."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="docker_scan_scope",
+                    label="Images",
+                    choices=[
+                        ("in_use", "Images containers use"),
+                        ("unscanned", "Images not scanned yet"),
+                        ("every", "Every image"),
+                    ],
+                    default="in_use",
+                ),
+            ],
+            run=_run_docker_scan,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="docker_prune",
+            label="Clean up Docker",
+            description=(
+                "Removes stopped containers, untagged images, unused networks and "
+                "the build cache. Named volumes are never removed by a schedule."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="docker_prune_level",
+                    label="Also remove",
+                    choices=[
+                        ("safe", "Nothing more"),
+                        ("images", "Every image no container uses"),
+                        ("volumes", "Unused anonymous volumes"),
+                    ],
+                    default="safe",
+                ),
+            ],
+            run=_run_docker_prune,
+            destructive=True,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="docker_backup",
+            label="Docker backup",
+            description="Runs every enabled restic backup of each machine's Docker tab.",
+            run=_docker_backup_runner("run"),
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="docker_backup_check",
+            label="Check Docker backups",
+            description="Runs restic check on the repository of every enabled backup.",
+            run=_docker_backup_runner("check"),
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="docker_backup_prune",
+            label="Prune Docker backups",
+            description=(
+                "Deletes the snapshots each enabled backup's retention doesn't keep "
+                "(restic forget --prune). Backups without retention are skipped."
+            ),
+            run=_docker_backup_runner("forget"),
+            destructive=True,
         )
     )

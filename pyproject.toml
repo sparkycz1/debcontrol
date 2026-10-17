@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.118.0"
+version = "0.119.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -208,6 +208,7 @@ module = [
     "app.tasks.celery_app",
     "app.tasks.jobs",
     "app.tasks.ai_jobs",
+    "app.tasks.docker_jobs",
     "app.scheduling.jobs",
 ]
 disallow_untyped_decorators = false

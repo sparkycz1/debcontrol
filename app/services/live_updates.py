@@ -52,6 +52,8 @@ KIND_FACTS = "facts"
 KIND_PACKAGES = "packages"
 KIND_SERVICES = "services"
 KIND_UPDATES = "updates"
+# Docker: a job ended, so containers, images, stacks or backups changed.
+KIND_DOCKER = "docker"
 
 
 def channel_for(machine_id: str) -> str:

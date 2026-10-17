@@ -1,0 +1,47 @@
+{#- Small pieces the Docker tab's pages share. -#}
+
+{#- A Docker job's status as a badge. -#}
+{% macro job_status(request, job) -%}
+  {%- set cls = {'pending': 'badge-warn', 'running': 'badge-warn', 'succeeded': 'badge-ok', 'failed': 'badge-error', 'blocked': 'badge-error'}.get(job.status, '') -%}
+  <span class="badge {{ cls }}">{{ t(request, "docker.job.status." ~ job.status) }}</span>
+{%- endmacro %}
+
+{#- What a job is, in words: "Update · nginx". -#}
+{% macro job_title(request, job) -%}
+  {{ t(request, "docker.job.kind." ~ job.kind) }}{% if job.target %} · <code>{{ job.target }}</code>{% endif %}
+{%- endmacro %}
+
+{#- Vulnerability counts of a scan ({"critical": 2, "high": 10, ...}) as
+    badges; only the severities that have any, "none found" otherwise. -#}
+{% macro severity_counts(request, counts, link=none) -%}
+  {%- set counts = counts or {} -%}
+  {%- set shown = [] -%}
+  <span class="severity-counts">
+  {%- for sev, cls in (('critical', 'badge-error'), ('high', 'badge-warn'), ('medium', ''), ('low', ''), ('unknown', '')) -%}
+    {%- if counts.get(sev) -%}
+      {%- set _ = shown.append(sev) -%}
+      <span class="badge {{ cls }}" title="{{ t(request, 'docker.severity.' ~ sev) }}">{{ t(request, "docker.severity_short." ~ sev, count=counts.get(sev)) }}</span>
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if not shown -%}<span class="badge badge-ok">{{ t(request, "docker.scan.clean") }}</span>{%- endif -%}
+  {%- if link %} <a href="{{ link }}">{{ t(request, "docker.scan.details") }}</a>{% endif -%}
+  </span>
+{%- endmacro %}
+
+{#- A container's state as a badge (same colours as the old Monitoring table). -#}
+{% macro container_state(request, c) -%}
+  {%- set status_text = c.status or c.state -%}
+  {%- if c.health == 'unhealthy' %}{% set cls = 'badge-error' -%}
+  {%- elif c.health == 'starting' or c.state == 'restarting' %}{% set cls = 'badge-warn' -%}
+  {%- elif c.state == 'running' %}{% set cls = 'badge-ok' -%}
+  {%- elif c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') %}{% set cls = 'badge-error' -%}
+  {%- else %}{% set cls = '' %}{% endif -%}
+  <span class="badge {{ cls }}" {% if c.health %}title="{{ t(request, 'monitoring.containers.health') }}: {{ t(request, 'monitoring.containers.health_' ~ c.health) }}"{% endif %}>{{ status_text }}</span>
+{%- endmacro %}
+
+{#- A loading placeholder for an htmx panel that asks the machine. -#}
+{% macro lazy_panel(request, url, id) -%}
+  <div id="{{ id }}" hx-get="{{ url }}" hx-trigger="load, live-docker from:body" hx-swap="innerHTML">
+    <p class="hint">{{ t(request, "docker.loading") }}</p>
+  </div>
+{%- endmacro %}

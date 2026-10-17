@@ -1,0 +1,31 @@
+{#- Networks as the machine reports them right now
+    (machines_docker.docker_networks_panel). -#}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif networks %}
+  <div class="monitoring-table-wrap">
+    <table class="data-table" id="networks-table">
+      <thead><tr>
+        <th data-sort="text">{{ t(request, "docker.networks.name") }}</th>
+        <th data-sort="text">{{ t(request, "docker.volumes.driver") }}</th>
+        <th data-sort="text">{{ t(request, "docker.networks.scope") }}</th>
+        <th data-sort="text">{{ t(request, "docker.networks.containers") }}</th>
+      </tr></thead>
+      <tbody>
+        {% for n in networks %}
+          <tr>
+            <td><code>{{ n.name }}</code>
+              {% if n.builtin %} <span class="badge">{{ t(request, "docker.networks.builtin") }}</span>{% endif %}
+              {% if n.internal %} <span class="badge badge-tag">{{ t(request, "docker.networks.internal") }}</span>{% endif %}
+            </td>
+            <td>{{ n.driver }}</td>
+            <td>{{ n.scope }}</td>
+            <td>{% if n.containers %}{% for c in n.containers %}<a href="{{ docker_base }}/containers/{{ c | urlencode }}">{{ c }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="table-muted">—</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="hint">{{ t(request, "docker.networks.none") }}</p>
+{% endif %}
