@@ -77,7 +77,7 @@ async def machine_security(
             },
         )
     if new_cookie:
-        set_csrf_cookie(response, csrf_token)
+        set_csrf_cookie(response, new_cookie)
     return response
 
 
