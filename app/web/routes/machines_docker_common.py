@@ -131,7 +131,9 @@ async def wait_task(
 def redirect(url: str, **flash: str | None) -> RedirectResponse:
     """303 to `url` (a same-site path, else the machine list), carrying each
     given message signed (`app.web.flash`)."""
-    url = safe_local_path(url, "/machines")
+    # One leading slash, whatever `url` was: never "//host" (and
+    # safe_local_path already refused backslashes and control characters).
+    url = "/" + safe_local_path(url, "/machines").lstrip("/")
     query = {key: sign_flash(value) for key, value in flash.items() if value}
     if query:
         url += ("&" if "?" in url else "?") + urlencode(query)
