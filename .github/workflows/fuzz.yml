@@ -49,6 +49,13 @@ jobs:
           - networks
           - tls_target
           - tags
+          - docker_inventory
+          - docker_scan
+          - docker_update
+          - docker_files_listing
+          - docker_prune_output
+          - restic_output
+          - compose_input
     steps:
       # Pinned by commit SHA like every other action here (see ci.yml).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7

@@ -102,6 +102,26 @@ async def seed() -> str:
             upgradable_count=4,
             security_upgradable_count=1,
             monitoring_updated_at=now,
+            # Two containers, so the Docker tab has a table to draw.
+            docker_status="ok",
+            docker_containers=[
+                {
+                    "name": "nginx",
+                    "image": "nginx:1.27",
+                    "state": "running",
+                    "status": "Up 3 days (healthy)",
+                    "health": "healthy",
+                    "ports": "0.0.0.0:80->80/tcp",
+                    "cpu_percent": 0.4,
+                    "mem_bytes": 12_000_000,
+                },
+                {
+                    "name": "worker",
+                    "image": "example/worker:latest",
+                    "state": "exited",
+                    "status": "Exited (0) 2 hours ago",
+                },
+            ],
         )
         db_host = Machine(
             name="db1",

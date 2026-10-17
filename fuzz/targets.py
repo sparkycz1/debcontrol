@@ -27,6 +27,16 @@ from app.services.endpoint_checks import parse_tls_target
 from app.services.machine_tags import parse_tag_names_from_text
 from app.services.network_probes import parse_dns_answers
 from app.services.push_channels import redact_url
+from app.ssh import docker_compose, docker_files, docker_prune, restic
+from app.ssh.docker_cli import DockerAccessError, DockerCommandError, parse_wrapped
+from app.ssh.docker_inventory import parse_inventory
+from app.ssh.docker_scan import parse_scan_output
+from app.ssh.docker_update import (
+    parse_plan_output,
+    parse_pull_output,
+    parse_recreate_output,
+    plan_from_inspect,
+)
 from app.ssh.facts import parse_facts_output
 from app.ssh.image_updates import ImageCheckError, parse_image_update_output
 from app.ssh.logs import (
@@ -194,6 +204,80 @@ def tags(data: bytes) -> None:
         assert name and name == name.strip()
 
 
+def docker_inventory(data: bytes) -> None:
+    text = _text(data)
+    parse_inventory(text)
+    # The documented "this account can't reach Docker" answer.
+    with contextlib.suppress(DockerAccessError):
+        parse_wrapped(text)
+
+
+def docker_scan(data: bytes) -> None:
+    parse_scan_output(_text(data))
+
+
+def docker_update(data: bytes) -> None:
+    """Pull/recreate answers never raise; an inspect answer either fails with
+    the documented error or yields a plan without crashing."""
+    text = _text(data)
+    parse_pull_output(text)
+    parse_recreate_output(text)
+    try:
+        container, image = parse_plan_output(text)
+    except DockerCommandError:
+        return
+    with contextlib.suppress(DockerCommandError):
+        plan_from_inspect(container, image)
+
+
+def docker_files_listing(data: bytes) -> None:
+    """The file browser's listing and tar parsing never raise; a path the
+    guard accepts is absolute with no `..` left in it."""
+    text = _text(data)
+    docker_files.parse_listing(text)
+    docker_files.first_file(data)
+    docker_files.first_member_owner(data)
+    try:
+        path = docker_files.normalize_path(text)
+    except DockerCommandError:
+        return
+    assert path.startswith("/") and not path.startswith("//")
+    assert ".." not in path.split("/")
+
+
+def docker_prune_output(data: bytes) -> None:
+    text = _text(data)
+    assert docker_prune.parse_reclaimed_bytes(text) >= 0
+    assert all(v >= 0 for v in docker_prune.parse_removed_counts(text).values())
+
+
+def restic_output(data: bytes) -> None:
+    """restic's answers never raise; a host path the guard accepts is
+    absolute and normalized; env lines fail only with the documented error."""
+    text = _text(data)
+    restic.parse_snapshots(text)
+    restic.parse_backup_summary(text)
+    restic.failed_step(text)
+    path = restic.normalize_host_path(text)
+    if path is not None:
+        assert path.startswith("/") and ".." not in path.split("/")
+    with contextlib.suppress(DockerCommandError):
+        restic.parse_env_lines(text)
+
+
+def compose_input(data: bytes) -> None:
+    """A compose path the guard accepts stays inside the repository; a Git
+    URL it accepts is plain https with no credentials."""
+    text = _text(data)
+    docker_compose.parse_commit(text)
+    docker_compose.failed_step(text)
+    path = docker_compose.normalize_compose_path(text)
+    if path is not None:
+        assert not path.startswith(("/", "..")) and ".." not in path.split("/")
+    if docker_compose.is_git_url_valid(text):
+        assert text.startswith("https://") and not any(ch.isspace() for ch in text)
+
+
 TARGETS: dict[str, Callable[[bytes], None]] = {
     fn.__name__: fn
     for fn in (
@@ -217,5 +301,12 @@ TARGETS: dict[str, Callable[[bytes], None]] = {
         networks,
         tls_target,
         tags,
+        docker_inventory,
+        docker_scan,
+        docker_update,
+        docker_files_listing,
+        docker_prune_output,
+        restic_output,
+        compose_input,
     )
 }
