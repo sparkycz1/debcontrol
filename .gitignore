@@ -31,6 +31,8 @@ data/known_hosts
 data/upgrade-images
 data/upgrade-images.tmp
 data/*.db
+# Update requests and their outcome (scripts/self_update.py)
+self-update/
 
 # Editors / OS
 .vscode/

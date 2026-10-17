@@ -18,8 +18,8 @@ def _tabnav_html(page_text: str) -> str:
     return match.group(0)
 
 
-async def test_settings_tabs_show_the_same_five_tabs_everywhere(client):
-    for tab in ("general", "checks", "security", "integrations", "ai"):
+async def test_settings_tabs_show_the_same_six_tabs_everywhere(client):
+    for tab in ("general", "checks", "security", "integrations", "ai", "update"):
         response = await client.get(f"/settings?tab={tab}")
         assert response.status_code == 200, tab
         tabnav = _tabnav_html(response.text)
@@ -29,6 +29,7 @@ async def test_settings_tabs_show_the_same_five_tabs_everywhere(client):
             "/settings?tab=security",
             "/settings?tab=integrations",
             "/settings?tab=ai",
+            "/settings?tab=update",
         ):
             assert f'href="{expected}"' in tabnav
         assert tabnav.count('class="active" aria-current="page"') == 1
