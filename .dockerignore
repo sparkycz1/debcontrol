@@ -15,6 +15,7 @@ htmlcov
 tests
 README.md
 data/
+self-update/
 secrets/
 *.pem
 *.key

@@ -22,6 +22,8 @@
     {% include "settings/_integrations.html" %}
   {% elif active_tab == 'ai' %}
     {% include "settings/_ai.html" %}
+  {% elif active_tab == 'update' %}
+    {% include "settings/_update.html" %}
   {% else %}
     {% include "settings/_general.html" %}
   {% endif %}

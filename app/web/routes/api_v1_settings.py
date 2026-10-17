@@ -14,6 +14,13 @@ What's exposed and why:
   These are also *writable* here (`PATCH /api/v1/settings`,
   `settings.manage`), with exactly the ranges the Settings page enforces
   (`app.services.settings_limits`) and the same audit action codes.
+- **Updating debcontrol itself** (Settings -> Update):
+  `GET /api/v1/settings/update` (`settings.view`) reports what the host
+  watcher last saw; `POST .../update/check` and `POST .../update/upgrade`
+  (`settings.manage`) ask it for a check or an upgrade, the same two
+  buttons and audit action codes as the page (`app.services.app_update`).
+  An upgrade only ever installs what the checkout's own branch has
+  upstream — nothing in the request picks a version or a source.
 
 What's deliberately **not** exposed here, even to a `settings.manage`
 token:
@@ -74,6 +81,7 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.version import APP_VERSION, commit_url, get_git_commit
 from app.db.models.role import Permission
 from app.db.session import get_db
+from app.services import app_update
 from app.services.settings_limits import (
     AUDIT_ACTION_BY_FIELD,
     BOUNDED_FIELDS,
@@ -182,3 +190,60 @@ async def update_settings_api(
         "changed": sorted(changed),
         "needs_restart": sorted(NEEDS_RESTART_FIELDS & changed.keys()),
     }
+
+
+@router.get("/update", dependencies=[_view])
+async def get_app_update_api() -> dict[str, object]:
+    """What the host watcher behind Settings -> Update last reported:
+    whether it is installed, the last check, the last upgrade."""
+    return app_update.read_status().as_dict()
+
+
+async def _request_app_update_api(
+    request: Request, db: AsyncSession, kind: str
+) -> dict[str, object]:
+    try:
+        app_update.request(kind)
+    except app_update.WatcherNotInstalledError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="The update watcher is not installed on the host "
+            "(scripts/install_update_watcher.sh).",
+        ) from None
+    except app_update.UpgradeInProgressError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="An update is already requested or running."
+        ) from None
+    if kind == app_update.UPGRADE:
+        await log_event(
+            db,
+            request=request,
+            action="settings.app_update.upgrade",
+            summary=f"Requested an update of debcontrol (running {APP_VERSION}) via the API",
+            details={"from_version": APP_VERSION},
+        )
+    else:
+        await log_event(
+            db,
+            request=request,
+            action="settings.app_update.check",
+            summary="Requested a check for a debcontrol update via the API",
+        )
+    return {"requested": kind}
+
+
+@router.post("/update/check", dependencies=[_manage], status_code=status.HTTP_202_ACCEPTED)
+async def check_app_update_api(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict[str, object]:
+    return await _request_app_update_api(request, db, app_update.CHECK)
+
+
+@router.post("/update/upgrade", dependencies=[_manage], status_code=status.HTTP_202_ACCEPTED)
+async def upgrade_app_api(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict[str, object]:
+    """Install the newest commit of the checkout's branch — the same as
+    `scripts/upgrade.sh`. debcontrol restarts during it; poll
+    `GET /api/v1/settings/update` for the outcome."""
+    return await _request_app_update_api(request, db, app_update.UPGRADE)

@@ -1,0 +1,115 @@
+{# Settings -> Update. Polls itself while a check or an upgrade is under
+   way — including while the upgrade restarts this very app, when a few
+   polls fail and htmx just keeps the last version on screen. #}
+{% set u = app_update %}
+{% set can_manage = request.state.user and request.state.user.has_permission('settings.manage') %}
+<div
+  id="app-update-status"
+  {% if u.busy %}
+  hx-get="/settings/update/status"
+  hx-trigger="every 3s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <p>{{ t(request, "settings.update.running_version", version=u.current_version) }}</p>
+
+  {% if not u.installed %}
+    <div class="alert alert-warn">
+      <p>{{ t(request, "settings.update.not_installed") }}</p>
+    </div>
+    <pre><code>sudo ./scripts/install_update_watcher.sh</code></pre>
+    <p class="hint">{{ t(request, "settings.update.not_installed_manual") }}</p>
+    <pre><code>./scripts/upgrade.sh</code></pre>
+  {% else %}
+    {% set a = u.available %}
+    {% if u.pending %}
+      <p>
+        <span class="badge badge-warn">{{ t(request, "settings.update.pending." ~ ('upgrade' if 'upgrade' in u.pending else 'check')) }}</span>
+      </p>
+      {% if u.pending_stale %}
+        <div class="alert alert-warn">
+          <p>{{ t(request, "settings.update.pending_stale") }}</p>
+        </div>
+        <pre><code>systemctl status debcontrol-update.path debcontrol-update.service</code></pre>
+      {% endif %}
+    {% elif a and a.checking %}
+      <p><span class="badge badge-warn">{{ t(request, "settings.update.checking") }}</span></p>
+    {% endif %}
+
+    {% if a %}
+      {% if not a.ok and not a.checking %}
+        <div class="alert alert-error">
+          <p>{{ t(request, "settings.update.check_failed") }}</p>
+          {% if a.error %}<pre class="run-output" tabindex="0">{{ a.error }}</pre>{% endif %}
+        </div>
+      {% elif a.update_available %}
+        <p>
+          <span class="badge badge-warn">{{ t(request, "settings.update.available_badge") }}</span>
+          {{ t(request, "settings.update.available", version=(a.remote_version or "?"), count=a.behind, branch=(a.branch or "?")) }}
+        </p>
+        {% if a.commits %}
+          <details>
+            <summary>{{ t(request, "settings.update.commits") }}</summary>
+            <ul>
+              {% for c in a.commits %}<li><code>{{ c.commit }}</code> {{ c.subject }}</li>{% endfor %}
+            </ul>
+            {% if a.behind > a.commits | length %}
+              <p class="hint">{{ t(request, "settings.update.more_commits", count=(a.behind - (a.commits | length))) }}</p>
+            {% endif %}
+          </details>
+        {% endif %}
+      {% elif a.ok %}
+        <p><span class="badge badge-ok">{{ t(request, "settings.update.up_to_date") }}</span></p>
+      {% endif %}
+      {% if a.dirty %}
+        <div class="alert alert-warn">
+          <p>{{ t(request, "settings.update.dirty") }}</p>
+        </div>
+      {% endif %}
+      {% if a.checked_at %}
+        <p class="hint">{{ t(request, "settings.update.checked_at", when=(a.checked_at | local_time('%Y-%m-%d %H:%M %Z'))) }}</p>
+      {% endif %}
+    {% else %}
+      <p class="hint">{{ t(request, "settings.update.never_checked") }}</p>
+    {% endif %}
+
+    {% if can_manage %}
+      <div class="page-header-actions">
+        <form method="post" action="/settings/update/check" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+          <button type="submit" class="button button-secondary" {% if u.busy %}disabled{% endif %}>{{ t(request, "settings.update.check_now") }}</button>
+        </form>
+        {% if a and a.update_available %}
+          <form method="post" action="/settings/update/upgrade" class="inline-form"
+                data-confirm="{{ t(request, 'settings.update.upgrade_confirm', version=(a.remote_version or '?')) }}">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+            <button type="submit" class="button" {% if u.busy or a.dirty %}disabled{% endif %}>{{ t(request, "settings.update.upgrade_now", version=(a.remote_version or "?")) }}</button>
+          </form>
+        {% endif %}
+      </div>
+      <p class="hint">{{ t(request, "settings.update.upgrade_hint") }}</p>
+    {% endif %}
+
+    {% set run = u.upgrade %}
+    {% if run %}
+      <h3>{{ t(request, "settings.update.last_upgrade") }}</h3>
+      <p>
+        {% if run.state == 'running' %}<span class="badge badge-warn">{{ t(request, "settings.update.state.running") }}</span>
+        {% elif run.state == 'succeeded' %}<span class="badge badge-ok">{{ t(request, "settings.update.state.succeeded") }}</span>
+        {% elif run.state == 'interrupted' %}<span class="badge badge-error">{{ t(request, "settings.update.state.interrupted") }}</span>
+        {% else %}<span class="badge badge-error">{{ t(request, "settings.update.state.failed", code=(run.exit_code if run.exit_code is not none else "?")) }}</span>{% endif %}
+        {{ t(request, "settings.update.versions", from_version=(run.from_version or "?"), to_version=(run.to_version or "…")) }}
+        · {{ run.started_at | local_time('%Y-%m-%d %H:%M %Z') }}{% if run.finished_at %} – {{ run.finished_at | local_time('%H:%M') }}{% endif %}
+      </p>
+      {% if run.state == 'succeeded' and run.to_version and run.to_version != u.current_version %}
+        <p class="hint">{{ t(request, "settings.update.reload") }} <a href="/settings?tab=update">{{ t(request, "settings.update.reload_link") }}</a></p>
+      {% endif %}
+      {% if u.log_tail %}
+        <details {% if run.state != 'succeeded' %}open{% endif %}>
+          <summary>{{ t(request, "settings.update.log") }}</summary>
+          <pre class="run-output" tabindex="0">{{ u.log_tail }}</pre>
+        </details>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+</div>

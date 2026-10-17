@@ -137,6 +137,14 @@ services:
       - "${APP_BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8080}:8080"
     volumes:
       - ssh_data:/app/data
+      # Updating debcontrol from Settings -> Update: the page drops a
+      # request file into the first directory, a systemd watcher on the
+      # host (scripts/install_update_watcher.sh) runs the update and
+      # writes its outcome into the second, which the app can only read.
+      # Both stay empty, and the page says how to update by hand, until
+      # that watcher is installed. See scripts/self_update.py.
+      - ./self-update/request:/app/self-update/request
+      - ./self-update/status:/app/self-update/status:ro
     depends_on:
       db:
         condition: service_healthy

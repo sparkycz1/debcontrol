@@ -1,8 +1,8 @@
 """Settings — the app's SSH identity (General), background-check
 intervals/timeouts/concurrency and every retention policy (Checks &
-retention), the audit log's own hash-chain verification (Security), and
-the LDAP/OIDC/syslog/SMTP login and integration configuration
-(Integrations) — see `app/db/models/app_settings.py` for why all of this
+retention), the audit log's own hash-chain verification (Security), the
+LDAP/OIDC/syslog/SMTP login and integration configuration (Integrations),
+and updating debcontrol itself (Update, `app.services.app_update`) — see `app/db/models/app_settings.py` for why all of this
 is Settings-page config rather than environment variables.
 """
 
@@ -37,6 +37,7 @@ from app.core.app_settings import get_or_create_app_settings
 from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
+from app.core.version import APP_VERSION
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 from app.db.models.app_settings import (
@@ -58,6 +59,7 @@ from app.db.models.role import Permission
 from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
+from app.services import app_update
 from app.services.notifications import send_smtp_message
 from app.services.settings_limits import (
     AUDIT_ACTION_BY_FIELD,
@@ -90,7 +92,7 @@ _manage = Depends(require_permission(Permission.SETTINGS_MANAGE))
 # string param is simpler and gets the same result — every handler below
 # just needs to know which tab *it itself* belongs to, to redirect back to
 # `/settings?tab=<that tab>` instead of losing your place on every save.
-_TAB_KEYS = ["general", "checks", "security", "integrations", "ai"]
+_TAB_KEYS = ["general", "checks", "security", "integrations", "ai", "update"]
 _VALID_TABS = set(_TAB_KEYS)
 _DEFAULT_TAB = "general"
 
@@ -162,6 +164,8 @@ async def _render_settings(
             name: BOUNDED_FIELDS[name] for name in SIGN_IN_POLICY_FIELDS
         },
         "client_ip": client_ip(request),
+        # Settings -> Update: what the host watcher last reported.
+        "app_update": app_update.read_status() if tab == "update" else None,
         **extra,
     }
     response = templates.TemplateResponse(request, "settings/index.html", context)
@@ -1536,3 +1540,58 @@ async def update_fleet_summary_settings(
         },
     )
     return RedirectResponse(url="/settings?tab=ai", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# Settings -> Update: updating debcontrol itself. The app only asks; a
+# watcher on the host does the work — see app/services/app_update.py and
+# scripts/self_update.py.
+
+
+@router.get("/update/status")
+async def app_update_status(request: Request) -> Response:
+    """The status panel on its own, polled while a check or an upgrade
+    is under way (and while the app restarts in the middle of one)."""
+    return templates.TemplateResponse(
+        request,
+        "partials/app_update_status.html",
+        {"app_update": app_update.read_status()},
+    )
+
+
+async def _request_app_update(request: Request, db: AsyncSession, kind: str) -> Response:
+    try:
+        app_update.request(kind)
+    except app_update.WatcherNotInstalledError:
+        return await _render_settings(
+            request, db, [t(request, "settings.update.error.not_installed")], tab="update"
+        )
+    except app_update.UpgradeInProgressError:
+        return await _render_settings(
+            request, db, [t(request, "settings.update.error.in_progress")], tab="update"
+        )
+    if kind == app_update.UPGRADE:
+        await log_event(
+            db,
+            request=request,
+            action="settings.app_update.upgrade",
+            summary=f"Requested an update of debcontrol (running {APP_VERSION})",
+            details={"from_version": APP_VERSION},
+        )
+    else:
+        await log_event(
+            db,
+            request=request,
+            action="settings.app_update.check",
+            summary="Requested a check for a debcontrol update",
+        )
+    return RedirectResponse(url="/settings?tab=update", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/update/check", dependencies=[_manage, Depends(verify_csrf)])
+async def check_app_update(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    return await _request_app_update(request, db, app_update.CHECK)
+
+
+@router.post("/update/upgrade", dependencies=[_manage, Depends(verify_csrf)])
+async def upgrade_app(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    return await _request_app_update(request, db, app_update.UPGRADE)
