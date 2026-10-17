@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -197,7 +197,6 @@ async def security_audit_overview(
 )
 async def run_security_audits(
     request: Request,
-    install: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -205,9 +204,8 @@ async def run_security_audits(
     already under way, or no confirmed host key, are skipped)."""
     visible = await machines_visible_to(db, current_user)
     machines = list((await db.execute(visible)).scalars().all())
-    install_if_missing = install == "on"
     audits, skipped = await trigger_security_audits(
-        db, machines, install_if_missing=install_if_missing, started_by=current_user.username
+        db, machines, started_by=current_user.username
     )
     await log_event(
         db,
@@ -218,7 +216,6 @@ async def run_security_audits(
         details={
             "started": len(audits),
             "skipped": skipped,
-            "install_if_missing": install_if_missing,
         },
     )
     return RedirectResponse(

@@ -104,7 +104,6 @@ async def _run_security_audit(
     _audits, skipped = await trigger_security_audits(
         db,
         machines,
-        install_if_missing=params.get("install") == "yes",
         started_by="schedule",
     )
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
@@ -246,23 +245,15 @@ def register_builtin_actions() -> None:
     register_action(
         ScheduledActionSpec(
             key="security_audit",
-            label="Security audit (Lynis)",
+            label="Security audit",
             description=(
-                "Runs `lynis audit system` on each targeted machine and keeps the "
-                "hardening index, warnings and suggestions (Security -> Audit). "
-                "Machines with an audit still running are skipped."
+                "Installs or updates Lynis, runs debcontrol's own checks and "
+                "`lynis audit system` on each targeted machine and keeps the "
+                "results (Security -> Audit). Machines with an audit still "
+                "running are skipped."
             ),
-            params=[
-                ScheduledActionParam(
-                    key="install",
-                    label="Install Lynis where missing",
-                    choices=[
-                        ("no", "No"),
-                        ("yes", "Yes, with apt-get"),
-                    ],
-                    default="no",
-                ),
-            ],
+            # A task saved before 0.118.0 may still carry an `install`
+            # param; it is ignored (Lynis is always installed or updated).
             run=_run_security_audit,
         )
     )

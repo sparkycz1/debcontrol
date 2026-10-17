@@ -7,7 +7,7 @@ nothing and runs no code of its own as root. The distributions ship old
 releases, so debcontrol prefers CISOfy's own signed apt repository
 (`CISOFY_REPO_SETUP`, added by onboarding from 0.115.0, which runs as
 root): from there the newest Lynis arrives with ordinary system updates.
-A run that asks to install (`install_if_missing`) runs `apt-get install
+Every run (from 0.118.0, no longer an option) runs `apt-get install
 lynis` first, which installs it or upgrades an older one; connected as
 root it also adds that repository when missing. A scoped sudo account may
 run apt-get but not write apt's sources, so there it uses whatever
@@ -120,34 +120,33 @@ CHECKS_TIMEOUT_SECONDS = 6 * 60
 _LINE = re.compile(r"^([a-z_]+)(\[\])?=(.*)$")
 
 
-def build_audit_command(*, install_if_missing: bool) -> str:
-    """The whole audit as one script (one SSH exec). Prints the markers
-    above and the report's kept lines; see the module docstring."""
+def build_audit_command() -> str:
+    """The whole audit as one script (one SSH exec): install or upgrade
+    Lynis, run it, print the markers above and the report's kept lines;
+    see the module docstring."""
     find = (
         "L=; for c in " + " ".join(_LYNIS_PATHS) + ' "$(command -v lynis 2>/dev/null)"; do '
         '[ -n "$c" ] && [ -x "$c" ] && { L="$c"; break; }; done; '
     )
-    install = ""
-    if install_if_missing:
-        install = (
-            "export DEBIAN_FRONTEND=noninteractive; "
-            # Root: CISOfy's repository, then install or upgrade from it.
-            'if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then '
-            f"{CISOFY_REPO_SETUP} || echo {CISOFY_FAILED_MARKER}; "
-            "apt-get -q update >/dev/null 2>&1; "
-            "apt-get -y -q install lynis >/dev/null 2>&1 "
-            f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
-            f"{find}"
-            # A scoped sudo account: install or upgrade from the
-            # repositories the machine already has (CISOfy's, once
-            # onboarding added it).
-            "elif command -v apt-get >/dev/null 2>&1; then "
-            "sudo -n apt-get -q update >/dev/null 2>&1; "
-            "sudo -n apt-get -y -q install lynis >/dev/null 2>&1 "
-            f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
-            f"{find}"
-            "fi; "
-        )
+    install = (
+        "export DEBIAN_FRONTEND=noninteractive; "
+        # Root: CISOfy's repository, then install or upgrade from it.
+        'if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then '
+        f"{CISOFY_REPO_SETUP} || echo {CISOFY_FAILED_MARKER}; "
+        "apt-get -q update >/dev/null 2>&1; "
+        "apt-get -y -q install lynis >/dev/null 2>&1 "
+        f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
+        f"{find}"
+        # A scoped sudo account: install or upgrade from the
+        # repositories the machine already has (CISOfy's, once
+        # onboarding added it).
+        "elif command -v apt-get >/dev/null 2>&1; then "
+        "sudo -n apt-get -q update >/dev/null 2>&1; "
+        "sudo -n apt-get -y -q install lynis >/dev/null 2>&1 "
+        f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
+        f"{find}"
+        "fi; "
+    )
     return (
         f"{find}"
         f"{install}"
@@ -338,7 +337,6 @@ async def run_audit(
     machine: Machine,
     secret: str | None,
     *,
-    install_if_missing: bool,
     connect_timeout_seconds: int,
     run_timeout_seconds: int,
 ) -> LynisResult:
@@ -346,7 +344,7 @@ async def run_audit(
     or timeout problem raises `SSHConnectionError`. Its own connection
     rather than `app.ssh.exec.run_command`, whose output cap would cut the
     head (the markers) off a report with many findings."""
-    command = build_audit_command(install_if_missing=install_if_missing)
+    command = build_audit_command()
     try:
         async with await open_connection(machine, secret, connect_timeout_seconds) as conn:
             checks = await _run_checks(conn)

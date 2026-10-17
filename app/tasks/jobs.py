@@ -3331,7 +3331,6 @@ async def _run_security_audit(audit_id: str) -> None:
             result = await run_lynis_audit(
                 machine,
                 secret,
-                install_if_missing=audit.install_if_missing,
                 connect_timeout_seconds=app_settings.ssh_connect_timeout,
                 run_timeout_seconds=security_audit.RUN_TIMEOUT_SECONDS,
             )
