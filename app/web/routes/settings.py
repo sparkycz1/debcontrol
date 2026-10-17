@@ -2,8 +2,9 @@
 intervals/timeouts/concurrency and every retention policy (Checks &
 retention), the audit log's own hash-chain verification (Security), the
 LDAP/OIDC/syslog/SMTP login and integration configuration (Integrations),
-and updating debcontrol itself (Update, `app.services.app_update`) — see `app/db/models/app_settings.py` for why all of this
-is Settings-page config rather than environment variables.
+and updating debcontrol itself (Update, `app.services.app_update`) — see
+`app/db/models/app_settings.py` for why all of this is Settings-page
+config rather than environment variables.
 """
 
 from __future__ import annotations
