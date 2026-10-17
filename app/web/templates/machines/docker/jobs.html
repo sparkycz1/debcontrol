@@ -1,0 +1,11 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ t(request, "docker.nav.jobs") }}{% endblock %}
+
+{% block docker_content %}
+  <h2>{{ t(request, "docker.jobs.heading") }}</h2>
+  <p class="hint">{{ t(request, "docker.jobs.hint") }}</p>
+  <div id="jobs-panel" hx-get="{{ docker_base }}/jobs/panel" hx-trigger="every 30s, live-docker from:body" hx-swap="innerHTML">
+    {% include "machines/docker/_jobs_list.html" %}
+  </div>
+{% endblock %}

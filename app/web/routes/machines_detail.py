@@ -1277,7 +1277,7 @@ async def check_image_updates_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    """"Check for image updates now" on the container table — the same
+    """"Check for image updates now" on the Docker tab — the same
     registry-digest comparison the daily sweep runs, on demand."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
     app_settings = await get_or_create_app_settings(db)
@@ -1310,7 +1310,7 @@ async def check_image_updates_endpoint(
     if error is not None:
         query["images_error"] = sign_flash(error)
     return RedirectResponse(
-        url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
+        url=f"/machines/{machine.id}/docker?{urlencode(query)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -1327,10 +1327,10 @@ async def container_action_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    """Start/stop/restart one Docker container from the Monitoring tab's
-    container table. Same `action.power` permission as reboot/shutdown —
-    stopping a service's container is the same kind of disruptive action.
-    Waits for docker's own answer, then redirects back with the outcome."""
+    """Start/stop/restart one Docker container from the Docker tab. Same
+    `action.power` permission as reboot/shutdown — stopping a service's
+    container is the same kind of disruptive action. Waits for docker's own
+    answer, then redirects back with the outcome."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
     if action not in CONTAINER_ACTIONS or not is_container_name_valid(container):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
@@ -1366,8 +1366,12 @@ async def container_action_endpoint(
     query = {"container": sign_flash(container), "container_action": action}
     if error is not None:
         query["container_error"] = sign_flash(error)
+    back = f"/machines/{machine.id}/docker"
+    # Back to the container's own page when the button was there.
+    if request.query_params.get("from") == "container":
+        back += f"/containers/{container}"
     return RedirectResponse(
-        url=f"/machines/{machine.id}/monitoring?{urlencode(query)}#containers",
+        url=f"{back}?{urlencode(query)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

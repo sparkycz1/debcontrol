@@ -1,0 +1,66 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import severity_counts %}
+
+{% block docker_title %}{{ t(request, "docker.vulns.title", image=(scan.image_ref or scan.image_id[7:19])) }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.vulns.title", image=(scan.image_ref or scan.image_id[7:19])) }}</h2>
+      <p class="hint">
+        <code>{{ scan.image_id[:19] }}</code> ·
+        {{ t(request, "docker.scan.scanned_at", when=(scan.scanned_at | local_time)) }}
+        {% for name, version in (scan.scanners or {}).items() %} · {{ name }} {{ version }}{% endfor %}
+      </p>
+    </div>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/images">{{ t(request, "docker.back_to_images") }}</a>
+  </div>
+  <p>{{ severity_counts(request, scan.counts) }}</p>
+  {% for name, message in (scan.errors or {}).items() %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.scan.scanner_failed", scanner=name) }} {{ message }}</p></div>
+  {% endfor %}
+
+  <form method="get" class="inline-form monitoring-toolbar">
+    <select name="severity" class="inline-select" data-autosubmit aria-label="{{ t(request, 'docker.vulns.severity') }}">
+      <option value="">{{ t(request, "docker.vulns.all_severities") }}</option>
+      {% for sev in ('critical', 'high', 'medium', 'low', 'unknown') %}
+        <option value="{{ sev }}" {% if sev == severity %}selected{% endif %}>{{ t(request, "docker.severity." ~ sev) }}</option>
+      {% endfor %}
+    </select>
+    <input type="search" name="q" value="{{ q }}" class="chart-filter" placeholder="{{ t(request, 'docker.vulns.search') }}" aria-label="{{ t(request, 'docker.vulns.search') }}">
+    <button type="submit" class="button button-secondary log-small-button">{{ t(request, "monitoring.apply") }}</button>
+  </form>
+
+  {% if findings %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="vulns-table">
+        <thead><tr>
+          <th data-sort="text">{{ t(request, "docker.vulns.id") }}</th>
+          <th data-sort="text">{{ t(request, "docker.vulns.severity") }}</th>
+          <th data-sort="text">{{ t(request, "docker.vulns.package") }}</th>
+          <th data-sort="text">{{ t(request, "docker.vulns.installed") }}</th>
+          <th data-sort="text">{{ t(request, "docker.vulns.fixed") }}</th>
+          <th data-sort="text">{{ t(request, "docker.vulns.found_by") }}</th>
+        </tr></thead>
+        <tbody>
+          {% for f in findings %}
+            <tr>
+              <td class="cell-nowrap">
+                {% if f.url %}<a href="{{ f.url }}" target="_blank" rel="noopener noreferrer">{{ f.id }}</a>{% else %}{{ f.id }}{% endif %}
+                {% if f.title %}<div class="table-summary cell-truncate" title="{{ f.title }}">{{ f.title }}</div>{% endif %}
+              </td>
+              <td><span class="badge {{ {'critical': 'badge-error', 'high': 'badge-warn'}.get(f.severity, '') }}">{{ t(request, "docker.severity." ~ f.severity) }}</span></td>
+              <td><code>{{ f.pkg }}</code></td>
+              <td><code>{{ f.installed }}</code></td>
+              <td>{% if f.fixed %}<code>{{ f.fixed }}</code>{% else %}<span class="table-muted">{{ t(request, "docker.vulns.no_fix") }}</span>{% endif %}</td>
+              <td>{{ (f.scanners or []) | join(', ') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">{{ t(request, "docker.vulns.shown", count=(findings | length)) }}</p>
+  {% else %}
+    <p class="hint">{{ t(request, "docker.vulns.none") }}</p>
+  {% endif %}
+{% endblock %}

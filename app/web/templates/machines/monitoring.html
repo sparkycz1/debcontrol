@@ -58,7 +58,6 @@
     {% endif %}
 
     {% set ts = history.bucket_timestamps %}
-    {% set has_docker = machine.docker_status == 'ok' and history.docker_cpu_by_container %}
 
     <div class="monitoring-grid">
       {% if machine.monitoring_updated_at %}
@@ -72,13 +71,6 @@
              footer=t(request, "monitoring.current_value", value=(history.latest_cpu_percent | chart_value('percent'))),
              empty_text=t(request, "monitoring.no_data")) }}
 
-        {% if has_docker %}
-          {% set docker_cpu = [] %}
-          {% for name, values in history.docker_cpu_by_container.items() %}{% set _ = docker_cpu.append((name, values)) %}{% endfor %}
-          {{ chart_card(t(request, "monitoring.card.docker_cpu"), t(request, "monitoring.card.docker_cpu_hint"),
-                        chart(docker_cpu, ts, fmt='percent', stacked=true, time_format=tf),
-                        filter=true, empty_text=t(request, "monitoring.no_data")) }}
-        {% endif %}
 
         {# --- Memory --- #}
         {% set ram_threshold = condition_thresholds.get('monitoring.ram_percent') %}
@@ -109,13 +101,6 @@
                    threshold_label=(t(request, "monitoring.threshold_percent", value=(ram_threshold | round(0) | int)) if ram_threshold is not none else none)),
              footer=ram_footer, empty_text=t(request, "monitoring.no_data")) }}
 
-        {% if has_docker %}
-          {% set docker_mem = [] %}
-          {% for name, values in history.docker_mem_by_container.items() %}{% set _ = docker_mem.append((name, values)) %}{% endfor %}
-          {{ chart_card(t(request, "monitoring.card.docker_memory"), t(request, "monitoring.card.docker_memory_hint"),
-                        chart(docker_mem, ts, fmt='bytes', stacked=true, time_format=tf),
-                        filter=true, empty_text=t(request, "monitoring.no_data")) }}
-        {% endif %}
 
         {# --- Disk usage + I/O --- #}
         {% set fs_series = [] %}
@@ -169,13 +154,6 @@
                       chart(net, ts, fmt='bytes_rate', time_format=tf, hidden=net_hidden),
                       filter=(net | length > 4), empty_text=t(request, "monitoring.network.none_found")) }}
 
-        {% if has_docker %}
-          {% set docker_net = [] %}
-          {% for name, values in history.docker_net_by_container.items() %}{% set _ = docker_net.append((name, values)) %}{% endfor %}
-          {{ chart_card(t(request, "monitoring.card.docker_network"), t(request, "monitoring.card.docker_network_hint"),
-                        chart(docker_net, ts, fmt='bytes_rate', stacked=true, time_format=tf),
-                        filter=true, empty_text=t(request, "monitoring.no_data")) }}
-        {% endif %}
 
         {# --- Load --- #}
         {{ chart_card(
@@ -250,124 +228,14 @@
       {% endif %}
     </div>
 
-    {# --- Docker containers --- #}
-    {% if machine.docker_status == 'no_access' %}
-      <section class="chart-card chart-card-wide monitoring-section">
-        <header class="chart-card-header"><div><h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3></div></header>
-        <p class="hint">{{ t(request, "monitoring.containers.no_access") }}</p>
-      </section>
-    {% elif machine.docker_status == 'ok' %}
-      {% set can_act = request.state.user.has_permission('action.power') and machine.host_key_fingerprint %}
-      {% set acted = flash(request, 'container') %}
+    {# --- Docker: its own tab now (machines/docker/*) --- #}
+    {% if machine.docker_status is not none %}
       <section class="chart-card chart-card-wide monitoring-section" id="containers">
-        {% if acted and request.query_params.get('container_action') in ('start', 'stop', 'restart') %}
-          {% set acted_action = t(request, "monitoring.containers.action_" ~ request.query_params.get('container_action')) %}
-          {% set container_error = flash(request, 'container_error') %}
-          {% if container_error %}
-            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.action_failed", action=acted_action, name=acted) }} {{ container_error }}</p></div>
-          {% else %}
-            <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.action_done", action=acted_action, name=acted) }}</p></div>
-          {% endif %}
-        {% endif %}
-        {% if request.query_params.get('images_checked') %}
-          {% set images_error = flash(request, 'images_error') %}
-          {% if images_error %}
-            <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.images_failed") }} {{ images_error }}</p></div>
-          {% else %}
-            <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.images_done") }}</p></div>
-          {% endif %}
-        {% endif %}
-        <header class="chart-card-header">
-          <div>
-            <h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3>
-            <p class="chart-card-subtitle">
-              {{ t(request, "monitoring.containers.hint") }}
-              {% if machine.docker_images_checked_at %}— {{ t(request, "monitoring.containers.images_checked_at", when=(machine.docker_images_checked_at | local_time('%Y-%m-%d %H:%M'))) }}{% endif %}
-            </p>
-          </div>
-          {% if request.state.user.has_permission('machine.manage') and machine.host_key_fingerprint %}
-            <form method="post" action="/machines/{{ machine.id }}/docker/check-images" class="inline-form">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="button button-secondary log-small-button">{{ t(request, "monitoring.containers.check_images") }}</button>
-            </form>
-          {% endif %}
-          {% if machine.docker_containers %}
-            <input type="search" class="chart-filter" data-table-filter="containers-table"
-                   placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
-          {% endif %}
-        </header>
-        {% if machine.docker_containers %}
-          <div class="monitoring-table-wrap">
-            <table class="data-table containers-table" id="containers-table">
-              <thead>
-                <tr>
-                  <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
-                  <th data-sort="number">{{ t(request, "monitoring.containers.cpu") }}</th>
-                  <th data-sort="number">{{ t(request, "monitoring.containers.memory") }}</th>
-                  <th data-sort="number">{{ t(request, "monitoring.containers.network") }}</th>
-                  <th data-sort="text">{{ t(request, "monitoring.containers.ports") }}</th>
-                  <th data-sort="text">{{ t(request, "monitoring.containers.image") }}</th>
-                  <th data-sort="text">{{ t(request, "monitoring.containers.status") }}</th>
-                  {% if can_act %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
-                </tr>
-              </thead>
-              <tbody>
-                {% for c in machine.docker_containers %}
-                  {% set net_series = history.docker_net_by_container.get(c.name) or [] %}
-                  {% set net_rate = (net_series | select('number') | list | last) if net_series | select('number') | list else none %}
-                  <tr>
-                    <td class="cell-nowrap"><strong>{{ c.name }}</strong></td>
-                    <td class="cell-nowrap" data-sort-value="{{ c.cpu_percent if c.cpu_percent is number else -1 }}">{{ c.cpu_percent | chart_value('percent') if c.cpu_percent is number else '—' }}</td>
-                    <td class="cell-nowrap" data-sort-value="{{ c.mem_bytes if c.mem_bytes is number else -1 }}">{{ c.mem_bytes | bytes if c.mem_bytes is number else '—' }}</td>
-                    <td class="cell-nowrap" data-sort-value="{{ net_rate if net_rate is not none else -1 }}">{{ net_rate | chart_value('bytes_rate') if net_rate is not none else '—' }}</td>
-                    <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
-                    <td class="cell-truncate" title="{{ c.image }}">
-                      {% set img_status = (machine.docker_image_updates or {}).get(c.image) %}
-                      {% set img_versions = (machine.docker_image_versions or {}).get(c.image) or {} %}
-                      {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
-                      {{ c.image }}
-                      {% if img_status == 'update' and img_versions.remote_version and img_versions.remote_version != img_versions.local_version %}
-                        <div class="table-summary">{{ t(request, "monitoring.containers.image_new_build", new=img_versions.remote_version, current=(img_versions.local_version or '?')) }}</div>
-                      {% endif %}
-                      {% if img_versions.series or img_versions.newest %}
-                        <div class="table-summary">
-                          {% if img_versions.series %}{{ t(request, "monitoring.containers.image_newer_series", tag=img_versions.series) }}{% endif %}
-                          {% if img_versions.series and img_versions.newest %} · {% endif %}
-                          {% if img_versions.newest %}{{ t(request, "monitoring.containers.image_newest", tag=img_versions.newest) }}{% endif %}
-                        </div>
-                      {% endif %}
-                    </td>
-                    <td class="cell-nowrap">
-                      {% if c.health == 'unhealthy' %}{% set state_badge = 'badge-error' %}
-                      {% elif c.health == 'starting' or c.state == 'restarting' %}{% set state_badge = 'badge-warn' %}
-                      {% elif c.state == 'running' %}{% set state_badge = 'badge-ok' %}
-                      {% elif c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') %}{% set state_badge = 'badge-error' %}
-                      {% else %}{% set state_badge = '' %}{% endif %}
-                      <span class="badge {{ state_badge }}"
-                            {% if c.health %}title="{{ t(request, 'monitoring.containers.health') }}: {{ t(request, 'monitoring.containers.health_' ~ c.health) }}"{% endif %}>{{ c.status or c.state }}</span>
-                    </td>
-                    {% if can_act %}
-                      <td class="container-actions">
-                        {% set actions = ('restart', 'stop') if c.state in ('running', 'restarting', 'paused') else ('start',) %}
-                        {% for a in actions %}
-                          <form method="post" action="/machines/{{ machine.id }}/containers/{{ c.name | urlencode }}/{{ a }}" class="inline-form"
-                                data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button type="submit" class="button {{ 'button-danger' if a == 'stop' else 'button-secondary' }} log-small-button">
-                              {{ t(request, "monitoring.containers.action_" ~ a) }}
-                            </button>
-                          </form>
-                        {% endfor %}
-                      </td>
-                    {% endif %}
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="hint">{{ t(request, "monitoring.containers.none") }}</p>
-        {% endif %}
+        <header class="chart-card-header"><div>
+          <h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3>
+          <p class="chart-card-subtitle">{{ t(request, "monitoring.containers.moved", count=((machine.docker_containers or []) | length)) }}
+            <a href="/machines/{{ machine.id }}/docker">{{ t(request, "monitoring.containers.open_docker") }}</a></p>
+        </div></header>
       </section>
     {% endif %}
 

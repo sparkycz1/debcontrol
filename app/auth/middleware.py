@@ -76,7 +76,9 @@ _PUBLIC_PATHS = frozenset(
 # (app.services.status_page). `/push/<token>`: a push check's heartbeat,
 # called by scripts and cron jobs, guarded the same way
 # (app/web/routes/check_push.py).
-_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/", "/status/", "/push/")
+# `/hooks/docker/<token>`: a Git stack's deploy webhook, called by a Git
+# host (app/web/routes/docker_hooks.py) — the token is the credential.
+_PUBLIC_PREFIXES = ("/static/", "/api/", "/branding/", "/status/", "/push/", "/hooks/docker/")
 
 
 # Reachable with a valid session even while a role's `require_totp` block is
@@ -107,7 +109,7 @@ def _is_public(path: str) -> bool:
 # operator never signs in from) — and push-check heartbeats, for the same
 # reason.
 _NETWORK_EXEMPT_PATHS = frozenset({"/healthz", "/api/inform"})
-_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/", "/status/", "/push/")
+_NETWORK_EXEMPT_PREFIXES = ("/static/", "/branding/", "/status/", "/push/", "/hooks/docker/")
 
 
 async def _network_allowed(request: Request) -> bool:

@@ -1,0 +1,18 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel %}
+
+{% block docker_title %}{{ t(request, "docker.nav.volumes") }}{% endblock %}
+
+{% block docker_content %}
+  {% set with_sizes = request.query_params.get('sizes') == '1' %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.volumes.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.volumes.hint") }}</p>
+    </div>
+    {% if not with_sizes %}
+      <a class="button button-secondary log-small-button" href="{{ docker_base }}/volumes?sizes=1">{{ t(request, "docker.volumes.show_sizes") }}</a>
+    {% endif %}
+  </div>
+  {{ lazy_panel(request, docker_base ~ "/volumes/panel" ~ ("?sizes=1" if with_sizes else ""), "volumes-panel") }}
+{% endblock %}

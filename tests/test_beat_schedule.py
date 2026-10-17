@@ -31,6 +31,7 @@ from __future__ import annotations
 # order-dependent pass this test exists to not be.
 import app.scheduling.jobs
 import app.tasks.ai_jobs
+import app.tasks.docker_jobs
 import app.tasks.jobs  # noqa: F401
 from app.tasks.celery_app import celery_app
 
@@ -56,6 +57,9 @@ _EXPECTED_PERIODIC_TASKS = {
     "app.tasks.ai_jobs.generate_fleet_summary",
     "app.tasks.ai_jobs.purge_old_fleet_summaries",
     "app.tasks.jobs.run_due_app_backup",
+    "app.tasks.docker_jobs.reconcile_docker_jobs",
+    "app.tasks.docker_jobs.poll_git_stacks",
+    "app.tasks.docker_jobs.purge_old_docker_jobs",
 }
 
 

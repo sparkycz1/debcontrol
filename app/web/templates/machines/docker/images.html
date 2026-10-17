@@ -1,0 +1,30 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel %}
+
+{% block docker_title %}{{ t(request, "docker.nav.images") }}{% endblock %}
+
+{% block docker_content %}
+  {% set summary = machine.docker_vulnerabilities or {} %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.images.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.images.hint") }}</p>
+    </div>
+    {% if can_updates and machine.host_key_fingerprint %}
+      <div class="page-header-actions">
+        {% for scope in ('unscanned', 'in_use', 'all') %}
+          <form method="post" action="{{ docker_base }}/images/scan" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="scope" value="{{ scope }}">
+            <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.scan.scope." ~ scope) }}</button>
+          </form>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  {% if summary.scanned_at %}
+    <p class="hint">{{ t(request, "docker.scan.summary", images=(summary.images or 0), unscanned=(summary.unscanned or 0)) }}</p>
+  {% endif %}
+
+  {{ lazy_panel(request, docker_base ~ "/images/panel", "images-panel") }}
+{% endblock %}

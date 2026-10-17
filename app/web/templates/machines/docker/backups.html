@@ -1,0 +1,56 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ t(request, "docker.nav.backups") }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.backups.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.backups.hint") }}</p>
+    </div>
+    {% if can_terminal %}
+      <a class="button" href="{{ docker_base }}/backups/new">{{ t(request, "docker.backups.new") }}</a>
+    {% endif %}
+  </div>
+  {% if backups %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="backups-table">
+        <thead><tr>
+          <th>{{ t(request, "docker.backup.name") }}</th>
+          <th>{{ t(request, "docker.backup.sources") }}</th>
+          <th>{{ t(request, "docker.backup.repository") }}</th>
+          <th>{{ t(request, "docker.backup.last") }}</th>
+          <th>{{ t(request, "docker.backup.last_check") }}</th>
+        </tr></thead>
+        <tbody>
+          {% for b in backups %}
+            <tr>
+              <td class="cell-nowrap"><a href="{{ docker_base }}/backups/{{ b.id }}"><strong>{{ b.name }}</strong></a>
+                {% if not b.enabled %}<span class="badge">{{ t(request, "docker.backup.disabled") }}</span>{% endif %}</td>
+              <td>
+                {% for v in b.volumes %}<div><span class="badge badge-tag">{{ t(request, "docker.backup.volume") }}</span> <code>{{ v }}</code></div>{% endfor %}
+                {% for p in b.paths %}<div><span class="badge badge-tag">{{ t(request, "docker.backup.path") }}</span> <code>{{ p }}</code></div>{% endfor %}
+              </td>
+              <td class="cell-truncate" title="{{ b.repository_display }}"><code>{{ b.repository_display }}</code></td>
+              <td class="cell-nowrap">
+                {% if b.last_backup_status == 'ok' %}<span class="badge badge-ok">{{ t(request, "docker.job.status.succeeded") }}</span>
+                {% elif b.last_backup_status == 'failed' %}<span class="badge badge-error" title="{{ b.last_error or '' }}">{{ t(request, "docker.job.status.failed") }}</span>
+                {% else %}<span class="table-muted">{{ t(request, "docker.backup.never") }}</span>{% endif %}
+                {% if b.last_backup_at %}<div class="table-summary">{{ b.last_backup_at | local_time }}{% if b.last_backup_bytes is number %} · +{{ b.last_backup_bytes | bytes }}{% endif %}</div>{% endif %}
+              </td>
+              <td class="cell-nowrap">
+                {% if b.last_check_status == 'ok' %}<span class="badge badge-ok">{{ t(request, "docker.job.status.succeeded") }}</span>
+                {% elif b.last_check_status == 'failed' %}<span class="badge badge-error">{{ t(request, "docker.job.status.failed") }}</span>
+                {% else %}<span class="table-muted">—</span>{% endif %}
+                {% if b.last_check_at %}<div class="table-summary">{{ b.last_check_at | local_time }}</div>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="hint">{{ t(request, "docker.backups.none") }}</p>
+  {% endif %}
+  <p class="hint">{{ t(request, "docker.backups.schedule_hint") }} <a href="/scheduling">{{ t(request, "docker.backups.schedule_link") }}</a></p>
+{% endblock %}

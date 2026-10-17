@@ -1,0 +1,59 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel %}
+
+{% block docker_title %}{{ t(request, "docker.nav.stacks") }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.stacks.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.stacks.hint") }}</p>
+    </div>
+    {% if can_terminal %}
+      <a class="button" href="{{ docker_base }}/stacks/new">{{ t(request, "docker.stacks.new") }}</a>
+    {% endif %}
+  </div>
+
+  {% if stacks %}
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="stacks-table">
+        <thead><tr>
+          <th>{{ t(request, "docker.stacks.name") }}</th>
+          <th>{{ t(request, "docker.stacks.source") }}</th>
+          <th>{{ t(request, "docker.stacks.deployed") }}</th>
+          <th>{{ t(request, "docker.stacks.state") }}</th>
+        </tr></thead>
+        <tbody>
+          {% for s in stacks %}
+            <tr>
+              <td><a href="{{ docker_base }}/stacks/{{ s.id }}"><strong>{{ s.name }}</strong></a></td>
+              <td>
+                {% if s.source == 'git' %}
+                  <span class="badge badge-tag">Git</span> <span class="cell-truncate" title="{{ s.git_url }}">{{ s.git_url }}</span>
+                  <div class="table-summary">{{ s.git_branch }} · {{ s.git_compose_path }}{% if s.auto_sync %} · {{ t(request, "docker.stacks.auto_sync_on") }}{% endif %}{% if s.webhook_token_hash %} · {{ t(request, "docker.stacks.webhook_on") }}{% endif %}</div>
+                {% else %}
+                  <span class="badge">{{ t(request, "docker.stacks.source_editor") }}</span>
+                {% endif %}
+              </td>
+              <td class="cell-nowrap">
+                {% if s.deployed_at %}{{ s.deployed_at | local_time }}{% if s.deployed_commit %} · <code>{{ s.deployed_commit[:8] }}</code>{% endif %}
+                {% else %}<span class="table-muted">{{ t(request, "docker.stacks.never_deployed") }}</span>{% endif %}
+              </td>
+              <td>
+                {% if s.last_status == 'failed' %}<span class="badge badge-error" title="{{ s.last_error or '' }}">{{ t(request, "docker.job.status.failed") }}</span>
+                {% elif s.last_status == 'ok' %}<span class="badge badge-ok">{{ t(request, "docker.stacks.state_ok") }}</span>{% endif %}
+                {% if changed.get(s.id) %}<span class="badge badge-warn">{{ t(request, "docker.stacks.changed") }}</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="hint">{{ t(request, "docker.stacks.none_managed") }}</p>
+  {% endif %}
+
+  <h2>{{ t(request, "docker.projects.heading") }}</h2>
+  <p class="hint">{{ t(request, "docker.projects.hint") }}</p>
+  {{ lazy_panel(request, docker_base ~ "/stacks/panel", "projects-panel") }}
+{% endblock %}

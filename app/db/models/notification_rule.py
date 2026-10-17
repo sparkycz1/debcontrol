@@ -140,6 +140,15 @@ class NotificationEventType(enum.StrEnum):
     # (`app.tasks.jobs.run_due_app_backup`). Not about a machine, so like
     # FLEET_SUMMARY_GENERATED it matches every rule's machine scope.
     APP_BACKUP_FAILED = "app.backup_failed"
+    # Docker (`app.tasks.docker_jobs._after_close`): a container update
+    # finished, failed, or was stopped by the vulnerability gate,
+    DOCKER_UPDATE_SUCCEEDED = "docker.update.succeeded"
+    DOCKER_UPDATE_FAILED = "docker.update.failed"
+    DOCKER_UPDATE_BLOCKED = "docker.update.blocked"
+    # deploying or acting on a Compose stack failed,
+    DOCKER_STACK_FAILED = "docker.stack.failed"
+    # a restic backup of Docker volumes / host paths failed.
+    DOCKER_BACKUP_FAILED = "docker.backup.failed"
 
 
 notification_rule_users = Table(

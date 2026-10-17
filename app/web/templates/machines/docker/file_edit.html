@@ -1,0 +1,33 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ path }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.files.title_" ~ target.kind, name=target.name) }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ files_url(directory) }}">{{ t(request, "docker.files.back_to_folder") }}</a>
+  </div>
+  {% include "machines/docker/_file_crumbs.html" %}
+
+  {% if error %}
+    <div class="alert alert-error"><p>{{ error }}</p></div>
+  {% else %}
+    <p class="hint">
+      {{ t(request, "docker.files.info", size=(info.size | bytes), mode=('%o' | format(info.mode)), uid=info.uid, gid=info.gid) }}
+      · <a href="{{ files_url(path, 'download') }}">{{ t(request, "docker.files.download") }}</a>
+    </p>
+    {% if binary %}
+      <div class="alert alert-warn"><p>{{ t(request, "docker.files.binary") }}</p></div>
+    {% else %}
+      <form method="post" action="{{ files_url(path, 'save') }}" class="form form-wide"
+            data-confirm="{{ t(request, 'docker.files.save_confirm', name=path) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="path" value="{{ path }}">
+        <textarea name="content" rows="28" class="code-input" spellcheck="false" aria-label="{{ path }}">
+{{ text }}</textarea>
+        <p class="hint">{{ t(request, "docker.files.save_hint") }}</p>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    {% endif %}
+  {% endif %}
+{% endblock %}

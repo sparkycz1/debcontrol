@@ -1,0 +1,20 @@
+{#- The outcome of a container start/stop/restart (`container_action_endpoint`)
+    or an image update check, carried back in the redirect. -#}
+  {% set acted = flash(request, 'container') %}
+  {% if acted and request.query_params.get('container_action') in ('start', 'stop', 'restart') %}
+    {% set acted_action = t(request, "monitoring.containers.action_" ~ request.query_params.get('container_action')) %}
+    {% set container_error = flash(request, 'container_error') %}
+    {% if container_error %}
+      <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.action_failed", action=acted_action, name=acted) }} {{ container_error }}</p></div>
+    {% else %}
+      <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.action_done", action=acted_action, name=acted) }}</p></div>
+    {% endif %}
+  {% endif %}
+  {% if request.query_params.get('images_checked') %}
+    {% set images_error = flash(request, 'images_error') %}
+    {% if images_error %}
+      <div class="alert alert-error"><p>{{ t(request, "monitoring.containers.images_failed") }} {{ images_error }}</p></div>
+    {% else %}
+      <div class="alert alert-ok"><p>{{ t(request, "monitoring.containers.images_done") }}</p></div>
+    {% endif %}
+  {% endif %}

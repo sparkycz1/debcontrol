@@ -232,7 +232,12 @@ celery_app = Celery(
     # imports back into them, so importing them here at module-definition
     # time is a circular import. Celery imports these itself, once, when a
     # worker or beat process boots — after this module is fully loaded.
-    include=["app.tasks.jobs", "app.tasks.ai_jobs", "app.scheduling.jobs"],
+    include=[
+        "app.tasks.jobs",
+        "app.tasks.ai_jobs",
+        "app.tasks.docker_jobs",
+        "app.scheduling.jobs",
+    ],
 )
 
 celery_app.conf.update(
@@ -369,6 +374,20 @@ celery_app.conf.beat_schedule = {
     # Update runs whose task stopped (a worker restart, or debcontrol's own
     # host being the one updated) are picked up again: their job carries on
     # on the machine and is read again (`_reconcile_update_runs`).
+    # Docker jobs (app.tasks.docker_jobs): resume the ones nobody follows,
+    # start the ones nobody started; Git stacks with auto-sync on.
+    "reconcile-docker-jobs": {
+        "task": "app.tasks.docker_jobs.reconcile_docker_jobs",
+        "schedule": timedelta(seconds=60),
+    },
+    "poll-git-stacks": {
+        "task": "app.tasks.docker_jobs.poll_git_stacks",
+        "schedule": timedelta(minutes=5),
+    },
+    "purge-old-docker-jobs": {
+        "task": "app.tasks.docker_jobs.purge_old_docker_jobs",
+        "schedule": crontab(hour=3, minute=25),
+    },
     "reconcile-update-runs": {
         "task": "app.tasks.jobs.reconcile_update_runs",
         "schedule": timedelta(seconds=60),
@@ -494,5 +513,9 @@ def _reconcile_after_start(**kwargs: Any) -> None:
     celery_app.send_task(
         "app.tasks.jobs.reconcile_update_runs",
         kwargs={"after_restart": True},
+        countdown=_RECONCILE_AFTER_START_SECONDS,
+    )
+    celery_app.send_task(
+        "app.tasks.docker_jobs.reconcile_docker_jobs",
         countdown=_RECONCILE_AFTER_START_SECONDS,
     )

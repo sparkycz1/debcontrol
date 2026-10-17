@@ -207,6 +207,7 @@ async def open_shell_session(
     *,
     term_type: str,
     term_size: tuple[int, int],
+    command: str | None = None,
 ) -> tuple[asyncssh.SSHClientConnection, asyncssh.SSHClientProcess[bytes]]:
     """Open a connection (same strict pinned host-key verification as
     `open_connection` — this deliberately calls it rather than re-building
@@ -236,10 +237,14 @@ async def open_shell_session(
     variables its own `AcceptEnv`/`SetEnv` allows (Debian/Ubuntu's default
     sshd_config allows `LANG`/`LC_*`) — a server that doesn't accept these
     just ignores the request rather than failing the connection.
+
+    `command` runs that command in the PTY instead of the login shell —
+    the Docker tab's container shell (`docker exec -it`).
     """
     conn = await open_connection(machine, secret, timeout_seconds)
     try:
         process = await conn.create_process(
+            command,
             term_type=term_type,
             term_size=term_size,
             encoding=None,

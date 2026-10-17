@@ -6,6 +6,17 @@ from app.db.models.ai_usage import AiUsageRecord
 from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings, FleetSummaryFrequency
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
+from app.db.models.docker import (
+    DockerBackup,
+    DockerContainerSetting,
+    DockerImageScan,
+    DockerJob,
+    DockerJobKind,
+    DockerJobStatus,
+    DockerStack,
+    StackSource,
+    VulnerabilityGate,
+)
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
@@ -72,6 +83,13 @@ __all__ = [
     "AuditOutcome",
     "AuthMethod",
     "AuthProvider",
+    "DockerBackup",
+    "DockerContainerSetting",
+    "DockerImageScan",
+    "DockerJob",
+    "DockerJobKind",
+    "DockerJobStatus",
+    "DockerStack",
     "EndpointCheck",
     "EndpointCheckResult",
     "FleetSnapshot",
@@ -117,6 +135,7 @@ __all__ = [
     "SecurityAudit",
     "SecurityAuditStatus",
     "SecurityAuditSuppression",
+    "StackSource",
     "Tag",
     "TemporaryPermissionGrant",
     "TerminalRecording",
@@ -126,5 +145,6 @@ __all__ = [
     "User",
     "UserMachineGroupAccess",
     "UserSession",
+    "VulnerabilityGate",
     "WebAuthnCredential",
 ]

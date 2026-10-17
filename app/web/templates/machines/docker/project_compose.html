@@ -1,0 +1,30 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ project }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.projects.compose_title", name=project) }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/stacks">{{ t(request, "docker.back_to_stacks") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "docker.projects.compose_hint") }}</p>
+  {% if error %}
+    <div class="alert alert-error"><p>{{ error }}</p></div>
+  {% elif found is none %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.projects.not_found") }}</p></div>
+  {% else %}
+    {% if found.working_dir %}<p>{{ t(request, "docker.projects.working_dir") }} <code>{{ found.working_dir }}</code></p>{% endif %}
+    {% for f in files %}
+      <section class="panel">
+        <h3><code>{{ f.path }}</code></h3>
+        {% if f.error %}
+          <div class="alert alert-error"><p>{{ f.error }}</p></div>
+        {% else %}
+          <pre class="run-output" tabindex="0">{{ f.content }}</pre>
+        {% endif %}
+      </section>
+    {% else %}
+      <p class="hint">{{ t(request, "docker.projects.files_unknown") }}</p>
+    {% endfor %}
+  {% endif %}
+{% endblock %}

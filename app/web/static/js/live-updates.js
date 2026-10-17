@@ -21,7 +21,7 @@
 // No-ops entirely on a page with no `[data-live-machine-id]` anchor —
 // nothing loads this unconditionally, each machine-scoped page opts in by
 // including it (see machines/detail.html, monitoring.html,
-// update_history.html).
+// update_history.html, machines/docker/_layout.html).
 (() => {
   "use strict";
 
@@ -109,6 +109,7 @@
     packages: tr("kind.packages", "Installed packages refreshed"),
     services: tr("kind.services", "Services refreshed"),
     updates: tr("kind.updates", "Update availability changed"),
+    docker: tr("kind.docker", "Docker changed"),
   };
 
   function notificationsWanted() {

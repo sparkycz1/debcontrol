@@ -1,0 +1,6 @@
+{#- The Jobs page's list, also re-fetched on its own (machines_docker.docker_jobs_panel). -#}
+{% if jobs %}
+  {% include "machines/docker/_jobs_table.html" %}
+{% else %}
+  <p class="hint">{{ t(request, "docker.jobs.none") }}</p>
+{% endif %}

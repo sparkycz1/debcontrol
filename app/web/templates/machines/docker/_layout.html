@@ -1,0 +1,48 @@
+{#- Every page of a machine's Docker tab: the machine's tabs, the Docker
+    sub-navigation, the outcome of the last action (signed `notice` /
+    `error` query parameters, `app.web.flash`), and live refreshes when a
+    Docker job finishes (`live-docker`). -#}
+{#- A page that needs more strings in JavaScript sets `js_keys` at its top
+    level (one `js-i18n` block per page). -#}
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{% block docker_title %}{{ t(request, "machine.tab.docker") }}{% endblock %} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  {% from "partials/_js_i18n.html" import js_i18n with context %}
+  {{ js_i18n(["live.notify.enable", "live.notify.enable_title", "live.notify.on", "live.notify.on_title", "live.notify.this_machine", "live.kind.status", "live.kind.facts", "live.kind.packages", "live.kind.services", "live.kind.updates", "live.kind.docker", "live.kind.other"] + (js_keys | default([]))) }}
+  <div class="page-header" data-live-machine-id="{{ machine.id }}" data-live-machine-name="{{ machine.name }}">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <nav class="tab-nav tab-nav-sub" aria-label="{{ t(request, 'machine.tab.docker') }}">
+    {% for key, label, url in subnav %}
+      <a href="{{ url }}" {% if key == active_sub %}class="active" aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  {% set flash_notice = flash(request, 'notice') %}
+  {% set flash_error = flash(request, 'error') %}
+  {% if flash_notice %}<div class="alert alert-ok" role="status"><p>{{ flash_notice }}</p></div>{% endif %}
+  {% if flash_error %}<div class="alert alert-error" role="alert"><p>{{ flash_error }}</p></div>{% endif %}
+
+  {% if machine.docker_status == 'no_access' %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.no_access") }}</p></div>
+  {% endif %}
+  {% if not machine.host_key_fingerprint %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.no_host_key") }}</p></div>
+  {% endif %}
+
+  {% block docker_content %}{% endblock %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/live-updates.js') }}" defer></script>
+  {# Charts, plus table filtering and sorting (`data-table-filter`, `th[data-sort]`). #}
+  <script src="{{ static_url('js/monitoring-chart.js') }}" defer></script>
+  {% block docker_scripts %}{% endblock %}
+{% endblock %}
