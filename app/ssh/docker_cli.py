@@ -13,8 +13,9 @@ unquoted, and nothing starting with `-` reaches docker as a name.
 of needing it installed on the machine: the vulnerability scanners, restic,
 git, curl (to talk to the Docker Engine API when a container has to be
 recreated) and busybox (to look into a volume). They come from Docker Hub;
-the scanners and restic are pulled fresh every time (`--pull always`), so
-their programs and vulnerability databases are always the newest. The
+the scanners and restic are pulled before every run (falling back to the
+copy already on the machine when Docker Hub can't be reached), so their
+programs and vulnerability databases are the newest available. The
 machine needs to reach Docker Hub for those features, nothing else does.
 """
 

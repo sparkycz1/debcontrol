@@ -54,6 +54,7 @@ async def _audit(
     summary: str,
     *,
     ok: bool = True,
+    denied: bool = False,
     details: dict[str, Any] | None = None,
 ) -> None:
     await log_event(
@@ -61,7 +62,15 @@ async def _audit(
         request=request,
         action=action,
         summary=summary,
-        outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
+        # A safeguard that blocked the request (typed confirmation, debcontrol's
+        # own) is DENIED, like elsewhere in the app; a failed attempt is FAILURE.
+        outcome=(
+            AuditOutcome.DENIED
+            if denied
+            else AuditOutcome.SUCCESS
+            if ok
+            else AuditOutcome.FAILURE
+        ),
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
@@ -93,6 +102,7 @@ def _form(raw: Any) -> docker_backups.BackupForm:
         keep_daily=str(raw.get("keep_daily") or ""),
         keep_weekly=str(raw.get("keep_weekly") or ""),
         keep_monthly=str(raw.get("keep_monthly") or ""),
+        clear_env=raw.get("clear_env") == "1",
     )
 
 
@@ -319,7 +329,7 @@ async def docker_backup_restore(
             machine,
             "machine.docker.backup.restore",
             f'Refused to restore Docker backup "{backup.name}": machine name not confirmed',
-            ok=False,
+            denied=True,
             details={"backup": backup.name, "snapshot": snapshot},
         )
         return redirect(back, error=LocalizedText(request, "docker.backup.confirm_mismatch"))
@@ -343,7 +353,7 @@ async def docker_backup_restore(
             machine,
             "machine.docker.backup.restore",
             f'Refused to restore Docker backup "{backup.name}": debcontrol uses those volumes',
-            ok=False,
+            denied=True,
             details={"backup": backup.name, "snapshot": snapshot},
         )
         return redirect(back, error=LocalizedText(request, "docker.protected"))
@@ -445,9 +455,3 @@ async def docker_backup_snapshots(
             "csrf_token": request.state.csrf_token,
         },
     )
-
-
-def need_terminal_permission() -> Any:
-    from app.db.models.role import Permission
-
-    return Permission.ACTION_TERMINAL

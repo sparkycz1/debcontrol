@@ -273,8 +273,8 @@ class Machine(Base):
     # latest scans (app.services.docker_scans.summarize):
     # {"critical", "high", "medium", "low", "images", "unscanned", "scanned_at"}.
     docker_vulnerabilities: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    # The oldest "last successful backup" among the machine's enabled restic
-    # backups (app.db.models.docker.DockerBackup); None = no such backup.
+    # When any of the machine's restic backups (app.db.models.docker.
+    # DockerBackup) last succeeded; None = never.
     docker_backup_ok_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---

@@ -401,8 +401,9 @@ def register_builtin_actions() -> None:
             label="Scan Docker images",
             description=(
                 "Scans images for vulnerabilities with Trivy and Grype (both pulled "
-                "fresh each time). An image is scanned again only once it changes, "
-                "unless every image is chosen."
+                "fresh each time, so findings published since the last scan show "
+                "up too). Choose which images: those containers use, only those "
+                "never scanned, or every image."
             ),
             params=[
                 ScheduledActionParam(

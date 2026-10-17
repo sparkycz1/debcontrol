@@ -460,6 +460,9 @@ def _check_updatable(plan: ContainerPlan) -> None:
 
 async def _job_container_update(ctx: _Context) -> None:
     name = ctx.job.target
+    # Checked again when the job runs: the machine may have been recognised
+    # as debcontrol's own host since the job was queued.
+    await docker_jobs.check_container(ctx.session, ctx.machine, name)
     gate = normalize_gate(str(ctx.params.get("gate") or ""))
     if ctx.result.get("phase") in (None, "pull"):
         state: dict[str, Any] = {}
@@ -542,6 +545,7 @@ async def _finish_recreate(ctx: _Context, status: int | None, output: str) -> No
 async def _job_container_rollback(ctx: _Context) -> None:
     name = ctx.job.target
     target = str(ctx.params.get("image_id") or "")
+    await docker_jobs.check_container(ctx.session, ctx.machine, name)
     if not is_image_id_valid(target):
         raise _JobFailedError("There is no previous image to roll back to.")
 
@@ -585,6 +589,7 @@ async def _stack(ctx: _Context) -> DockerStack:
 
 async def _job_stack_deploy(ctx: _Context) -> None:
     stack = await _stack(ctx)
+    await docker_jobs.check_project(ctx.session, ctx.machine, stack.name)
     pull = bool(ctx.params.get("pull", True))
 
     async def build() -> str:
@@ -616,6 +621,8 @@ async def _job_stack_deploy(ctx: _Context) -> None:
 async def _job_stack_action(ctx: _Context) -> None:
     params = ctx.params
     action = str(params.get("action") or "")
+    if action != "start":
+        await docker_jobs.check_project(ctx.session, ctx.machine, ctx.job.target)
 
     async def build() -> str:
         if action == "remove":
@@ -1309,6 +1316,10 @@ async def _sync_git_stack(stack_id: str, *, started_by: str) -> dict[str, Any]:
             return {"ok": False, "error": output.output.strip()[-300:] or "No such branch."}
         if head == stack.deployed_commit and not docker_stacks.is_changed(stack):
             return {"ok": True, "deployed": False, "commit": head}
+        try:
+            await docker_jobs.check_project(session, machine, stack.name)
+        except docker_jobs.ProtectedError:
+            return {"ok": False, "error": docker_jobs.PROTECTED_MESSAGE}
         job = await queue_stack_deploy(session, stack, started_by=started_by)
         return {"ok": True, "deployed": job is not None, "commit": head}
 

@@ -185,13 +185,22 @@ async def _audit(
     details: dict[str, Any] | None = None,
     *,
     ok: bool = True,
+    denied: bool = False,
 ) -> None:
     await log_event(
         db,
         request=request,
         action=action,
         summary=summary,
-        outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
+        # A safeguard that blocked the request (typed confirmation, debcontrol's
+        # own) is DENIED, like elsewhere in the app; a failed attempt is FAILURE.
+        outcome=(
+            AuditOutcome.DENIED
+            if denied
+            else AuditOutcome.SUCCESS
+            if ok
+            else AuditOutcome.FAILURE
+        ),
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
@@ -396,7 +405,7 @@ async def _update(
                 "machine.docker.container.update",
                 f'Refused to update container "{name}" on "{machine.name}": debcontrol runs in it',
                 {"container": name, "reason": reason},
-                ok=False,
+                denied=True,
             )
     return {"jobs": [_job(job) for job in queued.jobs], "skipped": queued.skipped}
 
@@ -475,9 +484,11 @@ async def docker_container_rollback_api(
             "machine.docker.container.rollback",
             f'Refused to roll back container "{name}" on "{machine.name}": debcontrol runs in it',
             {"container": name},
-            ok=False,
+            denied=True,
         )
         raise _protected() from exc
+    except DockerCommandError as exc:
+        raise _bad(str(exc)) from exc
     answer = _queued(job)
     await _audit(
         db,
@@ -604,7 +615,7 @@ async def docker_prune_api(
             "machine.docker.prune",
             f'Refused to remove all unused volumes on "{machine.name}": name not confirmed',
             options.as_dict(),
-            ok=False,
+            denied=True,
         )
         raise _bad('all_volumes needs volumes too and the machine\'s name in "confirm".')
     answer = _queued(await docker_actions.prune(db, machine, options, started_by=user.username))
@@ -747,6 +758,15 @@ async def _deploy(
     return answer
 
 
+def _check_deploy(body: _StackSave, user: User, machine: Machine) -> None:
+    """`deploy: true` is checked before anything is saved, so a refused
+    deploy leaves no half-done change behind."""
+    if body.deploy:
+        if not user.has_permission(Permission.ACTION_UPDATES):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+        _ready(machine)
+
+
 @router.post("/stacks", dependencies=[_terminal], status_code=status.HTTP_201_CREATED)
 async def docker_stack_create_api(
     request: Request,
@@ -757,6 +777,7 @@ async def docker_stack_create_api(
 ) -> dict[str, Any]:
     """Create a stack; `deploy: true` also deploys it (needs `action.updates`)."""
     machine = await _get_machine_or_404(machine_id, db, user)
+    _check_deploy(body, user, machine)
     form = _stack_form(body)
     errors = form.validate()
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
@@ -782,8 +803,6 @@ async def docker_stack_create_api(
     )
     answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
     if body.deploy:
-        if not user.has_permission(Permission.ACTION_UPDATES):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
         answer.update(await _deploy(request, db, machine, user, stack, True))
     return answer
 
@@ -817,6 +836,7 @@ async def docker_stack_save_api(
     Saving does not deploy unless `deploy: true`."""
     machine = await _get_machine_or_404(machine_id, db, user)
     stack = await _stack_or_404(db, machine, stack_id)
+    _check_deploy(body, user, machine)
     form = _stack_form(body)
     form.name = stack.name
     errors = form.validate()
@@ -834,8 +854,6 @@ async def docker_stack_save_api(
     )
     answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
     if body.deploy:
-        if not user.has_permission(Permission.ACTION_UPDATES):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
         answer.update(await _deploy(request, db, machine, user, stack, True))
     return answer
 
@@ -958,7 +976,7 @@ async def docker_stack_delete_api(
             "machine.docker.stack.delete",
             f'Refused to delete Docker stack "{stack.name}" with its volumes: name not confirmed',
             {"stack": stack.name},
-            ok=False,
+            denied=True,
         )
         raise _bad('Removing volumes needs the stack\'s name in "confirm".')
     if stack.deployed_at is None and stack.last_status is None:
@@ -986,6 +1004,15 @@ async def docker_stack_delete_api(
             remove_volumes=remove_volumes,
         )
     except docker_jobs.ProtectedError as exc:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.stack.delete",
+            f'Refused to delete Docker stack "{stack.name}": debcontrol runs in it',
+            {"stack": stack.name},
+            denied=True,
+        )
         raise _protected() from exc
     answer = _queued(job)
     await _audit(
@@ -1092,7 +1119,7 @@ async def docker_project_action_api(
             f'Refused "{action}" of Compose project "{project}" on "{machine.name}": '
             "debcontrol runs in it",
             {"project": project, "action": action},
-            ok=False,
+            denied=True,
         )
         raise _protected() from exc
     except DockerCommandError as exc:
@@ -1160,6 +1187,8 @@ class _BackupSave(BaseModel):
     repository: str = ""
     password: str = ""
     env: str = ""
+    # On edit: true removes the stored variables (an empty `env` keeps them).
+    clear_env: bool = False
     volumes: list[str] = Field(default_factory=list, max_length=100)
     paths: list[str] = Field(default_factory=list, max_length=100)
     excludes: list[str] = Field(default_factory=list, max_length=200)
@@ -1180,6 +1209,7 @@ def _backup_form(body: _BackupSave) -> docker_backups.BackupForm:
         repository=body.repository,
         password=body.password,
         env=body.env.replace("\r\n", "\n"),
+        clear_env=body.clear_env,
         volumes="\n".join(body.volumes),
         paths="\n".join(body.paths),
         excludes="\n".join(body.excludes),
@@ -1359,7 +1389,7 @@ async def docker_backup_restore_api(
             "machine.docker.backup.restore",
             f'Refused to restore Docker backup "{backup.name}": machine name not confirmed',
             {"backup": backup.name, "snapshot": body.snapshot},
-            ok=False,
+            denied=True,
         )
         raise _bad('A restore needs the machine\'s name in "confirm".')
     _ready(machine)
@@ -1384,7 +1414,7 @@ async def docker_backup_restore_api(
             "machine.docker.backup.restore",
             f'Refused to restore Docker backup "{backup.name}": debcontrol uses those volumes',
             {"backup": backup.name, "snapshot": body.snapshot},
-            ok=False,
+            denied=True,
         )
         raise _protected() from exc
     except DockerCommandError as exc:

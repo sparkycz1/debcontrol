@@ -67,6 +67,7 @@ async def _audit(
     summary: str,
     *,
     ok: bool = True,
+    denied: bool = False,
     details: dict[str, Any] | None = None,
 ) -> None:
     await log_event(
@@ -74,7 +75,15 @@ async def _audit(
         request=request,
         action=action,
         summary=summary,
-        outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
+        # A safeguard that blocked the request (typed confirmation, debcontrol's
+        # own) is DENIED, like elsewhere in the app; a failed attempt is FAILURE.
+        outcome=(
+            AuditOutcome.DENIED
+            if denied
+            else AuditOutcome.SUCCESS
+            if ok
+            else AuditOutcome.FAILURE
+        ),
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
@@ -513,7 +522,7 @@ async def docker_stack_delete(
             machine,
             "machine.docker.stack.delete",
             f'Refused to delete Docker stack "{stack.name}" with its volumes: name not confirmed',
-            ok=False,
+            denied=True,
             details={"stack": stack.name},
         )
         return redirect(back, error=LocalizedText(request, "docker.stack.confirm_mismatch"))
@@ -541,6 +550,15 @@ async def docker_stack_delete(
             remove_volumes=volumes,
         )
     except docker_jobs.ProtectedError:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.stack.delete",
+            f'Refused to delete Docker stack "{stack.name}": debcontrol runs in it',
+            denied=True,
+            details={"stack": stack.name},
+        )
         return redirect(back, error=LocalizedText(request, "docker.protected"))
     if job is None:
         return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
@@ -608,7 +626,7 @@ async def docker_project_action(
             "machine.docker.stack.action",
             f'Refused "{action}" of Compose project "{project}" on "{machine.name}": '
             "debcontrol runs in it",
-            ok=False,
+            denied=True,
             details={"project": project, "action": action},
         )
         return redirect(back, error=LocalizedText(request, "docker.protected"))

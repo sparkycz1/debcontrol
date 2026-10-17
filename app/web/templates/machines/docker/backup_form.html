@@ -83,6 +83,9 @@
         <label for="b-env">{{ t(request, "docker.backup.env") }}</label>
         <textarea id="b-env" name="env" rows="3" class="code-input" spellcheck="false" placeholder="{{ t(request, 'docker.backup.secret_keep') if backup and backup.env_encrypted else 'AWS_ACCESS_KEY_ID=...' }}"></textarea>
         <p class="hint">{{ t(request, "docker.backup.env_hint") }}</p>
+        {% if backup and backup.env_encrypted %}
+        <label class="checkbox"><input type="checkbox" name="clear_env" value="1"> {{ t(request, "docker.backup.env_clear") }}</label>
+        {% endif %}
 
         <label for="b-volumes">{{ t(request, "docker.backup.volumes") }}</label>
         <textarea id="b-volumes" name="volumes" rows="4" class="code-input" spellcheck="false">

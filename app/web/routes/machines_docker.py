@@ -89,6 +89,7 @@ async def _audit(
     summary: str,
     *,
     ok: bool = True,
+    denied: bool = False,
     details: dict[str, Any] | None = None,
 ) -> None:
     await log_event(
@@ -96,7 +97,15 @@ async def _audit(
         request=request,
         action=action,
         summary=summary,
-        outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
+        # A safeguard that blocked the request (typed confirmation, debcontrol's
+        # own) is DENIED, like elsewhere in the app; a failed attempt is FAILURE.
+        outcome=(
+            AuditOutcome.DENIED
+            if denied
+            else AuditOutcome.SUCCESS
+            if ok
+            else AuditOutcome.FAILURE
+        ),
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
@@ -341,7 +350,7 @@ async def _queue_updates(
                 machine,
                 "machine.docker.container.update",
                 f'Refused to update container "{name}" on "{machine.name}": debcontrol runs in it',
-                ok=False,
+                denied=True,
                 details={"container": name, "reason": reason},
             )
     error = None
@@ -436,10 +445,12 @@ async def docker_container_rollback(
             machine,
             "machine.docker.container.rollback",
             f'Refused to roll back container "{name}" on "{machine.name}": debcontrol runs in it',
-            ok=False,
+            denied=True,
             details={"container": name},
         )
         return redirect(base, error=_protected_error(request))
+    except DockerCommandError:
+        return redirect(base, error=LocalizedText(request, "docker.rollback.nothing"))
     if job is None:
         return redirect(base, error=LocalizedText(request, "docker.job.already_queued"))
     await _audit(
@@ -613,7 +624,7 @@ async def docker_prune(
             machine,
             "machine.docker.prune",
             f'Refused to remove all unused volumes on "{machine.name}": name not confirmed',
-            ok=False,
+            denied=True,
             details=options.as_dict(),
         )
         return redirect(back, error=LocalizedText(request, "docker.prune.confirm_mismatch"))

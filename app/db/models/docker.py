@@ -9,8 +9,8 @@ about it. See wiki/Docker for the whole feature.
   restarts in the middle — for instance because the container being
   updated runs on debcontrol's own host. Kept for `docker_jobs.KEEP_DAYS`.
 - `DockerImageScan` — the latest vulnerability scan (Trivy and Grype) of
-  one image on one machine, keyed by the image's id, so an image is not
-  scanned again until it changes.
+  one image on one machine, keyed by the image's id: a new scan of the
+  same image replaces it, and a changed image gets its own.
 - `DockerContainerSetting` — per container: updated automatically by the
   "Update Docker containers" schedule or not, and which vulnerabilities
   stop an update.

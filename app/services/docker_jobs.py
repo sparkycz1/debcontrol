@@ -31,6 +31,7 @@ from app.db.models.docker import (
 )
 from app.db.models.machine import Machine
 from app.services import self_host
+from app.ssh.docker_cli import is_image_id_valid
 
 # How long finished jobs are kept.
 KEEP_DAYS = 90
@@ -224,8 +225,10 @@ def rollback_image(job: DockerJob | None) -> str | None:
     if job is None:
         return None
     result: dict[str, Any] = job.result or {}
-    previous = result.get("previous_image_id")
-    return str(previous) if previous else None
+    previous = str(result.get("previous_image_id") or "")
+    # Only a full image id can be gone back to (anything else came from a
+    # broken or hostile answer and would be refused anyway).
+    return previous if is_image_id_valid(previous) else None
 
 
 async def purge_old(db: AsyncSession) -> int:

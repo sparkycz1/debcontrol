@@ -85,12 +85,13 @@ async def queue_job(
     ref_id: uuid.UUID | None = None,
 ) -> DockerJob | None:
     """One job; None when the same job is already waiting or running."""
+    target = target[:255]  # the column's length, for the lookup too
     if await docker_jobs.active_job(db, machine.id, kind, target):
         return None
     job = DockerJob(
         machine_id=machine.id,
         kind=kind,
-        target=target[:255],
+        target=target,
         params=params or {},
         started_by=started_by,
         ref_id=ref_id,
@@ -390,22 +391,27 @@ async def trigger_prune(
 async def trigger_backups(
     db: AsyncSession, machines: list[Machine], what: str, *, started_by: str
 ) -> tuple[int, int]:
-    """Run, check or prune every enabled backup of each machine."""
+    """Run, check or prune every enabled backup of each machine. Counted
+    per machine, like the other actions: attempted when at least one of its
+    backups was queued, skipped otherwise."""
     attempted = skipped = 0
     for machine in machines:
-        if not _eligible(machine):
+        queued = 0
+        if _eligible(machine):
+            for backup in await docker_backups.list_backups(db, machine.id):
+                if not backup.enabled:
+                    continue
+                if what == "forget" and not docker_backups.has_retention(backup):
+                    continue
+                try:
+                    if await backup_job(db, machine, backup, what, started_by=started_by):
+                        queued += 1
+                except (DockerCommandError, docker_jobs.ProtectedError):
+                    continue
+        if queued:
+            attempted += 1
+        else:
             skipped += 1
-            continue
-        for backup in await docker_backups.list_backups(db, machine.id):
-            if not backup.enabled:
-                continue
-            if what == "forget" and not docker_backups.has_retention(backup):
-                continue
-            try:
-                if await backup_job(db, machine, backup, what, started_by=started_by):
-                    attempted += 1
-            except (DockerCommandError, docker_jobs.ProtectedError):
-                skipped += 1
     return attempted, skipped
 
 

@@ -41,7 +41,10 @@ from app.ssh.docker_cli import (
 TargetKind = Literal["container", "volume"]
 
 MAX_ENTRIES = 2000
-MAX_EDIT_BYTES = 1024 * 1024
+# What opens in the editor. Saving posts it back as a multipart form field,
+# which Starlette caps at 1 MiB; with CRLF line endings from the browser a
+# 256 KiB file stays well inside that.
+MAX_EDIT_BYTES = 256 * 1024
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 

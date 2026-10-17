@@ -88,7 +88,7 @@ def normalize_compose_path(path: str) -> str | None:
     if not cleaned or len(cleaned) > 255 or "\0" in cleaned or "\\" in cleaned:
         return None
     normalized = posixpath.normpath(cleaned)
-    if normalized.startswith("..") or normalized == ".":
+    if normalized == "." or normalized == ".." or normalized.startswith("../"):
         return None
     if not re.match(r"^[A-Za-z0-9._/ -]+$", normalized):
         return None
@@ -125,7 +125,7 @@ def build_stack_action_script(
     if action in _NEEDS_FILES:
         base = _compose_base(project, working_dir, files)
         if env_file:
-            base += f" --env-file {env_file}"
+            base += f" --env-file {q(env_file)}"
     prefix = f"cd {q(working_dir)} 2>/dev/null || true; " if working_dir else ""
     commands = {
         "up": f"{base} up -d --remove-orphans",

@@ -89,6 +89,8 @@ class BackupForm:
     keep_daily: str = ""
     keep_weekly: str = ""
     keep_monthly: str = ""
+    # Remove the stored variables (an empty `env` alone keeps them).
+    clear_env: bool = False
     errors: list[str] = field(default_factory=list)
 
     _parsed: dict[str, object] = field(default_factory=dict, init=False, repr=False)
@@ -161,6 +163,8 @@ class BackupForm:
             backup.password_encrypted = encrypt_secret(self.password)
         if self.env.strip():
             backup.env_encrypted = encrypt_secret(self.env)
+        elif self.clear_env:
+            backup.env_encrypted = None
         backup.volumes = list(parsed["volumes"])  # type: ignore[call-overload]
         backup.paths = list(parsed["paths"])  # type: ignore[call-overload]
         backup.excludes = list(parsed["excludes"])  # type: ignore[call-overload]

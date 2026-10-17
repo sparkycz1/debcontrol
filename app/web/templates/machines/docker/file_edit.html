@@ -19,7 +19,7 @@
     {% if binary %}
       <div class="alert alert-warn"><p>{{ t(request, "docker.files.binary") }}</p></div>
     {% else %}
-      <form method="post" action="{{ files_url(path, 'save') }}" class="form form-wide"
+      <form method="post" action="{{ files_url(path, 'save') }}" enctype="multipart/form-data" class="form form-wide"
             data-confirm="{{ t(request, 'docker.files.save_confirm', name=path) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="path" value="{{ path }}">

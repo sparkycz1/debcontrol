@@ -79,9 +79,10 @@ def redact_repository(repository: str) -> str:
             parts = urlsplit(rest)
         except ValueError:
             return "rest:***"
-        if parts.username or parts.password:
-            host = parts.hostname or ""
-            netloc = "***@" + host + (f":{parts.port}" if parts.port else "")
+        if "@" in parts.netloc:
+            # The host part as written (port included) — `parts.port`
+            # raises on a port that isn't a number.
+            netloc = "***@" + parts.netloc.rpartition("@")[2]
             return "rest:" + urlunsplit(parts._replace(netloc=netloc))
     return repository
 
@@ -339,7 +340,8 @@ def parse_backup_summary(raw: str) -> BackupSummary:
         summary.bytes_added = _int(data.get("data_added"))
         summary.bytes_processed = _int(data.get("total_bytes_processed"))
         files = [_int(data.get(k)) for k in ("files_new", "files_changed", "files_unmodified")]
-        summary.files = sum(f for f in files if f is not None) if any(files) else None
+        known = [f for f in files if f is not None]
+        summary.files = sum(known) if known else None
     return summary
 
 

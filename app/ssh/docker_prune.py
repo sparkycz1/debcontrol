@@ -78,7 +78,17 @@ def build_prune_script(options: PruneOptions) -> str:
     if options.containers:
         steps.append(("containers", "$D container prune -f"))
     if options.images:
-        steps.append(("images", "$D image prune -f" + (" -a" if options.all_images else "")))
+        # Docker lists every untagged name and deleted layer, not images;
+        # count the images before and after instead.
+        prune = "$D image prune -f" + (" -a" if options.all_images else "")
+        steps.append(
+            (
+                "images",
+                'before="$($D images -aq | sort -u | wc -l)"; '
+                f"{prune} && "
+                'echo "@@DC_IMAGES_REMOVED $((before - $($D images -aq | sort -u | wc -l)))"',
+            )
+        )
     if options.networks:
         steps.append(("networks", "$D network prune -f"))
     if options.volumes:
@@ -109,11 +119,17 @@ def parse_removed_counts(raw: str) -> dict[str, int]:
     """How many objects each prune removed — the lines Docker lists under
     "Deleted ..." until the next blank line or marker."""
     counts: dict[str, int] = {}
+    images_removed: int | None = None
     current: str | None = None
     listing = False
     for line in raw.splitlines():
         stripped = line.strip()
-        if stripped.startswith("@@DC_PRUNE "):
+        if stripped.startswith("@@DC_IMAGES_REMOVED "):
+            value = stripped.split(" ", 1)[1]
+            if value.isdigit():
+                images_removed = int(value)
+            listing = False
+        elif stripped.startswith("@@DC_PRUNE "):
             current = stripped.split(" ", 1)[1]
             if current not in PRUNE_TARGETS:
                 current = None
@@ -128,4 +144,6 @@ def parse_removed_counts(raw: str) -> dict[str, int]:
         elif listing or stripped.startswith(("deleted: ", "untagged: ")):
             counts[current] = counts.get(current, 0) + 1
     counts.pop("", None)
+    if images_removed is not None:
+        counts["images"] = images_removed
     return counts
