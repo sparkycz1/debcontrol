@@ -33,10 +33,12 @@ class _FakeWebSocket:
         *,
         token: str | None = None,
         origin: str | None = "http://testserver",
+        query: dict[str, str] | None = None,
     ) -> None:
         self.app = _FakeApp(db_session_factory)
         self.cookies: dict[str, str] = {"session": token} if token else {}
         self.headers: dict[str, str] = {"host": "testserver"}
+        self.query_params: dict[str, str] = dict(query or {})
         if origin is not None:
             self.headers["origin"] = origin
         self.closed: tuple[int, str | None] | None = None
@@ -234,7 +236,9 @@ async def test_terminal_websocket_logs_open_and_close_and_tears_down_ssh(
     fake_conn = _FakeConnection()
     fake_process = _FakeProcess()
 
-    async def _fake_open_shell_session(machine, secret, timeout_seconds, *, term_type, term_size):
+    async def _fake_open_shell_session(
+        machine, secret, timeout_seconds, *, term_type, term_size, command=None
+    ):
         return fake_conn, fake_process
 
     monkeypatch.setattr(terminal_ws_module, "open_shell_session", _fake_open_shell_session)
@@ -272,7 +276,9 @@ async def test_terminal_websocket_closes_with_error_when_ssh_connection_fails(
         db_session_factory, permissions={Permission.ACTION_TERMINAL}
     )
 
-    async def _fake_open_shell_session(machine, secret, timeout_seconds, *, term_type, term_size):
+    async def _fake_open_shell_session(
+        machine, secret, timeout_seconds, *, term_type, term_size, command=None
+    ):
         raise SSHConnectionError("connection refused")
 
     monkeypatch.setattr(terminal_ws_module, "open_shell_session", _fake_open_shell_session)

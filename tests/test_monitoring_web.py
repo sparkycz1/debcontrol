@@ -316,7 +316,7 @@ async def _set_machine(
         await session.commit()
 
 
-async def test_monitoring_tab_shows_docker_containers_table(client, db_session_factory):
+async def test_docker_tab_shows_containers_table_moved_from_monitoring(client, db_session_factory):
     await client.get("/machines/new")
     csrf_token = client.cookies.get("csrftoken")
     machine_id = await _create_machine(client, csrf_token, name="docker-host")
@@ -343,7 +343,11 @@ async def test_monitoring_tab_shows_docker_containers_table(client, db_session_f
         ],
     )
 
-    response = await client.get(f"/machines/{machine_id}/monitoring")
+    monitoring = await client.get(f"/machines/{machine_id}/monitoring")
+    assert f'href="/machines/{machine_id}/docker"' in monitoring.text
+    assert "immich_server" not in monitoring.text
+
+    response = await client.get(f"/machines/{machine_id}/docker")
 
     assert response.status_code == 200
     assert '<h3 class="chart-card-title">All containers</h3>' in response.text
@@ -352,7 +356,7 @@ async def test_monitoring_tab_shows_docker_containers_table(client, db_session_f
     assert "2283" in response.text
 
 
-async def test_monitoring_tab_explains_docker_without_access(client, db_session_factory):
+async def test_docker_tab_explains_docker_without_access(client, db_session_factory):
     await client.get("/machines/new")
     csrf_token = client.cookies.get("csrftoken")
     machine_id = await _create_machine(client, csrf_token, name="docker-denied")
@@ -360,7 +364,7 @@ async def test_monitoring_tab_explains_docker_without_access(client, db_session_
     await _add_monitoring_sample(db_session_factory, machine_id)
     await _set_machine(db_session_factory, machine_id, docker_status="no_access")
 
-    response = await client.get(f"/machines/{machine_id}/monitoring")
+    response = await client.get(f"/machines/{machine_id}/docker")
 
     assert "can&#39;t reach the Docker daemon" in response.text
 

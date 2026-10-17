@@ -80,7 +80,7 @@ async def test_table_shows_update_badge(client, db_session_factory):
         machine.docker_image_updates = {"nginx:latest": "update"}
         await session.commit()
 
-    response = await client.get(f"/machines/{machine_id}/monitoring")
+    response = await client.get(f"/machines/{machine_id}/docker")
 
     assert "update available" in response.text
     assert f"/machines/{machine_id}/docker/check-images" in response.text

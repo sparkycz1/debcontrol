@@ -84,7 +84,13 @@ async def _run_session(db_session_factory: Any, monkeypatch: Any) -> uuid.UUID:
     process.stdout = _Stdout()  # type: ignore[assignment]
 
     async def fake_open(
-        machine: Any, secret: Any, timeout_seconds: int, *, term_type: str, term_size: Any
+        machine: Any,
+        secret: Any,
+        timeout_seconds: int,
+        *,
+        term_type: str,
+        term_size: Any,
+        command: str | None = None,
     ) -> tuple[Any, Any]:
         return _FakeConnection(), process
 

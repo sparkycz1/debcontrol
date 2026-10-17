@@ -48,12 +48,12 @@ def test_parse_no_access():
         parse_container_action_output("@@NOACCESS\n")
 
 
-async def test_monitoring_table_shows_actions_per_state(client, db_session_factory):
+async def test_docker_table_shows_actions_per_state(client, db_session_factory):
     machine_id = await _make_machine(db_session_factory)
     await _add_monitoring_sample(db_session_factory, machine_id)
     await _with_containers(db_session_factory, machine_id)
 
-    response = await client.get(f"/machines/{machine_id}/monitoring")
+    response = await client.get(f"/machines/{machine_id}/docker")
 
     assert f"/machines/{machine_id}/containers/immich_server/restart" in response.text
     assert f"/machines/{machine_id}/containers/immich_server/stop" in response.text
@@ -71,7 +71,7 @@ async def test_action_dispatches_the_task_and_redirects(client, db_session_facto
     )
 
     assert response.status_code == 303
-    assert response.headers["location"].startswith(f"/machines/{machine_id}/monitoring?")
+    assert response.headers["location"].startswith(f"/machines/{machine_id}/docker?")
     assert "container_action=restart" in response.headers["location"]
     assert celery_calls.names == ["app.tasks.jobs.run_container_action"]
     assert celery_calls[0][2] == {"action": "restart", "container": "immich_server"}

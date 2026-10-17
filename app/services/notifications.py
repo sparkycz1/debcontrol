@@ -189,6 +189,32 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: the automatic backup failed",
             "The scheduled backup of debcontrol itself failed at {timestamp}.\n\n{details}",
         ),
+        NotificationEventType.DOCKER_UPDATE_SUCCEEDED: (
+            "debcontrol: container {container} updated on {machine_name}",
+            "The Docker container {container} on {machine_name} ({machine_ip}) was "
+            "updated to its newest image at {timestamp}.",
+        ),
+        NotificationEventType.DOCKER_UPDATE_FAILED: (
+            "debcontrol: updating container {container} failed on {machine_name}",
+            "Updating the Docker container {container} on {machine_name} ({machine_ip}) "
+            "failed at {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_UPDATE_BLOCKED: (
+            "debcontrol: update of {container} on {machine_name} stopped by vulnerabilities",
+            "The vulnerability gate stopped the update of the Docker container {container} "
+            "on {machine_name} ({machine_ip}) at {timestamp}; the container still runs its "
+            "previous image.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_STACK_FAILED: (
+            "debcontrol: Docker stack {stack} failed on {machine_name}",
+            "Deploying or changing the Docker stack {stack} on {machine_name} "
+            "({machine_ip}) failed at {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_BACKUP_FAILED: (
+            "debcontrol: Docker backup {backup} failed on {machine_name}",
+            "The restic backup {backup} on {machine_name} ({machine_ip}) failed at "
+            "{timestamp}.\n\n{details}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -292,6 +318,32 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
         NotificationEventType.APP_BACKUP_FAILED: (
             "debcontrol: automatická záloha selhala",
             "Plánovaná záloha samotného debcontrol v {timestamp} selhala.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_UPDATE_SUCCEEDED: (
+            "debcontrol: kontejner {container} na {machine_name} aktualizován",
+            "Docker kontejner {container} na {machine_name} ({machine_ip}) byl v "
+            "{timestamp} aktualizován na nejnovější image.",
+        ),
+        NotificationEventType.DOCKER_UPDATE_FAILED: (
+            "debcontrol: aktualizace kontejneru {container} na {machine_name} selhala",
+            "Aktualizace Docker kontejneru {container} na {machine_name} ({machine_ip}) "
+            "v {timestamp} selhala.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_UPDATE_BLOCKED: (
+            "debcontrol: aktualizaci {container} na {machine_name} zastavily zranitelnosti",
+            "Brána zranitelností v {timestamp} zastavila aktualizaci Docker kontejneru "
+            "{container} na {machine_name} ({machine_ip}); kontejner dál běží na "
+            "předchozím image.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_STACK_FAILED: (
+            "debcontrol: Docker stack {stack} na {machine_name} selhal",
+            "Nasazení nebo změna Docker stacku {stack} na {machine_name} ({machine_ip}) "
+            "v {timestamp} selhala.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_BACKUP_FAILED: (
+            "debcontrol: Docker záloha {backup} na {machine_name} selhala",
+            "Restic záloha {backup} na {machine_name} ({machine_ip}) v {timestamp} "
+            "selhala.\n\n{details}",
         ),
     },
 }

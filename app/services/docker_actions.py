@@ -35,6 +35,7 @@ from app.ssh.docker_cli import (
 )
 from app.ssh.docker_compose import STACK_ACTIONS
 from app.ssh.docker_prune import PruneOptions
+from app.ssh.restic import is_snapshot_valid
 from app.tasks.docker_jobs import run_docker_job
 
 SCAN_SCOPES = ("in_use", "unscanned", "all")

@@ -16,6 +16,7 @@ import operator as op
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from app.db.models.machine import Machine
@@ -41,6 +42,24 @@ class ConditionField:
     #: Only "monitoring.filesystem_use_percent" needs a mount_point to
     #: disambiguate which filesystem row to read.
     needs_mount: bool = False
+
+
+def _vulnerability_count(machine: Machine, severity: str) -> int | None:
+    """Vulnerabilities of `severity` in the scanned images the machine's
+    containers use (`Machine.docker_vulnerabilities`); None before any scan."""
+    summary = machine.docker_vulnerabilities
+    if not isinstance(summary, dict) or not summary.get("images"):
+        return None
+    value = summary.get(severity)
+    return int(value) if isinstance(value, int) else None
+
+
+def _hours_since(when: datetime | None) -> float | None:
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return round((datetime.now(UTC) - when).total_seconds() / 3600, 1)
 
 
 def _filesystem_percent(
@@ -207,6 +226,22 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
         "docker_exited_error_count",
         "number",
         lambda m, s, mount: _docker_count(m, _exited_with_error),
+    ),
+    # --- Docker image scans and backups (machines/docker/*) ---
+    "docker.critical_vulnerabilities": ConditionField(
+        "docker_critical_vulnerabilities",
+        "number",
+        lambda m, s, mount: _vulnerability_count(m, "critical"),
+    ),
+    "docker.high_vulnerabilities": ConditionField(
+        "docker_high_vulnerabilities",
+        "number",
+        lambda m, s, mount: _vulnerability_count(m, "high"),
+    ),
+    "docker.backup_age_hours": ConditionField(
+        "docker_backup_age_hours",
+        "number",
+        lambda m, s, mount: _hours_since(m.docker_backup_ok_at),
     ),
 }
 

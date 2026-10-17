@@ -11,6 +11,7 @@ no scan summary or backup yet); nothing existing changes.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import sqlalchemy as sa
 
@@ -23,13 +24,13 @@ branch_labels: Sequence[str] | str | None = None
 depends_on: Sequence[str] | str | None = None
 
 
-def _created_at() -> sa.Column[object]:
+def _created_at() -> sa.Column[Any]:
     return sa.Column(
         "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
 
 
-def _updated_at() -> sa.Column[object]:
+def _updated_at() -> sa.Column[Any]:
     return sa.Column(
         "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
