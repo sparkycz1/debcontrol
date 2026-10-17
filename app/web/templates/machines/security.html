@@ -18,7 +18,6 @@
   {% if can_run %}
     <form method="post" action="/machines/{{ machine.id }}/security/audit" class="form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label><input type="checkbox" name="install"> {{ t(request, "security_audit.install_if_missing") }}</label>
       <button type="submit" class="button">{{ t(request, "security_audit.run_now") }}</button>
       <p class="hint">{{ t(request, "security_audit.run_hint") }}</p>
     </form>

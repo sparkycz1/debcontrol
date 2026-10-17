@@ -85,16 +85,14 @@ async def machine_security(
 async def run_machine_security_audit(
     request: Request,
     machine_id: uuid.UUID,
-    install: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """Start a Lynis audit of this machine. Same permission as running
-    updates: it runs a packaged tool as root and may install it."""
+    updates: it installs or updates a package and runs it as root."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    install_if_missing = install == "on"
     audits, _skipped = await trigger_security_audits(
-        db, [machine], install_if_missing=install_if_missing, started_by=current_user.username
+        db, [machine], started_by=current_user.username
     )
     await log_event(
         db,
@@ -107,7 +105,6 @@ async def run_machine_security_audit(
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
-        details={"install_if_missing": install_if_missing},
     )
     url = f"/machines/{machine.id}/security"
     if not audits:

@@ -184,12 +184,12 @@ async def trigger_security_audits(
     db: AsyncSession,
     machines: list[Machine],
     *,
-    install_if_missing: bool = False,
     started_by: str | None = None,
 ) -> tuple[list[SecurityAudit], int]:
     """Create one pending Lynis `SecurityAudit` per eligible machine (a
     pinned host key, no audit already under way), commit, then enqueue a
-    task for each. Returns (the new audits, skipped count)."""
+    task for each. Every audit installs or upgrades Lynis first (see
+    `app.ssh.lynis`). Returns (the new audits, skipped count)."""
     eligible = [
         m
         for m in machines
@@ -199,7 +199,7 @@ async def trigger_security_audits(
     audits = [
         SecurityAudit(
             machine_id=m.id,
-            install_if_missing=install_if_missing,
+            install_if_missing=True,
             started_by=started_by,
             created_at=now,
         )

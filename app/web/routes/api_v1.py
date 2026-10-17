@@ -3283,6 +3283,8 @@ async def unmark_security_finding_ok_api(
 
 
 class _SecurityAuditRequest(BaseModel):
+    # Accepted and ignored since 0.118.0: every audit installs or updates
+    # Lynis. Kept so existing clients that send it don't break.
     install_if_missing: bool = False
 
 
@@ -3299,15 +3301,13 @@ async def run_machine_security_audit_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """Start a security audit of the machine (debcontrol's own checks and
-    Lynis); `install_if_missing` installs or updates Lynis first (from
-    CISOfy's repository where the machine has it). Returns the pending
+    Lynis), installing or updating Lynis first (from CISOfy's repository
+    where the machine has it); `install_if_missing` is accepted and ignored.
+    Returns the pending
     audit; poll `GET .../security-audits` for the result. 409 when the
     machine has no confirmed host key or an audit is already under way."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    install_if_missing = payload.install_if_missing if payload else False
-    audits, _skipped = await trigger_security_audits(
-        db, [machine], install_if_missing=install_if_missing, started_by=user.username
-    )
+    audits, _skipped = await trigger_security_audits(db, [machine], started_by=user.username)
     await log_event(
         db,
         request=request,
@@ -3319,7 +3319,6 @@ async def run_machine_security_audit_api(
         target_type="machine",
         target_id=machine.id,
         target_label=machine.name,
-        details={"install_if_missing": install_if_missing},
     )
     if not audits:
         raise HTTPException(

@@ -84,17 +84,14 @@ def test_missing_lynis_and_a_failed_run_are_told_apart() -> None:
     assert not failed.usable and failed.output == "Fatal error: something"
 
 
-def test_the_script_is_valid_shell_and_installs_only_when_asked() -> None:
-    plain = build_audit_command(install_if_missing=False)
-    install = build_audit_command(install_if_missing=True)
+def test_the_script_is_valid_shell_and_always_installs_or_updates_lynis() -> None:
+    command = build_audit_command()
 
-    for command in (plain, install):
-        subprocess.run(["sh", "-n", "-c", command], check=True)  # noqa: S603, S607
-        assert 'sudo -n -l "$L"' in command and "--report-file" in command
-    assert "apt-get" not in plain
-    assert "sudo -n apt-get -y -q install lynis" in install
+    subprocess.run(["sh", "-n", "-c", command], check=True)  # noqa: S603, S607
+    assert 'sudo -n -l "$L"' in command and "--report-file" in command
+    assert "sudo -n apt-get -y -q install lynis" in command
     # Connected as root, CISOfy's repository is added first.
-    assert lynis.CISOFY_REPO_SETUP in install and lynis.CISOFY_REPO_URL in install
+    assert lynis.CISOFY_REPO_SETUP in command and lynis.CISOFY_REPO_URL in command
     # Lynis can only run as root through a grant for its exact path.
     assert "/usr/sbin/lynis" in SUDO_COMMANDS
 
@@ -116,11 +113,11 @@ def _fake_result(**kw: Any) -> LynisResult:
     return result
 
 
-async def _run_job(monkeypatch: Any, result: LynisResult, audit_id: uuid.UUID) -> list[bool]:
-    calls: list[bool] = []
+async def _run_job(monkeypatch: Any, result: LynisResult, audit_id: uuid.UUID) -> list[str]:
+    calls: list[str] = []
 
-    async def fake_run(machine: Any, secret: Any, *, install_if_missing: bool, **_kw: Any) -> Any:
-        calls.append(install_if_missing)
+    async def fake_run(machine: Any, secret: Any, **_kw: Any) -> Any:
+        calls.append(machine.name)
         return result
 
     monkeypatch.setattr(jobs, "run_lynis_audit", fake_run)
@@ -155,7 +152,7 @@ async def test_the_job_keeps_the_report_and_prunes_old_audits(
     async with db_session_factory() as db:
         stored = await db.get(SecurityAudit, audit.id)
         count = len((await db.execute(select(SecurityAudit))).scalars().all())
-    assert calls == [True]
+    assert calls == ["web1"]
     assert stored is not None and stored.status == SecurityAuditStatus.SUCCEEDED
     assert stored.hardening_index == 57 and stored.privileged is True
     assert len(stored.warnings or []) == 2 and stored.error is None
@@ -222,7 +219,7 @@ async def test_auditing_from_the_pages_the_api_and_a_schedule(
     csrf = client.cookies.get("csrftoken")
     started = await client.post(
         f"/machines/{machine_id}/security/audit",
-        data={"csrf_token": csrf, "install": "on"},
+        data={"csrf_token": csrf},
         follow_redirects=False,
     )
     again = await client.post(
@@ -275,7 +272,8 @@ async def test_auditing_from_the_pages_the_api_and_a_schedule(
         register_builtin_actions()
         action = get_action("security_audit")
         assert action is not None
-        result = await action.run(db, machines, {"install": "yes"})
+        # A task saved before 0.118.0 may still carry `install`: ignored.
+        result = await action.run(db, machines, {"install": "no"})
     assert pending.install_if_missing is True
     assert actions.count("machine.security_audit.run") == 3
     assert actions.count("machines.bulk.security_audit.run") == 1
