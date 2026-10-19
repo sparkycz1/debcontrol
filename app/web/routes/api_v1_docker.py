@@ -16,6 +16,11 @@ the machine terminal — see `api_v1.py`'s module docstring). Secrets never
 come back: a stack's Git token and a backup's password, repository and
 environment are write-only; a stack's compose file and `.env` are returned
 only to `action.terminal`, who may edit them anyway.
+
+Importing backup settings is a web-page convenience only: the web page
+reads an exported file into a pre-filled form, and over the API the same
+is `POST .../backups` with that file's fields plus the password, which an
+export never contains.
 """
 
 from __future__ import annotations
