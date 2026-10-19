@@ -92,9 +92,6 @@
               <tr>
                 {% if can_update %}<th><span class="visually-hidden">{{ t(request, "docker.select") }}</span></th>{% endif %}
                 <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.containers.cpu") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.containers.memory") }}</th>
-                <th data-sort="number">{{ t(request, "monitoring.containers.network") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.containers.ports") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.containers.image") }}</th>
                 <th data-sort="text">{{ t(request, "docker.vulnerabilities") }}</th>
@@ -105,8 +102,6 @@
             </thead>
             <tbody>
               {% for c in machine.docker_containers %}
-                {% set net_series = history.docker_net_by_container.get(c.name) or [] %}
-                {% set net_rate = (net_series | select('number') | list | last) if net_series | select('number') | list else none %}
                 {% set setting = settings.get(c.name) %}
                 {% set is_own = protected_project and c.compose_project == protected_project %}
                 {% set img_status = (machine.docker_image_updates or {}).get(c.image) %}
@@ -128,9 +123,6 @@
                     {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
                     {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}</span>{% endif %}
                   </td>
-                  <td class="cell-nowrap" data-sort-value="{{ c.cpu_percent if c.cpu_percent is number else -1 }}">{{ c.cpu_percent | chart_value('percent') if c.cpu_percent is number else '—' }}</td>
-                  <td class="cell-nowrap" data-sort-value="{{ c.mem_bytes if c.mem_bytes is number else -1 }}">{{ c.mem_bytes | bytes if c.mem_bytes is number else '—' }}</td>
-                  <td class="cell-nowrap" data-sort-value="{{ net_rate if net_rate is not none else -1 }}">{{ net_rate | chart_value('bytes_rate') if net_rate is not none else '—' }}</td>
                   <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
                   <td class="cell-truncate" title="{{ c.image }}">
                     {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}

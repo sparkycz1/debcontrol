@@ -450,6 +450,25 @@ async def test_volumes_and_networks(client, db_session_factory, celery_calls):
     assert networks.json() == {"networks": [{"name": "bridge"}]}
 
 
+async def test_network_detail(client, db_session_factory, celery_calls):
+    headers = await _api_token(client)
+    machine_id = await docker_machine(client, db_session_factory, headers)
+    celery_calls.result_for[INVENTORY] = {
+        "ok": True,
+        "inventory": {"network_details": [{"name": "site_default", "subnets": []}]},
+    }
+    found = await client.get(f"{base(machine_id)}/networks/site_default", headers=headers)
+    assert found.status_code == 200
+    assert found.json() == {"network": {"name": "site_default", "subnets": []}}
+    sections = [args[1] for name, args, _kw in celery_calls if name == INVENTORY]
+    assert sections[-1] == ["network_inspect"]
+
+    missing = await client.get(f"{base(machine_id)}/networks/other", headers=headers)
+    assert missing.status_code == 404
+    invalid = await client.get(f"{base(machine_id)}/networks/bad;name", headers=headers)
+    assert invalid.status_code == 404
+
+
 async def test_scan_images(client, login_as, db_session_factory):
     headers = await _api_token(client)
     machine_id = await docker_machine(client, db_session_factory, headers)

@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import posixpath
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -42,6 +42,7 @@ from app.ssh.docker_cli import (
     RESTIC_IMAGE,
     DockerCommandError,
     as_dict,
+    as_list,
     is_volume_name_valid,
     q,
 )
@@ -50,9 +51,9 @@ RESTIC_CACHE_VOLUME = "debcontrol-restic-cache"
 REMOTE_PREFIXES = ("s3:", "b2:", "azure:", "gs:", "swift:", "rest:")
 MAX_SOURCES = 50
 
-_ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
+_ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}\Z")
 _RESERVED_ENV = {"RESTIC_REPOSITORY", "RESTIC_PASSWORD", "RESTIC_CACHE_DIR"}
-_SNAPSHOT_RE = re.compile(r"^([0-9a-f]{8,64}|latest)$")
+_SNAPSHOT_RE = re.compile(r"^([0-9a-f]{8,64}|latest)\Z")
 
 
 def is_snapshot_valid(snapshot: str) -> bool:
@@ -132,7 +133,7 @@ class ResticConfig:
         return f"dc-{self.backup_id}"
 
     def validate(self) -> None:
-        if not re.match(r"^[0-9a-f-]{36}$", self.backup_id):
+        if not re.match(r"^[0-9a-f-]{36}\Z", self.backup_id):
             raise DockerCommandError("Invalid backup id.")
         if not is_repository_valid(self.repository):
             raise DockerCommandError("Invalid repository.")
@@ -303,11 +304,62 @@ def build_restore_script(config: ResticConfig, snapshot: str, *, delete: bool) -
     return "\n".join(lines) + "\n"
 
 
-def build_snapshots_script(config: ResticConfig) -> str:
+def build_snapshots_script(config: ResticConfig, *, all_snapshots: bool = False) -> str:
     """List the backup's snapshots (`restic snapshots --json`), quick enough
-    to wait for."""
+    to wait for — or, with `all_snapshots`, every snapshot in the
+    repository (another machine's, an older install's, plain restic's)."""
     lines = _prelude(config, mounts=_mounts(config, writable=False))
-    lines += [f"R snapshots --json --tag {q(config.tag)}"]
+    lines.append("R snapshots --json" + ("" if all_snapshots else f" --tag {q(config.tag)}"))
+    return "\n".join(lines) + "\n"
+
+
+def normalize_snapshot_path(path: str) -> str | None:
+    """A directory inside a snapshot to restore from (`/` = all of it), or None."""
+    if not path or len(path) > 1024 or any(c in path for c in "\n\r\0:"):
+        return None
+    if not path.startswith("/") or ".." in path.split("/"):
+        return None
+    return "/" + posixpath.normpath(path).lstrip("/")
+
+
+def build_restore_to_script(
+    config: ResticConfig,
+    snapshot: str,
+    *,
+    source: str,
+    volume: str = "",
+    path: str = "",
+    delete: bool,
+) -> str:
+    """Restore `source` of any snapshot in the repository (`/` = all of it)
+    into one volume or host directory of this machine — a snapshot of
+    another machine, of an older install, or into a new volume. Stops the
+    containers using that volume first, like an in-place restore."""
+    if not _SNAPSHOT_RE.match(snapshot):
+        raise DockerCommandError("Invalid snapshot.")
+    checked_source = normalize_snapshot_path(source)
+    if checked_source is None:
+        raise DockerCommandError("Invalid path inside the snapshot.")
+    if bool(volume) == bool(path):
+        raise DockerCommandError("Restore into one volume or one directory.")
+    if volume and not is_volume_name_valid(volume):
+        raise DockerCommandError(f'"{volume}" is not a valid volume name.')
+    if path and normalize_host_path(path) != path:
+        raise DockerCommandError(f'"{path}" can\'t be restored into.')
+    target = replace(config, volumes=[volume] if volume else [], paths=[])
+    mounts = f"-v {q(volume or path)}:/restore"
+    if config.repository.startswith("/"):
+        mounts += f" -v {q(config.repository)}:{q(config.repository)}"
+    lines = _prelude(target, mounts=mounts)
+    lines += _stop_users(target)
+    what = snapshot if checked_source == "/" else f"{snapshot}:{checked_source}"
+    delete_flag = " --delete" if delete else ""
+    lines += [
+        "echo '@@DC_STEP restore'",
+        f"R restore {q(what)} --target /restore{delete_flag} "
+        "|| { echo '@@DC_FAILED restore'; exit 1; }",
+        "echo '@@DC_DONE'",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -371,7 +423,10 @@ def parse_snapshots(raw: str) -> list[dict[str, Any]]:
                 "short_id": str(item.get("short_id") or snapshot_id[:8])[:16],
                 "time": str(item.get("time") or "")[:40],
                 "host": str(item.get("hostname") or "")[:64],
-                "paths": [str(p)[:1024] for p in item.get("paths") or [] if isinstance(p, str)][
+                "tags": [
+                    str(t)[:128] for t in as_list(item.get("tags")) if isinstance(t, str)
+                ][:20],
+                "paths": [str(p)[:1024] for p in as_list(item.get("paths")) if isinstance(p, str)][
                     :MAX_SOURCES
                 ],
                 "size_bytes": _int(size),

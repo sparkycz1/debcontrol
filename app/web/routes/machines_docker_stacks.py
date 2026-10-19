@@ -28,7 +28,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.services import docker_actions, docker_jobs, docker_stacks
 from app.ssh.docker_cli import DockerCommandError, is_project_name_valid
-from app.ssh.docker_compose import STACK_ACTIONS
+from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
 from app.web.routes.machines_common import (
@@ -211,6 +211,8 @@ def _form_from_request(form: Any) -> docker_stacks.StackForm:
         git_compose_path=str(form.get("git_compose_path") or docker_stacks.DEFAULT_COMPOSE_PATH),
         git_token=token,
         auto_sync=form.get("auto_sync") == "1",
+        # Chosen once, on the new-stack form; the edit form has no such field.
+        directory=str(form.get("directory") or "") if "directory" in form else None,
     )
 
 
@@ -242,9 +244,12 @@ async def docker_stack_create(
     machine = await _get_machine_or_404(machine_id, db, current_user)
     raw = await request.form()
     form = _form_from_request(raw)
+    form.directory = form.directory or ""
     errors = form.validate()
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
         errors.append("docker.stack.error.name_taken")
+    if not errors and await docker_stacks.directory_taken(db, machine.id, form.directory or ""):
+        errors.append("docker.stack.error.directory_taken")
     if not errors:
         try:
             await docker_jobs.check_project(db, machine, form.name)
@@ -270,7 +275,12 @@ async def docker_stack_create(
         machine,
         "machine.docker.stack.create",
         f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        details={"stack": stack.name, "source": stack.source, "git_url": stack.git_url},
+        details={
+            "stack": stack.name,
+            "source": stack.source,
+            "git_url": stack.git_url,
+            "directory": stack.directory,
+        },
     )
     if raw.get("deploy") == "1" and current_user.has_permission(Permission.ACTION_UPDATES):
         return await _deploy(request, db, machine, current_user, stack, pull=True)
@@ -339,6 +349,8 @@ async def docker_stack_save(
     form = _form_from_request(raw)
     # A deployed stack keeps its name: it is the Compose project's name.
     form.name = stack.name
+    # And its directory: the files are already there.
+    form.directory = None
     errors = form.validate()
     if errors:
         return await _stack_page(
@@ -575,6 +587,120 @@ async def docker_stack_delete(
 
 
 @router.post(
+    "/{machine_id}/docker/projects/{project}/compose",
+    dependencies=[need_terminal, Depends(verify_csrf)],
+)
+async def docker_project_compose_save(
+    request: Request,
+    machine_id: uuid.UUID,
+    project: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Replace one compose file of a project found on the machine (which
+    file it may be is read from the machine, never taken from the
+    request alone); `up=1` also applies it (`action.updates`). Registered
+    before `docker_project_action`, whose `{action}` would match "compose"."""
+    if not is_project_name_valid(project):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such project.")
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    back = f"{docker_base(machine)}/projects/{project}/compose"
+    if not machine.host_key_fingerprint:
+        return redirect(back, error=LocalizedText(request, "docker.no_host_key"))
+    raw = await request.form()
+    path = str(raw.get("path") or "")
+    content = str(raw.get("content") or "").replace("\r\n", "\n")
+    apply = raw.get("up") == "1"
+    if apply and not current_user.has_permission(Permission.ACTION_UPDATES):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    if any(s.name == project for s in await docker_stacks.list_stacks(db, machine.id)):
+        return redirect(back, error=LocalizedText(request, "docker.projects.edit_managed"))
+    try:
+        await docker_jobs.check_project(db, machine, project)
+    except docker_jobs.ProtectedError:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.project.compose_edit",
+            f'Refused editing a compose file of "{project}" on "{machine.name}": '
+            "debcontrol runs in it",
+            denied=True,
+            details={"project": project, "path": path},
+        )
+        return redirect(back, error=LocalizedText(request, "docker.protected"))
+    if len(content.encode()) > MAX_FILE_BYTES or "\0" in content:
+        return redirect(back, error=LocalizedText(request, "docker.projects.edit_too_large"))
+    projects, error = await _projects(request, db, machine)
+    found = next((p for p in projects if p["name"] == project), None)
+    files = [str(f) for f in (found or {}).get("config_files") or []]
+    if error is not None:
+        return redirect(back, error=error)
+    if found is None or path not in files:
+        return redirect(back, error=LocalizedText(request, "docker.projects.edit_not_a_file"))
+    working_dir = str(found["working_dir"] or "")
+    app_settings = await get_or_create_app_settings(db)
+    result, error = await wait_task(
+        request,
+        docker_tasks.docker_write_compose_file.delay(
+            str(machine.id), project, path, content, working_dir, files
+        ),
+        app_settings.ssh_connect_timeout + 150,
+    )
+    if error is not None or result is None:
+        step = str((result or {}).get("step") or "")
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.project.compose_edit",
+            f'Editing compose file "{path}" of "{project}" on "{machine.name}" failed'
+            + (f" ({step})" if step else ""),
+            ok=False,
+            details={"project": project, "path": path, "step": step or None},
+        )
+        message = (
+            LocalizedText(request, "docker.projects.edit_invalid", details=str(error or ""))
+            if step == "config"
+            else str(error or LocalizedText(request, "docker.projects.edit_failed"))
+        )
+        return redirect(back, error=message)
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.project.compose_edit",
+        f'Edited compose file "{path}" of "{project}" on "{machine.name}"',
+        details={"project": project, "path": path, "up": apply},
+    )
+    if not apply:
+        return redirect(back, notice=LocalizedText(request, "docker.projects.edit_saved"))
+    try:
+        job = await docker_actions.stack_action(
+            db,
+            machine,
+            project,
+            "up",
+            started_by=actor(current_user),
+            working_dir=working_dir,
+            files=files,
+        )
+    except (docker_jobs.ProtectedError, DockerCommandError) as exc:
+        return redirect(back, error=str(exc))
+    if job is None:
+        return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.action",
+        f'Started "up" of Compose project "{project}" on "{machine.name}"',
+        details={"project": project, "action": "up"},
+    )
+    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+@router.post(
     "/{machine_id}/docker/projects/{project}/{action}", dependencies=[Depends(verify_csrf)]
 )
 async def docker_project_action(
@@ -675,11 +801,23 @@ async def docker_project_compose(
                     "error": file_error,
                 }
             )
+    managed = next(
+        (s for s in await docker_stacks.list_stacks(db, machine.id) if s.name == project), None
+    )
+    protected = await docker_jobs.protected_project(db, machine)
     return render(
         request,
         "machines/docker/project_compose.html",
         machine,
         current_user,
         "stacks",
-        {"project": project, "found": found, "files": files, "error": error},
+        {
+            "project": project,
+            "found": found,
+            "files": files,
+            "error": error,
+            "managed": managed,
+            "is_protected": bool(protected) and protected == project,
+            "max_bytes": MAX_FILE_BYTES,
+        },
     )

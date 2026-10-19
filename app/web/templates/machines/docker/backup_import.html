@@ -1,0 +1,58 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ t(request, "docker.backups.import") }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.backups.import") }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/backups">{{ t(request, "docker.back_to_backups") }}</a>
+  </div>
+  <p class="hint">{{ t(request, "docker.backups.import_hint") }}</p>
+  {% if import_error %}
+    <div class="alert alert-error"><p>{{ t(request, import_error) }}</p></div>
+  {% endif %}
+
+  {% if definitions %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.backups.import_pick") }}</h2>
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="import-table">
+          <thead><tr>
+            <th>{{ t(request, "docker.backup.name") }}</th>
+            <th>{{ t(request, "docker.backup.sources") }}</th>
+            <th>{{ t(request, "docker.backup.repository") }}</th>
+            <th><span class="visually-hidden">{{ t(request, "docker.backups.import") }}</span></th>
+          </tr></thead>
+          <tbody>
+            {% for d, raw in definitions %}
+              <tr>
+                <td><strong>{{ d.name }}</strong></td>
+                <td>
+                  {% for v in d.volumes %}<div><span class="badge badge-tag">{{ t(request, "docker.backup.volume") }}</span> <code>{{ v }}</code></div>{% endfor %}
+                  {% for p in d.paths %}<div><span class="badge badge-tag">{{ t(request, "docker.backup.path") }}</span> <code>{{ p }}</code></div>{% endfor %}
+                </td>
+                <td class="cell-truncate"><code>{{ d.repository or d.repository_display }}</code></td>
+                <td>
+                  <form method="post" action="{{ docker_base }}/backups/import" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="definition" value="{{ raw }}">
+                    <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.backups.import_this") }}</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <form method="post" action="{{ docker_base }}/backups/import" enctype="multipart/form-data" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="import-file">{{ t(request, "docker.backups.import_file") }}</label>
+      <input id="import-file" type="file" name="file" accept=".json,application/json" required>
+      <button type="submit" class="button">{{ t(request, "docker.backups.import_read") }}</button>
+    </form>
+  </section>
+{% endblock %}

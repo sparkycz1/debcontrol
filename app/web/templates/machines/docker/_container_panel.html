@@ -44,7 +44,7 @@
       <dd>{{ c.restart_policy or 'no' }}{% if c.restart_count %} · {{ t(request, "docker.container.restarts", count=c.restart_count) }}{% endif %}</dd>
       {% if c.command %}<dt>{{ t(request, "docker.container.command") }}</dt><dd><code>{{ c.command }}</code></dd>{% endif %}
       <dt>{{ t(request, "docker.container.network_mode") }}</dt><dd>{{ c.network_mode or '—' }}</dd>
-      {% if c.networks %}<dt>{{ t(request, "docker.container.networks") }}</dt><dd>{{ c.networks | join(', ') }}</dd>{% endif %}
+      {% if c.networks %}<dt>{{ t(request, "docker.container.networks") }}</dt><dd>{% for net in c.networks %}<a href="{{ docker_base }}/networks/{{ net | urlencode }}">{{ net }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
       <dt>{{ t(request, "monitoring.containers.ports") }}</dt><dd>{{ c.ports | join(', ') if c.ports else '—' }}</dd>
       {% if c.env_names %}
         <dt>{{ t(request, "docker.container.env") }}</dt>

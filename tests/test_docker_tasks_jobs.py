@@ -613,6 +613,30 @@ async def test_restoring_onto_debcontrols_own_volumes_fails_before_anything_runs
     assert machine_shell.started == []
 
 
+async def test_restoring_into_a_volume_runs_the_restore_to_script(
+    db_session_factory: Any, machine_shell: FakeMachine
+) -> None:
+    machine = _machine()
+    backup = _backup(machine)
+    job = _job(
+        machine,
+        DockerJobKind.BACKUP_RESTORE,
+        "nightly",
+        ref_id=backup.id,
+        params={"mode": "to", "snapshot": "latest", "source": "/backup/volumes/old",
+                "volume": "fresh", "path": "", "delete": False},
+    )
+    await _add(db_session_factory, machine, backup, job)
+    machine_shell.finishes("@@DC_DONE\n")
+
+    await tasks._run_docker_job(str(job.id))
+
+    [(_remote, script)] = machine_shell.started
+    assert "-v fresh:/restore" in script
+    assert "R restore latest:/backup/volumes/old --target /restore ||" in script
+    assert (await _get(db_session_factory, DockerJob, job.id)).status == DockerJobStatus.SUCCEEDED
+
+
 async def test_a_job_whose_backup_was_deleted_fails(
     db_session_factory: Any, machine_shell: FakeMachine
 ) -> None:
@@ -695,6 +719,27 @@ async def test_removing_a_managed_stack_deletes_it_once_compose_is_done(
 
     assert await _get(db_session_factory, DockerStack, stack.id) is None
     assert (await _get(db_session_factory, DockerJob, job.id)).status == DockerJobStatus.SUCCEEDED
+
+
+async def test_removing_a_stack_in_a_chosen_directory_keeps_that_directory(
+    db_session_factory: Any, machine_shell: FakeMachine
+) -> None:
+    machine = _machine()
+    stack = _stack(machine)
+    stack.directory = "/opt/shop"
+    job = _job(
+        machine, DockerJobKind.STACK_ACTION, "shop", ref_id=stack.id,
+        params={"action": "remove", "volumes": False},
+    )
+    await _add(db_session_factory, machine, stack, job)
+    machine_shell.finishes("@@DC_DONE\n")
+
+    await tasks._run_docker_job(str(job.id))
+
+    [(_remote, script)] = machine_shell.started
+    assert "dir=/opt/shop;" in script
+    assert 'rm -rf -- "$dir";' not in script
+    assert await _get(db_session_factory, DockerStack, stack.id) is None
 
 
 async def test_git_sync_deploys_only_a_new_commit_and_never_twice(
@@ -890,3 +935,42 @@ async def test_git_sync_never_deploys_debcontrols_own_project(
     async with db_session_factory() as db:
         assert (await db.execute(select(DockerJob))).scalars().all() == []
     assert RUN_JOB not in celery_calls.names
+
+
+async def test_writing_a_compose_file_sends_it_on_standard_input(
+    db_session_factory: Any, machine_shell: FakeMachine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine = _machine()
+    await _add(db_session_factory, machine)
+    sent: list[Any] = []
+
+    async def fake_run_script(
+        _machine: Any, _secret: Any, _timeout: int, script: str, **kwargs: Any
+    ) -> CommandOutput:
+        sent.append((script, kwargs.get("stdin")))
+        return CommandOutput(0, "@@DC_DONE\n")
+
+    monkeypatch.setattr(tasks, "run_script", fake_run_script)
+    files = ["/srv/app/compose.yaml"]
+
+    ok = await tasks._docker_write_compose_file(
+        str(machine.id), "app", files[0], "services: {}\n", "/srv/app", files
+    )
+
+    assert ok == {"ok": True}
+    [(script, stdin)] = sent
+    assert stdin == "services: {}\n"
+    assert "services: {}" not in script
+
+    async def failing(*_args: Any, **_kwargs: Any) -> CommandOutput:
+        return CommandOutput(1, "yaml: bad\n@@DC_FAILED config\n")
+
+    monkeypatch.setattr(tasks, "run_script", failing)
+    failed = await tasks._docker_write_compose_file(
+        str(machine.id), "app", files[0], "x", "/srv/app", files
+    )
+    assert failed == {"ok": False, "step": "config", "error": "yaml: bad"}
+    refused = await tasks._docker_write_compose_file(
+        str(machine.id), "app", "/etc/passwd", "x", "/srv/app", files
+    )
+    assert refused["ok"] is False

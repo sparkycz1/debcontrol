@@ -189,7 +189,7 @@ def test_docker_tab_loads_without_browser_errors(page: Any) -> None:
     machine = _first_href(page, "/machines?q=web1", "/machines/")
     # Only the pages drawn from the database: the rest ask the machine
     # over SSH (inventory, a container's details, Compose projects, the shell).
-    for sub in ("", "/jobs", "/stacks/new", "/backups", "/backups/new"):
+    for sub in ("", "/jobs", "/stacks/new", "/backups", "/backups/new", "/backups/import"):
         _open(page, machine + "/docker" + sub)
 
 

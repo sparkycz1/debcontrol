@@ -8,11 +8,14 @@ running, checking and pruning a configured backup need `action.updates`.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import Depends, Form, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.audit import log_event
 from app.auth.dependencies import get_current_user
@@ -103,6 +106,7 @@ def _form(raw: Any) -> docker_backups.BackupForm:
         keep_weekly=str(raw.get("keep_weekly") or ""),
         keep_monthly=str(raw.get("keep_monthly") or ""),
         clear_env=raw.get("clear_env") == "1",
+        all_snapshots=raw.get("all_snapshots") == "1",
     )
 
 
@@ -139,6 +143,117 @@ async def docker_backup_new(
         current_user,
         "backups",
         {"backup": None, "form": None, "errors": []},
+    )
+
+
+def _export_response(data: dict[str, Any], filename: str) -> Response:
+    return Response(
+        content=json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _export_name(machine: Machine, what: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in f"{machine.name}-{what}")
+    return f"debcontrol-backups-{safe[:80]}.json"
+
+
+@router.get("/{machine_id}/docker/backups/export", dependencies=[need_terminal])
+async def docker_backups_export(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Every backup's settings as a file to import elsewhere — no secrets
+    in it (`docker_backups.export_definition`)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    backups = await docker_backups.list_backups(db, machine.id)
+    return _export_response(
+        docker_backups.export_definitions(backups, machine), _export_name(machine, "all")
+    )
+
+
+@router.get("/{machine_id}/docker/backups/import", dependencies=[need_terminal])
+async def docker_backups_import_page(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    return render(
+        request,
+        "machines/docker/backup_import.html",
+        machine,
+        current_user,
+        "backups",
+        {"definitions": None, "import_error": None},
+    )
+
+
+@router.post(
+    "/{machine_id}/docker/backups/import", dependencies=[need_terminal, Depends(verify_csrf)]
+)
+async def docker_backups_import(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Read an exported file (`file`) or one definition from it
+    (`definition`, from the chooser): one definition opens the new-backup
+    form filled in with it, for the password to be typed; several are
+    listed to pick from. Nothing is saved here."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    raw = await request.form()
+    upload = raw.get("file")
+    text = ""
+    if isinstance(upload, UploadFile):
+        data = await upload.read(docker_backups.MAX_IMPORT_BYTES + 1)
+        text = data.decode("utf-8", errors="replace")
+    elif raw.get("definition"):
+        text = str(raw.get("definition"))
+    try:
+        definitions = docker_backups.parse_import(text)
+    except ValueError as exc:
+        return render(
+            request,
+            "machines/docker/backup_import.html",
+            machine,
+            current_user,
+            "backups",
+            {"definitions": None, "import_error": f"docker.backups.import_error.{exc}"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(definitions) > 1:
+        return render(
+            request,
+            "machines/docker/backup_import.html",
+            machine,
+            current_user,
+            "backups",
+            {
+                "definitions": [(d, json.dumps(d)) for d in definitions],
+                "import_error": None,
+            },
+        )
+    definition = definitions[0]
+    return render(
+        request,
+        "machines/docker/backup_form.html",
+        machine,
+        current_user,
+        "backups",
+        {
+            "backup": None,
+            "form": docker_backups.form_from_definition(definition),
+            "errors": [],
+            "imported": definition,
+        },
     )
 
 
@@ -375,6 +490,102 @@ async def docker_backup_restore(
             "paths": paths,
             "delete": form.get("delete") == "1",
         },
+    )
+    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+@router.get("/{machine_id}/docker/backups/{backup_id}/export", dependencies=[need_terminal])
+async def docker_backup_export(
+    machine_id: uuid.UUID,
+    backup_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    backup = await _backup_or_404(db, machine, backup_id)
+    return _export_response(
+        docker_backups.export_definitions([backup], machine), _export_name(machine, backup.name)
+    )
+
+
+@router.post(
+    "/{machine_id}/docker/backups/{backup_id}/restore-to",
+    dependencies=[need_terminal, Depends(verify_csrf)],
+)
+async def docker_backup_restore_to(
+    request: Request,
+    machine_id: uuid.UUID,
+    backup_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Restore part of any snapshot in the repository (another machine's
+    too) into one volume or directory. The machine's name has to be typed:
+    it overwrites what is there."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    backup = await _backup_or_404(db, machine, backup_id)
+    form = await request.form()
+    back = f"{docker_base(machine)}/backups/{backup.id}"
+    snapshot = str(form.get("snapshot") or "")
+    source = str(form.get("source") or "/").strip() or "/"
+    target_kind = str(form.get("target_kind") or "volume")
+    target = str(form.get("target") or "").strip()
+    volume = target if target_kind == "volume" else ""
+    path = target if target_kind == "path" else ""
+    details = {
+        "backup": backup.name,
+        "snapshot": snapshot,
+        "source": source,
+        "volume": volume or None,
+        "path": path or None,
+        "delete": form.get("delete") == "1",
+    }
+    if str(form.get("confirm_name") or "").strip() != machine.name:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.backup.restore",
+            f'Refused to restore from Docker backup "{backup.name}": machine name not confirmed',
+            denied=True,
+            details=details,
+        )
+        return redirect(back, error=LocalizedText(request, "docker.backup.confirm_mismatch"))
+    try:
+        job = await docker_actions.restore_backup_to(
+            db,
+            machine,
+            backup,
+            snapshot,
+            started_by=actor(current_user),
+            source=source,
+            volume=volume,
+            path=path,
+            delete=form.get("delete") == "1",
+        )
+    except docker_jobs.ProtectedError:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.backup.restore",
+            f'Refused to restore from Docker backup "{backup.name}": debcontrol uses that volume',
+            denied=True,
+            details=details,
+        )
+        return redirect(back, error=LocalizedText(request, "docker.protected"))
+    except DockerCommandError as exc:
+        return redirect(back, error=str(exc))
+    if job is None:
+        return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.backup.restore",
+        f'Started restoring {source} of snapshot {snapshot[:12]} (Docker backup "{backup.name}") '
+        f'into {"volume " + volume if volume else path} on "{machine.name}"',
+        details=details,
     )
     return redirect(f"{docker_base(machine)}/jobs/{job.id}")
 

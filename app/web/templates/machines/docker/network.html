@@ -1,0 +1,14 @@
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel %}
+
+{% block docker_title %}{{ name }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.network.heading", name=name) }}</h2>
+    <div class="page-header-actions">
+      <a class="button button-secondary log-small-button" href="{{ docker_base }}/networks">{{ t(request, "docker.network.back") }}</a>
+    </div>
+  </div>
+  {{ lazy_panel(request, docker_base ~ "/networks/" ~ (name | urlencode) ~ "/panel", "network-panel") }}
+{% endblock %}

@@ -105,6 +105,10 @@ def _viewer_pages(
         f"{base}/volumes/panel?sizes=1",
         f"{base}/networks",
         f"{base}/networks/panel",
+        f"{base}/networks/site_default",
+        f"{base}/networks/site_default/panel",
+        f"{base}/networks/gone",
+        f"{base}/networks/gone/panel",
         f"{base}/stacks",
         f"{base}/stacks/panel",
         f"{base}/stacks/{stack_id}",
@@ -368,6 +372,8 @@ async def test_unknown_or_foreign_rows_are_not_found(client, db_session_factory)
         f"{base}/images/{IMAGE_ID}/vulnerabilities",
         f"{base}/images/not-an-id/vulnerabilities",
         f"{base}/containers/bad;name",
+        f"{base}/networks/bad;name",
+        f"{base}/networks/bad;name/panel",
     ):
         assert (await client.get(url)).status_code == 404, url
 
@@ -401,6 +407,33 @@ async def test_panels_ask_the_worker_for_the_right_sections(
     assert celery_calls.names == [INVENTORY_TASK, INVENTORY_TASK]
     assert celery_calls[0][1] == (str(machine_id), ["volumes", "inspect", "volume_sizes"])
     assert celery_calls[1][1] == (str(machine_id), ["networks", "inspect"])
+
+
+async def test_network_page_shows_addressing_and_attached_containers(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    celery_calls.result_for[INVENTORY_TASK] = inventory_answer()
+    base = f"/machines/{machine_id}/docker"
+
+    listing = await client.get(f"{base}/networks/panel")
+    assert f'href="{base}/networks/site_default"' in listing.text
+    container = await client.get(f"{base}/containers/web/panel")
+    assert f'href="{base}/networks/site_default"' in container.text
+
+    page = await client.get(f"{base}/networks/site_default")
+    assert page.status_code == 200
+    assert f"{base}/networks/site_default/panel" in page.text
+    panel = await client.get(f"{base}/networks/site_default/panel")
+    assert panel.status_code == 200
+    for text in ("172.18.0.0/16", "172.18.0.1", "172.18.0.2/16", "02:42:ac:12:00:02", "br-site"):
+        assert text in panel.text, text
+    assert f'href="{base}/containers/web"' in panel.text
+    assert celery_calls[-1][1] == (str(machine_id), ["network_inspect"])
+
+    missing = await client.get(f"{base}/networks/gone/panel")
+    assert missing.status_code == 200
+    assert "172.18.0.0/16" not in missing.text
 
 
 async def test_job_page_polls_while_running_and_stops_when_done(client, db_session_factory):

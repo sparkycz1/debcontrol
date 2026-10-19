@@ -6,12 +6,22 @@ The repository address, its password and the extra environment are
 encrypted at rest and never shown again in full — the address only as
 `repository_display` (credentials in it redacted). Leaving the password
 or environment empty on edit keeps what is stored.
+
+**Export / import.** A backup's settings can be exported as a JSON file
+(`export_definitions`) and imported on another machine or install
+(`parse_import`), to attach the same restic repository there. The file
+never carries a secret: no password, only the names of the extra
+environment variables, and the repository address only when it has no
+credentials in it — whoever imports types those in again.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +101,8 @@ class BackupForm:
     keep_monthly: str = ""
     # Remove the stored variables (an empty `env` alone keeps them).
     clear_env: bool = False
+    # List every snapshot in the repository, not just this backup's.
+    all_snapshots: bool = False
     errors: list[str] = field(default_factory=list)
 
     _parsed: dict[str, object] = field(default_factory=dict, init=False, repr=False)
@@ -169,6 +181,7 @@ class BackupForm:
         backup.paths = list(parsed["paths"])  # type: ignore[call-overload]
         backup.excludes = list(parsed["excludes"])  # type: ignore[call-overload]
         backup.stop_containers = self.stop_containers
+        backup.all_snapshots = self.all_snapshots
         backup.enabled = self.enabled
         keep: dict[str, int | None] = parsed["keep"]  # type: ignore[assignment]
         backup.keep_last = keep.get("last")
@@ -214,4 +227,138 @@ def config_for(
         volumes=chosen_volumes,
         paths=chosen_paths,
         excludes=list(backup.excludes or []),
+    )
+
+
+# --- Export / import ---------------------------------------------------------
+
+EXPORT_KIND = "debcontrol.docker-backups"
+EXPORT_VERSION = 1
+MAX_IMPORT_BYTES = 256 * 1024
+MAX_IMPORT_BACKUPS = 100
+
+
+def _env_names(backup: DockerBackup) -> list[str]:
+    if not backup.env_encrypted:
+        return []
+    return [
+        line.partition("=")[0]
+        for line in parse_env_lines(decrypt_secret(backup.env_encrypted))
+    ]
+
+
+def export_definition(backup: DockerBackup) -> dict[str, Any]:
+    """One backup's settings without a single secret (see the module
+    docstring)."""
+    repository = decrypt_secret(backup.repository_encrypted)
+    plain = redact_repository(repository) == repository
+    return {
+        "name": backup.name,
+        "repository": repository if plain else None,
+        "repository_display": backup.repository_display,
+        "env_names": _env_names(backup),
+        "volumes": list(backup.volumes or []),
+        "paths": list(backup.paths or []),
+        "excludes": list(backup.excludes or []),
+        "stop_containers": backup.stop_containers,
+        "enabled": backup.enabled,
+        "keep_last": backup.keep_last,
+        "keep_daily": backup.keep_daily,
+        "keep_weekly": backup.keep_weekly,
+        "keep_monthly": backup.keep_monthly,
+    }
+
+
+def export_definitions(backups: list[DockerBackup], machine: Machine) -> dict[str, Any]:
+    return {
+        "kind": EXPORT_KIND,
+        "version": EXPORT_VERSION,
+        "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "machine": machine.name,
+        "backups": [export_definition(b) for b in backups],
+    }
+
+
+def _str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(v)[:1024] for v in value if isinstance(v, str)][:MAX_SOURCES * 2]
+
+
+def _opt_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _definition(row: Any) -> dict[str, Any] | None:
+    if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+        return None
+    repository = row.get("repository")
+    display = row.get("repository_display")
+    return {
+        "name": str(row["name"]).strip()[:_NAME_MAX],
+        "repository": repository[:1024] if isinstance(repository, str) else "",
+        "repository_display": display[:512] if isinstance(display, str) else "",
+        "env_names": _str_list(row.get("env_names"))[:50],
+        "volumes": _str_list(row.get("volumes")),
+        "paths": _str_list(row.get("paths")),
+        "excludes": _str_list(row.get("excludes")),
+        "stop_containers": row.get("stop_containers") is True,
+        "enabled": row.get("enabled") is not False,
+        **{
+            f"keep_{k}": _opt_int(row.get(f"keep_{k}"))
+            for k in ("last", "daily", "weekly", "monthly")
+        },
+    }
+
+
+def parse_import(text: str) -> list[dict[str, Any]]:
+    """The definitions in an exported file (or a single exported
+    definition). Raises `ValueError` for anything else. What a definition
+    holds is checked again by `BackupForm` when it is saved."""
+    if len(text.encode()) > MAX_IMPORT_BYTES:
+        raise ValueError("too_large")
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("not_json") from exc
+    rows: Any
+    if isinstance(data, dict) and data.get("kind") == EXPORT_KIND:
+        if data.get("version") != EXPORT_VERSION:
+            raise ValueError("version")
+        rows = data.get("backups")
+    elif isinstance(data, dict) and "name" in data:
+        rows = [data]
+    else:
+        raise ValueError("not_export")
+    candidates = rows if isinstance(rows, list) else []
+    definitions = [d for d in (_definition(r) for r in candidates) if d is not None]
+    if not definitions:
+        raise ValueError("empty")
+    return definitions[:MAX_IMPORT_BACKUPS]
+
+
+def form_from_definition(definition: dict[str, Any]) -> BackupForm:
+    """A new-backup form filled in from an imported definition — the
+    password (and any credentials) left for the person to type. Lists
+    every snapshot, since an imported repository's are another backup's."""
+
+    def keep(key: str) -> str:
+        value = definition.get(f"keep_{key}")
+        return "" if value is None else str(value)
+
+    return BackupForm(
+        name=str(definition.get("name") or ""),
+        repository=str(definition.get("repository") or ""),
+        password="",
+        env="\n".join(f"{name}=" for name in definition.get("env_names") or []),
+        volumes="\n".join(definition.get("volumes") or []),
+        paths="\n".join(definition.get("paths") or []),
+        excludes="\n".join(definition.get("excludes") or []),
+        stop_containers=bool(definition.get("stop_containers")),
+        enabled=bool(definition.get("enabled", True)),
+        keep_last=keep("last"),
+        keep_daily=keep("daily"),
+        keep_weekly=keep("weekly"),
+        keep_monthly=keep("monthly"),
+        all_snapshots=True,
     )

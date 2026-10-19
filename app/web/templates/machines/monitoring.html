@@ -228,17 +228,6 @@
       {% endif %}
     </div>
 
-    {# --- Docker: its own tab now (machines/docker/*) --- #}
-    {% if machine.docker_status is not none %}
-      <section class="chart-card chart-card-wide monitoring-section" id="containers">
-        <header class="chart-card-header"><div>
-          <h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3>
-          <p class="chart-card-subtitle">{{ t(request, "monitoring.containers.moved", count=((machine.docker_containers or []) | length)) }}
-            <a href="/machines/{{ machine.id }}/docker">{{ t(request, "monitoring.containers.open_docker") }}</a></p>
-        </div></header>
-      </section>
-    {% endif %}
-
     {# --- S.M.A.R.T. --- #}
     {% if machine.is_physical and machine.smart_devices is not none %}
       <section class="chart-card chart-card-wide monitoring-section">

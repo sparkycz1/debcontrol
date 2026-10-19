@@ -7,7 +7,13 @@
     <h2>{{ t(request, "docker.projects.compose_title", name=project) }}</h2>
     <a class="button button-secondary log-small-button" href="{{ docker_base }}/stacks">{{ t(request, "docker.back_to_stacks") }}</a>
   </div>
-  <p class="hint">{{ t(request, "docker.projects.compose_hint") }}</p>
+  {% set editable = not managed and not is_protected and machine.host_key_fingerprint %}
+  <p class="hint">{{ t(request, "docker.projects.edit_hint") if editable else t(request, "docker.projects.compose_hint") }}</p>
+  {% if managed %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.projects.edit_managed") }} <a href="{{ docker_base }}/stacks/{{ managed.id }}">{{ t(request, "docker.projects.open_stack") }}</a></p></div>
+  {% elif is_protected %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.protected") }}</p></div>
+  {% endif %}
   {% if error %}
     <div class="alert alert-error"><p>{{ error }}</p></div>
   {% elif found is none %}
@@ -19,6 +25,17 @@
         <h3><code>{{ f.path }}</code></h3>
         {% if f.error %}
           <div class="alert alert-error"><p>{{ f.error }}</p></div>
+        {% elif editable %}
+          <form method="post" action="{{ docker_base }}/projects/{{ project }}/compose" enctype="multipart/form-data" class="form form-wide">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="path" value="{{ f.path }}">
+            <label for="compose-{{ loop.index }}" class="visually-hidden">{{ f.path }}</label>
+            <textarea id="compose-{{ loop.index }}" name="content" rows="24" class="code-input" spellcheck="false" maxlength="{{ max_bytes }}">{{ f.content }}</textarea>
+            {% if can_updates %}
+              <label><input type="checkbox" name="up" value="1"> {{ t(request, "docker.projects.edit_apply") }}</label>
+            {% endif %}
+            <button type="submit" class="button">{{ t(request, "docker.projects.edit_save") }}</button>
+          </form>
         {% else %}
           <pre class="run-output" tabindex="0">{{ f.content }}</pre>
         {% endif %}

@@ -76,6 +76,7 @@ from app.ssh.docker_compose import (
     build_remote_head_command,
     build_remove_script,
     build_stack_action_script,
+    build_write_file_script,
     parse_commit,
 )
 from app.ssh.docker_compose import failed_step as compose_failed_step
@@ -106,6 +107,7 @@ from app.ssh.restic import (
     build_check_script,
     build_forget_script,
     build_restore_script,
+    build_restore_to_script,
     build_snapshots_script,
     parse_backup_summary,
     parse_snapshots,
@@ -626,7 +628,16 @@ async def _job_stack_action(ctx: _Context) -> None:
 
     async def build() -> str:
         if action == "remove":
-            return build_remove_script(ctx.job.target, volumes=bool(params.get("volumes")))
+            stack = (
+                await ctx.session.get(DockerStack, ctx.job.ref_id)
+                if ctx.job.ref_id is not None
+                else None
+            )
+            return build_remove_script(
+                ctx.job.target,
+                volumes=bool(params.get("volumes")),
+                directory=(stack.directory or "") if stack is not None else "",
+            )
         return build_stack_action_script(
             ctx.job.target,
             action,
@@ -842,6 +853,17 @@ async def _job_backup_restore(ctx: _Context) -> None:
     paths = [str(p) for p in params.get("paths") or []]
 
     async def build() -> str:
+        if params.get("mode") == "to":
+            volume = str(params.get("volume") or "")
+            await docker_jobs.check_volumes(ctx.session, ctx.machine, [volume] if volume else [])
+            return build_restore_to_script(
+                docker_backups.config_for(backup, ctx.machine, volumes=[], paths=[]),
+                str(params.get("snapshot") or ""),
+                source=str(params.get("source") or "/"),
+                volume=volume,
+                path=str(params.get("path") or ""),
+                delete=bool(params.get("delete")),
+            )
         await docker_jobs.check_volumes(ctx.session, ctx.machine, volumes)
         config = docker_backups.config_for(backup, ctx.machine, volumes=volumes, paths=paths)
         return build_restore_script(
@@ -1114,6 +1136,41 @@ def docker_compose_file(machine_id: str, path: str) -> dict[str, Any]:
     return asyncio.run(_docker_compose_file(machine_id, path))
 
 
+async def _docker_write_compose_file(
+    machine_id: str, project: str, path: str, content: str, working_dir: str, files: list[str]
+) -> dict[str, Any]:
+    """Replace one compose file of a project found on the machine
+    (`build_write_file_script`); the old text comes back when `docker
+    compose config` rejects the new one."""
+    async with db_session.AsyncSessionLocal() as session:
+        try:
+            machine, secret, timeout = await _machine_and_secret(session, machine_id)
+            script = build_write_file_script(project, path, working_dir=working_dir, files=files)
+            output = await run_script(
+                machine, secret, timeout, script, run_timeout_seconds=120, stdin=content
+            )
+        except _READ_ERRORS as exc:
+            return _error(exc)
+    if output.exit_status == 0 and "@@DC_DONE" in output.output:
+        return {"ok": True}
+    step = compose_failed_step(output.output) or "write"
+    lines = [
+        line for line in output.output.strip().splitlines() if not line.startswith("@@DC_")
+    ]
+    return {"ok": False, "step": step, "error": " ".join(lines[-5:])[-600:]}
+
+
+@celery_app.task(
+    name="app.tasks.docker_jobs.docker_write_compose_file", time_limit=_SHORT_TASK_TIME_LIMIT
+)
+def docker_write_compose_file(
+    machine_id: str, project: str, path: str, content: str, working_dir: str, files: list[str]
+) -> dict[str, Any]:
+    return asyncio.run(
+        _docker_write_compose_file(machine_id, project, path, content, working_dir, files)
+    )
+
+
 async def _docker_backup_snapshots(backup_id: str) -> dict[str, Any]:
     async with db_session.AsyncSessionLocal() as session:
         backup = await session.get(DockerBackup, uuid.UUID(backup_id))
@@ -1121,7 +1178,9 @@ async def _docker_backup_snapshots(backup_id: str) -> dict[str, Any]:
             return {"ok": False, "error": "Backup not found."}
         try:
             machine, secret, timeout = await _machine_and_secret(session, str(backup.machine_id))
-            script = build_snapshots_script(docker_backups.config_for(backup, machine))
+            script = build_snapshots_script(
+                docker_backups.config_for(backup, machine), all_snapshots=backup.all_snapshots
+            )
             output = await run_script(machine, secret, timeout, script, run_timeout_seconds=300)
         except _READ_ERRORS as exc:
             return _error(exc)
@@ -1359,6 +1418,7 @@ __all__ = [
     "docker_compose_file",
     "docker_files_task",
     "docker_inventory",
+    "docker_write_compose_file",
     "poll_git_stacks",
     "purge_old_docker_jobs",
     "queue_stack_deploy",

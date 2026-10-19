@@ -16,6 +16,11 @@ the machine terminal — see `api_v1.py`'s module docstring). Secrets never
 come back: a stack's Git token and a backup's password, repository and
 environment are write-only; a stack's compose file and `.env` are returned
 only to `action.terminal`, who may edit them anyway.
+
+Importing backup settings is a web-page convenience only: the web page
+reads an exported file into a pre-filled form, and over the API the same
+is `POST .../backups` with that file's fields plus the password, which an
+export never contains.
 """
 
 from __future__ import annotations
@@ -53,10 +58,11 @@ from app.ssh.docker_cli import (
     is_container_name_valid,
     is_image_id_valid,
     is_image_valid,
+    is_network_name_valid,
     is_project_name_valid,
     is_volume_name_valid,
 )
-from app.ssh.docker_compose import STACK_ACTIONS
+from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.ssh.docker_prune import PruneOptions
 from app.tasks import docker_jobs as docker_tasks
 from app.web.routes.api_v1 import _get_machine_or_404
@@ -123,6 +129,8 @@ def _stack(stack: DockerStack, *, secrets: bool) -> dict[str, Any]:
         "id": str(stack.id),
         "name": stack.name,
         "source": stack.source,
+        # None = the default ~/.local/share/debcontrol/stacks/<name>.
+        "directory": stack.directory,
         "git_url": stack.git_url,
         "git_branch": stack.git_branch,
         "git_compose_path": stack.git_compose_path,
@@ -155,6 +163,7 @@ def _backup(backup: DockerBackup) -> dict[str, Any]:
         "paths": list(backup.paths or []),
         "excludes": list(backup.excludes or []),
         "stop_containers": backup.stop_containers,
+        "all_snapshots": backup.all_snapshots,
         "keep_last": backup.keep_last,
         "keep_daily": backup.keep_daily,
         "keep_weekly": backup.keep_weekly,
@@ -655,6 +664,26 @@ async def docker_networks_api(
     return {"networks": inventory.get("networks") or []}
 
 
+@router.get("/networks/{name}", dependencies=[_view])
+async def docker_network_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """One network as `docker network inspect` describes it: addressing,
+    options, labels and the attached containers with their addresses."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not is_network_name_valid(name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network.")
+    inventory = await _inventory(request, db, machine, ["network_inspect"])
+    for network in inventory.get("network_details") or []:
+        if network.get("name") == name:
+            return {"network": network}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network.")
+
+
 # --- Jobs -----------------------------------------------------------------------
 
 
@@ -718,6 +747,9 @@ class _StackSave(BaseModel):
     # None keeps the stored token, "" removes it.
     git_token: str | None = None
     auto_sync: bool = False
+    # Where the files go on the machine (absolute or ~/...), chosen on
+    # create only; None/"" = the default directory.
+    directory: str | None = Field(default=None, max_length=1024)
     deploy: bool = False
 
 
@@ -732,6 +764,7 @@ def _stack_form(body: _StackSave) -> docker_stacks.StackForm:
         git_compose_path=body.git_compose_path,
         git_token=body.git_token,
         auto_sync=body.auto_sync,
+        directory=body.directory,
     )
 
 
@@ -778,9 +811,12 @@ async def docker_stack_create_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     _check_deploy(body, user, machine)
     form = _stack_form(body)
+    form.directory = form.directory or ""
     errors = form.validate()
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
         errors.append("docker.stack.error.name_taken")
+    if not errors and await docker_stacks.directory_taken(db, machine.id, form.directory or ""):
+        errors.append("docker.stack.error.directory_taken")
     if not errors:
         try:
             await docker_jobs.check_project(db, machine, form.name)
@@ -798,7 +834,12 @@ async def docker_stack_create_api(
         machine,
         "machine.docker.stack.create",
         f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        {"stack": stack.name, "source": stack.source, "git_url": stack.git_url},
+        {
+            "stack": stack.name,
+            "source": stack.source,
+            "git_url": stack.git_url,
+            "directory": stack.directory,
+        },
     )
     answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
     if body.deploy:
@@ -838,6 +879,13 @@ async def docker_stack_save_api(
     _check_deploy(body, user, machine)
     form = _stack_form(body)
     form.name = stack.name
+    # The directory is chosen once, when the stack is made.
+    if (body.directory or None) not in (None, stack.directory):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=["docker.stack.error.directory_fixed"],
+        )
+    form.directory = None
     errors = form.validate()
     if errors:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=errors)
@@ -1168,6 +1216,117 @@ async def docker_project_compose_api(
     return {"project": project, "working_dir": found["working_dir"], "files": files}
 
 
+class _ComposeFileSave(BaseModel):
+    # One of the project's compose files, as GET .../compose lists them.
+    path: str = Field(max_length=1024)
+    content: str
+    # Also run `docker compose up -d` afterwards (needs `action.updates`).
+    up: bool = False
+
+
+@router.put("/projects/{project}/compose", dependencies=[_terminal])
+async def docker_project_compose_save_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    project: str,
+    body: _ComposeFileSave,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Replace one compose file of a project found on the machine. The
+    whole project is checked with `docker compose config` and the old
+    text put back when it fails (422). Not for stacks debcontrol deploys:
+    change those with PUT /stacks/{id}."""
+    if not is_project_name_valid(project):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such project.")
+    if body.up and not user.has_permission(Permission.ACTION_UPDATES):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    content = body.content.replace("\r\n", "\n")
+    if len(content.encode()) > MAX_FILE_BYTES or "\0" in content:
+        raise _bad("The compose file is too large (at most 512 KiB) or contains a NUL byte.")
+    if any(s.name == project for s in await docker_stacks.list_stacks(db, machine.id)):
+        raise _bad("This is a stack debcontrol deploys; change it with PUT /stacks/{id}.")
+    try:
+        await docker_jobs.check_project(db, machine, project)
+    except docker_jobs.ProtectedError as exc:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.project.compose_edit",
+            f'Refused editing a compose file of "{project}" on "{machine.name}": '
+            "debcontrol runs in it",
+            {"project": project, "path": body.path},
+            denied=True,
+        )
+        raise _protected() from exc
+    found = next((p for p in await _projects(request, db, machine) if p["name"] == project), None)
+    files = [str(f) for f in (found or {}).get("config_files") or []]
+    if found is None or body.path not in files:
+        raise _bad("That file is not one of this project's compose files.")
+    working_dir = str(found["working_dir"] or "")
+    app_settings = await get_or_create_app_settings(db)
+    result, error = await wait_task(
+        request,
+        docker_tasks.docker_write_compose_file.delay(
+            str(machine.id), project, body.path, content, working_dir, files
+        ),
+        app_settings.ssh_connect_timeout + 150,
+    )
+    if error is not None or result is None:
+        step = str((result or {}).get("step") or "")
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.project.compose_edit",
+            f'Editing compose file "{body.path}" of "{project}" on "{machine.name}" failed'
+            + (f" ({step})" if step else ""),
+            {"project": project, "path": body.path, "step": step or None},
+            ok=False,
+        )
+        code = (
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+            if step == "config"
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=code, detail=str(error or "?"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.project.compose_edit",
+        f'Edited compose file "{body.path}" of "{project}" on "{machine.name}"',
+        {"project": project, "path": body.path, "up": body.up},
+    )
+    answer: dict[str, Any] = {"saved": True, "path": body.path}
+    if body.up:
+        try:
+            job = await docker_actions.stack_action(
+                db,
+                machine,
+                project,
+                "up",
+                started_by=user.username,
+                working_dir=working_dir,
+                files=files,
+            )
+        except DockerCommandError as exc:
+            raise _bad(str(exc)) from exc
+        answer.update(_queued(job))
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.stack.action",
+            f'Started "up" of Compose project "{project}" on "{machine.name}"',
+            {"project": project, "action": "up"},
+        )
+    return answer
+
+
 # --- Backups ----------------------------------------------------------------------
 
 
@@ -1192,6 +1351,8 @@ class _BackupSave(BaseModel):
     paths: list[str] = Field(default_factory=list, max_length=100)
     excludes: list[str] = Field(default_factory=list, max_length=200)
     stop_containers: bool = False
+    # List every snapshot in the repository (other machines' too).
+    all_snapshots: bool = False
     enabled: bool = True
     keep_last: int | None = None
     keep_daily: int | None = None
@@ -1213,6 +1374,7 @@ def _backup_form(body: _BackupSave) -> docker_backups.BackupForm:
         paths="\n".join(body.paths),
         excludes="\n".join(body.excludes),
         stop_containers=body.stop_containers,
+        all_snapshots=body.all_snapshots,
         enabled=body.enabled,
         keep_last=keep(body.keep_last),
         keep_daily=keep(body.keep_daily),
@@ -1268,6 +1430,20 @@ async def docker_backup_create_api(
         _backup_details(backup),
     )
     return _backup(backup)
+
+
+@router.get("/backups/export", dependencies=[_terminal])
+async def docker_backups_export_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Every backup's settings without secrets, as the web page's Export
+    file. To import one, POST /backups with its fields plus `password`
+    (and the repository when it came back as null: it had credentials)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    backups = await docker_backups.list_backups(db, machine.id)
+    return docker_backups.export_definitions(backups, machine)
 
 
 @router.get("/backups/{backup_id}", dependencies=[_view])
@@ -1433,6 +1609,106 @@ async def docker_backup_restore_api(
             "paths": paths,
             "delete": body.delete,
         },
+    )
+    return answer
+
+
+@router.get("/backups/{backup_id}/export", dependencies=[_terminal])
+async def docker_backup_export_api(
+    machine_id: uuid.UUID,
+    backup_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    backup = await _backup_or_404(db, machine, backup_id)
+    return docker_backups.export_definitions([backup], machine)
+
+
+class _RestoreToRequest(BaseModel):
+    snapshot: str = Field(max_length=64)
+    # A directory inside the snapshot; "/" = all of it.
+    source: str = Field(default="/", max_length=1024)
+    # Exactly one of the two.
+    volume: str = Field(default="", max_length=255)
+    path: str = Field(default="", max_length=1024)
+    delete: bool = False
+    # The machine's name: a restore overwrites what is there.
+    confirm: str = ""
+
+
+@router.post(
+    "/backups/{backup_id}/restore-to",
+    dependencies=[_terminal],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def docker_backup_restore_to_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    backup_id: uuid.UUID,
+    body: _RestoreToRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Restore `source` of any snapshot in the repository (another
+    machine's too) into one volume or host directory."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    backup = await _backup_or_404(db, machine, backup_id)
+    details = {
+        "backup": backup.name,
+        "snapshot": body.snapshot,
+        "source": body.source,
+        "volume": body.volume or None,
+        "path": body.path or None,
+        "delete": body.delete,
+    }
+    if body.confirm.strip() != machine.name:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.backup.restore",
+            f'Refused to restore from Docker backup "{backup.name}": machine name not confirmed',
+            details,
+            denied=True,
+        )
+        raise _bad('A restore needs the machine\'s name in "confirm".')
+    _ready(machine)
+    try:
+        job = await docker_actions.restore_backup_to(
+            db,
+            machine,
+            backup,
+            body.snapshot,
+            started_by=user.username,
+            source=body.source,
+            volume=body.volume,
+            path=body.path,
+            delete=body.delete,
+        )
+    except docker_jobs.ProtectedError as exc:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.backup.restore",
+            f'Refused to restore from Docker backup "{backup.name}": debcontrol uses that volume',
+            details,
+            denied=True,
+        )
+        raise _protected() from exc
+    except DockerCommandError as exc:
+        raise _bad(str(exc)) from exc
+    answer = _queued(job)
+    target = f"volume {body.volume}" if body.volume else body.path
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.backup.restore",
+        f'Started restoring {body.source} of snapshot {body.snapshot[:12]} '
+        f'(Docker backup "{backup.name}") into {target} on "{machine.name}"',
+        details,
     )
     return answer
 

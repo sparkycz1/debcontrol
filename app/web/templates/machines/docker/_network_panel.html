@@ -1,0 +1,97 @@
+{#- One network as `docker network inspect` describes it right now
+    (machines_docker.docker_network_panel). -#}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif network is none %}
+  <div class="alert alert-warn"><p>{{ t(request, "docker.network.not_found") }}</p></div>
+{% else %}
+  {% set n = network %}
+  <section class="panel">
+    <dl class="detail-list">
+      <dt>{{ t(request, "docker.volumes.driver") }}</dt><dd>{{ n.driver or '—' }}</dd>
+      <dt>{{ t(request, "docker.networks.scope") }}</dt><dd>{{ n.scope or '—' }}</dd>
+      <dt>{{ t(request, "docker.network.id") }}</dt><dd><code>{{ n.id[:12] }}</code></dd>
+      {% if n.created %}<dt>{{ t(request, "docker.container.created") }}</dt><dd>{{ n.created[:19] | replace('T', ' ') }}</dd>{% endif %}
+      {% if n.compose_project %}
+        <dt>{{ t(request, "docker.container.stack") }}</dt><dd><a href="{{ docker_base }}/stacks">{{ n.compose_project }}</a></dd>
+      {% endif %}
+      <dt>{{ t(request, "docker.network.flags") }}</dt>
+      <dd>
+        {% if n.builtin %}<span class="badge">{{ t(request, "docker.networks.builtin") }}</span>{% endif %}
+        {% if n.internal %}<span class="badge badge-tag">{{ t(request, "docker.networks.internal") }}</span>{% endif %}
+        {% if n.attachable %}<span class="badge badge-tag">{{ t(request, "docker.network.attachable") }}</span>{% endif %}
+        {% if n.ingress %}<span class="badge badge-tag">{{ t(request, "docker.network.ingress") }}</span>{% endif %}
+        {% if n.ipv6 %}<span class="badge badge-tag">IPv6</span>{% endif %}
+        {% if not (n.builtin or n.internal or n.attachable or n.ingress or n.ipv6) %}<span class="table-muted">—</span>{% endif %}
+      </dd>
+      <dt>{{ t(request, "docker.network.ipam_driver") }}</dt><dd>{{ n.ipam_driver or '—' }}</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "docker.network.addressing") }}</h2>
+    {% if n.subnets %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>{{ t(request, "docker.network.subnet") }}</th>
+            <th>{{ t(request, "docker.network.gateway") }}</th>
+            <th>{{ t(request, "docker.network.ip_range") }}</th>
+          </tr></thead>
+          <tbody>
+            {% for s in n.subnets %}
+              <tr><td><code>{{ s.subnet or '—' }}</code></td><td><code>{{ s.gateway or '—' }}</code></td><td><code>{{ s.ip_range or '—' }}</code></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="hint">{{ t(request, "docker.network.no_subnets") }}</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "docker.networks.containers") }}</h2>
+    {% if n.containers %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="network-containers-table">
+          <thead><tr>
+            <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
+            <th data-sort="text">IPv4</th>
+            <th data-sort="text">IPv6</th>
+            <th data-sort="text">MAC</th>
+          </tr></thead>
+          <tbody>
+            {% for c in n.containers %}
+              <tr>
+                <td>{% if c.name %}<a href="{{ docker_base }}/containers/{{ c.name | urlencode }}">{{ c.name }}</a>{% else %}<code>{{ c.id[:12] }}</code>{% endif %}</td>
+                <td><code>{{ c.ipv4 or '—' }}</code></td>
+                <td><code>{{ c.ipv6 or '—' }}</code></td>
+                <td><code>{{ c.mac or '—' }}</code></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="hint">{{ t(request, "docker.network.no_containers") }}</p>
+    {% endif %}
+  </section>
+
+  {% if n.options %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.network.options") }}</h2>
+      <dl class="detail-list">
+        {% for k, v in n.options.items() %}<dt><code>{{ k }}</code></dt><dd><code>{{ v }}</code></dd>{% endfor %}
+      </dl>
+    </section>
+  {% endif %}
+  {% if n.labels %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.network.labels") }}</h2>
+      <dl class="detail-list">
+        {% for k, v in n.labels.items() %}<dt><code>{{ k }}</code></dt><dd><code>{{ v }}</code></dd>{% endfor %}
+      </dl>
+    </section>
+  {% endif %}
+{% endif %}

@@ -232,6 +232,50 @@ def test_a_full_inventory_is_parsed_and_cross_referenced() -> None:
     assert inventory.df["volumes"]["reclaimable_bytes"] == 0
 
 
+def test_network_inspect_becomes_details() -> None:
+    inspected = [
+        {
+            "Name": "site_default",
+            "Id": "e" * 64,
+            "Created": "2026-10-01T10:00:00.123Z",
+            "Scope": "local",
+            "Driver": "bridge",
+            "EnableIPv6": False,
+            "IPAM": {
+                "Driver": "default",
+                "Config": [{"Subnet": "172.18.0.0/16", "Gateway": "172.18.0.1"}],
+            },
+            "Internal": False,
+            "Attachable": True,
+            "Containers": {
+                "abc": {
+                    "Name": "web",
+                    "IPv4Address": "172.18.0.2/16",
+                    "IPv6Address": "",
+                    "MacAddress": "02:42:ac:12:00:02",
+                }
+            },
+            "Options": {"com.docker.network.bridge.name": "br-site"},
+            "Labels": {"com.docker.compose.project": "site"},
+        },
+        {"Name": "host", "Driver": "host", "IPAM": {"Config": None}, "Containers": {}},
+        {"Name": ""},
+        "garbage",
+    ]
+    inventory = parse_inventory("===NETWORK_INSPECT===\n" + json.dumps(inspected))
+
+    assert [n["name"] for n in inventory.network_details] == ["host", "site_default"]
+    host, site = inventory.network_details
+    assert host["builtin"] is True and host["subnets"] == [] and host["containers"] == []
+    assert site["subnets"] == [{"subnet": "172.18.0.0/16", "gateway": "172.18.0.1", "ip_range": ""}]
+    assert site["attachable"] is True and site["compose_project"] == "site"
+    assert site["options"] == {"com.docker.network.bridge.name": "br-site"}
+    assert site["containers"] == [
+        {"id": "abc", "name": "web", "ipv4": "172.18.0.2/16", "ipv6": "",
+         "mac": "02:42:ac:12:00:02"}
+    ]
+
+
 def test_only_the_sections_asked_for_are_filled() -> None:
     inventory = parse_inventory("===VERSION===\n26.0.0\n===NETWORKS===\n")
 
@@ -245,10 +289,11 @@ def test_only_the_sections_asked_for_are_filled() -> None:
 def test_a_garbled_inventory_is_empty_not_an_error(garbage: str) -> None:
     raw = "\n".join(f"==={name}===\n{garbage}" for name in
                     ("VERSION", "IMAGES", "INSPECT", "VOLUMES", "VOLUME_SIZES", "NETWORKS",
-                     "COMPOSE", "DF"))
+                     "NETWORK_INSPECT", "COMPOSE", "DF"))
     inventory = parse_inventory(raw)
 
     assert inventory.containers == [] and inventory.images == [] and inventory.compose == []
+    assert inventory.network_details == []
 
 
 # --- Prune -------------------------------------------------------------------
@@ -506,7 +551,9 @@ def test_restic_snapshots_newest_first_and_invalid_ids_dropped() -> None:
     snapshots = [
         {"id": "a" * 64, "short_id": "aaaaaaaa", "time": "2026-10-01T02:00:00Z",
          "hostname": "nas", "paths": ["/backup"], "summary": {"total_bytes_processed": 10}},
-        {"id": "b" * 64, "time": "2026-10-02T02:00:00Z", "hostname": "nas", "paths": ["/backup"]},
+        {"id": "b" * 64, "time": "2026-10-02T02:00:00Z", "hostname": "nas", "paths": ["/backup"],
+         "tags": ["debcontrol", "dc-1", 5]},
+        {"id": "c" * 64, "time": "2026-09-01T02:00:00Z", "paths": 5, "tags": "x"},
         {"id": "--delete", "time": "2026-10-03T02:00:00Z"},
         "not a dict",
     ]
@@ -514,8 +561,10 @@ def test_restic_snapshots_newest_first_and_invalid_ids_dropped() -> None:
 
     parsed = restic.parse_snapshots(raw)
 
-    assert [s["id"] for s in parsed] == ["b" * 64, "a" * 64]
+    assert [s["id"] for s in parsed] == ["b" * 64, "a" * 64, "c" * 64]
     assert parsed[0]["short_id"] == "bbbbbbbb"
+    assert parsed[0]["tags"] == ["debcontrol", "dc-1"]
+    assert (parsed[2]["paths"], parsed[2]["tags"]) == ([], [])
     assert (parsed[1]["size_bytes"], parsed[0]["size_bytes"]) == (10, None)
 
 

@@ -9,7 +9,11 @@
       <p class="hint">{{ t(request, "docker.backups.hint") }}</p>
     </div>
     {% if can_terminal %}
-      <a class="button" href="{{ docker_base }}/backups/new">{{ t(request, "docker.backups.new") }}</a>
+      <div class="page-header-actions">
+        <a class="button" href="{{ docker_base }}/backups/new">{{ t(request, "docker.backups.new") }}</a>
+        <a class="button button-secondary" href="{{ docker_base }}/backups/import">{{ t(request, "docker.backups.import") }}</a>
+        {% if backups %}<a class="button button-secondary" href="{{ docker_base }}/backups/export" download>{{ t(request, "docker.backups.export_all") }}</a>{% endif %}
+      </div>
     {% endif %}
   </div>
   {% if backups %}

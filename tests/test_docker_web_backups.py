@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.security import decrypt_secret
+from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.docker import DockerBackup, DockerJobKind
 from app.db.models.role import Permission
 from tests.test_docker_web_support import (
     BACKUP_ENV_SECRET,
     BACKUP_PASSWORD_SECRET,
+    BACKUP_REPO_PASSWORD,
     MACHINE_NAME,
     RUN_JOB_TASK,
     SNAPSHOT_ID,
@@ -414,3 +415,183 @@ async def test_snapshots_panel_asks_the_worker_and_shows_its_error(
     assert "wrong password or no key found" in response.text
     assert celery_calls.names == [SNAPSHOTS_TASK]
     assert celery_calls[0][1] == (str(backup_id),)
+
+
+# --- Export, import, other hosts' snapshots ---------------------------------
+
+
+async def test_export_has_the_settings_but_no_secret(client, db_session_factory):
+    machine_id = await make_docker_machine(db_session_factory)
+    await add_backup(db_session_factory, machine_id)
+    await add_backup(db_session_factory, machine_id, name="local")
+    async with db_session_factory() as session:
+        from sqlalchemy import select
+
+        local = (
+            await session.execute(select(DockerBackup).where(DockerBackup.name == "local"))
+        ).scalar_one()
+        local.repository_encrypted = encrypt_secret("/srv/restic")
+        local.repository_display = "/srv/restic"
+        await session.commit()
+
+    response = await client.get(f"/machines/{machine_id}/docker/backups/export")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    for secret in (BACKUP_PASSWORD_SECRET, "backup-env-secret-value", BACKUP_REPO_PASSWORD):
+        assert secret not in response.text
+    data = response.json()
+    assert data["kind"] == "debcontrol.docker-backups" and data["machine"] == MACHINE_NAME
+    by_name = {b["name"]: b for b in data["backups"]}
+    assert by_name["nightly"]["repository"] is None
+    assert by_name["nightly"]["repository_display"] == "rest:https://***@restic.example.test/repo"
+    assert by_name["nightly"]["env_names"] == ["AWS_SECRET_ACCESS_KEY"]
+    assert by_name["local"]["repository"] == "/srv/restic"
+    assert by_name["nightly"]["volumes"] == ["site_data"]
+    one = await client.get(
+        f"/machines/{machine_id}/docker/backups/{local.id}/export"
+    )
+    assert [b["name"] for b in one.json()["backups"]] == ["local"]
+
+
+async def test_import_fills_in_the_new_backup_form_and_saves_nothing(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    await add_backup(db_session_factory, machine_id)
+    exported = (await client.get(f"/machines/{machine_id}/docker/backups/export")).text
+    other_id = await make_docker_machine(db_session_factory, name="newhost")
+    csrf = await csrf_token(client, other_id)
+    url = f"/machines/{other_id}/docker/backups/import"
+
+    assert (await client.get(url)).status_code == 200
+    response = await client.post(
+        url,
+        data={"csrf_token": csrf},
+        files={"file": ("backups.json", exported.encode(), "application/json")},
+    )
+
+    assert response.status_code == 200
+    assert 'name="name" required maxlength="64" value="nightly"' in response.text
+    assert "AWS_SECRET_ACCESS_KEY=" in response.text
+    assert 'name="all_snapshots" value="1" checked' in response.text
+    assert "rest:https://***@restic.example.test/repo" in response.text
+    async with db_session_factory() as session:
+        from app.services import docker_backups
+
+        assert await docker_backups.list_backups(session, other_id) == []
+
+
+async def test_import_of_several_lists_them_and_bad_files_are_refused(
+    client, db_session_factory
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    await add_backup(db_session_factory, machine_id)
+    await add_backup(db_session_factory, machine_id, name="weekly")
+    exported = (await client.get(f"/machines/{machine_id}/docker/backups/export")).text
+    csrf = await csrf_token(client, machine_id)
+    url = f"/machines/{machine_id}/docker/backups/import"
+
+    listed = await client.post(
+        url, data={"csrf_token": csrf}, files={"file": ("b.json", exported.encode())}
+    )
+    assert listed.status_code == 200
+    assert listed.text.count('name="definition"') == 2
+    picked = await client.post(
+        url, data={"csrf_token": csrf, "definition": '{"name": "weekly", "volumes": ["v1"]}'}
+    )
+    assert 'value="weekly"' in picked.text
+
+    for content in (b"not json", b'{"kind": "other"}', b'{"kind": "debcontrol.docker-backups",'
+                    b' "version": 99, "backups": []}', b"x" * 300_000):
+        refused = await client.post(
+            url, data={"csrf_token": csrf}, files={"file": ("b.json", content)}
+        )
+        assert refused.status_code == 400
+        assert 'class="alert alert-error"' in refused.text
+    no_csrf = await client.post(url, files={"file": ("b.json", exported.encode())})
+    assert no_csrf.status_code == 403
+
+
+async def test_every_snapshot_can_be_listed_and_saved(client, db_session_factory):
+    machine_id = await make_docker_machine(db_session_factory)
+    csrf = await csrf_token(client, machine_id)
+
+    await client.post(
+        f"/machines/{machine_id}/docker/backups",
+        data=_backup_form(csrf, all_snapshots="1"),
+    )
+
+    async with db_session_factory() as session:
+        from sqlalchemy import select
+
+        backup = (await session.execute(select(DockerBackup))).scalar_one()
+    assert backup.all_snapshots is True
+
+
+async def test_snapshots_of_other_hosts_offer_restore_into_a_volume(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    backup_id = await add_backup(db_session_factory, machine_id)
+    async with db_session_factory() as session:
+        row = await session.get(DockerBackup, backup_id)
+        assert row is not None
+        row.all_snapshots = True
+        await session.commit()
+    foreign = "fedcba98" * 8
+    celery_calls.result_for[SNAPSHOTS_TASK] = {
+        "ok": True,
+        "snapshots": [
+            {"id": SNAPSHOT_ID, "short_id": SNAPSHOT_ID[:8], "time": "2026-10-17T03:00:00Z",
+             "host": MACHINE_NAME, "tags": ["debcontrol", f"dc-{backup_id}"],
+             "paths": ["/backup"], "size_bytes": 1},
+            {"id": foreign, "short_id": foreign[:8], "time": "2026-10-01T03:00:00Z",
+             "host": "oldbox", "tags": [], "paths": ["/home/kuba"], "size_bytes": 2},
+        ],
+    }
+
+    panel = await client.get(f"/machines/{machine_id}/docker/backups/{backup_id}/snapshots")
+
+    assert "oldbox" in panel.text
+    # In place only for debcontrol's layout; into a volume or directory for all.
+    assert panel.text.count('/restore"') == 1
+    assert panel.text.count('/restore-to"') == 2
+
+
+async def test_restore_to_queues_a_job_for_one_target(client, db_session_factory, celery_calls):
+    machine_id = await make_docker_machine(db_session_factory)
+    backup_id = await add_backup(db_session_factory, machine_id)
+    csrf = await csrf_token(client, machine_id)
+    url = f"/machines/{machine_id}/docker/backups/{backup_id}/restore-to"
+    form = {
+        "csrf_token": csrf,
+        "snapshot": SNAPSHOT_ID,
+        "source": "/backup/volumes/old_data/",
+        "target_kind": "volume",
+        "target": "new_data",
+    }
+
+    refused = await client.post(url, data=form)
+    assert refused.status_code == 303
+    assert await jobs_of(db_session_factory, machine_id) == []
+    [denied] = await audit_entries(db_session_factory, "machine.docker.backup.restore")
+    assert denied.outcome == AuditOutcome.DENIED
+
+    queued = await client.post(url, data={**form, "confirm_name": MACHINE_NAME})
+    [job] = await jobs_of(db_session_factory, machine_id)
+    assert queued.headers["location"] == f"/machines/{machine_id}/docker/jobs/{job.id}"
+    assert job.kind == DockerJobKind.BACKUP_RESTORE
+    assert job.params == {
+        "mode": "to",
+        "snapshot": SNAPSHOT_ID,
+        "source": "/backup/volumes/old_data",
+        "volume": "new_data",
+        "path": "",
+        "delete": False,
+    }
+    for bad in ({"source": "../x"}, {"target_kind": "path", "target": "/proc/x"},
+                {"target": "bad volume"}, {"snapshot": "nope"}):
+        response = await client.post(url, data={**form, "confirm_name": MACHINE_NAME, **bad})
+        assert response.status_code == 303
+    assert len(await jobs_of(db_session_factory, machine_id)) == 1

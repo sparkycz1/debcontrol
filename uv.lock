@@ -659,7 +659,7 @@ wheels = [
 
 [[package]]
 name = "debcontrol"
-version = "0.119.1"
+version = "0.120.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },

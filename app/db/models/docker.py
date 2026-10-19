@@ -46,6 +46,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -196,6 +197,10 @@ class DockerStack(Base):
     # The Compose project name (`docker_cli.is_project_name_valid`).
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Where the stack's files are on the machine, chosen when it was made
+    # (`docker_compose.normalize_stack_directory`); None = the default
+    # `~/.local/share/debcontrol/stacks/<name>`.
+    directory: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Editor: the compose file. Git: the compose file deployed last.
     compose_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The `.env` file, encrypted.
@@ -254,6 +259,11 @@ class DockerBackup(Base):
     excludes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     # Stop the containers using the volumes while the backup runs.
     stop_containers: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # List every snapshot in the repository, not just this backup's: for a
+    # repository brought over from another machine or an older install.
+    all_snapshots: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     keep_last: Mapped[int | None] = mapped_column(Integer, nullable=True)
     keep_daily: Mapped[int | None] = mapped_column(Integer, nullable=True)
     keep_weekly: Mapped[int | None] = mapped_column(Integer, nullable=True)

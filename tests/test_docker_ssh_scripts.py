@@ -22,6 +22,7 @@ import pytest
 
 from app.ssh import detached_jobs
 from app.ssh.docker_cli import (
+    BUSYBOX_IMAGE,
     DOCKER_ACCESS_PROBE,
     EXIT_MARKER,
     DockerCommandError,
@@ -37,6 +38,8 @@ from app.ssh.docker_compose import (
     build_remote_head_command,
     build_remove_script,
     build_stack_action_script,
+    build_write_file_script,
+    normalize_stack_directory,
 )
 from app.ssh.docker_files import (
     Target,
@@ -64,7 +67,9 @@ from app.ssh.restic import (
     build_check_script,
     build_forget_script,
     build_restore_script,
+    build_restore_to_script,
     build_snapshots_script,
+    normalize_snapshot_path,
 )
 
 _OLD = "sha256:" + "1" * 64
@@ -255,6 +260,173 @@ def test_removing_a_stack_deletes_volumes_only_when_asked() -> None:
     assert 'rm -rf -- "$dir"' in keep
     with pytest.raises(DockerCommandError):
         build_remove_script("../web", volumes=False)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", ""),
+        ("  ", ""),
+        ("/opt/my-app", "/opt/my-app"),
+        ("/opt/my app/", "/opt/my app"),
+        ("//srv//apps/./web", "/srv/apps/web"),
+        ("~/stacks/web", "~/stacks/web"),
+        ("/home/kuba/apps", "/home/kuba/apps"),
+        ("/var/lib/apps/web", "/var/lib/apps/web"),
+        ("/tmp/x", "/tmp/x"),  # noqa: S108 - a path string, never used
+        ("relative/dir", None),
+        ("~", None),
+        ("~root/x", None),
+        ("/opt/../etc", None),
+        ("/", None),
+        ("/home", None),
+        ("/opt", None),
+        ("/etc/web", None),
+        ("/usr/local/web", None),
+        ("/var/lib/docker/volumes/x", None),
+        ("/opt/$(id)", None),
+        ("/opt/a'b", None),
+        ("/opt/a\nb", None),
+        ("/-rf", None),
+        ("/" + "x" * 1024, None),
+    ],
+)
+def test_a_stack_directory_is_absolute_plain_and_not_a_system_one(
+    value: str, expected: str | None
+) -> None:
+    assert normalize_stack_directory(value) == expected
+
+
+def test_a_stack_goes_into_its_chosen_directory(tmp_path: Path) -> None:
+    target = tmp_path / "apps" / "my web"
+    script = build_deploy_script(
+        "web", compose="services: {}\n", pull=False, directory=str(target)
+    )
+
+    done = _sh(script, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert (target / "compose.yaml").read_text() == "services: {}\n"
+    assert (target / ".debcontrol-stack").read_text() == "web\n"
+    assert str(target / "compose.yaml") in _args(done.stdout)
+    # Deploying again into its own directory is fine.
+    assert _sh(script, tmp_path).returncode == 0
+    # A home-relative directory lands under $HOME.
+    home = _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                                   directory="~/stacks/web"), tmp_path)
+    assert home.returncode == 0, home.stderr
+    assert (tmp_path / "stacks/web/compose.yaml").exists()
+
+
+def test_a_chosen_directory_with_other_files_is_refused(tmp_path: Path) -> None:
+    target = tmp_path / "busy"
+    target.mkdir()
+    (target / "compose.yaml").write_text("theirs\n")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / ".debcontrol-stack").write_text("api\n")
+
+    for directory in (target, other):
+        done = _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                                       directory=str(directory)), tmp_path)
+        assert done.returncode == 1
+        assert "@@DC_FAILED directory_not_empty" in done.stdout
+    assert (target / "compose.yaml").read_text() == "theirs\n"
+    assert (other / ".debcontrol-stack").read_text() == "api\n"
+    with pytest.raises(DockerCommandError):
+        build_deploy_script("web", compose="services: {}\n", directory="/etc/web")
+
+
+def test_removing_a_stack_in_a_chosen_directory_keeps_other_files(tmp_path: Path) -> None:
+    target = tmp_path / "apps"
+    _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                            directory=str(target)), tmp_path)
+    (target / "data.txt").write_text("keep me\n")
+
+    done = _sh(build_remove_script("web", volumes=False, directory=str(target)), tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert sorted(p.name for p in target.iterdir()) == ["data.txt"]
+    # Once nothing else is left, the directory goes too.
+    (target / "data.txt").unlink()
+    _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                            directory=str(target)), tmp_path)
+    _sh(build_remove_script("web", volumes=False, directory=str(target)), tmp_path)
+    assert not target.exists()
+    # Not this stack's directory (no marker of its own): nothing is deleted.
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    (foreign / "compose.yaml").write_text("theirs\n")
+    _sh(build_remove_script("web", volumes=False, directory=str(foreign)), tmp_path)
+    assert (foreign / "compose.yaml").exists()
+
+
+def _sh_input(
+    script: str, home: Path, stdin: str, prelude: str = _ECHO_DOCKER
+) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "HOME": str(home), "TMPDIR": str(home)}
+    return subprocess.run(  # noqa: S603 - the script under test, run locally
+        ["sh", "-c", prelude + script],  # noqa: S607
+        capture_output=True,
+        text=True,
+        env=env,
+        input=stdin,
+        timeout=30,
+    )
+
+
+def test_a_compose_file_is_rewritten_in_place_and_checked(tmp_path: Path) -> None:
+    compose = tmp_path / "my app" / "compose.yaml"
+    compose.parent.mkdir()
+    compose.write_text("services: {}\n")
+    compose.chmod(0o640)
+    new = "services:\n  web:\n    image: nginx\n    command: echo $HOME `id` '$(x)'\n"
+    script = build_write_file_script(
+        "app", str(compose), working_dir=str(compose.parent), files=[str(compose)]
+    )
+
+    done = _sh_input(script, tmp_path, new)
+
+    assert done.returncode == 0, done.stderr
+    assert compose.read_text() == new
+    assert stat.S_IMODE(compose.stat().st_mode) == 0o640
+    args = _args(done.stdout)
+    assert args[:5] == ["compose", "-p", "app", "--project-directory", str(compose.parent)]
+    assert args[-2:] == ["config", "-q"]
+    assert done.stdout.splitlines()[-1] == "@@DC_DONE"
+
+
+def test_a_compose_file_compose_rejects_is_put_back(tmp_path: Path) -> None:
+    compose = tmp_path / "compose.yaml"
+    compose.write_text("services: {}\n")
+    failing = (
+        "dc_d() { case \"$*\" in *config*) echo 'yaml: line 2: bad'; return 1;; esac; }; "
+        "D=dc_d\n"
+    )
+    script = build_write_file_script("app", str(compose), files=[str(compose)])
+
+    done = _sh_input(script, tmp_path, "services: [broken\n", prelude=failing)
+
+    assert done.returncode == 1
+    assert "@@DC_FAILED config" in done.stdout
+    assert "yaml: line 2: bad" in done.stdout
+    assert compose.read_text() == "services: {}\n"
+    too_big = _sh_input(script, tmp_path, "x" * (MAX_FILE_BYTES + 1))
+    assert "@@DC_FAILED write" in too_big.stdout
+    assert compose.read_text() == "services: {}\n"
+
+
+def test_writing_a_compose_file_needs_one_of_the_projects_files() -> None:
+    with pytest.raises(DockerCommandError):
+        build_write_file_script("app", "/etc/passwd", files=["/srv/app/compose.yaml"])
+    for bad in ("compose.yml", "/a:/b", "/a\0b"):
+        with pytest.raises(DockerCommandError):
+            build_write_file_script("app", bad, files=[bad])
+    with pytest.raises(DockerCommandError):
+        build_write_file_script("bad;name", "/srv/c.yaml", files=["/srv/c.yaml"])
+    # Not writable as the account: through a helper container, from stdin.
+    script = build_write_file_script("app", "/srv/c.yaml", files=["/srv/c.yaml"])
+    assert f"-i -v /srv/c.yaml:/dc-file {BUSYBOX_IMAGE} sh -c 'cat > /dc-file'" in script
 
 
 def test_the_remote_head_check_keeps_the_token_off_the_command_line() -> None:
@@ -631,6 +803,61 @@ def test_a_restore_mounts_writable_always_stops_users_and_deletes_only_when_aske
             build_restore_script(config, snapshot, delete=False)
 
 
+# Like `_RESTIC_DOCKER`, but `run` prints every argument (to see restic's).
+_RESTIC_ARGS_DOCKER = (
+    "dc_d() { case \"$1\" in "
+    "ps) echo c1;; stop|start) echo \"$1 $*\" >&2;; "
+    "run) for a in \"$@\"; do printf '<%s>\\n' \"$a\"; done;; "
+    "esac; }; D=dc_d\n"
+)
+
+
+def test_restore_to_puts_one_part_of_a_snapshot_into_one_volume(tmp_path: Path) -> None:
+    config = _restic()
+
+    done = _sh(
+        build_restore_to_script(
+            config, "a1b2c3d4", source="/backup/volumes/old data", volume="newdata", delete=True
+        ),
+        tmp_path,
+        prelude=_RESTIC_ARGS_DOCKER,
+    )
+
+    assert done.returncode == 0, done.stderr
+    args = _args(done.stdout)
+    assert "newdata:/restore" in args
+    assert "pgdata:/backup/volumes/pgdata" not in " ".join(args)
+    assert args[-5:] == ["restore", "a1b2c3d4:/backup/volumes/old data", "--target", "/restore",
+                         "--delete"]
+    assert "stop stop c1" in done.stderr and "start start c1" in done.stderr
+    assert "@@DC_DONE" in done.stdout
+
+
+def test_restore_to_a_directory_of_a_whole_snapshot() -> None:
+    script = build_restore_to_script(
+        _restic(), "latest", source="/", path="/srv/restored", delete=False
+    )
+
+    assert "-v /srv/restored:/restore -v /srv/restic:/srv/restic" in script
+    assert "R restore latest --target /restore ||" in script
+    assert "@@DC_STEP stop" not in script
+    for kwargs in (
+        {"source": "/", "volume": "a", "path": "/srv/x"},
+        {"source": "/"},
+        {"source": "relative", "volume": "a"},
+        {"source": "/a/../b", "volume": "a"},
+        {"source": "/a:b", "volume": "a"},
+        {"source": "/", "volume": "bad name"},
+        {"source": "/", "path": "/proc/x"},
+    ):
+        with pytest.raises(DockerCommandError):
+            build_restore_to_script(_restic(), "latest", delete=False, **kwargs)
+    with pytest.raises(DockerCommandError):
+        build_restore_to_script(_restic(), "x; id", source="/", volume="a", delete=False)
+    assert normalize_snapshot_path("/backup//volumes/x/") == "/backup/volumes/x"
+    assert normalize_snapshot_path("/") == "/"
+
+
 def test_restic_maintenance_scripts() -> None:
     config = _restic()
 
@@ -639,6 +866,8 @@ def test_restic_maintenance_scripts() -> None:
     assert "read-data-subset" not in build_check_script(config, read_data_percent=500)
     assert "--keep-last 3 --prune" in build_forget_script(config, keep={"last": 3})
     assert f"R snapshots --json --tag {config.tag}" in build_snapshots_script(config)
+    every = build_snapshots_script(config, all_snapshots=True)
+    assert "R snapshots --json\n" in every and "--tag" not in every
     with pytest.raises(DockerCommandError):
         build_forget_script(config, keep={})
     with pytest.raises(DockerCommandError):

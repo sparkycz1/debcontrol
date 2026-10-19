@@ -251,6 +251,33 @@ async def test_stack_save_keeps_name_and_env_when_omitted(client, db_session_fac
     assert cleared.json()["stack"]["env"] == ""
 
 
+async def test_stack_directory_is_chosen_on_create_only(client, db_session_factory):
+    headers = await _api_token(client)
+    machine_id = await docker_machine(client, db_session_factory, headers)
+
+    created = await create_stack(client, machine_id, headers, directory="~/apps/shop")
+    assert created.status_code == 201, created.text
+    stack = created.json()["stack"]
+    assert stack["directory"] == "~/apps/shop"
+    url = f"{base(machine_id)}/stacks/{stack['id']}"
+
+    same = await client.put(url, json={"compose": COMPOSE, "directory": "~/apps/shop"},
+                            headers=headers)
+    assert same.status_code == 200
+    moved = await client.put(url, json={"compose": COMPOSE, "directory": "/opt/shop"},
+                             headers=headers)
+    assert moved.status_code == 422
+    assert moved.json()["detail"] == ["docker.stack.error.directory_fixed"]
+
+    invalid = await create_stack(client, machine_id, headers, name="other", directory="/usr/x")
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == ["docker.stack.error.directory"]
+    taken = await create_stack(client, machine_id, headers, name="other", directory="~/apps/shop")
+    assert taken.json()["detail"] == ["docker.stack.error.directory_taken"]
+    default = await create_stack(client, machine_id, headers, name="plain")
+    assert default.json()["stack"]["directory"] is None
+
+
 async def test_stack_deploy(client, db_session_factory, monkeypatch):
     headers = await _api_token(client)
     machine_id = await docker_machine(client, db_session_factory, headers)
@@ -548,3 +575,55 @@ async def test_create_with_deploy_without_updates_creates_nothing(
     response = await create_stack(client, machine_id, terminal, deploy=True)
     assert response.status_code == 403
     assert (await client.get(f"{base(machine_id)}/stacks", headers=headers)).json() == []
+
+
+WRITE_COMPOSE = "app.tasks.docker_jobs.docker_write_compose_file"
+
+
+async def test_project_compose_file_save(client, login_as, db_session_factory, celery_calls):
+    headers = await _api_token(client)
+    machine_id = await docker_machine(client, db_session_factory, headers)
+    celery_calls.result_for[INVENTORY] = PROJECT_INVENTORY
+    celery_calls.result_for[WRITE_COMPOSE] = {"ok": True}
+    url = f"{base(machine_id)}/projects/shop/compose"
+    body = {"path": "/srv/shop/compose.yaml", "content": COMPOSE}
+
+    saved = await client.put(url, json=body, headers=headers)
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"saved": True, "path": "/srv/shop/compose.yaml"}
+    [write] = [args for name, args, _kw in celery_calls if name == WRITE_COMPOSE]
+    assert write == (
+        machine_id, "shop", "/srv/shop/compose.yaml", COMPOSE, "/srv/shop",
+        ["/srv/shop/compose.yaml"],
+    )
+    assert ("machine.docker.project.compose_edit", "success") in await audit_actions(
+        db_session_factory
+    )
+
+    applied = await client.put(url, json={**body, "up": True}, headers=headers)
+    assert applied.status_code == 200
+    assert applied.json()["job"]["kind"] == DockerJobKind.STACK_ACTION
+
+    celery_calls.result_for[WRITE_COMPOSE] = {"ok": False, "step": "config", "error": "bad"}
+    rejected = await client.put(url, json=body, headers=headers)
+    assert rejected.status_code == 422
+    assert ("machine.docker.project.compose_edit", "failure") in await audit_actions(
+        db_session_factory
+    )
+
+    other = await client.put(url, json={**body, "path": "/etc/passwd"}, headers=headers)
+    assert other.status_code == 400
+    invalid = await client.put(f"{base(machine_id)}/projects/Bad;x/compose", json=body,
+                               headers=headers)
+    assert invalid.status_code == 404
+
+    # A stack debcontrol deploys is changed through /stacks.
+    await create_stack(client, machine_id, headers)
+    managed = await client.put(url, json=body, headers=headers)
+    assert managed.status_code == 400
+
+    viewer = await headers_for(
+        client, login_as, {Permission.MACHINE_VIEW, Permission.ACTION_TERMINAL}
+    )
+    no_updates = await client.put(url, json={**body, "up": True}, headers=viewer)
+    assert no_updates.status_code == 403

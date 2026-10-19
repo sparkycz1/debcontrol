@@ -31,6 +31,7 @@ from app.ssh.docker_compose import (
     is_branch_valid,
     is_git_url_valid,
     normalize_compose_path,
+    normalize_stack_directory,
 )
 
 WEBHOOK_PREFIX = "/hooks/docker/"
@@ -74,6 +75,16 @@ async def get_stack(
     return stack if stack is not None and stack.machine_id == machine_id else None
 
 
+async def directory_taken(db: AsyncSession, machine_id: uuid.UUID, directory: str) -> bool:
+    """Another stack of the machine already uses this chosen directory."""
+    if not directory:
+        return False
+    query = select(DockerStack.id).where(
+        DockerStack.machine_id == machine_id, DockerStack.directory == directory
+    )
+    return (await db.execute(query.limit(1))).first() is not None
+
+
 async def name_taken(
     db: AsyncSession, machine_id: uuid.UUID, name: str, exclude: uuid.UUID | None = None
 ) -> bool:
@@ -114,6 +125,9 @@ class StackForm:
     # None = keep the stored token; "" = remove it.
     git_token: str | None = None
     auto_sync: bool = False
+    # Where the files go on the machine, chosen once when the stack is
+    # made: "" = the default directory; None = keep what is stored.
+    directory: str | None = None
     errors: list[str] = field(default_factory=list)
 
     def validate(self) -> list[str]:
@@ -125,6 +139,12 @@ class StackForm:
             errors.append("docker.stack.error.source")
         if self.env is not None and len(self.env.encode()) > MAX_FILE_BYTES:
             errors.append("docker.stack.error.env")
+        if self.directory is not None:
+            directory = normalize_stack_directory(self.directory)
+            if directory is None:
+                errors.append("docker.stack.error.directory")
+            else:
+                self.directory = directory
         if self.source == StackSource.EDITOR:
             try:
                 validate_compose(self.compose)
@@ -151,6 +171,8 @@ class StackForm:
         """Copy onto `stack` (call `validate` first)."""
         stack.name = self.name
         stack.source = self.source
+        if self.directory is not None:
+            stack.directory = self.directory or None
         if self.env is not None:
             stack.env_encrypted = encrypt_secret(self.env) if self.env.strip() else None
         if self.source == StackSource.EDITOR:
@@ -202,9 +224,14 @@ def deploy_script(stack: DockerStack, *, pull: bool = True) -> str:
     """The job script deploying `stack` as stored — carries its secrets,
     so only ever sent on standard input (`app.ssh.detached_jobs`)."""
     env = env_text(stack)
+    directory = stack.directory or ""
     if stack.source == StackSource.GIT:
-        return build_deploy_script(stack.name, git=git_source(stack), env=env, pull=pull)
-    return build_deploy_script(stack.name, compose=stack.compose_content or "", env=env, pull=pull)
+        return build_deploy_script(
+            stack.name, git=git_source(stack), env=env, pull=pull, directory=directory
+        )
+    return build_deploy_script(
+        stack.name, compose=stack.compose_content or "", env=env, pull=pull, directory=directory
+    )
 
 
 def is_changed(stack: DockerStack) -> bool:
