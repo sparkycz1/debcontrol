@@ -35,6 +35,7 @@ from app.ssh.docker_cli import (
     is_container_name_valid,
     is_image_id_valid,
     is_image_valid,
+    is_network_name_valid,
 )
 from app.ssh.docker_prune import PruneOptions
 from app.tasks import docker_jobs as docker_tasks
@@ -712,6 +713,52 @@ async def docker_networks_panel(
             "machine": machine,
             "docker_base": docker_base(machine),
             "networks": (inventory or {}).get("networks") or [],
+            "error": error,
+        },
+    )
+
+
+@router.get("/{machine_id}/docker/networks/{name}")
+async def docker_network_page(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_network_name_valid(name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network.")
+    return render(
+        request, "machines/docker/network.html", machine, current_user, "networks", {"name": name}
+    )
+
+
+@router.get("/{machine_id}/docker/networks/{name}/panel")
+async def docker_network_panel(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The network as `docker network inspect` describes it right now."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_network_name_valid(name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network.")
+    inventory, error = await _inventory(request, db, machine, ["network_inspect"])
+    network = next(
+        (n for n in (inventory or {}).get("network_details") or [] if n.get("name") == name),
+        None,
+    )
+    return render_partial(
+        request,
+        "machines/docker/_network_panel.html",
+        {
+            "machine": machine,
+            "docker_base": docker_base(machine),
+            "network": network,
+            "name": name,
             "error": error,
         },
     )

@@ -53,6 +53,7 @@ from app.ssh.docker_cli import (
     is_container_name_valid,
     is_image_id_valid,
     is_image_valid,
+    is_network_name_valid,
     is_project_name_valid,
     is_volume_name_valid,
 )
@@ -653,6 +654,26 @@ async def docker_networks_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     inventory = await _inventory(request, db, machine, ["networks", "inspect"])
     return {"networks": inventory.get("networks") or []}
+
+
+@router.get("/networks/{name}", dependencies=[_view])
+async def docker_network_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """One network as `docker network inspect` describes it: addressing,
+    options, labels and the attached containers with their addresses."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not is_network_name_valid(name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network.")
+    inventory = await _inventory(request, db, machine, ["network_inspect"])
+    for network in inventory.get("network_details") or []:
+        if network.get("name") == name:
+            return {"network": network}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such network.")
 
 
 # --- Jobs -----------------------------------------------------------------------

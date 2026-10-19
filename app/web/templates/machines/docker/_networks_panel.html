@@ -14,7 +14,7 @@
       <tbody>
         {% for n in networks %}
           <tr>
-            <td><code>{{ n.name }}</code>
+            <td><a href="{{ docker_base }}/networks/{{ n.name | urlencode }}"><code>{{ n.name }}</code></a>
               {% if n.builtin %} <span class="badge">{{ t(request, "docker.networks.builtin") }}</span>{% endif %}
               {% if n.internal %} <span class="badge badge-tag">{{ t(request, "docker.networks.internal") }}</span>{% endif %}
             </td>

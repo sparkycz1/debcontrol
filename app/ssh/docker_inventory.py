@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from app.db.models.machine import Machine
-from app.ssh.docker_cli import DockerCommandError, as_dict, run_script
+from app.ssh.docker_cli import DockerCommandError, as_dict, as_list, run_script
 from app.ssh.monitoring import (
     COMPOSE_PROJECT_LABEL,
     COMPOSE_SERVICE_LABEL,
@@ -40,6 +40,8 @@ _SECTIONS: dict[str, str] = {
     "volumes": "$D volume ls --format '{{json .}}' 2>/dev/null",
     "volume_sizes": "$D system df -v --format '{{json .Volumes}}' 2>/dev/null",
     "networks": "$D network ls --no-trunc --format '{{json .}}' 2>/dev/null",
+    "network_inspect": 'ids="$($D network ls -q --no-trunc 2>/dev/null)"; '
+    '[ -z "$ids" ] || $D network inspect $ids 2>/dev/null',
     "compose": "$D compose ls -a --format json 2>/dev/null",
     "df": "$D system df --format '{{json .}}' 2>/dev/null",
 }
@@ -118,6 +120,7 @@ class Inventory:
     containers: list[dict[str, Any]] = field(default_factory=list)
     volumes: list[dict[str, Any]] = field(default_factory=list)
     networks: list[dict[str, Any]] = field(default_factory=list)
+    network_details: list[dict[str, Any]] = field(default_factory=list)
     compose: list[dict[str, Any]] = field(default_factory=list)
     df: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -309,6 +312,74 @@ def _parse_networks(text: str, containers: list[dict[str, Any]]) -> list[dict[st
     return networks
 
 
+def parse_network(row: dict[str, Any]) -> dict[str, Any] | None:
+    """One `docker network inspect` entry: addressing (IPAM), options,
+    labels and the containers attached with their addresses."""
+    name = _s(row.get("Name"), 255)
+    if not name:
+        return None
+    ipam = as_dict(row.get("IPAM"))
+    subnets = [
+        {
+            "subnet": _s(item.get("Subnet"), 64),
+            "gateway": _s(item.get("Gateway"), 64),
+            "ip_range": _s(item.get("IPRange"), 64),
+        }
+        for item in as_list(ipam.get("Config"))
+        if isinstance(item, dict)
+    ]
+    containers: list[dict[str, str]] = []
+    raw_containers = row.get("Containers")
+    if isinstance(raw_containers, dict):
+        for container_id, member in raw_containers.items():
+            if not isinstance(member, dict):
+                continue
+            containers.append(
+                {
+                    "id": _s(container_id, 64),
+                    "name": _s(member.get("Name"), 255),
+                    "ipv4": _s(member.get("IPv4Address"), 64),
+                    "ipv6": _s(member.get("IPv6Address"), 64),
+                    "mac": _s(member.get("MacAddress"), 32),
+                }
+            )
+    containers.sort(key=lambda c: c["name"])
+    options = row.get("Options")
+    labels = _labels(row.get("Labels"))
+    return {
+        "id": _s(row.get("Id"), 64),
+        "name": name,
+        "driver": _s(row.get("Driver"), 64),
+        "scope": _s(row.get("Scope"), 16),
+        "created": _s(row.get("Created"), 40),
+        "internal": bool(row.get("Internal")),
+        "attachable": bool(row.get("Attachable")),
+        "ingress": bool(row.get("Ingress")),
+        "ipv6": bool(row.get("EnableIPv6")),
+        "builtin": name in ("bridge", "host", "none"),
+        "ipam_driver": _s(ipam.get("Driver"), 64),
+        "subnets": subnets[:32],
+        "options": {str(k)[:255]: _s(v, 1024) for k, v in sorted(options.items())[:100]}
+        if isinstance(options, dict)
+        else {},
+        "labels": dict(sorted(labels.items())[:200]),
+        "compose_project": labels.get(COMPOSE_PROJECT_LABEL, "")[:255],
+        "containers": containers[:1000],
+    }
+
+
+def _parse_network_details(text: str) -> list[dict[str, Any]]:
+    value = _json_value(text)
+    details: list[dict[str, Any]] = []
+    for row in value if isinstance(value, list) else []:
+        if isinstance(row, dict):
+            network = parse_network(row)
+            if network is not None:
+                details.append(network)
+    details.sort(key=lambda n: n["name"])
+    return details
+
+
 def _parse_compose(text: str) -> list[dict[str, Any]]:
     value = _json_value(text)
     projects: list[dict[str, Any]] = []
@@ -376,6 +447,8 @@ def parse_inventory(raw: str) -> Inventory:
         )
     if "networks" in sections:
         inventory.networks = _parse_networks(sections["networks"], inventory.containers)
+    if "network_inspect" in sections:
+        inventory.network_details = _parse_network_details(sections["network_inspect"])
     if "compose" in sections:
         inventory.compose = _parse_compose(sections["compose"])
     if "df" in sections:

@@ -360,6 +360,36 @@ def inventory_answer() -> dict[str, Any]:
                     "internal": False,
                 },
             ],
+            "network_details": [
+                {
+                    "id": "e" * 64,
+                    "name": "site_default",
+                    "driver": "bridge",
+                    "scope": "local",
+                    "created": "2026-10-01T10:00:00.000Z",
+                    "internal": False,
+                    "attachable": False,
+                    "ingress": False,
+                    "ipv6": False,
+                    "builtin": False,
+                    "ipam_driver": "default",
+                    "subnets": [
+                        {"subnet": "172.18.0.0/16", "gateway": "172.18.0.1", "ip_range": ""}
+                    ],
+                    "options": {"com.docker.network.bridge.name": "br-site"},
+                    "labels": {"com.docker.compose.project": "site"},
+                    "compose_project": "site",
+                    "containers": [
+                        {
+                            "id": "0f1e2d3c4b5a",
+                            "name": "web",
+                            "ipv4": "172.18.0.2/16",
+                            "ipv6": "",
+                            "mac": "02:42:ac:12:00:02",
+                        }
+                    ],
+                }
+            ],
             "compose": [
                 {"name": "site", "status": "running(1)", "config_files": ["/srv/site/compose.yaml"]}
             ],

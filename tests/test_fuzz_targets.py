@@ -46,6 +46,9 @@ _SEEDS: list[bytes] = [
     # JSON from a machine (journal, pvesh, sensors) nested far too deep.
     b"[" * 5000,
     b'{"MESSAGE": "x"}\n' + b"[" * 5000 + b"\n",
+    # `docker network inspect` with every field the wrong type.
+    b'===NETWORK_INSPECT===\n[{"Name": "n", "IPAM": {"Config": 5}, "Containers": {"a": 1},'
+    b' "Options": [1], "Labels": "x=y"}, {"Name": 1, "IPAM": []}]',
 ]
 
 
