@@ -344,7 +344,8 @@ async def test_docker_tab_shows_containers_table_moved_from_monitoring(client, d
     )
 
     monitoring = await client.get(f"/machines/{machine_id}/monitoring")
-    assert f'href="/machines/{machine_id}/docker"' in monitoring.text
+    # Docker is only on its own tab: no section about it on Monitoring.
+    assert 'id="containers"' not in monitoring.text
     assert "immich_server" not in monitoring.text
 
     response = await client.get(f"/machines/{machine_id}/docker")
