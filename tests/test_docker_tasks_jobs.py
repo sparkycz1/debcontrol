@@ -613,6 +613,30 @@ async def test_restoring_onto_debcontrols_own_volumes_fails_before_anything_runs
     assert machine_shell.started == []
 
 
+async def test_restoring_into_a_volume_runs_the_restore_to_script(
+    db_session_factory: Any, machine_shell: FakeMachine
+) -> None:
+    machine = _machine()
+    backup = _backup(machine)
+    job = _job(
+        machine,
+        DockerJobKind.BACKUP_RESTORE,
+        "nightly",
+        ref_id=backup.id,
+        params={"mode": "to", "snapshot": "latest", "source": "/backup/volumes/old",
+                "volume": "fresh", "path": "", "delete": False},
+    )
+    await _add(db_session_factory, machine, backup, job)
+    machine_shell.finishes("@@DC_DONE\n")
+
+    await tasks._run_docker_job(str(job.id))
+
+    [(_remote, script)] = machine_shell.started
+    assert "-v fresh:/restore" in script
+    assert "R restore latest:/backup/volumes/old --target /restore ||" in script
+    assert (await _get(db_session_factory, DockerJob, job.id)).status == DockerJobStatus.SUCCEEDED
+
+
 async def test_a_job_whose_backup_was_deleted_fails(
     db_session_factory: Any, machine_shell: FakeMachine
 ) -> None:

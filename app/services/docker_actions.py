@@ -32,10 +32,11 @@ from app.ssh.docker_cli import (
     is_image_id_valid,
     is_image_valid,
     is_project_name_valid,
+    is_volume_name_valid,
 )
 from app.ssh.docker_compose import STACK_ACTIONS
 from app.ssh.docker_prune import PruneOptions
-from app.ssh.restic import is_snapshot_valid
+from app.ssh.restic import is_snapshot_valid, normalize_host_path, normalize_snapshot_path
 from app.tasks.docker_jobs import run_docker_job
 
 SCAN_SCOPES = ("in_use", "unscanned", "all")
@@ -317,6 +318,52 @@ async def restore_backup(
         backup.name,
         started_by=started_by,
         params={"snapshot": snapshot, "volumes": volumes, "paths": paths, "delete": delete},
+        ref_id=backup.id,
+    )
+
+
+async def restore_backup_to(
+    db: AsyncSession,
+    machine: Machine,
+    backup: DockerBackup,
+    snapshot: str,
+    *,
+    started_by: str | None,
+    source: str,
+    volume: str = "",
+    path: str = "",
+    delete: bool,
+) -> DockerJob | None:
+    """Restore `source` of any snapshot in the backup's repository into one
+    volume or host directory (`restic.build_restore_to_script`)."""
+    if not is_snapshot_valid(snapshot):
+        raise DockerCommandError("Invalid snapshot.")
+    checked_source = normalize_snapshot_path(source)
+    if checked_source is None:
+        raise DockerCommandError("Invalid path inside the snapshot.")
+    volume, path = volume.strip(), path.strip()
+    if bool(volume) == bool(path):
+        raise DockerCommandError("Restore into one volume or one directory.")
+    if volume and not is_volume_name_valid(volume):
+        raise DockerCommandError(f'"{volume}" is not a valid volume name.')
+    checked_path = normalize_host_path(path) if path else ""
+    if checked_path is None:
+        raise DockerCommandError(f'"{path}" can\'t be restored into.')
+    await docker_jobs.check_volumes(db, machine, [volume] if volume else [])
+    return await queue_job(
+        db,
+        machine,
+        DockerJobKind.BACKUP_RESTORE,
+        backup.name,
+        started_by=started_by,
+        params={
+            "mode": "to",
+            "snapshot": snapshot,
+            "source": checked_source,
+            "volume": volume,
+            "path": checked_path,
+            "delete": delete,
+        },
         ref_id=backup.id,
     )
 

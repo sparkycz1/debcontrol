@@ -46,6 +46,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -258,6 +259,11 @@ class DockerBackup(Base):
     excludes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     # Stop the containers using the volumes while the backup runs.
     stop_containers: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # List every snapshot in the repository, not just this backup's: for a
+    # repository brought over from another machine or an older install.
+    all_snapshots: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     keep_last: Mapped[int | None] = mapped_column(Integer, nullable=True)
     keep_daily: Mapped[int | None] = mapped_column(Integer, nullable=True)
     keep_weekly: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -344,6 +344,36 @@ async def test_backup_snapshots(client, db_session_factory, celery_calls):
     assert failed.status_code == 502
 
 
+async def test_backup_export_restore_to_and_every_snapshot(client, db_session_factory):
+    headers = await _api_token(client)
+    machine_id = await docker_machine(client, db_session_factory, headers)
+    created = await create_backup(client, machine_id, headers, all_snapshots=True)
+    assert created.json()["all_snapshots"] is True
+    backup_id = created.json()["id"]
+
+    exported = await client.get(f"{base(machine_id)}/backups/export", headers=headers)
+    assert exported.status_code == 200
+    assert_no_secrets(exported.text)
+    [definition] = exported.json()["backups"]
+    assert definition["repository"] is None
+    assert definition["env_names"] == ["AWS_SECRET_ACCESS_KEY"]
+    one = await client.get(f"{base(machine_id)}/backups/{backup_id}/export", headers=headers)
+    assert one.json()["backups"] == [definition]
+
+    url = f"{base(machine_id)}/backups/{backup_id}/restore-to"
+    body = {"snapshot": "0123abcd", "source": "/backup/volumes/old", "volume": "fresh"}
+    refused = await client.post(url, json=body, headers=headers)
+    assert refused.status_code == 400
+    queued = await client.post(url, json={**body, "confirm": "dock"}, headers=headers)
+    assert queued.status_code == 202, queued.text
+    assert queued.json()["job"]["kind"] == "backup_restore"
+    await finish_jobs(db_session_factory)
+    both = await client.post(
+        url, json={**body, "path": "/srv/x", "confirm": "dock"}, headers=headers
+    )
+    assert both.status_code == 400
+
+
 async def test_backup_delete_and_other_machines(client, db_session_factory):
     headers = await _api_token(client)
     machine_id = await docker_machine(client, db_session_factory, headers)

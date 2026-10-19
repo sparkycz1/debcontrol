@@ -40,7 +40,7 @@ MAX_LINE_LIMIT = 5000
 
 # Docker's own rule for container names (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`) —
 # checked before a name ever reaches the machine, on top of quoting it.
-_CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$")
+_CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}\Z")
 DOCKER_NO_ACCESS_MARKER = "@@NOACCESS"
 # Sets `$D` to a working docker invocation — plain `docker` for an account
 # in the `docker` group, else `sudo -n <docker path>` when a sudoers rule

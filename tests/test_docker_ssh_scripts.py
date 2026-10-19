@@ -67,7 +67,9 @@ from app.ssh.restic import (
     build_check_script,
     build_forget_script,
     build_restore_script,
+    build_restore_to_script,
     build_snapshots_script,
+    normalize_snapshot_path,
 )
 
 _OLD = "sha256:" + "1" * 64
@@ -801,6 +803,61 @@ def test_a_restore_mounts_writable_always_stops_users_and_deletes_only_when_aske
             build_restore_script(config, snapshot, delete=False)
 
 
+# Like `_RESTIC_DOCKER`, but `run` prints every argument (to see restic's).
+_RESTIC_ARGS_DOCKER = (
+    "dc_d() { case \"$1\" in "
+    "ps) echo c1;; stop|start) echo \"$1 $*\" >&2;; "
+    "run) for a in \"$@\"; do printf '<%s>\\n' \"$a\"; done;; "
+    "esac; }; D=dc_d\n"
+)
+
+
+def test_restore_to_puts_one_part_of_a_snapshot_into_one_volume(tmp_path: Path) -> None:
+    config = _restic()
+
+    done = _sh(
+        build_restore_to_script(
+            config, "a1b2c3d4", source="/backup/volumes/old data", volume="newdata", delete=True
+        ),
+        tmp_path,
+        prelude=_RESTIC_ARGS_DOCKER,
+    )
+
+    assert done.returncode == 0, done.stderr
+    args = _args(done.stdout)
+    assert "newdata:/restore" in args
+    assert "pgdata:/backup/volumes/pgdata" not in " ".join(args)
+    assert args[-5:] == ["restore", "a1b2c3d4:/backup/volumes/old data", "--target", "/restore",
+                         "--delete"]
+    assert "stop stop c1" in done.stderr and "start start c1" in done.stderr
+    assert "@@DC_DONE" in done.stdout
+
+
+def test_restore_to_a_directory_of_a_whole_snapshot() -> None:
+    script = build_restore_to_script(
+        _restic(), "latest", source="/", path="/srv/restored", delete=False
+    )
+
+    assert "-v /srv/restored:/restore -v /srv/restic:/srv/restic" in script
+    assert "R restore latest --target /restore ||" in script
+    assert "@@DC_STEP stop" not in script
+    for kwargs in (
+        {"source": "/", "volume": "a", "path": "/srv/x"},
+        {"source": "/"},
+        {"source": "relative", "volume": "a"},
+        {"source": "/a/../b", "volume": "a"},
+        {"source": "/a:b", "volume": "a"},
+        {"source": "/", "volume": "bad name"},
+        {"source": "/", "path": "/proc/x"},
+    ):
+        with pytest.raises(DockerCommandError):
+            build_restore_to_script(_restic(), "latest", delete=False, **kwargs)
+    with pytest.raises(DockerCommandError):
+        build_restore_to_script(_restic(), "x; id", source="/", volume="a", delete=False)
+    assert normalize_snapshot_path("/backup//volumes/x/") == "/backup/volumes/x"
+    assert normalize_snapshot_path("/") == "/"
+
+
 def test_restic_maintenance_scripts() -> None:
     config = _restic()
 
@@ -809,6 +866,8 @@ def test_restic_maintenance_scripts() -> None:
     assert "read-data-subset" not in build_check_script(config, read_data_percent=500)
     assert "--keep-last 3 --prune" in build_forget_script(config, keep={"last": 3})
     assert f"R snapshots --json --tag {config.tag}" in build_snapshots_script(config)
+    every = build_snapshots_script(config, all_snapshots=True)
+    assert "R snapshots --json\n" in every and "--tag" not in every
     with pytest.raises(DockerCommandError):
         build_forget_script(config, keep={})
     with pytest.raises(DockerCommandError):

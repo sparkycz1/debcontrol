@@ -61,8 +61,8 @@ STACK_MARKER = ".debcontrol-stack"
 # A compose file or .env larger than this is refused (a typo, not a stack).
 MAX_FILE_BYTES = 512 * 1024
 
-_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
-_HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$")
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}\Z")
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?\Z")
 
 
 def is_git_url_valid(url: str) -> bool:
@@ -98,12 +98,12 @@ def normalize_compose_path(path: str) -> str | None:
     normalized = posixpath.normpath(cleaned)
     if normalized == "." or normalized == ".." or normalized.startswith("../"):
         return None
-    if not re.match(r"^[A-Za-z0-9._/ -]+$", normalized):
+    if not re.match(r"^[A-Za-z0-9._/ -]+\Z", normalized):
         return None
     return normalized
 
 
-_STACK_DIR_RE = re.compile(r"^[A-Za-z0-9._/ @+-]+$")
+_STACK_DIR_RE = re.compile(r"^[A-Za-z0-9._/ @+-]+\Z")
 # System directories a stack never goes into (or under).
 _SYSTEM_DIRS = (
     "/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/libx32", "/proc",
@@ -134,6 +134,9 @@ def normalize_stack_directory(value: str) -> str | None:
     if normalized.startswith("//"):
         normalized = "/" + normalized.lstrip("/")
     if not _STACK_DIR_RE.match(normalized) or normalized.startswith("/-"):
+        return None
+    # No name that starts or ends with a space (it would not survive a re-check).
+    if any(part != part.strip() for part in normalized.split("/")):
         return None
     if home:
         return None if normalized == "/" else "~" + normalized
@@ -444,7 +447,7 @@ def build_remote_head_command(source: GitSource) -> str:
     )
 
 
-_SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+_SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?\Z")
 
 
 def parse_commit(raw: str) -> str | None:

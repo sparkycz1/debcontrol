@@ -551,7 +551,9 @@ def test_restic_snapshots_newest_first_and_invalid_ids_dropped() -> None:
     snapshots = [
         {"id": "a" * 64, "short_id": "aaaaaaaa", "time": "2026-10-01T02:00:00Z",
          "hostname": "nas", "paths": ["/backup"], "summary": {"total_bytes_processed": 10}},
-        {"id": "b" * 64, "time": "2026-10-02T02:00:00Z", "hostname": "nas", "paths": ["/backup"]},
+        {"id": "b" * 64, "time": "2026-10-02T02:00:00Z", "hostname": "nas", "paths": ["/backup"],
+         "tags": ["debcontrol", "dc-1", 5]},
+        {"id": "c" * 64, "time": "2026-09-01T02:00:00Z", "paths": 5, "tags": "x"},
         {"id": "--delete", "time": "2026-10-03T02:00:00Z"},
         "not a dict",
     ]
@@ -559,8 +561,10 @@ def test_restic_snapshots_newest_first_and_invalid_ids_dropped() -> None:
 
     parsed = restic.parse_snapshots(raw)
 
-    assert [s["id"] for s in parsed] == ["b" * 64, "a" * 64]
+    assert [s["id"] for s in parsed] == ["b" * 64, "a" * 64, "c" * 64]
     assert parsed[0]["short_id"] == "bbbbbbbb"
+    assert parsed[0]["tags"] == ["debcontrol", "dc-1"]
+    assert (parsed[2]["paths"], parsed[2]["tags"]) == ([], [])
     assert (parsed[1]["size_bytes"], parsed[0]["size_bytes"]) == (10, None)
 
 

@@ -23,6 +23,7 @@ import yaml
 
 from app.auth.session_policy import parse_networks
 from app.schemas.user import normalize_email
+from app.services.docker_backups import form_from_definition, parse_import
 from app.services.endpoint_checks import parse_tls_target
 from app.services.machine_tags import parse_tag_names_from_text
 from app.services.network_probes import parse_dns_answers
@@ -261,6 +262,9 @@ def restic_output(data: bytes) -> None:
     path = restic.normalize_host_path(text)
     if path is not None:
         assert path.startswith("/") and ".." not in path.split("/")
+    inside = restic.normalize_snapshot_path(text)
+    if inside is not None:
+        assert inside.startswith("/") and ".." not in inside.split("/") and ":" not in inside
     with contextlib.suppress(DockerCommandError):
         restic.parse_env_lines(text)
 
@@ -277,6 +281,24 @@ def compose_input(data: bytes) -> None:
         assert not path.startswith("/") and ".." not in path.split("/")
     if docker_compose.is_git_url_valid(text):
         assert text.startswith("https://") and not any(ch.isspace() for ch in text)
+    directory = docker_compose.normalize_stack_directory(text)
+    if directory:
+        # Absolute (or ~/...), no "..", never a system directory or "/" itself.
+        assert directory.startswith(("/", "~/")) and ".." not in directory.split("/")
+        assert directory not in ("/", "/etc", "/usr") and not directory.startswith("/etc/")
+        assert docker_compose.stack_dir_shell("x", directory)
+
+
+def backup_import(data: bytes) -> None:
+    """An uploaded backups export either parses into definitions that
+    fill in the form, or raises ValueError — nothing else."""
+    try:
+        definitions = parse_import(_text(data))
+    except ValueError:
+        return
+    assert definitions
+    for definition in definitions:
+        form_from_definition(definition)
 
 
 TARGETS: dict[str, Callable[[bytes], None]] = {
@@ -309,5 +331,6 @@ TARGETS: dict[str, Callable[[bytes], None]] = {
         docker_prune_output,
         restic_output,
         compose_input,
+        backup_import,
     )
 }

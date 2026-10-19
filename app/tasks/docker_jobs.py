@@ -107,6 +107,7 @@ from app.ssh.restic import (
     build_check_script,
     build_forget_script,
     build_restore_script,
+    build_restore_to_script,
     build_snapshots_script,
     parse_backup_summary,
     parse_snapshots,
@@ -852,6 +853,17 @@ async def _job_backup_restore(ctx: _Context) -> None:
     paths = [str(p) for p in params.get("paths") or []]
 
     async def build() -> str:
+        if params.get("mode") == "to":
+            volume = str(params.get("volume") or "")
+            await docker_jobs.check_volumes(ctx.session, ctx.machine, [volume] if volume else [])
+            return build_restore_to_script(
+                docker_backups.config_for(backup, ctx.machine, volumes=[], paths=[]),
+                str(params.get("snapshot") or ""),
+                source=str(params.get("source") or "/"),
+                volume=volume,
+                path=str(params.get("path") or ""),
+                delete=bool(params.get("delete")),
+            )
         await docker_jobs.check_volumes(ctx.session, ctx.machine, volumes)
         config = docker_backups.config_for(backup, ctx.machine, volumes=volumes, paths=paths)
         return build_restore_script(
@@ -1166,7 +1178,9 @@ async def _docker_backup_snapshots(backup_id: str) -> dict[str, Any]:
             return {"ok": False, "error": "Backup not found."}
         try:
             machine, secret, timeout = await _machine_and_secret(session, str(backup.machine_id))
-            script = build_snapshots_script(docker_backups.config_for(backup, machine))
+            script = build_snapshots_script(
+                docker_backups.config_for(backup, machine), all_snapshots=backup.all_snapshots
+            )
             output = await run_script(machine, secret, timeout, script, run_timeout_seconds=300)
         except _READ_ERRORS as exc:
             return _error(exc)

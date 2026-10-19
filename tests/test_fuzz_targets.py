@@ -49,6 +49,15 @@ _SEEDS: list[bytes] = [
     # `docker network inspect` with every field the wrong type.
     b'===NETWORK_INSPECT===\n[{"Name": "n", "IPAM": {"Config": 5}, "Containers": {"a": 1},'
     b' "Options": [1], "Labels": "x=y"}, {"Name": 1, "IPAM": []}]',
+    # A backups export with every field the wrong type.
+    b'{"kind": "debcontrol.docker-backups", "version": 1, "backups": [{"name": "a",'
+    b' "volumes": 5, "env_names": [1, "K"], "keep_last": true}, {"name": 2}, 7]}',
+    b'{"name": "x", "repository": [], "paths": "/srv"}',
+    b"//etc/x",
+    b"~/../etc",
+    # A stack directory with a trailing newline (once let through by "$").
+    b"/\n/\n",
+    b"~/ /",
 ]
 
 

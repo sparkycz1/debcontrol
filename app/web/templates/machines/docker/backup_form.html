@@ -13,6 +13,13 @@
   {% if errors %}
     <div class="alert alert-error">{% for e in errors %}<p>{{ t(request, e) }}</p>{% endfor %}</div>
   {% endif %}
+  {% if imported %}
+    <div class="alert alert-warn">
+      <p>{{ t(request, "docker.backups.imported", name=imported.name) }}</p>
+      {% if not imported.repository %}<p>{{ t(request, "docker.backups.imported_repository", repository=imported.repository_display) }}</p>{% endif %}
+      {% if imported.env_names %}<p>{{ t(request, "docker.backups.imported_env") }}</p>{% endif %}
+    </div>
+  {% endif %}
 
   {% if backup %}
     <section class="panel">
@@ -28,6 +35,9 @@
         <dt>{{ t(request, "docker.backup.retention") }}</dt>
         <dd>{% if has_retention %}{% for key in ('last', 'daily', 'weekly', 'monthly') %}{% if backup['keep_' ~ key] %}{{ t(request, "docker.backup.keep_" ~ key) }}: {{ backup['keep_' ~ key] }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}{% else %}{{ t(request, "docker.backup.keep_all") }}{% endif %}</dd>
       </dl>
+      {% if can_terminal %}
+        <p><a href="{{ docker_base }}/backups/{{ backup.id }}/export" download>{{ t(request, "docker.backup.export") }}</a></p>
+      {% endif %}
       {% if backup.last_backup_status == 'failed' and backup.last_error %}<div class="alert alert-error"><p>{{ backup.last_error }}</p></div>{% endif %}
       {% if can_updates and ready %}
         <div class="page-header-actions">
@@ -81,7 +91,7 @@
         <p class="hint">{{ t(request, "docker.backup.password_hint") }}</p>
 
         <label for="b-env">{{ t(request, "docker.backup.env") }}</label>
-        <textarea id="b-env" name="env" rows="3" class="code-input" spellcheck="false" placeholder="{{ t(request, 'docker.backup.secret_keep') if backup and backup.env_encrypted else 'AWS_ACCESS_KEY_ID=...' }}"></textarea>
+        <textarea id="b-env" name="env" rows="3" class="code-input" spellcheck="false" placeholder="{{ t(request, 'docker.backup.secret_keep') if backup and backup.env_encrypted else 'AWS_ACCESS_KEY_ID=...' }}">{{ form.env if imported else '' }}</textarea>
         <p class="hint">{{ t(request, "docker.backup.env_hint") }}</p>
         {% if backup and backup.env_encrypted %}
         <label class="checkbox"><input type="checkbox" name="clear_env" value="1"> {{ t(request, "docker.backup.env_clear") }}</label>
@@ -100,6 +110,9 @@
         <label for="b-excludes">{{ t(request, "docker.backup.excludes") }}</label>
         <textarea id="b-excludes" name="excludes" rows="3" class="code-input" spellcheck="false">
 {{ form.excludes if form else (backup.excludes | join('\n') if backup else '') }}</textarea>
+
+        <label><input type="checkbox" name="all_snapshots" value="1" {% if (form.all_snapshots if form else (backup.all_snapshots if backup else false)) %}checked{% endif %}> {{ t(request, "docker.backup.all_snapshots") }}</label>
+        <p class="hint">{{ t(request, "docker.backup.all_snapshots_hint") }}</p>
 
         <label><input type="checkbox" name="stop_containers" value="1" {% if (form.stop_containers if form else (backup.stop_containers if backup else false)) %}checked{% endif %}> {{ t(request, "docker.backup.stop_containers") }}</label>
         <p class="hint">{{ t(request, "docker.backup.stop_containers_hint") }}</p>

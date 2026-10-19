@@ -134,7 +134,7 @@ def normalize_severity(value: str) -> str:
     return lowered if lowered in _RANK else "unknown"
 
 
-_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
 def _finding(line: str, scanner: str) -> dict[str, Any] | None:

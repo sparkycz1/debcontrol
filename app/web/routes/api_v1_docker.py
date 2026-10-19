@@ -158,6 +158,7 @@ def _backup(backup: DockerBackup) -> dict[str, Any]:
         "paths": list(backup.paths or []),
         "excludes": list(backup.excludes or []),
         "stop_containers": backup.stop_containers,
+        "all_snapshots": backup.all_snapshots,
         "keep_last": backup.keep_last,
         "keep_daily": backup.keep_daily,
         "keep_weekly": backup.keep_weekly,
@@ -1345,6 +1346,8 @@ class _BackupSave(BaseModel):
     paths: list[str] = Field(default_factory=list, max_length=100)
     excludes: list[str] = Field(default_factory=list, max_length=200)
     stop_containers: bool = False
+    # List every snapshot in the repository (other machines' too).
+    all_snapshots: bool = False
     enabled: bool = True
     keep_last: int | None = None
     keep_daily: int | None = None
@@ -1366,6 +1369,7 @@ def _backup_form(body: _BackupSave) -> docker_backups.BackupForm:
         paths="\n".join(body.paths),
         excludes="\n".join(body.excludes),
         stop_containers=body.stop_containers,
+        all_snapshots=body.all_snapshots,
         enabled=body.enabled,
         keep_last=keep(body.keep_last),
         keep_daily=keep(body.keep_daily),
@@ -1421,6 +1425,20 @@ async def docker_backup_create_api(
         _backup_details(backup),
     )
     return _backup(backup)
+
+
+@router.get("/backups/export", dependencies=[_terminal])
+async def docker_backups_export_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Every backup's settings without secrets, as the web page's Export
+    file. To import one, POST /backups with its fields plus `password`
+    (and the repository when it came back as null: it had credentials)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    backups = await docker_backups.list_backups(db, machine.id)
+    return docker_backups.export_definitions(backups, machine)
 
 
 @router.get("/backups/{backup_id}", dependencies=[_view])
@@ -1586,6 +1604,106 @@ async def docker_backup_restore_api(
             "paths": paths,
             "delete": body.delete,
         },
+    )
+    return answer
+
+
+@router.get("/backups/{backup_id}/export", dependencies=[_terminal])
+async def docker_backup_export_api(
+    machine_id: uuid.UUID,
+    backup_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    machine = await _get_machine_or_404(machine_id, db, user)
+    backup = await _backup_or_404(db, machine, backup_id)
+    return docker_backups.export_definitions([backup], machine)
+
+
+class _RestoreToRequest(BaseModel):
+    snapshot: str = Field(max_length=64)
+    # A directory inside the snapshot; "/" = all of it.
+    source: str = Field(default="/", max_length=1024)
+    # Exactly one of the two.
+    volume: str = Field(default="", max_length=255)
+    path: str = Field(default="", max_length=1024)
+    delete: bool = False
+    # The machine's name: a restore overwrites what is there.
+    confirm: str = ""
+
+
+@router.post(
+    "/backups/{backup_id}/restore-to",
+    dependencies=[_terminal],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def docker_backup_restore_to_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    backup_id: uuid.UUID,
+    body: _RestoreToRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Restore `source` of any snapshot in the repository (another
+    machine's too) into one volume or host directory."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    backup = await _backup_or_404(db, machine, backup_id)
+    details = {
+        "backup": backup.name,
+        "snapshot": body.snapshot,
+        "source": body.source,
+        "volume": body.volume or None,
+        "path": body.path or None,
+        "delete": body.delete,
+    }
+    if body.confirm.strip() != machine.name:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.backup.restore",
+            f'Refused to restore from Docker backup "{backup.name}": machine name not confirmed',
+            details,
+            denied=True,
+        )
+        raise _bad('A restore needs the machine\'s name in "confirm".')
+    _ready(machine)
+    try:
+        job = await docker_actions.restore_backup_to(
+            db,
+            machine,
+            backup,
+            body.snapshot,
+            started_by=user.username,
+            source=body.source,
+            volume=body.volume,
+            path=body.path,
+            delete=body.delete,
+        )
+    except docker_jobs.ProtectedError as exc:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.backup.restore",
+            f'Refused to restore from Docker backup "{backup.name}": debcontrol uses that volume',
+            details,
+            denied=True,
+        )
+        raise _protected() from exc
+    except DockerCommandError as exc:
+        raise _bad(str(exc)) from exc
+    answer = _queued(job)
+    target = f"volume {body.volume}" if body.volume else body.path
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.backup.restore",
+        f'Started restoring {body.source} of snapshot {body.snapshot[:12]} '
+        f'(Docker backup "{backup.name}") into {target} on "{machine.name}"',
+        details,
     )
     return answer
 

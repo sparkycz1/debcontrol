@@ -76,13 +76,13 @@ HELPER_LABEL = "io.debcontrol.helper=1"
 
 EXIT_MARKER = "@@DC_EXIT "
 
-_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
-_VOLUME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$")
-_IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}\Z")
+_VOLUME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}\Z")
+_IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 # Docker's own reference grammar is wider in places (IPv6 registries) but
 # nothing a real image uses falls outside this: registry/path:tag@digest,
 # no whitespace, no shell metacharacters, never a leading "-".
-_IMAGE_REF_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/:@+-]{0,511}$")
+_IMAGE_REF_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/:@+-]{0,511}\Z")
 
 
 def is_project_name_valid(name: str) -> bool:
