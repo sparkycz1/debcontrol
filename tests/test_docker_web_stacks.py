@@ -182,6 +182,40 @@ async def test_create_rejects_a_name_already_taken(client, db_session_factory):
     assert response.status_code == 400
 
 
+async def test_a_new_stack_can_go_into_a_directory_of_ones_choosing(
+    client, db_session_factory
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    csrf = await csrf_token(client, machine_id)
+    url = f"/machines/{machine_id}/docker/stacks"
+    form = {"csrf_token": csrf, "source": "editor", "compose": COMPOSE}
+
+    created = await client.post(url, data={**form, "name": "blog", "directory": "/opt/blog/"})
+    assert created.status_code == 303
+    stack = await _stack_by_name(db_session_factory, "blog")
+    assert stack.directory == "/opt/blog"
+    assert "dir=/opt/blog\n" in docker_stacks.deploy_script(stack)
+    [audit] = await audit_entries(db_session_factory, "machine.docker.stack.create")
+    assert audit.details is not None and audit.details["directory"] == "/opt/blog"
+    page = await client.get(f"{url}/{stack.id}")
+    assert "<code>/opt/blog</code>" in page.text
+    assert 'name="directory"' not in page.text
+
+    # Default when left empty; refused when invalid or another stack's.
+    await client.post(url, data={**form, "name": "plain", "directory": ""})
+    assert (await _stack_by_name(db_session_factory, "plain")).directory is None
+    for name, directory in (("bad", "/etc/bad"), ("rel", "apps/x"), ("twin", "/opt/blog")):
+        refused = await client.post(url, data={**form, "name": name, "directory": directory})
+        assert refused.status_code == 400, directory
+
+    # Editing keeps the directory, whatever the form sends.
+    await client.post(
+        f"{url}/{stack.id}",
+        data={**form, "env_action": "keep", "directory": "/opt/elsewhere"},
+    )
+    assert (await _stack_by_name(db_session_factory, "blog")).directory == "/opt/blog"
+
+
 async def test_a_rejected_form_does_not_echo_the_git_token(client, db_session_factory):
     machine_id = await make_docker_machine(db_session_factory)
     csrf = await csrf_token(client, machine_id)

@@ -37,6 +37,7 @@ from app.ssh.docker_compose import (
     build_remote_head_command,
     build_remove_script,
     build_stack_action_script,
+    normalize_stack_directory,
 )
 from app.ssh.docker_files import (
     Target,
@@ -255,6 +256,105 @@ def test_removing_a_stack_deletes_volumes_only_when_asked() -> None:
     assert 'rm -rf -- "$dir"' in keep
     with pytest.raises(DockerCommandError):
         build_remove_script("../web", volumes=False)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", ""),
+        ("  ", ""),
+        ("/opt/my-app", "/opt/my-app"),
+        ("/opt/my app/", "/opt/my app"),
+        ("//srv//apps/./web", "/srv/apps/web"),
+        ("~/stacks/web", "~/stacks/web"),
+        ("/home/kuba/apps", "/home/kuba/apps"),
+        ("/var/lib/apps/web", "/var/lib/apps/web"),
+        ("/tmp/x", "/tmp/x"),  # noqa: S108 - a path string, never used
+        ("relative/dir", None),
+        ("~", None),
+        ("~root/x", None),
+        ("/opt/../etc", None),
+        ("/", None),
+        ("/home", None),
+        ("/opt", None),
+        ("/etc/web", None),
+        ("/usr/local/web", None),
+        ("/var/lib/docker/volumes/x", None),
+        ("/opt/$(id)", None),
+        ("/opt/a'b", None),
+        ("/opt/a\nb", None),
+        ("/-rf", None),
+        ("/" + "x" * 1024, None),
+    ],
+)
+def test_a_stack_directory_is_absolute_plain_and_not_a_system_one(
+    value: str, expected: str | None
+) -> None:
+    assert normalize_stack_directory(value) == expected
+
+
+def test_a_stack_goes_into_its_chosen_directory(tmp_path: Path) -> None:
+    target = tmp_path / "apps" / "my web"
+    script = build_deploy_script(
+        "web", compose="services: {}\n", pull=False, directory=str(target)
+    )
+
+    done = _sh(script, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert (target / "compose.yaml").read_text() == "services: {}\n"
+    assert (target / ".debcontrol-stack").read_text() == "web\n"
+    assert str(target / "compose.yaml") in _args(done.stdout)
+    # Deploying again into its own directory is fine.
+    assert _sh(script, tmp_path).returncode == 0
+    # A home-relative directory lands under $HOME.
+    home = _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                                   directory="~/stacks/web"), tmp_path)
+    assert home.returncode == 0, home.stderr
+    assert (tmp_path / "stacks/web/compose.yaml").exists()
+
+
+def test_a_chosen_directory_with_other_files_is_refused(tmp_path: Path) -> None:
+    target = tmp_path / "busy"
+    target.mkdir()
+    (target / "compose.yaml").write_text("theirs\n")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / ".debcontrol-stack").write_text("api\n")
+
+    for directory in (target, other):
+        done = _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                                       directory=str(directory)), tmp_path)
+        assert done.returncode == 1
+        assert "@@DC_FAILED directory_not_empty" in done.stdout
+    assert (target / "compose.yaml").read_text() == "theirs\n"
+    assert (other / ".debcontrol-stack").read_text() == "api\n"
+    with pytest.raises(DockerCommandError):
+        build_deploy_script("web", compose="services: {}\n", directory="/etc/web")
+
+
+def test_removing_a_stack_in_a_chosen_directory_keeps_other_files(tmp_path: Path) -> None:
+    target = tmp_path / "apps"
+    _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                            directory=str(target)), tmp_path)
+    (target / "data.txt").write_text("keep me\n")
+
+    done = _sh(build_remove_script("web", volumes=False, directory=str(target)), tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert sorted(p.name for p in target.iterdir()) == ["data.txt"]
+    # Once nothing else is left, the directory goes too.
+    (target / "data.txt").unlink()
+    _sh(build_deploy_script("web", compose="services: {}\n", pull=False,
+                            directory=str(target)), tmp_path)
+    _sh(build_remove_script("web", volumes=False, directory=str(target)), tmp_path)
+    assert not target.exists()
+    # Not this stack's directory (no marker of its own): nothing is deleted.
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    (foreign / "compose.yaml").write_text("theirs\n")
+    _sh(build_remove_script("web", volumes=False, directory=str(foreign)), tmp_path)
+    assert (foreign / "compose.yaml").exists()
 
 
 def test_the_remote_head_check_keeps_the_token_off_the_command_line() -> None:

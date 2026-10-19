@@ -251,6 +251,33 @@ async def test_stack_save_keeps_name_and_env_when_omitted(client, db_session_fac
     assert cleared.json()["stack"]["env"] == ""
 
 
+async def test_stack_directory_is_chosen_on_create_only(client, db_session_factory):
+    headers = await _api_token(client)
+    machine_id = await docker_machine(client, db_session_factory, headers)
+
+    created = await create_stack(client, machine_id, headers, directory="~/apps/shop")
+    assert created.status_code == 201, created.text
+    stack = created.json()["stack"]
+    assert stack["directory"] == "~/apps/shop"
+    url = f"{base(machine_id)}/stacks/{stack['id']}"
+
+    same = await client.put(url, json={"compose": COMPOSE, "directory": "~/apps/shop"},
+                            headers=headers)
+    assert same.status_code == 200
+    moved = await client.put(url, json={"compose": COMPOSE, "directory": "/opt/shop"},
+                             headers=headers)
+    assert moved.status_code == 422
+    assert moved.json()["detail"] == ["docker.stack.error.directory_fixed"]
+
+    invalid = await create_stack(client, machine_id, headers, name="other", directory="/usr/x")
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == ["docker.stack.error.directory"]
+    taken = await create_stack(client, machine_id, headers, name="other", directory="~/apps/shop")
+    assert taken.json()["detail"] == ["docker.stack.error.directory_taken"]
+    default = await create_stack(client, machine_id, headers, name="plain")
+    assert default.json()["stack"]["directory"] is None
+
+
 async def test_stack_deploy(client, db_session_factory, monkeypatch):
     headers = await _api_token(client)
     machine_id = await docker_machine(client, db_session_factory, headers)

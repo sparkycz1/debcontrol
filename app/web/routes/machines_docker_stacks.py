@@ -211,6 +211,8 @@ def _form_from_request(form: Any) -> docker_stacks.StackForm:
         git_compose_path=str(form.get("git_compose_path") or docker_stacks.DEFAULT_COMPOSE_PATH),
         git_token=token,
         auto_sync=form.get("auto_sync") == "1",
+        # Chosen once, on the new-stack form; the edit form has no such field.
+        directory=str(form.get("directory") or "") if "directory" in form else None,
     )
 
 
@@ -242,9 +244,12 @@ async def docker_stack_create(
     machine = await _get_machine_or_404(machine_id, db, current_user)
     raw = await request.form()
     form = _form_from_request(raw)
+    form.directory = form.directory or ""
     errors = form.validate()
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
         errors.append("docker.stack.error.name_taken")
+    if not errors and await docker_stacks.directory_taken(db, machine.id, form.directory or ""):
+        errors.append("docker.stack.error.directory_taken")
     if not errors:
         try:
             await docker_jobs.check_project(db, machine, form.name)
@@ -270,7 +275,12 @@ async def docker_stack_create(
         machine,
         "machine.docker.stack.create",
         f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        details={"stack": stack.name, "source": stack.source, "git_url": stack.git_url},
+        details={
+            "stack": stack.name,
+            "source": stack.source,
+            "git_url": stack.git_url,
+            "directory": stack.directory,
+        },
     )
     if raw.get("deploy") == "1" and current_user.has_permission(Permission.ACTION_UPDATES):
         return await _deploy(request, db, machine, current_user, stack, pull=True)
@@ -339,6 +349,8 @@ async def docker_stack_save(
     form = _form_from_request(raw)
     # A deployed stack keeps its name: it is the Compose project's name.
     form.name = stack.name
+    # And its directory: the files are already there.
+    form.directory = None
     errors = form.validate()
     if errors:
         return await _stack_page(

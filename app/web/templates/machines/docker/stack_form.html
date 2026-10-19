@@ -33,6 +33,8 @@
       <dl class="detail-list">
         <dt>{{ t(request, "docker.stacks.source") }}</dt>
         <dd>{% if stack.source == 'git' %}Git · <code>{{ stack.git_url }}</code> ({{ stack.git_branch }}, {{ stack.git_compose_path }}){% else %}{{ t(request, "docker.stacks.source_editor") }}{% endif %}</dd>
+        <dt>{{ t(request, "docker.stack.directory") }}</dt>
+        <dd><code>{{ stack.directory or ("~/.local/share/debcontrol/stacks/" ~ stack.name) }}</code></dd>
         <dt>{{ t(request, "docker.stacks.deployed") }}</dt>
         <dd>{% if stack.deployed_at %}{{ stack.deployed_at | local_time }}{% if stack.deployed_commit %} · <code>{{ stack.deployed_commit[:12] }}</code>{% endif %}{% else %}{{ t(request, "docker.stacks.never_deployed") }}{% endif %}
           {% if changed %} <span class="badge badge-warn">{{ t(request, "docker.stacks.changed") }}</span>{% endif %}</dd>
@@ -80,6 +82,10 @@
           <label for="stack-name">{{ t(request, "docker.stacks.name") }}</label>
           <input id="stack-name" name="name" required maxlength="64" pattern="[a-z0-9][a-z0-9_\-]*" value="{{ form.name if form else '' }}" spellcheck="false">
           <p class="hint">{{ t(request, "docker.stack.name_hint") }}</p>
+          <label for="stack-directory">{{ t(request, "docker.stack.directory") }}</label>
+          <input id="stack-directory" name="directory" maxlength="1024" value="{{ (form.directory or '') if form else '' }}"
+                 placeholder="~/.local/share/debcontrol/stacks/&lt;{{ t(request, 'docker.stacks.name') | lower }}&gt;" spellcheck="false">
+          <p class="hint">{{ t(request, "docker.stack.directory_hint") }}</p>
         {% endif %}
 
         <label for="stack-source">{{ t(request, "docker.stacks.source") }}</label>

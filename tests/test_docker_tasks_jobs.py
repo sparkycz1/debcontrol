@@ -697,6 +697,27 @@ async def test_removing_a_managed_stack_deletes_it_once_compose_is_done(
     assert (await _get(db_session_factory, DockerJob, job.id)).status == DockerJobStatus.SUCCEEDED
 
 
+async def test_removing_a_stack_in_a_chosen_directory_keeps_that_directory(
+    db_session_factory: Any, machine_shell: FakeMachine
+) -> None:
+    machine = _machine()
+    stack = _stack(machine)
+    stack.directory = "/opt/shop"
+    job = _job(
+        machine, DockerJobKind.STACK_ACTION, "shop", ref_id=stack.id,
+        params={"action": "remove", "volumes": False},
+    )
+    await _add(db_session_factory, machine, stack, job)
+    machine_shell.finishes("@@DC_DONE\n")
+
+    await tasks._run_docker_job(str(job.id))
+
+    [(_remote, script)] = machine_shell.started
+    assert "dir=/opt/shop;" in script
+    assert 'rm -rf -- "$dir";' not in script
+    assert await _get(db_session_factory, DockerStack, stack.id) is None
+
+
 async def test_git_sync_deploys_only_a_new_commit_and_never_twice(
     db_session_factory: Any, machine_shell: FakeMachine, celery_calls: RecordedCeleryCalls
 ) -> None:

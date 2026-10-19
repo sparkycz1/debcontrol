@@ -124,6 +124,8 @@ def _stack(stack: DockerStack, *, secrets: bool) -> dict[str, Any]:
         "id": str(stack.id),
         "name": stack.name,
         "source": stack.source,
+        # None = the default ~/.local/share/debcontrol/stacks/<name>.
+        "directory": stack.directory,
         "git_url": stack.git_url,
         "git_branch": stack.git_branch,
         "git_compose_path": stack.git_compose_path,
@@ -739,6 +741,9 @@ class _StackSave(BaseModel):
     # None keeps the stored token, "" removes it.
     git_token: str | None = None
     auto_sync: bool = False
+    # Where the files go on the machine (absolute or ~/...), chosen on
+    # create only; None/"" = the default directory.
+    directory: str | None = Field(default=None, max_length=1024)
     deploy: bool = False
 
 
@@ -753,6 +758,7 @@ def _stack_form(body: _StackSave) -> docker_stacks.StackForm:
         git_compose_path=body.git_compose_path,
         git_token=body.git_token,
         auto_sync=body.auto_sync,
+        directory=body.directory,
     )
 
 
@@ -799,9 +805,12 @@ async def docker_stack_create_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     _check_deploy(body, user, machine)
     form = _stack_form(body)
+    form.directory = form.directory or ""
     errors = form.validate()
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
         errors.append("docker.stack.error.name_taken")
+    if not errors and await docker_stacks.directory_taken(db, machine.id, form.directory or ""):
+        errors.append("docker.stack.error.directory_taken")
     if not errors:
         try:
             await docker_jobs.check_project(db, machine, form.name)
@@ -819,7 +828,12 @@ async def docker_stack_create_api(
         machine,
         "machine.docker.stack.create",
         f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        {"stack": stack.name, "source": stack.source, "git_url": stack.git_url},
+        {
+            "stack": stack.name,
+            "source": stack.source,
+            "git_url": stack.git_url,
+            "directory": stack.directory,
+        },
     )
     answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
     if body.deploy:
@@ -859,6 +873,13 @@ async def docker_stack_save_api(
     _check_deploy(body, user, machine)
     form = _stack_form(body)
     form.name = stack.name
+    # The directory is chosen once, when the stack is made.
+    if (body.directory or None) not in (None, stack.directory):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=["docker.stack.error.directory_fixed"],
+        )
+    form.directory = None
     errors = form.validate()
     if errors:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=errors)

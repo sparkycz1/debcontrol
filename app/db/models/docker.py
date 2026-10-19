@@ -196,6 +196,10 @@ class DockerStack(Base):
     # The Compose project name (`docker_cli.is_project_name_valid`).
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Where the stack's files are on the machine, chosen when it was made
+    # (`docker_compose.normalize_stack_directory`); None = the default
+    # `~/.local/share/debcontrol/stacks/<name>`.
+    directory: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Editor: the compose file. Git: the compose file deployed last.
     compose_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The `.env` file, encrypted.

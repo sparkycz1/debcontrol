@@ -626,7 +626,16 @@ async def _job_stack_action(ctx: _Context) -> None:
 
     async def build() -> str:
         if action == "remove":
-            return build_remove_script(ctx.job.target, volumes=bool(params.get("volumes")))
+            stack = (
+                await ctx.session.get(DockerStack, ctx.job.ref_id)
+                if ctx.job.ref_id is not None
+                else None
+            )
+            return build_remove_script(
+                ctx.job.target,
+                volumes=bool(params.get("volumes")),
+                directory=(stack.directory or "") if stack is not None else "",
+            )
         return build_stack_action_script(
             ctx.job.target,
             action,
