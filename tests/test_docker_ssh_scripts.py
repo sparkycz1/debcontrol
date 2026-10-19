@@ -22,6 +22,7 @@ import pytest
 
 from app.ssh import detached_jobs
 from app.ssh.docker_cli import (
+    BUSYBOX_IMAGE,
     DOCKER_ACCESS_PROBE,
     EXIT_MARKER,
     DockerCommandError,
@@ -37,6 +38,7 @@ from app.ssh.docker_compose import (
     build_remote_head_command,
     build_remove_script,
     build_stack_action_script,
+    build_write_file_script,
     normalize_stack_directory,
 )
 from app.ssh.docker_files import (
@@ -355,6 +357,74 @@ def test_removing_a_stack_in_a_chosen_directory_keeps_other_files(tmp_path: Path
     (foreign / "compose.yaml").write_text("theirs\n")
     _sh(build_remove_script("web", volumes=False, directory=str(foreign)), tmp_path)
     assert (foreign / "compose.yaml").exists()
+
+
+def _sh_input(
+    script: str, home: Path, stdin: str, prelude: str = _ECHO_DOCKER
+) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "HOME": str(home), "TMPDIR": str(home)}
+    return subprocess.run(  # noqa: S603 - the script under test, run locally
+        ["sh", "-c", prelude + script],  # noqa: S607
+        capture_output=True,
+        text=True,
+        env=env,
+        input=stdin,
+        timeout=30,
+    )
+
+
+def test_a_compose_file_is_rewritten_in_place_and_checked(tmp_path: Path) -> None:
+    compose = tmp_path / "my app" / "compose.yaml"
+    compose.parent.mkdir()
+    compose.write_text("services: {}\n")
+    compose.chmod(0o640)
+    new = "services:\n  web:\n    image: nginx\n    command: echo $HOME `id` '$(x)'\n"
+    script = build_write_file_script(
+        "app", str(compose), working_dir=str(compose.parent), files=[str(compose)]
+    )
+
+    done = _sh_input(script, tmp_path, new)
+
+    assert done.returncode == 0, done.stderr
+    assert compose.read_text() == new
+    assert stat.S_IMODE(compose.stat().st_mode) == 0o640
+    args = _args(done.stdout)
+    assert args[:5] == ["compose", "-p", "app", "--project-directory", str(compose.parent)]
+    assert args[-2:] == ["config", "-q"]
+    assert done.stdout.splitlines()[-1] == "@@DC_DONE"
+
+
+def test_a_compose_file_compose_rejects_is_put_back(tmp_path: Path) -> None:
+    compose = tmp_path / "compose.yaml"
+    compose.write_text("services: {}\n")
+    failing = (
+        "dc_d() { case \"$*\" in *config*) echo 'yaml: line 2: bad'; return 1;; esac; }; "
+        "D=dc_d\n"
+    )
+    script = build_write_file_script("app", str(compose), files=[str(compose)])
+
+    done = _sh_input(script, tmp_path, "services: [broken\n", prelude=failing)
+
+    assert done.returncode == 1
+    assert "@@DC_FAILED config" in done.stdout
+    assert "yaml: line 2: bad" in done.stdout
+    assert compose.read_text() == "services: {}\n"
+    too_big = _sh_input(script, tmp_path, "x" * (MAX_FILE_BYTES + 1))
+    assert "@@DC_FAILED write" in too_big.stdout
+    assert compose.read_text() == "services: {}\n"
+
+
+def test_writing_a_compose_file_needs_one_of_the_projects_files() -> None:
+    with pytest.raises(DockerCommandError):
+        build_write_file_script("app", "/etc/passwd", files=["/srv/app/compose.yaml"])
+    for bad in ("compose.yml", "/a:/b", "/a\0b"):
+        with pytest.raises(DockerCommandError):
+            build_write_file_script("app", bad, files=[bad])
+    with pytest.raises(DockerCommandError):
+        build_write_file_script("bad;name", "/srv/c.yaml", files=["/srv/c.yaml"])
+    # Not writable as the account: through a helper container, from stdin.
+    script = build_write_file_script("app", "/srv/c.yaml", files=["/srv/c.yaml"])
+    assert f"-i -v /srv/c.yaml:/dc-file {BUSYBOX_IMAGE} sh -c 'cat > /dc-file'" in script
 
 
 def test_the_remote_head_check_keeps_the_token_off_the_command_line() -> None:

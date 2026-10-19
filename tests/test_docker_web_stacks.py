@@ -753,6 +753,119 @@ async def test_project_compose_page_reads_the_files_from_the_machine(
     assert celery_calls[1][1] == (str(machine_id), "/srv/site/compose.yaml")
 
 
+WRITE_COMPOSE_TASK = "app.tasks.docker_jobs.docker_write_compose_file"
+SITE_COMPOSE = "/srv/site/compose.yaml"
+
+
+async def test_project_compose_page_offers_an_editor(client, db_session_factory, celery_calls):
+    machine_id = await make_docker_machine(db_session_factory)
+    celery_calls.result_for[INVENTORY_TASK] = inventory_answer()
+    celery_calls.result_for[COMPOSE_FILE_TASK] = {"ok": True, "content": "services:\n  web: {}\n"}
+
+    response = await client.get(f"/machines/{machine_id}/docker/projects/site/compose")
+
+    assert '<textarea id="compose-1" name="content"' in response.text
+    assert f'name="path" value="{SITE_COMPOSE}"' in response.text
+    assert 'name="up" value="1"' in response.text
+
+
+async def test_saving_a_project_compose_file_writes_it_on_the_machine(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    celery_calls.result_for[INVENTORY_TASK] = inventory_answer()
+    celery_calls.result_for[WRITE_COMPOSE_TASK] = {"ok": True}
+    csrf = await csrf_token(client, machine_id)
+    url = f"/machines/{machine_id}/docker/projects/site/compose"
+
+    saved = await client.post(
+        url, data={"csrf_token": csrf, "path": SITE_COMPOSE, "content": "services: {}\r\n"}
+    )
+
+    assert saved.status_code == 303
+    assert saved.headers["location"].startswith(url)
+    assert celery_calls.names == [INVENTORY_TASK, WRITE_COMPOSE_TASK]
+    assert celery_calls[1][1] == (
+        str(machine_id), "site", SITE_COMPOSE, "services: {}\n", "/srv/site", [SITE_COMPOSE]
+    )
+    assert await jobs_of(db_session_factory, machine_id) == []
+    [entry] = await audit_entries(db_session_factory, "machine.docker.project.compose_edit")
+    assert entry.outcome == AuditOutcome.SUCCESS
+
+    applied = await client.post(
+        url, data={"csrf_token": csrf, "path": SITE_COMPOSE, "content": "services: {}\n",
+                   "up": "1"},
+    )
+    [job] = await jobs_of(db_session_factory, machine_id)
+    assert applied.headers["location"] == f"/machines/{machine_id}/docker/jobs/{job.id}"
+    assert (job.kind, job.target) == (DockerJobKind.STACK_ACTION, "site")
+    assert job.params == {"action": "up", "working_dir": "/srv/site", "files": [SITE_COMPOSE]}
+
+
+async def test_a_compose_file_docker_rejects_is_reported_and_audited(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    celery_calls.result_for[INVENTORY_TASK] = inventory_answer()
+    celery_calls.result_for[WRITE_COMPOSE_TASK] = {
+        "ok": False, "step": "config", "error": "services.web additional property foo"
+    }
+    csrf = await csrf_token(client, machine_id)
+
+    posted = await client.post(
+        f"/machines/{machine_id}/docker/projects/site/compose",
+        data={"csrf_token": csrf, "path": SITE_COMPOSE, "content": "x", "up": "1"},
+    )
+    page = await follow(client, posted.headers["location"])
+
+    assert "services.web additional property foo" in page
+    assert await jobs_of(db_session_factory, machine_id) == []
+    [entry] = await audit_entries(db_session_factory, "machine.docker.project.compose_edit")
+    assert entry.outcome == AuditOutcome.FAILURE
+
+
+async def test_saving_a_compose_file_is_refused_when_it_should_be(
+    client, db_session_factory, celery_calls
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    celery_calls.result_for[INVENTORY_TASK] = inventory_answer()
+    csrf = await csrf_token(client, machine_id)
+    url = f"/machines/{machine_id}/docker/projects/site/compose"
+
+    # Not one of the project's files (as the machine reports them).
+    other = await client.post(url, data={"csrf_token": csrf, "path": "/etc/passwd", "content": "x"})
+    assert other.status_code == 303
+    assert WRITE_COMPOSE_TASK not in celery_calls.names
+    # No CSRF token.
+    assert (await client.post(url, data={"path": SITE_COMPOSE, "content": "x"})).status_code == 403
+    # A stack debcontrol deploys is edited on its own page.
+    await add_stack(db_session_factory, machine_id, name="site")
+    managed = await client.post(url, data={"csrf_token": csrf, "path": SITE_COMPOSE,
+                                           "content": "x"})
+    assert managed.status_code == 303
+    assert WRITE_COMPOSE_TASK not in celery_calls.names
+
+
+@pytest.mark.parametrize(
+    ("permissions", "up"), [(TERMINAL_ONLY, "1"), (UPDATES_AND_POWER, "0")]
+)
+async def test_saving_a_compose_file_needs_terminal_and_applying_it_updates(
+    client, login_as, db_session_factory, celery_calls, permissions, up
+):
+    machine_id = await make_docker_machine(db_session_factory)
+    celery_calls.result_for[INVENTORY_TASK] = inventory_answer()
+    await login_as(client, permissions=permissions)
+    csrf = await csrf_token(client, machine_id)
+
+    response = await client.post(
+        f"/machines/{machine_id}/docker/projects/site/compose",
+        data={"csrf_token": csrf, "path": SITE_COMPOSE, "content": "x", "up": up},
+    )
+
+    assert response.status_code == 403
+    assert WRITE_COMPOSE_TASK not in celery_calls.names
+
+
 async def test_new_stack_form_for_a_terminal_user(client, login_as, db_session_factory):
     machine_id = await make_docker_machine(db_session_factory)
     await login_as(client, permissions=TERMINAL_ONLY)

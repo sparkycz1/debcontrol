@@ -57,7 +57,7 @@ from app.ssh.docker_cli import (
     is_project_name_valid,
     is_volume_name_valid,
 )
-from app.ssh.docker_compose import STACK_ACTIONS
+from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.ssh.docker_prune import PruneOptions
 from app.tasks import docker_jobs as docker_tasks
 from app.web.routes.api_v1 import _get_machine_or_404
@@ -1208,6 +1208,117 @@ async def docker_project_compose_api(
             }
         )
     return {"project": project, "working_dir": found["working_dir"], "files": files}
+
+
+class _ComposeFileSave(BaseModel):
+    # One of the project's compose files, as GET .../compose lists them.
+    path: str = Field(max_length=1024)
+    content: str
+    # Also run `docker compose up -d` afterwards (needs `action.updates`).
+    up: bool = False
+
+
+@router.put("/projects/{project}/compose", dependencies=[_terminal])
+async def docker_project_compose_save_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    project: str,
+    body: _ComposeFileSave,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Replace one compose file of a project found on the machine. The
+    whole project is checked with `docker compose config` and the old
+    text put back when it fails (422). Not for stacks debcontrol deploys:
+    change those with PUT /stacks/{id}."""
+    if not is_project_name_valid(project):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such project.")
+    if body.up and not user.has_permission(Permission.ACTION_UPDATES):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    content = body.content.replace("\r\n", "\n")
+    if len(content.encode()) > MAX_FILE_BYTES or "\0" in content:
+        raise _bad("The compose file is too large (at most 512 KiB) or contains a NUL byte.")
+    if any(s.name == project for s in await docker_stacks.list_stacks(db, machine.id)):
+        raise _bad("This is a stack debcontrol deploys; change it with PUT /stacks/{id}.")
+    try:
+        await docker_jobs.check_project(db, machine, project)
+    except docker_jobs.ProtectedError as exc:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.project.compose_edit",
+            f'Refused editing a compose file of "{project}" on "{machine.name}": '
+            "debcontrol runs in it",
+            {"project": project, "path": body.path},
+            denied=True,
+        )
+        raise _protected() from exc
+    found = next((p for p in await _projects(request, db, machine) if p["name"] == project), None)
+    files = [str(f) for f in (found or {}).get("config_files") or []]
+    if found is None or body.path not in files:
+        raise _bad("That file is not one of this project's compose files.")
+    working_dir = str(found["working_dir"] or "")
+    app_settings = await get_or_create_app_settings(db)
+    result, error = await wait_task(
+        request,
+        docker_tasks.docker_write_compose_file.delay(
+            str(machine.id), project, body.path, content, working_dir, files
+        ),
+        app_settings.ssh_connect_timeout + 150,
+    )
+    if error is not None or result is None:
+        step = str((result or {}).get("step") or "")
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.project.compose_edit",
+            f'Editing compose file "{body.path}" of "{project}" on "{machine.name}" failed'
+            + (f" ({step})" if step else ""),
+            {"project": project, "path": body.path, "step": step or None},
+            ok=False,
+        )
+        code = (
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+            if step == "config"
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=code, detail=str(error or "?"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.project.compose_edit",
+        f'Edited compose file "{body.path}" of "{project}" on "{machine.name}"',
+        {"project": project, "path": body.path, "up": body.up},
+    )
+    answer: dict[str, Any] = {"saved": True, "path": body.path}
+    if body.up:
+        try:
+            job = await docker_actions.stack_action(
+                db,
+                machine,
+                project,
+                "up",
+                started_by=user.username,
+                working_dir=working_dir,
+                files=files,
+            )
+        except DockerCommandError as exc:
+            raise _bad(str(exc)) from exc
+        answer.update(_queued(job))
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.stack.action",
+            f'Started "up" of Compose project "{project}" on "{machine.name}"',
+            {"project": project, "action": "up"},
+        )
+    return answer
 
 
 # --- Backups ----------------------------------------------------------------------

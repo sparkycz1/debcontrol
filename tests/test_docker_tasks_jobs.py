@@ -911,3 +911,42 @@ async def test_git_sync_never_deploys_debcontrols_own_project(
     async with db_session_factory() as db:
         assert (await db.execute(select(DockerJob))).scalars().all() == []
     assert RUN_JOB not in celery_calls.names
+
+
+async def test_writing_a_compose_file_sends_it_on_standard_input(
+    db_session_factory: Any, machine_shell: FakeMachine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine = _machine()
+    await _add(db_session_factory, machine)
+    sent: list[Any] = []
+
+    async def fake_run_script(
+        _machine: Any, _secret: Any, _timeout: int, script: str, **kwargs: Any
+    ) -> CommandOutput:
+        sent.append((script, kwargs.get("stdin")))
+        return CommandOutput(0, "@@DC_DONE\n")
+
+    monkeypatch.setattr(tasks, "run_script", fake_run_script)
+    files = ["/srv/app/compose.yaml"]
+
+    ok = await tasks._docker_write_compose_file(
+        str(machine.id), "app", files[0], "services: {}\n", "/srv/app", files
+    )
+
+    assert ok == {"ok": True}
+    [(script, stdin)] = sent
+    assert stdin == "services: {}\n"
+    assert "services: {}" not in script
+
+    async def failing(*_args: Any, **_kwargs: Any) -> CommandOutput:
+        return CommandOutput(1, "yaml: bad\n@@DC_FAILED config\n")
+
+    monkeypatch.setattr(tasks, "run_script", failing)
+    failed = await tasks._docker_write_compose_file(
+        str(machine.id), "app", files[0], "x", "/srv/app", files
+    )
+    assert failed == {"ok": False, "step": "config", "error": "yaml: bad"}
+    refused = await tasks._docker_write_compose_file(
+        str(machine.id), "app", "/etc/passwd", "x", "/srv/app", files
+    )
+    assert refused["ok"] is False

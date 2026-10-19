@@ -76,6 +76,7 @@ from app.ssh.docker_compose import (
     build_remote_head_command,
     build_remove_script,
     build_stack_action_script,
+    build_write_file_script,
     parse_commit,
 )
 from app.ssh.docker_compose import failed_step as compose_failed_step
@@ -1123,6 +1124,41 @@ def docker_compose_file(machine_id: str, path: str) -> dict[str, Any]:
     return asyncio.run(_docker_compose_file(machine_id, path))
 
 
+async def _docker_write_compose_file(
+    machine_id: str, project: str, path: str, content: str, working_dir: str, files: list[str]
+) -> dict[str, Any]:
+    """Replace one compose file of a project found on the machine
+    (`build_write_file_script`); the old text comes back when `docker
+    compose config` rejects the new one."""
+    async with db_session.AsyncSessionLocal() as session:
+        try:
+            machine, secret, timeout = await _machine_and_secret(session, machine_id)
+            script = build_write_file_script(project, path, working_dir=working_dir, files=files)
+            output = await run_script(
+                machine, secret, timeout, script, run_timeout_seconds=120, stdin=content
+            )
+        except _READ_ERRORS as exc:
+            return _error(exc)
+    if output.exit_status == 0 and "@@DC_DONE" in output.output:
+        return {"ok": True}
+    step = compose_failed_step(output.output) or "write"
+    lines = [
+        line for line in output.output.strip().splitlines() if not line.startswith("@@DC_")
+    ]
+    return {"ok": False, "step": step, "error": " ".join(lines[-5:])[-600:]}
+
+
+@celery_app.task(
+    name="app.tasks.docker_jobs.docker_write_compose_file", time_limit=_SHORT_TASK_TIME_LIMIT
+)
+def docker_write_compose_file(
+    machine_id: str, project: str, path: str, content: str, working_dir: str, files: list[str]
+) -> dict[str, Any]:
+    return asyncio.run(
+        _docker_write_compose_file(machine_id, project, path, content, working_dir, files)
+    )
+
+
 async def _docker_backup_snapshots(backup_id: str) -> dict[str, Any]:
     async with db_session.AsyncSessionLocal() as session:
         backup = await session.get(DockerBackup, uuid.UUID(backup_id))
@@ -1368,6 +1404,7 @@ __all__ = [
     "docker_compose_file",
     "docker_files_task",
     "docker_inventory",
+    "docker_write_compose_file",
     "poll_git_stacks",
     "purge_old_docker_jobs",
     "queue_stack_deploy",

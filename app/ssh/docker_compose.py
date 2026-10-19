@@ -213,6 +213,46 @@ def build_read_file_command(path: str) -> str:
     )
 
 
+def build_write_file_script(
+    project: str, path: str, *, working_dir: str = "", files: list[str]
+) -> str:
+    """Replace one compose file of a project found on the machine with the
+    text on standard input, then have `docker compose config` check the
+    whole project; when it doesn't pass, the old text is put back. The
+    file is written in place, so it keeps its owner and mode: as the
+    account when it may write it, else through a helper container (the
+    Docker grant can write any file anyway). Prints `@@DC_DONE`, or
+    `@@DC_FAILED read|write|config`."""
+    if not path.startswith("/") or "\0" in path or ":" in path or len(path) > 1024:
+        raise DockerCommandError("Not an absolute path.")
+    if path not in files:
+        raise DockerCommandError("Not one of the project's compose files.")
+    quoted = q(path)
+    helper = f"$D run --rm --pull missing --label {HELPER_LABEL}"
+    check = _compose_base(project, working_dir, files) + " config -q"
+    prefix = f"cd {q(working_dir)} 2>/dev/null || true; " if working_dir else ""
+    return "\n".join(
+        [
+            "set -u",
+            'new="$(mktemp)"; old="$(mktemp)"; trap \'rm -f "$new" "$old"\' EXIT',
+            f'head -c {MAX_FILE_BYTES + 1} > "$new"',
+            f'[ "$(wc -c < "$new")" -le {MAX_FILE_BYTES} ] || '
+            "{ echo 'The file is too large.'; echo '@@DC_FAILED write'; exit 1; }",
+            f"if [ -r {quoted} ]; then cat {quoted} > \"$old\"; "
+            f'else {helper} -v {quoted}:/dc-file:ro {BUSYBOX_IMAGE} cat /dc-file > "$old"; fi '
+            "|| { echo '@@DC_FAILED read'; exit 1; }",
+            "put() { "
+            f'if [ -w {quoted} ]; then cat "$1" > {quoted}; '
+            f"else {helper} -i -v {quoted}:/dc-file {BUSYBOX_IMAGE} "
+            "sh -c 'cat > /dc-file' < \"$1\"; fi; }",
+            "put \"$new\" || { put \"$old\"; echo '@@DC_FAILED write'; exit 1; }",
+            f"{prefix}{check} || "
+            "{ put \"$old\"; echo '@@DC_FAILED config'; exit 1; }",
+            "echo '@@DC_DONE'",
+        ]
+    ) + "\n"
+
+
 # --- Stacks debcontrol manages --------------------------------------------
 
 
