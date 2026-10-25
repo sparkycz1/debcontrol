@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- Stage 1: build the virtualenv with uv -----------------------------------
-FROM python:3.14.8-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
+FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS builder
 
 # Official static uv binary — no need to pip-install it into the image.
 # Pinned to an exact version (same reasoning as Postgres/Redis/Caddy) —
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 # --- Stage 2: minimal runtime image ------------------------------------------
-FROM python:3.14.8-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
+FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS runtime
 
 # Lets scripts/upgrade.sh find (and remove) old untagged debcontrol builds.
 LABEL io.debcontrol.image="app"
