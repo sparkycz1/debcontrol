@@ -15,7 +15,7 @@
 [![Secret scanning: enabled](https://img.shields.io/badge/secret%20scanning-enabled-brightgreen)](https://github.com/sparkycz1/debcontrol/security)
 [![Security policy](https://img.shields.io/badge/security-policy-blue)](.github/SECURITY.md)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.15-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/web-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Task queue](https://img.shields.io/badge/task%20queue-Celery-37814A?logo=celery&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/db-PostgreSQL%2018-336791?logo=postgresql&logoColor=white)

@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.120.0"
+version = "0.121.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -9,12 +9,8 @@ license = { text = "PolyForm-Noncommercial-1.0.0" }
 dependencies = [
     "fastapi>=0.142.2",
     "uvicorn[standard]>=0.52.4",
-    # Lower bound is `openrouter`'s own ceiling (`pydantic>=2.11.2,<2.13`,
-    # every 1.x release so far — see that dependency's own comment below),
-    # not a feature floor of this app's — nothing here needs anything
-    # pydantic 2.13 added. `uv lock` currently resolves this to 2.12.x
-    # because of that ceiling; the full test suite + `mypy --strict`-style
-    # gate both pass at that version. Revisit once `openrouter` lifts it.
+    # `openrouter` used to cap this at <2.13 (its 1.x releases up to
+    # 1.3.66); 1.3.76+ allows any pydantic 2.x, so the lock is on 2.14 now.
     "pydantic>=2.11.2",
     "pydantic-settings>=2.15.0",
     "sqlalchemy[asyncio]>=2.1.2",
@@ -95,8 +91,7 @@ dependencies = [
     # has its own dedicated SDK, which is what this app uses for it instead.
     "openai>=3.24.0",
     # OpenRouter's own SDK — see `OpenRouterClient`. 1.x (declared "stable
-    # as of v1.0") pins `pydantic<2.13`, hence this project's own pydantic
-    # floor above; 1.x also changed `models.list_async`'s response shape
+    # as of v1.0") changed `models.list_async`'s response shape
     # (`response.result.data` instead of `response.data`, and it can
     # legitimately return `None`) and added pagination query params to the
     # models endpoint — both handled in `OpenRouterClient.list_models`.
@@ -140,10 +135,11 @@ dev = [
     "types-pyyaml>=6.0.12.20260826",
 ]
 # Coverage-guided fuzzing (`python -m fuzz.run`, `.github/workflows/fuzz.yml`).
-# Atheris ships Linux wheels only; `tests/test_fuzz_targets.py` runs the same
-# targets without it on every OS.
+# Atheris ships Linux wheels only, and none for Python 3.15 yet — so the
+# fuzz workflow runs on 3.14 (see fuzz.yml); `tests/test_fuzz_targets.py`
+# runs the same targets without it on every OS and Python.
 fuzz = [
-    "atheris>=3.1.0 ; sys_platform == 'linux'",
+    "atheris>=3.1.0 ; sys_platform == 'linux' and python_version < '3.15'",
 ]
 # The browser smoke test (`e2e/`, the `browser` job in ci.yml): every main
 # page in Chromium under the real CSP. Not part of the default `pytest` run.
@@ -158,7 +154,7 @@ package = false
 prerelease = "disallow"
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py315"
 line-length = 100
 
 [tool.ruff.lint]
@@ -187,7 +183,7 @@ max-complexity = 19
 "app/db/models/machine.py" = ["S105"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.15"
 plugins = ["pydantic.mypy"]
 strict = true
 warn_unused_ignores = true

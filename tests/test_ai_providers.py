@@ -72,8 +72,10 @@ async def test_anthropic_list_models_follows_pagination():
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         seen_params.append(dict(request.url.params))
-        assert request.headers["x-api-key"] == "secret-key"
-        assert request.headers["anthropic-version"] == "2023-06-01"
+        # anthropic 2.x sends the key as a Bearer token (1.x used x-api-key)
+        # and pins its own, newer API version — the SDK's call, not ours.
+        assert request.headers["authorization"] == "Bearer secret-key"
+        assert request.headers["anthropic-version"]
         if "after_id" not in request.url.params:
             return httpx2.Response(
                 200,

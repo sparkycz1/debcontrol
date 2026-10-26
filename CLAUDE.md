@@ -8,7 +8,7 @@ debcontrol: a FastAPI + htmx web app for managing a fleet of Debian/Ubuntu
 (and Proxmox VE, and other common distros) machines over SSH — facts,
 package updates, monitoring, a browser SSH terminal, scheduled actions,
 RBAC, an AI assistant, and a full read/write REST API mirroring the web
-UI. Server-rendered Jinja2 + htmx, not a SPA. Python 3.14, SQLAlchemy 2.1
+UI. Server-rendered Jinja2 + htmx, not a SPA. Python 3.15, SQLAlchemy 2.1
 async + PostgreSQL, Celery + Redis for background work, deployed via
 Docker Compose only (no supported bare-metal/venv run path for the app
 itself).
@@ -52,7 +52,7 @@ uv run mypy app alembic tests    # type check (strict for app/ and alembic/)
 uv run alembic revision --autogenerate -m "..."   # after changing a model — READ the generated file
 uv run alembic upgrade head
 uv run alembic heads             # must show exactly one head before committing a migration
-uv run python -m fuzz.run <target> -max_total_time=60   # Linux only (atheris); targets in fuzz/targets.py
+UV_PYTHON=3.14 uv run python -m fuzz.run <target> -max_total_time=60   # Linux only, Python 3.14 (atheris); targets in fuzz/targets.py
 uvx pip-audit --strict -r <(uv export --frozen --no-hashes --all-groups)   # known CVEs, same as CI
 ```
 
@@ -193,7 +193,7 @@ Before considering a change finished, not just "the code works":
    hashed, no new inline script/style (CSP), no new trust boundary crossed
    without the same scrutiny `wiki/Architecture`'s security model
    section already applies elsewhere.
-6. **Current, not legacy, tech.** Match what's already here (Python 3.14,
+6. **Current, not legacy, tech.** Match what's already here (Python 3.15,
    SQLAlchemy 2.1 async, Pydantic v2, FastAPI, htmx 2.x, `httpx2` for
    outbound HTTP — plain `httpx` only in `app/ai/providers.py`, for the two
    SDKs still built on it) — don't introduce
@@ -228,7 +228,7 @@ Before considering a change finished, not just "the code works":
    gets its own.
 
 9. **Pinned versions stay pinned.** Docker base images are pinned by tag
-   *and* digest (`python:3.14.x-slim@sha256:...`), GitHub Actions by commit
+   *and* digest (`python:3.15.x-slim@sha256:...`), GitHub Actions by commit
    SHA with a trailing `# vX.Y.Z` comment, Postgres/Redis/Caddy by exact
    patch — update the tag and the pin together (Dependabot understands
    both). Vendored JS/CSS (htmx, xterm.js, Swagger UI) is copied verbatim
