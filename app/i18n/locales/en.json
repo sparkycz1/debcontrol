@@ -99,7 +99,7 @@
     "api_docs.authorize": "Authorize",
     "api_docs.hint_middle": "and paste one of your own API tokens (",
     "api_docs.hint_after": " — your account needs API access enabled by an admin first) to try requests directly from this page. See the wiki page",
-    "api_docs.architecture_link": "Architecture",
+    "api_docs.architecture_link": "REST API",
     "api_docs.hint_final": "for the API's design rules and what's deliberately left out of it.",
     "totp_enroll.required_by_role": "Your role requires two-factor authentication. You won't be able to use debcontrol until you finish enrolling it here.",
     "totp_enroll.scan_hint": "Scan this with an authenticator app (Google Authenticator, Authy, 1Password, ...), or enter the setup key manually, then confirm with a code it generates.",
