@@ -125,12 +125,14 @@ class FakeRedis:
     def __init__(self) -> None:
         self._counters: dict[str, int] = {}
         self._values: dict[str, str] = {}
+        self.expire_calls: list[tuple[str, int, bool]] = []
 
     async def incr(self, key: str) -> int:
         self._counters[key] = self._counters.get(key, 0) + 1
         return self._counters[key]
 
-    async def expire(self, key: str, seconds: int) -> bool:
+    async def expire(self, key: str, seconds: int, *, nx: bool = False) -> bool:
+        self.expire_calls.append((key, seconds, nx))
         return True
 
     async def get(self, key: str) -> str | None:
