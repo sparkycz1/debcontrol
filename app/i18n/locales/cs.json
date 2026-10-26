@@ -100,7 +100,7 @@
     "api_docs.authorize": "Authorize",
     "api_docs.hint_middle": "a vložte jeden ze svých API tokenů (",
     "api_docs.hint_after": " — váš účet nejdřív potřebuje přístup k API povolený administrátorem) pro vyzkoušení požadavků přímo z této stránky. Pravidla návrhu API a co je z něj záměrně vynecháno viz wiki stránka",
-    "api_docs.architecture_link": "Architecture",
+    "api_docs.architecture_link": "REST API",
     "api_docs.hint_final": ".",
     "totp_enroll.required_by_role": "Vaše role vyžaduje dvoufaktorové ověření. Nebudete moct debcontrol používat, dokud tady jeho nastavení nedokončíte.",
     "totp_enroll.scan_hint": "Naskenujte toto autentizační aplikací (Google Authenticator, Authy, 1Password, ...), nebo zadejte setup klíč ručně, pak potvrďte kódem, který vygeneruje.",

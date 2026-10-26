@@ -13,6 +13,27 @@ async + PostgreSQL, Celery + Redis for background work, deployed via
 Docker Compose only (no supported bare-metal/venv run path for the app
 itself).
 
+## Standing rules from the maintainer
+
+These come from the repo owner (sparkycz1) and override any default habit:
+
+- **Security, speed and efficiency come first** — in that order, for every
+  change (the code you write *and* how you go about writing it).
+- **Never merge a PR until the maintainer has reviewed it**, unless they
+  explicitly say otherwise for that PR. Open it, drive CI to green, answer
+  review comments — then stop and wait.
+- **Use every skill/tool available** to you (code review, security review,
+  docs, design, …) rather than doing a job by hand that a skill covers.
+- **Wiki, REST API and i18n are always up to date with the code.**
+  Everything is documented, and everything the web UI can do is reachable
+  through the API (the narrow, documented exceptions in `api_v1.py`
+  aside). See the checklist below — this is not optional polish.
+- **Latest stable technology only** — no alpha, beta, rc, dev or nightly
+  releases. A Dependabot (or any other) PR that bumps to a pre-release gets
+  closed, with a one-line comment saying why.
+- **When something is unclear or doesn't make sense, ask** instead of
+  guessing.
+
 **The wiki is the primary source of truth, not this file** — it is
 detailed, current, and actively maintained alongside the code:
 

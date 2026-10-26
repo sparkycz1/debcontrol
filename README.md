@@ -1,52 +1,74 @@
 <p align="center">
-  <img src="app/web/static/img/favicon.svg" alt="debcontrol" width="88">
+  <img src="app/web/static/img/favicon.svg" alt="debcontrol" width="96">
 </p>
 
-<div align="center">
+<h1 align="center">debcontrol</h1>
 
-# debcontrol
+<p align="center">
+  <b>Your whole Debian fleet in one browser tab. No agents, just SSH.</b><br>
+  Updates with rollback, monitoring, Docker, security audits, uptime checks,<br>
+  a browser terminal and scheduled maintenance for Debian, Ubuntu and Proxmox.
+</p>
 
-</div>
+<p align="center">
+  <a href="https://github.com/sparkycz1/debcontrol/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/sparkycz1/debcontrol?label=release&color=c8102e"></a>
+  <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml/badge.svg"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/sparkycz1/debcontrol"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/sparkycz1/debcontrol/badge"></a>
+  <br>
+  <img alt="Python 3.15" src="https://img.shields.io/badge/python-3.15-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI + htmx" src="https://img.shields.io/badge/FastAPI%20%2B%20htmx-009688?logo=fastapi&logoColor=white">
+  <img alt="PostgreSQL 18" src="https://img.shields.io/badge/PostgreSQL-18-336791?logo=postgresql&logoColor=white">
+  <img alt="Docker Compose" src="https://img.shields.io/badge/deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white">
+  <a href="LICENSE"><img alt="License: PolyForm Noncommercial" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue"></a>
+</p>
 
-[![CI](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml)
-[![Fuzz](https://github.com/sparkycz1/debcontrol/actions/workflows/fuzz.yml/badge.svg)](https://github.com/sparkycz1/debcontrol/actions/workflows/fuzz.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sparkycz1/debcontrol/badge)](https://scorecard.dev/viewer/?uri=github.com/sparkycz1/debcontrol)
-[![Secret scanning: enabled](https://img.shields.io/badge/secret%20scanning-enabled-brightgreen)](https://github.com/sparkycz1/debcontrol/security)
-[![Security policy](https://img.shields.io/badge/security-policy-blue)](.github/SECURITY.md)
-[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.15-blue?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/web-FastAPI-009688?logo=fastapi&logoColor=white)
-![Task queue](https://img.shields.io/badge/task%20queue-Celery-37814A?logo=celery&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/db-PostgreSQL%2018-336791?logo=postgresql&logoColor=white)
-![Docker Compose](https://img.shields.io/badge/deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)
-![Dependabot](https://img.shields.io/badge/dependabot-enabled-025E8C?logo=dependabot&logoColor=white)
-![Security: bandit rules via ruff](https://img.shields.io/badge/security-ruff%20%2B%20pip--audit-4B8BBE)
+<p align="center">
+  <a href="#-quick-start"><b>Quick start</b></a> ·
+  <a href="https://github.com/sparkycz1/debcontrol/wiki"><b>Documentation</b></a> ·
+  <a href="#-screenshots"><b>Screenshots</b></a> ·
+  <a href="https://github.com/sparkycz1/debcontrol/wiki/REST-API"><b>REST API</b></a> ·
+  <a href=".github/SECURITY.md"><b>Security</b></a>
+</p>
 
-A web application for managing Debian machines over SSH. Officially
-supported: Debian and its derivatives (e.g. Ubuntu), for as long as each
-is supported by its own upstream — see the wiki:
-[Machine Requirements](https://github.com/sparkycz1/debcontrol/wiki/Machine-Requirements#os).
-Every page requires a login; access is controlled by custom roles (RBAC)
-an admin defines, and accounts can authenticate locally, against LDAP, or
-via OIDC SSO, with optional (or role-required) TOTP two-factor. Everything
-in the web UI is also available as a full read/write REST API, with
-interactive [Swagger](https://swagger.io/tools/swagger-ui/) docs at `/api`
-once logged in.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/dashboard-fleet.png" alt="Every machine of the fleet as a card on the Dashboard" width="900">
+</p>
 
-This project was built to manage and monitor my own homelab; most of it
-is vibecoded.
+## ✨ What it does
 
-**Full documentation lives in the [wiki](https://github.com/sparkycz1/debcontrol/wiki/Home)** — technology
-choices and the full security model ([Architecture](https://github.com/sparkycz1/debcontrol/wiki/Architecture)),
-every feature in detail ([Home](https://github.com/sparkycz1/debcontrol/wiki/Home)'s feature table), reverse
-proxy guides, and local development/testing
-([Development](https://github.com/sparkycz1/debcontrol/wiki/Development)). This file only covers getting a
-fresh instance running.
+| | |
+|---|---|
+| ⬆️ **Updates you can undo** | Preview what apt will install and remove, update one machine or a whole group, roll back afterwards, take a Proxmox snapshot first. Pending security updates are listed fleet-wide with their CVEs. |
+| 📈 **Monitoring** | CPU, memory, disks, network, temperatures, S.M.A.R.T. and GPUs, with history and drag-to-zoom charts. A disk-full forecast warns days ahead. |
+| 🐳 **Docker** | Container updates that put the old one back if the new one fails, Trivy + Grype scans, Compose stacks from an editor or Git, restic backups. |
+| 🛡️ **Security audit** | Lynis plus the vps-audit checks on every machine, a hardening index and how to fix each finding. |
+| 🔐 **Checks & status page** | HTTP, TLS, ping, TCP, DNS, SMTP, SSH and heartbeat checks, an SLA report and a public status page. |
+| ⏱️ **Scheduling** | Cron any action per time zone, maintenance windows, a month calendar, Wake-on-LAN. |
+| 🖥️ **Terminal, logs, runbooks** | A browser SSH terminal (optionally recorded), journal and log files, saved procedures with parameters. |
+| 🔔 **Notifications** | Email, webhook, ntfy, Gotify, Telegram, Discord, Pushover, Mattermost, Slack or Teams, on events or thresholds. |
+| 🧠 **AI assistant** | Ask your fleet in plain language. It only *proposes*; you confirm every command. |
+| 🟧 **Proxmox** | Guests, backups per guest, snapshots, ZFS, Backup Server and Mail Gateway. |
 
-## 🚀 Quick start (Docker)
+## 💡 Why debcontrol
 
-**Recommended — one interactive script does everything:**
+- 🔌 **Agentless.** One SSH key and a scoped `sudoers` line per machine.
+  Nothing to install, no extra open port.
+- 🛡️ **Safe by default.** SSH host keys are pinned (no trust on first
+  use), secrets are encrypted with AES-256-GCM, a strict Content Security
+  Policy, and every change goes to a hash-chained audit log.
+- 👥 **Built for a team.** Custom roles, machine-group scoping, LDAP, OIDC
+  SSO, TOTP and passkeys.
+- 🔁 **Everything scriptable.** A full read/write REST API mirrors the web
+  UI, with Swagger docs at `/api` and Prometheus metrics.
+- 🌍 **Your language.** Every page in English and Czech. A new language is
+  one JSON file.
+- 📈 **Scales.** From a homelab of five boxes to a few thousand machines
+  ([sizing guide](https://github.com/sparkycz1/debcontrol/wiki/Host-Requirements)).
+
+## 🚀 Quick start
+
+You need Docker with Compose v2.
 
 ```bash
 git clone https://github.com/sparkycz1/debcontrol.git
@@ -54,65 +76,82 @@ cd debcontrol
 python3 scripts/setup.py
 ```
 
-It generates every secret, asks a handful of questions (timezone, whether
-to use the bundled Caddy reverse proxy, background-check intervals, the
-Administrator password — typed twice, never printed — and the host port), then
-brings the stack up and creates the first admin account for you. Full
-details: [wiki/Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation).
+The wizard generates every secret, asks a few questions (time zone,
+language, the bundled Caddy for HTTPS, the admin password, the port),
+starts the stack and creates the first administrator. Then open
+`http://<host>:8080` and add your first machine.
 
-**Manual setup**, if you'd rather configure everything by hand:
+> [!WARNING]
+> The app itself speaks **plain HTTP**. Put TLS in front of it: the
+> bundled [Caddy](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Caddy)
+> (automatic Let's Encrypt), or your own
+> [nginx](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Nginx) or
+> [Traefik](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Traefik).
+
+<details>
+<summary><b>Manual setup instead of the wizard</b></summary>
 
 ```bash
 cp .env.example .env
-python3 scripts/generate_secrets.py
-```
-
-Paste the printed values (`SECRET_KEY`, `ENCRYPTION_KEY`,
-`POSTGRES_PASSWORD`, `REDIS_PASSWORD`) into `.env`. Optionally set `TZ`
-(e.g. `Europe/Prague`) — it's applied to every container and used by the
-app to display timestamps in the UI in that timezone; defaults to UTC.
-Then:
-
-```bash
+python3 scripts/generate_secrets.py   # paste the printed values into .env
 docker compose up -d --build
-```
-
-The app listens on `APP_PORT` (default `8080`, plain HTTP, all interfaces
-by default — meant to sit behind a TLS-terminating reverse proxy; set
-`APP_BIND_ADDRESS=127.0.0.1` in `.env` — no `docker-compose.yml` edit
-needed — or firewall the port off if you don't want that).
-Point your own nginx/Traefik/Caddy at it — see the reverse-proxy guides in
-the wiki: [nginx](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Nginx) ·
-[Traefik](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Traefik) ·
-[Caddy (standalone)](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Caddy). Or use the **bundled
-Caddy** (automatic HTTPS via Let's Encrypt, TLS 1.3 only, HTTP/3): set
-`DOMAIN` and `ACME_EMAIL` in `.env`, point that domain's DNS at this host,
-open ports 80/tcp, 443/tcp and 443/udp, then
-`docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build`
-— see [wiki/Reverse-Proxy-Caddy](https://github.com/sparkycz1/debcontrol/wiki/Reverse-Proxy-Caddy).
-
-Then create the first administrator account yourself:
-
-```bash
 docker compose exec web python scripts/create_admin.py --username admin
 ```
 
-> [!WARNING]
-> The app speaks **plain HTTP only**. Always put TLS termination in front
-> of it, and firewall its port off (or set `APP_BIND_ADDRESS=127.0.0.1` in
-> `.env`) if you don't want it reachable directly.
+With the bundled Caddy: set `DOMAIN` and `ACME_EMAIL` in `.env`, point
+the domain's DNS at this host, open ports 80/tcp, 443/tcp and 443/udp,
+then
+`docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build`.
 
-See [wiki/Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation) for the full walkthrough
-(environment variables, LDAP/OIDC setup, account recovery if you ever get
-locked out) and [wiki/Installation#updating](https://github.com/sparkycz1/debcontrol/wiki/Installation#updating)
-for upgrading later (`./scripts/upgrade.sh`). See
-[wiki/Development](https://github.com/sparkycz1/debcontrol/wiki/Development) for running the test suite,
-linting/type-checking, adding a migration, and other project conventions.
+Every variable is explained in
+[Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation).
+</details>
+
+**Updating** later: `./scripts/upgrade.sh`, or one click in
+**Settings → Update** ([how](https://github.com/sparkycz1/debcontrol/wiki/Installation#updating)).
+
+## 🖼️ Screenshots
+
+| | |
+|---|---|
+| ![Dashboard](https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/dashboard.png) | ![Machine list](https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/machines.png) |
+| **Dashboard**: fleet tiles and trends | **Machines**: status, updates, reboot flags |
+| ![Monitoring](https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/monitoring.png) | ![Docker](https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/docker.png) |
+| **Monitoring**: history with drag-to-zoom | **Docker**: updates, scans, stacks, backups |
+| ![Checks](https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/checks.png) | ![Light theme](https://raw.githubusercontent.com/wiki/sparkycz1/debcontrol/images/dashboard-light.png) |
+| **Checks**: from outside, with a status page | **Light theme**, one click away |
+
+## 📚 Documentation
+
+Everything lives in the **[wiki](https://github.com/sparkycz1/debcontrol/wiki)**:
+
+- **Set it up**: [Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation) ·
+  [Host requirements](https://github.com/sparkycz1/debcontrol/wiki/Host-Requirements) ·
+  [Machine requirements](https://github.com/sparkycz1/debcontrol/wiki/Machine-Requirements) ·
+  [Ansible onboarding](https://github.com/sparkycz1/debcontrol/wiki/Ansible-Onboarding)
+- **Use it**: [every feature, page by page](https://github.com/sparkycz1/debcontrol/wiki/Home)
+- **Script it**: [REST API](https://github.com/sparkycz1/debcontrol/wiki/REST-API)
+- **Understand or change it**: [Architecture and security model](https://github.com/sparkycz1/debcontrol/wiki/Architecture) ·
+  [Development](https://github.com/sparkycz1/debcontrol/wiki/Development)
+
+Officially supported targets: Debian and its derivatives (Ubuntu, Proxmox
+VE, Backup Server and Mail Gateway) for as long as each is supported
+upstream ([details](https://github.com/sparkycz1/debcontrol/wiki/Machine-Requirements#os)).
 
 ## 🔒 Security
 
-See [.github/SECURITY.md](.github/SECURITY.md) — supported versions and how to report a vulnerability. Dependency updates and security alerts are automated via [Dependabot](.github/dependabot.yml).
+Found a vulnerability? Please report it privately, see
+[SECURITY.md](.github/SECURITY.md). CI runs CodeQL, pip-audit, fuzzing and
+a browser test under the real CSP on every change; Dependabot keeps
+dependencies current.
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
+debcontrol started as a tool for managing my own homelab, and much of it
+was written with AI assistance.
 
 ## 📄 License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free for noncommercial use; commercial use needs a separate agreement with the licensor
+[PolyForm Noncommercial 1.0.0](LICENSE): free for noncommercial use.
+Commercial use needs a separate agreement with the licensor.
