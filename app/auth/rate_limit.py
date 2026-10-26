@@ -25,8 +25,8 @@ class _RedisLike(Protocol):
     async def incr(self, key: str) -> int:
         """Redis INCR."""
 
-    async def expire(self, key: str, seconds: int) -> object:
-        """Redis EXPIRE."""
+    async def expire(self, key: str, seconds: int, *, nx: bool = False) -> object:
+        """Redis EXPIRE (`nx`: only when the key has no TTL yet)."""
 
 
 async def check_rate_limit(
@@ -36,12 +36,16 @@ async def check_rate_limit(
 
     A fixed-window counter, not a true sliding window — good enough for
     "stop obviously abusive volume" and much cheaper than a sorted-set
-    sliding window. The window's TTL is set on the first increment; if a
-    crash happened between `INCR` and `EXPIRE` the key could rarely be left
-    without one, which only makes that one window run a little long — it
-    can never make the limit looser, so it isn't a security concern.
+    sliding window. The window's TTL is set by the first increment of a
+    window; every later one re-applies it with `EXPIRE ... NX`, which only
+    acts when the key has no TTL. Without that, a crash or dropped
+    connection between the first `INCR` and its `EXPIRE` would leave a
+    counter that never expires — locking that source out of the login
+    page for good once it reached the limit.
     """
     current = await redis.incr(key)
     if current == 1:
         await redis.expire(key, window_seconds)
+    else:
+        await redis.expire(key, window_seconds, nx=True)
     return current <= limit

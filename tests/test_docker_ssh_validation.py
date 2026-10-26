@@ -332,10 +332,12 @@ def test_restic_host_name_is_sanitized() -> None:
     ("area", "job_id"),
     [
         ("docker", "x; reboot"),
-        ("docker", str(uuid.uuid4()).upper()),
-        ("Docker", str(uuid.uuid4())),
-        ("../etc", str(uuid.uuid4())),
-        ("docker stack", str(uuid.uuid4())),
+        # Fixed ids, so the test ids stay the same on every collection
+        # (pytest-xdist workers must all collect the same tests).
+        ("docker", "CF5CD749-8C3C-46F2-B65D-735B4EFC53DE"),
+        ("Docker", "ac0dd3c5-d459-4611-99b4-1f635aae76a3"),
+        ("../etc", "05141c42-a0bd-47b8-93fb-4e98e4fe5e76"),
+        ("docker stack", "6f1d2a7e-3b4c-4d5e-8f90-a1b2c3d4e5f6"),
     ],
 )
 def test_detached_job_area_and_id_are_checked(area: str, job_id: str) -> None:

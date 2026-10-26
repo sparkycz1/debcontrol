@@ -24,6 +24,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels the checks of the commit it replaces (they'd
+# only hold runners the new run needs). Pushes to main are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -37,6 +43,9 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          # Downloaded wheels cached between runs (keyed on uv.lock).
+          enable-cache: true
 
       - name: Install Python 3.15
         run: uv python install 3.15
@@ -50,8 +59,10 @@ jobs:
       - name: mypy
         run: uv run mypy app alembic tests
 
+      # pytest-xdist: one worker per CPU (4 on a hosted runner) — about a
+      # third of the single-process time.
       - name: pytest
-        run: uv run pytest -q
+        run: uv run pytest -q -n auto
 
       - name: alembic — exactly one head
         env:
@@ -103,6 +114,9 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          # Downloaded wheels cached between runs (keyed on uv.lock).
+          enable-cache: true
 
       - name: Install Python
         run: uv python install 3.15
@@ -127,6 +141,9 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          # Downloaded wheels cached between runs (keyed on uv.lock).
+          enable-cache: true
 
       - name: Install Python 3.15
         run: uv python install 3.15
@@ -147,21 +164,28 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          # Downloaded wheels cached between runs (keyed on uv.lock).
+          enable-cache: true
 
       - name: Install Python 3.15
         run: uv python install 3.15
 
-      # Known-CVE scan of exactly what uv.lock would actually install —
-      # separate from Dependabot (which watches for *newer* fixed versions
-      # existing at all) in that this fails the build the moment a
-      # vulnerable version is pinned, rather than waiting for a PR.
+      # Known-CVE scan of everything uv.lock pins — separate from Dependabot
+      # (which watches for *newer* fixed versions existing at all) in that
+      # this fails the build the moment a vulnerable version is pinned,
+      # rather than waiting for a PR. Every dependency group, not just the
+      # app's own: the dev/test/fuzz/e2e tools run in CI with its token, and
+      # OpenSSF Scorecard's "Vulnerabilities" check (code scanning) reads
+      # the whole lock file too, so a dev-only CVE would otherwise show up
+      # there as an alert while this job stays green.
       - name: Export locked dependencies
-        run: uv export --frozen --no-hashes --no-dev -o requirements-audit.txt
+        run: uv export --frozen --no-hashes --all-groups -o requirements-audit.txt
 
       # `uvx` runs pip-audit in its own throwaway environment — never
       # touches uv.lock or this project's own venv.
       - name: pip-audit (known CVEs in locked dependencies)
-        run: uvx pip-audit --strict -r requirements-audit.txt
+        run: uvx pip-audit@2.10.1 --strict -r requirements-audit.txt
   dependency-review:
     # Only meaningful on a PR — it diffs the base branch against the PR's
     # head to flag what a PR specifically *introduces* (a newly-added
