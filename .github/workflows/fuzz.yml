@@ -64,16 +64,22 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
 
+      # Atheris has no Python 3.15 wheel yet, so fuzzing alone stays on
+      # 3.14 (the app itself, its image and the CI gate run 3.15).
+      # UV_PYTHON overrides .python-version for every uv call below.
       - name: Install Python
         run: uv python install 3.14
 
       - name: Install dependencies (with Atheris)
+        env:
+          UV_PYTHON: "3.14"
         run: uv sync --locked --group fuzz
 
       - name: Fuzz ${{ matrix.target }}
         env:
+          UV_PYTHON: "3.14"
           # 20 minutes each on the weekly run, one minute otherwise.
           SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1200' || '60' }}
           TARGET: ${{ matrix.target }}
