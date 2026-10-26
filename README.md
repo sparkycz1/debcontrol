@@ -11,13 +11,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/sparkycz1/debcontrol/releases/latest"><img src="https://img.shields.io/github/v/release/sparkycz1/debcontrol?color=c8102e" alt="Latest release"></a>
   <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml"><img src="https://github.com/sparkycz1/debcontrol/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml"><img src="https://github.com/sparkycz1/debcontrol/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/fuzz.yml"><img src="https://github.com/sparkycz1/debcontrol/actions/workflows/fuzz.yml/badge.svg" alt="Fuzz"></a>
   <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/scorecard.yml"><img src="https://github.com/sparkycz1/debcontrol/actions/workflows/scorecard.yml/badge.svg" alt="Scorecard"></a>
   <a href="https://github.com/sparkycz1/debcontrol/actions/workflows/release.yml"><img src="https://github.com/sparkycz1/debcontrol/actions/workflows/release.yml/badge.svg" alt="Release"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/sparkycz1/debcontrol"><img src="https://api.securityscorecards.dev/projects/github.com/sparkycz1/debcontrol/badge" alt="OpenSSF Scorecard"></a>
-  <a href="https://github.com/sparkycz1/debcontrol/releases/latest"><img src="https://img.shields.io/github/v/release/sparkycz1/debcontrol?color=c8102e" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue" alt="License"></a>
 </p>
 
