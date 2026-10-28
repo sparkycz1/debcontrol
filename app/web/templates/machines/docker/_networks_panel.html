@@ -3,8 +3,8 @@
 {% if error %}
   <div class="alert alert-error"><p>{{ error }}</p></div>
 {% elif networks %}
-  <div class="monitoring-table-wrap">
-    <table class="data-table" id="networks-table">
+  <div class="monitoring-table-wrap table-cards-wrap">
+    <table class="data-table table-cards" id="networks-table" data-remember="docker-networks-table">
       <thead><tr>
         <th data-sort="text">{{ t(request, "docker.networks.name") }}</th>
         <th data-sort="text">{{ t(request, "docker.volumes.driver") }}</th>

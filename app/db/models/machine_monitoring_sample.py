@@ -99,11 +99,12 @@ class MachineMonitoringSample(Base):
     gpus: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     # Each {"name", "cpu_percent", "mem_bytes", "net_rx_bytes",
-    # "net_tx_bytes"} — running containers only, just the numbers the
-    # Monitoring tab charts (net bytes cumulative since container start, a
-    # rate computed downstream). The rest of each container's details
-    # (image/ports/health) is kept once on Machine.docker_containers, not
-    # repeated in every sample.
+    # "net_tx_bytes", "block_read_bytes", "block_write_bytes"} — running
+    # containers only, just the numbers the Docker tab charts (net and
+    # block bytes cumulative since container start, a rate computed
+    # downstream; samples older than 0.123.0 have no block bytes). The
+    # rest of each container's details (image/ports/health) is kept once
+    # on Machine.docker_containers, not repeated in every sample.
     docker_stats: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
 

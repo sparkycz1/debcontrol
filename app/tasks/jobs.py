@@ -459,10 +459,13 @@ def view_machine_docker_logs(
     )
 
 
-async def _run_container_action(machine_id: str, *, action: str, container: str) -> dict[str, Any]:
-    """Start/stop/restart one container (app.ssh.containers), then enqueue a
-    fresh monitoring sample so the Monitoring tab's container table shows
-    the new state without waiting for the next sweep."""
+async def _run_container_action(
+    machine_id: str, *, action: str, container: str = "", containers: list[str] | None = None
+) -> dict[str, Any]:
+    """Start/stop/restart (or remove) one container or several at once
+    (app.ssh.containers), then enqueue a fresh monitoring sample so the
+    Docker tab's container table shows the new state without waiting for
+    the next sweep."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
 
@@ -481,6 +484,7 @@ async def _run_container_action(machine_id: str, *, action: str, container: str)
                 app_settings.ssh_connect_timeout,
                 action=action,
                 container=container,
+                containers=containers,
             )
         except ContainerActionError as exc:
             return {"ok": False, "error": str(exc)}
@@ -496,8 +500,14 @@ async def _run_container_action(machine_id: str, *, action: str, container: str)
     name="app.tasks.jobs.run_container_action",
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
-def run_container_action_task(machine_id: str, *, action: str, container: str) -> dict[str, Any]:
-    return asyncio.run(_run_container_action(machine_id, action=action, container=container))
+def run_container_action_task(
+    machine_id: str, *, action: str, container: str = "", containers: list[str] | None = None
+) -> dict[str, Any]:
+    return asyncio.run(
+        _run_container_action(
+            machine_id, action=action, container=container, containers=containers
+        )
+    )
 
 
 async def _forecast_machine_disks(machine_id: str) -> dict[str, Any]:
@@ -1692,6 +1702,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
                         "mem_bytes": c["mem_bytes"],
                         "net_rx_bytes": c["net_rx_bytes"],
                         "net_tx_bytes": c["net_tx_bytes"],
+                        "block_read_bytes": c.get("block_read_bytes"),
+                        "block_write_bytes": c.get("block_write_bytes"),
                     }
                     for c in sample["docker_containers"]
                     if c["state"] == "running"

@@ -1,7 +1,7 @@
 {% extends "machines/docker/_layout.html" %}
 {% from "partials/range_picker.html" import range_picker with context %}
 {% from "macros/charts.html" import chart_card with context %}
-{% from "machines/docker/_macros.html" import job_status, severity_counts, container_state %}
+{% from "machines/docker/_macros.html" import job_status, severity_compact, container_state, web_links, image_links %}
 
 {% block docker_title %}{{ t(request, "docker.nav.containers") }}{% endblock %}
 
@@ -44,11 +44,17 @@
         {{ chart_card(t(request, "monitoring.card.docker_network"), t(request, "monitoring.card.docker_network_hint"),
                       chart(docker_net, ts, fmt='bytes_rate', stacked=true, time_format=tf),
                       filter=true, empty_text=t(request, "monitoring.no_data")) }}
+        {% set docker_blkio = [] %}
+        {% for name, values in history.docker_blkio_by_container.items() %}{% if values | select('number') | list %}{% set _ = docker_blkio.append((name, values)) %}{% endif %}{% endfor %}
+        {{ chart_card(t(request, "monitoring.card.docker_disk"), t(request, "monitoring.card.docker_disk_hint"),
+                      chart(docker_blkio, ts, fmt='bytes_rate', stacked=true, time_format=tf),
+                      filter=true, empty_text=t(request, "monitoring.no_data")) }}
       </div>
     {% endif %}
 
-    <section class="chart-card chart-card-wide monitoring-section" id="containers">
-      <header class="chart-card-header">
+    {% set can_select = can_act or can_update %}
+    <section class="chart-card chart-card-wide monitoring-section containers-section" id="containers">
+      <header class="chart-card-header containers-header">
         <div>
           <h3 class="chart-card-title">{{ t(request, "monitoring.containers.heading") }}</h3>
           <p class="chart-card-subtitle">
@@ -71,33 +77,55 @@
               <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.update.all_with_update") }}</button>
             </form>
           {% endif %}
-          {% if machine.docker_containers %}
-            <input type="search" class="chart-filter" data-table-filter="containers-table"
-                   placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
-          {% endif %}
         </div>
       </header>
       {% if machine.docker_containers %}
-        {% if can_update %}
+        <div class="containers-toolbar">
+          {#- The tiles count each state group and filter the table by it
+              (static/js/docker-table.js sets the select below, which the
+              table filter in monitoring-chart.js reads). -#}
+          <div class="state-tiles" role="group" aria-label="{{ t(request, 'docker.tiles.label') }}" data-state-tiles="containers-table">
+            <button type="button" class="state-tile" data-state="" aria-pressed="true">
+              <span class="state-tile-count">{{ machine.docker_containers | length }}</span>
+              <span class="state-tile-label">{{ t(request, "docker.tiles.all") }}</span>
+            </button>
+            {% for group in state_groups %}
+              {% if state_counts.get(group) %}
+                <button type="button" class="state-tile state-tile-{{ group }}" data-state="{{ group }}" aria-pressed="false">
+                  <span class="state-tile-count">{{ state_counts[group] }}</span>
+                  <span class="state-tile-label">{{ t(request, "docker.tiles." ~ group) }}</span>
+                </button>
+              {% endif %}
+            {% endfor %}
+          </div>
+          <select class="visually-hidden" data-row-state-filter="containers-table" tabindex="-1" aria-hidden="true">
+            <option value=""></option>
+            {% for group in state_groups %}<option value="{{ group }}">{{ group }}</option>{% endfor %}
+          </select>
+          <input type="search" class="chart-filter" data-table-filter="containers-table"
+                 placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+        </div>
+        {% if can_select %}
           {# The checkboxes in the table belong to this form (form="..."),
              so each row's own start/stop forms are not nested in it. #}
-          <form method="post" action="{{ docker_base }}/update" id="update-selected" class="inline-form"
-                data-confirm="{{ t(request, 'docker.update.selected_confirm') }}">
+          <form method="post" action="{{ docker_base }}/containers/bulk" id="containers-bulk" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           </form>
         {% endif %}
-        <div class="monitoring-table-wrap">
-          <table class="data-table containers-table" id="containers-table">
+        <div class="monitoring-table-wrap table-cards-wrap" tabindex="0" role="region" aria-label="{{ t(request, 'monitoring.containers.heading') }}">
+          <table class="data-table containers-table table-cards" id="containers-table" data-remember="docker-containers">
             <thead>
               <tr>
-                {% if can_update %}<th><span class="visually-hidden">{{ t(request, "docker.select") }}</span></th>{% endif %}
+                {% if can_select %}
+                  <th class="cell-select">
+                    <input type="checkbox" data-select-all="container" form="containers-bulk" aria-label="{{ t(request, 'docker.select_all') }}">
+                  </th>
+                {% endif %}
                 <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
-                <th data-sort="text">{{ t(request, "monitoring.containers.ports") }}</th>
+                <th data-sort="text">{{ t(request, "docker.links.ports_heading") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.containers.image") }}</th>
-                <th data-sort="text">{{ t(request, "docker.vulnerabilities") }}</th>
+                <th data-sort="number" class="col-vulns">{{ t(request, "docker.vulnerabilities") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.containers.status") }}</th>
-                <th data-sort="text">{{ t(request, "docker.last_update") }}</th>
-                {% if can_act %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
               </tr>
             </thead>
             <tbody>
@@ -108,25 +136,45 @@
                 {% set img_versions = (machine.docker_image_versions or {}).get(c.image) or {} %}
                 {% set scan = scans_by_ref.get(c.image) %}
                 {% set job = last_jobs.get(c.name) %}
-                <tr>
-                  {% if can_update %}
-                    <td>
+                {% set ov = overview.get(c.name) or {} %}
+                <tr data-row-state="{{ ov.row_state }}">
+                  {% if can_select %}
+                    <td class="cell-select">
                       {% if not is_own %}
-                        <input type="checkbox" name="container" value="{{ c.name }}" form="update-selected"
+                        <input type="checkbox" name="container" value="{{ c.name }}" form="containers-bulk"
                                aria-label="{{ t(request, 'docker.select_container', name=c.name) }}">
                       {% endif %}
                     </td>
                   {% endif %}
-                  <td class="cell-nowrap">
+                  <td class="cell-name" data-label="{{ t(request, 'monitoring.containers.name') }}">
                     <a href="{{ docker_base }}/containers/{{ c.name | urlencode }}"><strong>{{ c.name }}</strong></a>
-                    {% if c.compose_project %}<div class="table-summary">{{ t(request, "docker.stack_label", name=c.compose_project) }}</div>{% endif %}
-                    {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
-                    {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}</span>{% endif %}
+                    <div class="cell-badges">
+                      {% if c.compose_project %}<span class="table-summary">{{ t(request, "docker.stack_label", name=c.compose_project) }}</span>{% endif %}
+                      {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
+                      {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}</span>{% endif %}
+                    </div>
+                    {% if can_act %}
+                      <div class="row-actions">
+                        {% set actions = ('restart', 'stop') if c.state in ('running', 'restarting', 'paused') else ('start',) %}
+                        {% for a in actions %}
+                          <form method="post" action="/machines/{{ machine.id }}/containers/{{ c.name | urlencode }}/{{ a }}" class="inline-form"
+                                data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="row-action {{ 'row-action-danger' if a == 'stop' }}">{{ t(request, "monitoring.containers.action_" ~ a) }}</button>
+                          </form>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
                   </td>
-                  <td class="cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</td>
-                  <td class="cell-truncate" title="{{ c.image }}">
-                    {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
-                    {{ c.image }}
+                  <td class="cell-links" data-label="{{ t(request, 'docker.links.ports_heading') }}">
+                    {{ web_links(request, ov.web_links) }}
+                    {% if not ov.web_links %}<span class="table-muted cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</span>{% endif %}
+                  </td>
+                  <td class="cell-image" data-label="{{ t(request, 'monitoring.containers.image') }}">
+                    <div class="cell-image-ref">
+                      {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
+                      <span class="cell-truncate" title="{{ c.image }}">{{ c.image }}</span>
+                    </div>
                     {% if img_status == 'update' and img_versions.remote_version and img_versions.remote_version != img_versions.local_version %}
                       <div class="table-summary">{{ t(request, "monitoring.containers.image_new_build", new=img_versions.remote_version, current=(img_versions.local_version or '?')) }}</div>
                     {% endif %}
@@ -137,45 +185,53 @@
                         {% if img_versions.newest %}{{ t(request, "monitoring.containers.image_newest", tag=img_versions.newest) }}{% endif %}
                       </div>
                     {% endif %}
+                    {% if img_status == 'update' or img_versions.series or img_versions.newest %}
+                      <div class="table-summary">{{ image_links(request, ov.image_links) }}</div>
+                    {% endif %}
+                    {#- The same counts as the next column, shown here instead
+                        when the table is too narrow for that column. -#}
+                    {% if scan %}<div class="vulns-inline">{{ severity_compact(request, scan.counts, docker_base ~ "/images/" ~ scan.image_id ~ "/vulnerabilities") }}</div>{% endif %}
                   </td>
-                  <td class="cell-nowrap" data-sort-value="{{ ((scan.counts or {}).get('critical', 0) * 1000 + (scan.counts or {}).get('high', 0)) if scan else -1 }}">
+                  <td class="cell-nowrap col-vulns" data-label="{{ t(request, 'docker.vulnerabilities') }}" data-sort-value="{{ ((scan.counts or {}).get('critical', 0) * 1000000 + (scan.counts or {}).get('high', 0) * 1000 + (scan.counts or {}).get('medium', 0)) if scan else -1 }}">
                     {% if scan %}
-                      {{ severity_counts(request, scan.counts, docker_base ~ "/images/" ~ scan.image_id ~ "/vulnerabilities") }}
+                      {{ severity_compact(request, scan.counts, docker_base ~ "/images/" ~ scan.image_id ~ "/vulnerabilities") }}
                     {% else %}
                       <span class="table-muted">{{ t(request, "docker.scan.not_scanned") }}</span>
                     {% endif %}
                   </td>
-                  <td class="cell-nowrap">{{ container_state(request, c) }}</td>
-                  <td class="cell-nowrap">
+                  <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}">
+                    {{ container_state(request, c) }}
                     {% if job %}
-                      <a href="{{ docker_base }}/jobs/{{ job.id }}">{{ job_status(request, job) }}</a>
-                      <div class="table-summary">{{ job.created_at | local_time }}</div>
-                    {% else %}<span class="table-muted">—</span>{% endif %}
+                      <div class="table-summary">
+                        {{ t(request, "docker.last_update") }}:
+                        <a href="{{ docker_base }}/jobs/{{ job.id }}">{{ job_status(request, job) }}</a>
+                        {{ job.created_at | local_time }}
+                      </div>
+                    {% endif %}
                   </td>
-                  {% if can_act %}
-                    <td class="container-actions">
-                      {% set actions = ('restart', 'stop') if c.state in ('running', 'restarting', 'paused') else ('start',) %}
-                      {% for a in actions %}
-                        <form method="post" action="/machines/{{ machine.id }}/containers/{{ c.name | urlencode }}/{{ a }}" class="inline-form"
-                              data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}">
-                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                          <button type="submit" class="button {{ 'button-danger' if a == 'stop' else 'button-secondary' }} log-small-button">
-                            {{ t(request, "monitoring.containers.action_" ~ a) }}
-                          </button>
-                        </form>
-                      {% endfor %}
-                    </td>
-                  {% endif %}
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-        {% if can_update %}
-          <p>
-            <button type="submit" form="update-selected" class="button button-secondary">{{ t(request, "docker.update.selected") }}</button>
-            <span class="hint">{{ t(request, "docker.update.selected_hint") }}</span>
-          </p>
+        {% if can_select %}
+          <div class="bulk-bar">
+            <span class="hint">{{ t(request, "docker.bulk.with_selected") }}</span>
+            {% if can_act %}
+              <button type="submit" form="containers-bulk" name="action" value="start" class="button button-secondary log-small-button">{{ t(request, "monitoring.containers.action_start") }}</button>
+              <button type="submit" form="containers-bulk" name="action" value="restart" class="button button-secondary log-small-button"
+                      data-confirm="{{ t(request, 'docker.bulk.confirm_restart') }}">{{ t(request, "monitoring.containers.action_restart") }}</button>
+              <button type="submit" form="containers-bulk" name="action" value="stop" class="button button-secondary log-small-button"
+                      data-confirm="{{ t(request, 'docker.bulk.confirm_stop') }}">{{ t(request, "monitoring.containers.action_stop") }}</button>
+            {% endif %}
+            {% if can_update %}
+              <button type="submit" form="containers-bulk" name="action" value="update" class="button button-secondary log-small-button"
+                      data-confirm="{{ t(request, 'docker.update.selected_confirm') }}" title="{{ t(request, 'docker.update.selected_hint') }}">{{ t(request, "docker.update.selected") }}</button>
+              <button type="submit" form="containers-bulk" name="action" value="scan" class="button button-secondary log-small-button">{{ t(request, "docker.bulk.scan") }}</button>
+              <button type="submit" form="containers-bulk" name="action" value="remove" class="button button-danger log-small-button"
+                      data-confirm="{{ t(request, 'docker.bulk.confirm_remove') }}" title="{{ t(request, 'docker.bulk.remove_hint') }}">{{ t(request, "docker.bulk.remove") }}</button>
+            {% endif %}
+          </div>
         {% endif %}
       {% else %}
         <p class="hint">{{ t(request, "monitoring.containers.none") }}</p>

@@ -32,8 +32,8 @@
   </form>
 
   {% if findings %}
-    <div class="monitoring-table-wrap">
-      <table class="data-table" id="vulns-table">
+    <div class="monitoring-table-wrap table-cards-wrap">
+      <table class="data-table table-cards" id="vulns-table" data-remember="docker-vulns-table">
         <thead><tr>
           <th data-sort="text">{{ t(request, "docker.vulns.id") }}</th>
           <th data-sort="text">{{ t(request, "docker.vulns.severity") }}</th>

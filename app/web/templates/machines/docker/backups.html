@@ -17,8 +17,8 @@
     {% endif %}
   </div>
   {% if backups %}
-    <div class="monitoring-table-wrap">
-      <table class="data-table" id="backups-table">
+    <div class="monitoring-table-wrap table-cards-wrap">
+      <table class="data-table table-cards" id="backups-table" data-remember="docker-backups-table">
         <thead><tr>
           <th>{{ t(request, "docker.backup.name") }}</th>
           <th>{{ t(request, "docker.backup.sources") }}</th>

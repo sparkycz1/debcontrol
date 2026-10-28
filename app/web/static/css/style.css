@@ -2049,9 +2049,174 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 .cell-truncate { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .container-actions { white-space: nowrap; text-align: right; }
 /* Docker containers: names, numbers and status stay on one line; ports
-   and image give way first (full text on hover). */
-.containers-table th, .containers-table td { padding: 0.5rem 0.65rem; }
-.containers-table .cell-truncate { max-width: 13rem; }
+   and image give way first (full text on hover). The row's start/stop
+   buttons sit under the name, so the table needs no actions column. */
+.containers-table th, .containers-table td { padding: 0.5rem 0.65rem; vertical-align: top; }
+.containers-table .cell-truncate { max-width: 13rem; display: inline-block; vertical-align: bottom; }
+.containers-table .cell-name { min-width: 11rem; }
+.containers-table .cell-image { min-width: 10rem; max-width: 18rem; }
+.containers-table .cell-image-ref { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; min-width: 0; }
+.containers-table .cell-image .cell-truncate { display: block; max-width: 100%; min-width: 0; }
+.containers-table .vulns-inline { display: none; margin-top: var(--space-1); }
+.containers-table .cell-links { max-width: 14rem; }
+.containers-table .cell-links .cell-truncate { max-width: 12rem; }
+.containers-table .cell-status { min-width: 9rem; }
+.cell-select { width: 2.25rem; }
+.cell-badges { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; margin-top: 0.15rem; }
+.cell-badges .table-summary { margin: 0; }
+.cell-badges .badge-tag { margin: 0; }
+
+/* A row's own actions: small text buttons under the container's name. */
+.row-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
+.row-action {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.row-action:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+.row-action-danger:hover { color: var(--color-danger); border-color: var(--color-danger); }
+
+/* Vulnerabilities in one short line: critical and high as badges, the
+   rest as a muted number; the whole line links to the details. */
+.severity-compact {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+.severity-compact .badge { padding: 0.1rem 0.45rem; }
+.severity-rest { color: var(--color-muted); font-size: 0.8rem; white-space: nowrap; }
+a.severity-compact:hover .severity-rest { color: var(--color-text); }
+
+/* Links to a container's web interface (app.services.container_links). */
+.link-chips { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+.link-chip {
+  display: inline-block;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+.link-chip:hover { border-color: var(--color-accent); }
+.link-chip-proxy, .link-chip-custom { font-weight: 600; }
+.image-links { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); }
+
+/* Containers page: tiles counting each state, then the filter. */
+.containers-header { flex-wrap: wrap; row-gap: var(--space-2); }
+.containers-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+.containers-toolbar .chart-filter { flex: 0 1 16rem; min-width: 10rem; }
+.state-tiles { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.state-tile {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4em;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.state-tile:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+.state-tile[aria-pressed="true"] { color: var(--color-text); border-color: var(--color-accent); }
+.state-tile-count { font-weight: 700; font-size: 1rem; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.state-tile-running .state-tile-count { color: var(--color-ok); }
+.state-tile-unhealthy .state-tile-count, .state-tile-exited .state-tile-count { color: var(--color-danger); }
+.state-tile-restarting .state-tile-count, .state-tile-paused .state-tile-count { color: var(--color-warn); }
+
+/* What the selected rows can do, under the table. */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-3);
+}
+
+/* Tables that turn into cards when their box gets narrow (a phone, half
+   a screen): each row a card, each cell "column name: value" with the
+   name from data-label (static/js/docker-table.js fills it in). */
+.table-cards-wrap { container-type: inline-size; }
+/* Half a screen: the containers' vulnerability counts move under the
+   image instead of taking a column of their own. */
+@container (44rem <= width < 66rem) {
+  .containers-table .col-vulns { display: none; }
+  .containers-table .vulns-inline { display: block; }
+}
+/* On a phone the cards scroll with the page, not inside their own box. */
+@media (width < 48rem) {
+  .table-cards-wrap { max-height: none; }
+}
+@container (width < 44rem) {
+  .table-cards, .table-cards tbody, .table-cards tr, .table-cards td { display: block; }
+  .table-cards thead { display: none; }
+  .table-cards tbody tr {
+    position: relative;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .table-cards tbody tr:last-child { border-bottom: 0; }
+  .table-cards tbody td {
+    position: relative;
+    padding: 0.2rem 0 0.2rem calc(35% + var(--space-2));
+    border: 0;
+    max-width: none;
+    min-height: 1.6rem;
+    white-space: normal;
+  }
+  .table-cards tbody td::before {
+    content: attr(data-label);
+    position: absolute;
+    left: 0;
+    top: 0.3rem;
+    width: 35%;
+    color: var(--color-muted);
+    font-size: 0.8rem;
+  }
+  .table-cards .severity-compact { flex-wrap: wrap; }
+  /* Cells with no column name (a checkbox, the name with its buttons)
+     take the whole width. */
+  .table-cards tbody td:not([data-label]),
+  .table-cards tbody td[data-label=""],
+  .table-cards tbody td.cell-name { padding-left: 0; }
+  .table-cards tbody td:not([data-label])::before,
+  .table-cards tbody td[data-label=""]::before,
+  .table-cards tbody td.cell-name::before { content: none; }
+  .table-cards .cell-truncate { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .table-cards tbody td.cell-select {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-3);
+    width: auto;
+    padding: 0;
+    min-height: 0;
+  }
+  .table-cards tbody td.cell-name { padding-right: 2rem; }
+  .containers-table .cell-name, .containers-table .cell-image,
+  .containers-table .cell-links, .containers-table .cell-status { min-width: 0; max-width: none; }
+}
 .container-actions > * + * { margin-left: var(--space-1); }
 .row-highlight td { background: var(--color-surface-raised); }
 .container-actions .inline-form + .inline-form { margin-left: var(--space-1); }

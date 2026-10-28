@@ -840,6 +840,34 @@ async def test_a_scan_stores_results_and_summarizes_the_machine(
     assert "CVE-1" not in (stored.output or "")
 
 
+async def test_a_scan_of_references_resolves_them_to_image_ids_on_the_machine(
+    db_session_factory: Any, machine_shell: FakeMachine
+) -> None:
+    machine = _machine()
+    job = _job(machine, DockerJobKind.IMAGE_SCAN, "2 images",
+               params={"refs": ["nginx:1.27", "redis:7"]})
+    await _add(db_session_factory, machine, job)
+    machine_shell.inventory = SimpleNamespace(
+        images=[
+            {"id": NEW_ID, "ref": "nginx:1.27", "in_use": True},
+            {"id": "sha256:" + "c" * 64, "ref": "postgres:17", "in_use": True},
+        ],
+        # redis:7 was re-tagged since: only its container still names it.
+        containers=[{"image": "redis:7", "image_id": OLD_ID}],
+    )
+    machine_shell.finishes(
+        _scan_lines("nginx:1.27", ["CVE-1:HIGH"]) + "\n" + _scan_lines("redis:7", [])
+    )
+
+    await tasks._run_docker_job(str(job.id))
+
+    stored = await _get(db_session_factory, DockerJob, job.id)
+    assert stored.result["images"] == {"nginx:1.27": NEW_ID, "redis:7": OLD_ID}
+    assert stored.status == DockerJobStatus.SUCCEEDED
+    [(_remote, script)] = machine_shell.started
+    assert "postgres" not in script
+
+
 async def test_a_scan_where_no_image_could_be_scanned_fails(
     db_session_factory: Any, machine_shell: FakeMachine
 ) -> None:

@@ -45,3 +45,45 @@
     <p class="hint">{{ t(request, "docker.loading") }}</p>
   </div>
 {%- endmacro %}
+
+{#- Where a container's web interface opens (app.services.container_links):
+    a label's URL, a reverse proxy's host name, or a published port. Every
+    URL comes from the machine, so it opens in a new tab with no opener. -#}
+{% macro web_links(request, links) -%}
+  {%- if links -%}
+    <span class="link-chips">
+    {%- for link in links -%}
+      <a class="link-chip link-chip-{{ link.kind }}" href="{{ link.url }}" target="_blank" rel="noopener noreferrer"
+         title="{{ t(request, 'docker.links.open', url=link.url) }}">{{ link.label }}</a>
+    {%- endfor -%}
+    </span>
+  {%- endif -%}
+{%- endmacro %}
+
+{#- The image's registry page, source and release notes. -#}
+{% macro image_links(request, links) -%}
+  {%- if links and (links.registry_url or links.source_url or links.releases_url) -%}
+    <span class="image-links">
+      {%- if links.registry_url %}<a href="{{ links.registry_url }}" target="_blank" rel="noopener noreferrer">{{ t(request, "docker.links.registry") }}</a>{% endif -%}
+      {%- if links.source_url %}<a href="{{ links.source_url }}" target="_blank" rel="noopener noreferrer">{{ t(request, "docker.links.source") }}</a>{% endif -%}
+      {%- if links.releases_url %}<a href="{{ links.releases_url }}" target="_blank" rel="noopener noreferrer">{{ t(request, "docker.links.releases") }}</a>{% endif -%}
+    </span>
+  {%- endif -%}
+{%- endmacro %}
+
+{#- Vulnerability counts in one short line for a table cell: critical
+    and high as badges, medium and low as a muted number, the whole line
+    a link to the details. -#}
+{% macro severity_compact(request, counts, link=none) -%}
+  {%- set counts = counts or {} -%}
+  {%- set rest = (counts.get('medium', 0) or 0) + (counts.get('low', 0) or 0) + (counts.get('unknown', 0) or 0) -%}
+  {%- set label -%}
+    {{ t(request, "docker.severity.critical") }}: {{ counts.get('critical', 0) or 0 }}, {{ t(request, "docker.severity.high") }}: {{ counts.get('high', 0) or 0 }}, {{ t(request, "docker.severity.medium") }}: {{ counts.get('medium', 0) or 0 }}, {{ t(request, "docker.severity.low") }}: {{ counts.get('low', 0) or 0 }}
+  {%- endset -%}
+  <a class="severity-compact" {% if link %}href="{{ link }}"{% endif %} title="{{ label }}" aria-label="{{ label }}">
+  {%- if counts.get('critical') %}<span class="badge badge-error">{{ t(request, "docker.severity_tiny.critical", count=counts.get('critical')) }}</span>{% endif -%}
+  {%- if counts.get('high') %}<span class="badge badge-warn">{{ t(request, "docker.severity_tiny.high", count=counts.get('high')) }}</span>{% endif -%}
+  {%- if rest %}<span class="severity-rest">{{ t(request, "docker.severity_tiny.rest", count=rest) }}</span>{% endif -%}
+  {%- if not counts.get('critical') and not counts.get('high') and not rest %}<span class="badge badge-ok">{{ t(request, "docker.scan.clean") }}</span>{% endif -%}
+  </a>
+{%- endmacro %}

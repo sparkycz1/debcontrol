@@ -28,7 +28,13 @@ from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import docker_actions, docker_jobs, docker_scans, monitoring_history
+from app.services import (
+    docker_actions,
+    docker_jobs,
+    docker_overview,
+    docker_scans,
+    monitoring_history,
+)
 from app.services.docker_gate import GATES
 from app.ssh.docker_cli import (
     DockerCommandError,
@@ -149,6 +155,7 @@ async def docker_containers_page(
     for job in jobs:
         last_jobs.setdefault(job.target, job)
     protected = await docker_jobs.protected_project(db, machine)
+    containers = docker_overview.containers_of(machine)
     return render(
         request,
         "machines/docker/containers.html",
@@ -165,6 +172,11 @@ async def docker_containers_page(
             "last_jobs": last_jobs,
             "protected_project": protected,
             "has_active_jobs": await docker_jobs.has_active_jobs(db, machine.id),
+            "overview": {
+                str(c.get("name")): docker_overview.describe(machine, c) for c in containers
+            },
+            "state_counts": docker_overview.state_counts(containers),
+            "state_groups": docker_overview.STATE_GROUPS,
         },
     )
 
@@ -231,6 +243,9 @@ async def docker_container_panel(
     scan = None
     if container is not None and container.get("image_id"):
         scan = await docker_scans.get_scan(db, machine.id, str(container["image_id"]))
+    sampled = next(
+        (c for c in docker_overview.containers_of(machine) if c.get("name") == name), None
+    )
     return render_partial(
         request,
         "machines/docker/_container_panel.html",
@@ -240,6 +255,7 @@ async def docker_container_panel(
             "container": container,
             "image": image,
             "scan": scan,
+            "overview": docker_overview.describe(machine, sampled) if sampled else None,
             "error": error,
             "can_power": current_user.has_permission(Permission.ACTION_POWER),
             "can_updates": current_user.has_permission(Permission.ACTION_UPDATES),
@@ -414,6 +430,119 @@ async def docker_update_many(
         else None
     )
     return redirect(f"{docker_base(machine)}/jobs", notice=notice, error=error)
+
+
+# What the selected rows' buttons need: start/stop/restart are power
+# actions, like a single container's; update, scan and remove change what
+# is installed, like an update or a clean-up.
+_BULK_PERMISSION = {
+    "start": Permission.ACTION_POWER,
+    "stop": Permission.ACTION_POWER,
+    "restart": Permission.ACTION_POWER,
+    "remove": Permission.ACTION_UPDATES,
+    "scan": Permission.ACTION_UPDATES,
+    "update": Permission.ACTION_UPDATES,
+}
+
+
+@router.post("/{machine_id}/docker/containers/bulk", dependencies=[Depends(verify_csrf)])
+async def docker_containers_bulk(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The buttons under the containers table, for the selected rows:
+    start, stop, restart, remove (stopped ones), scan their images, or
+    update them. Each needs the same permission as doing it to one."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    form = await request.form()
+    action = str(form.get("action") or "")
+    permission = _BULK_PERMISSION.get(action)
+    if permission is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    if not current_user.has_permission(permission):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    names = [str(v) for v in form.getlist("container") if is_container_name_valid(str(v))]
+    if not names:
+        return redirect(
+            docker_base(machine), error=LocalizedText(request, "docker.bulk.none_selected")
+        )
+    if action == "update":
+        queued, update_error = await _queue_updates(
+            request, db, machine, current_user, names, ""
+        )
+        update_notice = (
+            LocalizedText(request, "docker.update.queued", count=len(queued.jobs))
+            if queued.jobs
+            else None
+        )
+        return redirect(f"{docker_base(machine)}/jobs", notice=update_notice, error=update_error)
+    if action == "scan":
+        images = {
+            str(c.get("image"))
+            for c in docker_overview.containers_of(machine)
+            if c.get("name") in names and c.get("image")
+        }
+        try:
+            job = await docker_actions.scan_images(
+                db, machine, started_by=actor(current_user), refs=sorted(images)
+            )
+        except DockerCommandError:
+            return redirect(
+                docker_base(machine), error=LocalizedText(request, "docker.bulk.none_selected")
+            )
+        if job is None:
+            return redirect(
+                docker_base(machine), error=LocalizedText(request, "docker.job.already_queued")
+            )
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.images.scan",
+            f'Started a vulnerability scan ({job.target}) on "{machine.name}"',
+            details={"target": job.target},
+        )
+        return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+    app_settings = await get_or_create_app_settings(db)
+    result = await docker_actions.run_bulk_action(
+        db, machine, action, names, timeout=app_settings.ssh_connect_timeout + 120
+    )
+    for name in result.names:
+        await _audit(
+            db,
+            request,
+            machine,
+            f"machine.container.{action}",
+            f'Container "{name}" {action} on "{machine.name}"',
+            ok=result.error is None,
+            details={"container": name, **({"error": result.error} if result.error else {})},
+        )
+    for name, reason in result.skipped.items():
+        if reason == "protected":
+            await _audit(
+                db,
+                request,
+                machine,
+                f"machine.container.{action}",
+                f'Refused to {action} container "{name}" on "{machine.name}": '
+                "debcontrol runs in it",
+                denied=True,
+                details={"container": name, "reason": reason},
+            )
+    error: str | None = result.error
+    if error is None and "protected" in result.skipped.values():
+        error = _protected_error(request)
+    notice = (
+        LocalizedText(
+            request, f"docker.bulk.done_{action}", count=len(result.names)
+        )
+        if result.names and result.error is None
+        else None
+    )
+    return redirect(docker_base(machine), notice=notice, error=error)
 
 
 @router.post(

@@ -5,8 +5,8 @@
   <div class="alert alert-error"><p>{{ error }}</p></div>
 {% elif projects %}
   {% set ready = machine.host_key_fingerprint %}
-  <div class="monitoring-table-wrap">
-    <table class="data-table" id="projects-table">
+  <div class="monitoring-table-wrap table-cards-wrap">
+    <table class="data-table table-cards" id="projects-table" data-remember="docker-projects-table">
       <thead><tr>
         <th>{{ t(request, "docker.stacks.name") }}</th>
         <th>{{ t(request, "docker.projects.containers") }}</th>
