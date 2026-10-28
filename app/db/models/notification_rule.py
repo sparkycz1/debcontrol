@@ -149,6 +149,14 @@ class NotificationEventType(enum.StrEnum):
     DOCKER_STACK_FAILED = "docker.stack.failed"
     # a restic backup of Docker volumes / host paths failed.
     DOCKER_BACKUP_FAILED = "docker.backup.failed"
+    # Container events read with each monitoring sample
+    # (`app.services.container_events`): a container crashed (non-zero
+    # exit), keeps restarting, was killed for running out of memory, or
+    # its health check turned unhealthy.
+    DOCKER_CONTAINER_CRASHED = "docker.container.crashed"
+    DOCKER_CONTAINER_RESTART_LOOP = "docker.container.restart_loop"
+    DOCKER_CONTAINER_OOM = "docker.container.oom"
+    DOCKER_CONTAINER_UNHEALTHY = "docker.container.unhealthy"
 
 
 notification_rule_users = Table(

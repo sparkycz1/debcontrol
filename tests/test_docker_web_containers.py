@@ -220,7 +220,12 @@ async def test_settings_are_saved_and_audited(client, db_session_factory, celery
     assert setting.updated_by == "test-admin"
     assert celery_calls == []
     [entry] = await audit_entries(db_session_factory, "machine.docker.container.settings")
-    assert entry.details == {"container": "web", "auto_update": True, "gate": "worse"}
+    assert entry.details == {
+        "container": "web",
+        "auto_update": True,
+        "update_policy": "any",
+        "gate": "worse",
+    }
 
 
 async def test_settings_reject_an_unknown_gate(client, db_session_factory):

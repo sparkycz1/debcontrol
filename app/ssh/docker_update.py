@@ -65,12 +65,17 @@ STOP_TIMEOUT_SECONDS = 30
 # --- Step 1: pull ------------------------------------------------------------
 
 
+_VERSION_FORMAT = "'{{index .Config.Labels \"org.opencontainers.image.version\"}}'"
+
+
 def build_pull_script(
-    ref: str, *, current: str, scan: bool, scan_old: str | None = None
+    ref: str, *, current: str, scan: bool, scan_old: str | None = None, versions: bool = False
 ) -> str:
     """Pull `ref`, print its image id before and after; with `scan`, scan
     the new image when it differs from `current` (the image id the
-    container runs) — and `scan_old`, an image id, too."""
+    container runs) — and `scan_old`, an image id, too. With `versions`,
+    also print the version each of the two images declares (for the
+    update policy, `app.services.update_policy`)."""
     if not is_image_ref_valid(ref) or is_image_id_valid(ref) or "@" in ref:
         raise DockerCommandError(f'"{ref}" is not an image reference that can be updated.')
     if not is_image_id_valid(current):
@@ -84,6 +89,13 @@ def build_pull_script(
         f'new="$($D image inspect --format \'{{{{.Id}}}}\' {q(ref)} 2>/dev/null)"',
         'echo "@@DC_NEW_ID $new"',
     ]
+    if versions:
+        lines += [
+            f'echo "@@DC_OLD_VERSION $($D image inspect --format {_VERSION_FORMAT} '
+            f'{q(current)} 2>/dev/null | head -n 1)"',
+            f'echo "@@DC_NEW_VERSION $($D image inspect --format {_VERSION_FORMAT} '
+            '"$new" 2>/dev/null | head -n 1)"',
+        ]
     script = "\n".join(lines) + "\n"
     if scan:
         targets = [ref] + ([scan_old] if scan_old else [])
@@ -98,6 +110,9 @@ class PullResult:
     old_id: str = ""
     new_id: str = ""
     failed: bool = False
+    # The versions the running and the pulled image declare ("" = none).
+    old_version: str = ""
+    new_version: str = ""
 
     @property
     def changed(self) -> bool:
@@ -115,7 +130,16 @@ def parse_pull_output(raw: str) -> PullResult:
             result.new_id = value if is_image_id_valid(value) else ""
         elif line.strip() == "@@DC_PULL_FAILED":
             result.failed = True
+        elif line.startswith("@@DC_OLD_VERSION"):
+            result.old_version = _label_value(line[len("@@DC_OLD_VERSION") :])
+        elif line.startswith("@@DC_NEW_VERSION"):
+            result.new_version = _label_value(line[len("@@DC_NEW_VERSION") :])
     return result
+
+
+def _label_value(raw: str) -> str:
+    text = raw.strip()
+    return "" if text in ("<no value>", "<nil>") else text[:80]
 
 
 def build_retag_command(image_id: str, ref: str) -> str:

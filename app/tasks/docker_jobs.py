@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import logging
 import time
 import uuid
@@ -52,11 +53,19 @@ from app.db.models.docker import (
 )
 from app.db.models.machine import Machine
 from app.db.models.notification_rule import NotificationEventType
-from app.services import docker_backups, docker_jobs, docker_scans, docker_stacks
+from app.services import (
+    docker_acceptances,
+    docker_backups,
+    docker_jobs,
+    docker_scans,
+    docker_stacks,
+)
 from app.services.docker_gate import evaluate as evaluate_gate
 from app.services.docker_gate import normalize_gate
+from app.services.image_versions import parse_image
 from app.services.live_updates import KIND_DOCKER, publish_machine_event
 from app.services.notifications import notify
+from app.services.update_policy import bump_target, normalize_policy, parse_version, within
 from app.ssh import detached_jobs, docker_files
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.docker_cli import (
@@ -66,6 +75,7 @@ from app.ssh.docker_cli import (
     DockerAccessError,
     DockerCommandError,
     is_image_id_valid,
+    is_image_ref_valid,
     q,
     run_binary,
     run_script,
@@ -95,6 +105,7 @@ from app.ssh.docker_scan import MAX_IMAGES as MAX_SCAN_IMAGES
 from app.ssh.docker_scan import build_scan_script, parse_scan_output
 from app.ssh.docker_update import (
     ContainerPlan,
+    PullResult,
     build_create_payload,
     build_plan_command,
     build_pull_script,
@@ -471,23 +482,43 @@ async def _job_container_update(ctx: _Context) -> None:
     # as debcontrol's own host since the job was queued.
     await docker_jobs.check_container(ctx.session, ctx.machine, name)
     gate = normalize_gate(str(ctx.params.get("gate") or ""))
+    # Only a scheduled update carries a policy (`app.services.update_policy`).
+    policy = normalize_policy(str(ctx.params.get("policy") or ""))
     if ctx.result.get("phase") in (None, "pull"):
-        state: dict[str, Any] = {}
 
         async def build_pull() -> str:
             plan, _container, _image = await _inspect(ctx, name)
             _check_updatable(plan)
-            state["plan"] = plan
             scan_old = None
             if gate == "worse" and docker_scans.counts_of(
                 await docker_scans.get_scan(ctx.session, ctx.machine.id, plan.image_id)
             ) is None:
                 scan_old = plan.image_id
+            # A container debcontrol recreates itself (not Compose's) moves
+            # to the newest tag the policy allows, when there is one.
+            target = None
+            if policy != "any" and not plan.is_compose:
+                try:
+                    target = await bump_target(plan.ref, policy)
+                except Exception:
+                    logger.warning("Tag lookup for %s failed", plan.ref, exc_info=True)
             ctx.result.update(
-                {"ref": plan.ref, "previous_image_id": plan.image_id, "gate_policy": gate}
+                {
+                    "ref": target or plan.ref,
+                    "previous_image_id": plan.image_id,
+                    "gate_policy": gate,
+                }
             )
+            if policy != "any":
+                ctx.result["update_policy"] = policy
+            if target:
+                ctx.result["previous_ref"] = plan.ref
             return build_pull_script(
-                plan.ref, current=plan.image_id, scan=gate != "off", scan_old=scan_old
+                target or plan.ref,
+                current=plan.image_id,
+                scan=gate != "off",
+                scan_old=scan_old,
+                versions=policy != "any",
             )
 
         status, output = await _run_phase(ctx, "pull", build_pull)
@@ -496,10 +527,20 @@ async def _job_container_update(ctx: _Context) -> None:
             raise _JobFailedError("Pulling the image failed — see the output.")
         previous = str(ctx.result.get("previous_image_id") or "")
         ref = str(ctx.result.get("ref") or "")
+        bumped = bool(ctx.result.get("previous_ref"))
         ctx.result["new_image_id"] = pull.new_id
         if not pull.new_id or not previous or pull.new_id == previous:
             ctx.result["note"] = "up_to_date"
             await _close(ctx, DockerJobStatus.SKIPPED)
+            return
+        if policy != "any" and not _policy_allows(ctx, policy, pull, bumped):
+            # Like a stopped update: the tag points at what runs again. A
+            # bumped tag is a different one, and the running one untouched.
+            if not bumped:
+                with contextlib.suppress(DockerCommandError, SSHConnectionError):
+                    await ctx.short(build_retag_command(previous, ref))
+            ctx.result["note"] = "policy"
+            await _close(ctx, DockerJobStatus.SKIPPED, _policy_message(ctx, policy))
             return
         if gate != "off":
             found = parse_scan_output(output)
@@ -515,8 +556,9 @@ async def _job_container_update(ctx: _Context) -> None:
             if not verdict.allowed:
                 # The tag points at what runs again: nothing deploys the
                 # stopped image by accident.
-                with contextlib.suppress(DockerCommandError, SSHConnectionError):
-                    await ctx.short(build_retag_command(previous, ref))
+                if not bumped:
+                    with contextlib.suppress(DockerCommandError, SSHConnectionError):
+                        await ctx.short(build_retag_command(previous, ref))
                 await _close(ctx, DockerJobStatus.BLOCKED, gate_message(gate, verdict.reason))
                 return
 
@@ -526,12 +568,43 @@ async def _job_container_update(ctx: _Context) -> None:
         if plan.is_compose:
             return build_recreate_script(plan, previous_image_id=previous)
         payload, extra = build_create_payload(container, image)
+        if ctx.result.get("previous_ref") and plan.ref == ctx.result.get("previous_ref"):
+            # The tag bump: the same container on the newer tag.
+            payload["Image"] = str(ctx.result.get("ref"))
         return build_recreate_script(
             plan, payload=payload, extra_networks=extra, previous_image_id=previous
         )
 
     status, output = await _run_phase(ctx, "recreate", build_recreate)
     await _finish_recreate(ctx, status, output)
+
+
+def _policy_allows(ctx: _Context, policy: str, pull: PullResult, bumped: bool) -> bool:
+    """The update policy's guard: the new image's declared version (or, for
+    a tag bump without one, its tag) within the policy of the running
+    one's (or its tag's)."""
+    ref = str(ctx.result.get("ref") or "")
+    old_ref = str(ctx.result.get("previous_ref") or ref)
+    old = parse_version(pull.old_version) or _tag_version(old_ref)
+    new = parse_version(pull.new_version) or (_tag_version(ref) if bumped else None)
+    ctx.result["versions"] = {"old": pull.old_version, "new": pull.new_version}
+    return within(policy, old, new)
+
+
+def _tag_version(ref: str) -> tuple[int, ...] | None:
+    parsed = parse_image(ref)
+    return parse_version(parsed.tag) if parsed is not None else None
+
+
+def _policy_message(ctx: _Context, policy: str) -> str:
+    versions = dict(ctx.result.get("versions") or {})
+    old, new = versions.get("old") or "?", versions.get("new") or "?"
+    allowed = "the same major version" if policy == "minor" else "the same major.minor version"
+    return (
+        f"Not updated: the update policy allows only {allowed}, and the new image "
+        f"declares version {new} (running {old}). An image that declares no version "
+        "is not updated under a limited policy."
+    )
 
 
 async def _finish_recreate(ctx: _Context, status: int | None, output: str) -> None:
@@ -570,6 +643,20 @@ async def _job_container_rollback(ctx: _Context) -> None:
         if plan.is_compose:
             return build_recreate_script(plan, retag_to=target, previous_image_id=plan.image_id)
         payload, extra = build_create_payload(container, image)
+        # The update being undone moved the container to another tag (the
+        # update policy's tag bump): back to the tag it had.
+        back_to = str(ctx.params.get("ref") or "")
+        if (
+            back_to
+            and back_to != plan.ref
+            and is_image_ref_valid(back_to)
+            and not is_image_id_valid(back_to)
+            and "@" not in back_to
+        ):
+            ctx.result["previous_ref"] = plan.ref
+            ctx.result["ref"] = back_to
+            payload["Image"] = back_to
+            plan = dataclasses.replace(plan, ref=back_to)
         return build_recreate_script(
             plan,
             payload=payload,
@@ -1639,6 +1726,38 @@ def poll_git_stacks() -> int:
     return asyncio.run(_poll_git_stacks())
 
 
+# --- Accepted vulnerabilities ------------------------------------------------
+
+
+async def _recompute_vulnerability_acceptances(vuln_ids: list[str]) -> int:
+    """After a vulnerability was accepted or an acceptance revoked: the
+    counts of every scan holding it, and those machines' summaries
+    (`app.services.docker_acceptances.recompute`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        changed = await docker_acceptances.recompute(session, {str(v) for v in vuln_ids})
+        await session.commit()
+    return changed
+
+
+@celery_app.task(name="app.tasks.docker_jobs.recompute_vulnerability_acceptances")
+def recompute_vulnerability_acceptances(vuln_ids: list[str]) -> int:
+    return asyncio.run(_recompute_vulnerability_acceptances(vuln_ids))
+
+
+async def _expire_vulnerability_acceptances() -> int:
+    """Hourly: acceptances past their date are removed and their
+    vulnerabilities counted again."""
+    async with db_session.AsyncSessionLocal() as session:
+        expired = await docker_acceptances.expire(session)
+        await session.commit()
+    return expired
+
+
+@celery_app.task(name="app.tasks.docker_jobs.expire_vulnerability_acceptances")
+def expire_vulnerability_acceptances() -> int:
+    return asyncio.run(_expire_vulnerability_acceptances())
+
+
 __all__ = [
     "STACKS_DIR",
     "docker_backup_snapshots",
@@ -1646,9 +1765,11 @@ __all__ = [
     "docker_files_task",
     "docker_inventory",
     "docker_write_compose_file",
+    "expire_vulnerability_acceptances",
     "poll_git_stacks",
     "purge_old_docker_jobs",
     "queue_stack_deploy",
+    "recompute_vulnerability_acceptances",
     "reconcile_docker_jobs",
     "resume_docker_job",
     "run_docker_job",

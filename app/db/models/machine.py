@@ -262,13 +262,25 @@ class Machine(Base):
     # {image: "update" | "current" | "unknown"} for every running image, from
     # the daily registry-digest comparison (app.ssh.image_updates).
     docker_image_updates: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
-    # {image: {"local_version", "remote_version", "series", "newest"}} —
-    # which newer version exists, where that can be told
-    # (app.services.image_versions). Only the known keys are present.
-    docker_image_versions: Mapped[dict[str, dict[str, str]] | None] = mapped_column(
+    # {image: {"local_version", "remote_version", "series", "newest",
+    # "allowed": {"minor": tag, "patch": tag}}} — which newer version
+    # exists, and the newest one each limited update policy allows, where
+    # that can be told (app.services.image_versions). Only the known keys
+    # are present.
+    docker_image_versions: Mapped[dict[str, dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True
     )
     docker_images_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The last image update check, successful or not (app.tasks.jobs.
+    # _check_machine_image_updates): {"at", "ok", "error", "reasons":
+    # {image: why it is "unknown"}, "rate_limited": images Docker Hub (or
+    # another registry) refused for its rate limit, "hub_requests": the
+    # Docker Hub requests one check makes}. None before 0.125.0.
+    docker_image_check: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Where the next monitoring sample's `docker events` read starts: the
+    # machine's own clock (Unix seconds) at the previous sample, so events
+    # are neither missed nor reported twice (app.services.container_events).
+    docker_events_since: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Vulnerabilities in the images the machine's containers run, from their
     # latest scans (app.services.docker_scans.summarize):
     # {"critical", "high", "medium", "low", "images", "unscanned", "scanned_at"}.

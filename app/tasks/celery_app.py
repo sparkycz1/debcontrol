@@ -299,7 +299,9 @@ celery_app.conf.beat_schedule = {
     },
     "check-all-machine-image-updates": {
         "task": "app.tasks.jobs.check_all_machine_image_updates",
-        "schedule": crontab(hour=4, minute=30),
+        # Hourly; each machine is checked once per Settings -> Checks &
+        # retention's `docker_image_check_interval_hours` (24 by default).
+        "schedule": crontab(minute=30),
     },
     "forecast-all-machine-disks": {
         "task": "app.tasks.jobs.forecast_all_machine_disks",
@@ -387,6 +389,11 @@ celery_app.conf.beat_schedule = {
     "purge-old-docker-jobs": {
         "task": "app.tasks.docker_jobs.purge_old_docker_jobs",
         "schedule": crontab(hour=3, minute=25),
+    },
+    # Accepted container vulnerabilities past their date count again.
+    "expire-vulnerability-acceptances": {
+        "task": "app.tasks.docker_jobs.expire_vulnerability_acceptances",
+        "schedule": crontab(minute=40),
     },
     "reconcile-update-runs": {
         "task": "app.tasks.jobs.reconcile_update_runs",

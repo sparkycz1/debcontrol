@@ -95,7 +95,9 @@ def parse_image(image: str) -> ImageRef | None:
     return ImageRef(registry=registry, repository=repository, tag=tag)
 
 
-def _version(tag: str) -> tuple[str, tuple[int, ...], str] | None:
+def parse_tag(tag: str) -> tuple[str, tuple[int, ...], str] | None:
+    """`(leading "v", numbers, flavour)` of a version tag, None for any
+    other tag (`latest`, `stable`, a commit)."""
     match = _TAG_RE.match(tag)
     if match is None:
         return None
@@ -112,14 +114,14 @@ def newer_tags(current: str, tags: list[str]) -> dict[str, str]:
     tags shaped like `current` (same "v", same flavour, same number of
     parts). Empty when `current` is not a version tag or nothing is newer;
     `newest` is left out when it is the same as `series`."""
-    mine = _version(current)
+    mine = parse_tag(current)
     if mine is None:
         return {}
     prefix, numbers, flavour = mine
     best_series: tuple[tuple[int, ...], str] | None = None
     best_all: tuple[tuple[int, ...], str] | None = None
     for tag in tags:
-        other = _version(tag)
+        other = parse_tag(tag)
         if other is None or other[0] != prefix or other[2] != flavour:
             continue
         candidate = other[1]
@@ -188,11 +190,22 @@ async def list_tags(ref: ImageRef, client: httpx2.AsyncClient) -> list[str] | No
         return None
 
 
+async def fetch_tags(
+    ref: ImageRef, transport: httpx2.AsyncBaseTransport | None = None
+) -> list[str] | None:
+    """`list_tags` with a client of its own."""
+    async with httpx2.AsyncClient(
+        timeout=_TIMEOUT_SECONDS, follow_redirects=False, transport=transport
+    ) as client:
+        return await list_tags(ref, client)
+
+
 async def describe(
     images: dict[str, dict[str, str]], transport: httpx2.AsyncBaseTransport | None = None
 ) -> dict[str, dict[str, Any]]:
-    """`{image: {"local_version", "remote_version", "series", "newest"}}`
-    (only the keys that are known) for the machine-side findings in
+    """`{image: {"local_version", "remote_version", "series", "newest",
+    "allowed": {"minor": tag, "patch": tag}}}` (only the keys that are
+    known) for the machine-side findings in
     `images` — `{image: {"local_version": ..., "remote_version": ...}}`.
     One tag listing per distinct repository."""
     result: dict[str, dict[str, Any]] = {}
@@ -207,11 +220,22 @@ async def describe(
                 if key in ("local_version", "remote_version") and value
             }
             ref = parse_image(image)
-            if ref is not None and _version(ref.tag) is not None:
+            if ref is not None and parse_tag(ref.tag) is not None:
                 key = (ref.registry, ref.repository)
                 if key not in listed:
                     listed[key] = await list_tags(ref, client)
                 entry.update(newer_tags(ref.tag, listed[key] or []))
+                # The newest tag each limited update policy allows
+                # (`app.services.update_policy`), for the Docker tab's hint.
+                from app.services.update_policy import allowed_tag
+
+                allowed = {
+                    policy: tag
+                    for policy in ("minor", "patch")
+                    if (tag := allowed_tag(policy, ref.tag, listed[key] or []))
+                }
+                if allowed:
+                    entry["allowed"] = allowed
             if entry:
                 result[image] = entry
     return result

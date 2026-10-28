@@ -56,6 +56,12 @@
           {{ t(request, "docker.auto_update_label") }}
         </label>
         <p class="hint">{{ t(request, "docker.auto_update_hint") }}</p>
+        <label for="setting-policy">{{ t(request, "docker.policy.label") }}</label>
+        <select id="setting-policy" name="update_policy">
+          {% set current_policy = setting.update_policy if setting else 'any' %}
+          {% for p in update_policies %}<option value="{{ p }}" {% if p == current_policy %}selected{% endif %}>{{ t(request, "docker.policy." ~ p) }}</option>{% endfor %}
+        </select>
+        <p class="hint">{{ t(request, "docker.policy.hint") }}</p>
         <label for="setting-gate">{{ t(request, "docker.gate.label") }}</label>
         <select id="setting-gate" name="gate">
           {% set current_gate = setting.vulnerability_gate if setting else 'off' %}
@@ -73,6 +79,7 @@
       <h2>{{ t(request, "docker.container.settings") }}</h2>
       <dl class="detail-list">
         <dt>{{ t(request, "docker.auto_update_label") }}</dt><dd>{{ t(request, "docker.yes") if setting.auto_update else t(request, "docker.no") }}</dd>
+        <dt>{{ t(request, "docker.policy.label") }}</dt><dd>{{ t(request, "docker.policy." ~ (setting.update_policy or 'any')) }}</dd>
         <dt>{{ t(request, "docker.gate.label") }}</dt><dd>{{ t(request, "docker.gate." ~ setting.vulnerability_gate) }}</dd>
       </dl>
     </section>

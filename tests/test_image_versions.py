@@ -96,8 +96,13 @@ async def test_only_public_registries_are_asked_and_each_repository_once() -> No
     )
 
     assert found == {
-        "nginx:1.27.1": {"series": "1.27.3", "newest": "1.29.0"},
-        "nginx:1.27.3": {"newest": "1.29.0"},
+        "nginx:1.27.1": {
+            "series": "1.27.3",
+            "newest": "1.29.0",
+            # The newest tag each limited update policy allows.
+            "allowed": {"minor": "1.29.0", "patch": "1.27.3"},
+        },
+        "nginx:1.27.3": {"newest": "1.29.0", "allowed": {"minor": "1.29.0"}},
         "app:latest": {"local_version": "2.3.0", "remote_version": "2.4.1"},
     }
     assert not any("registry.lan" in url for url in requests)
@@ -122,6 +127,7 @@ async def test_the_check_stores_and_shows_the_newer_version(
         return (
             {"nginx:1.27.1": "current", "app:latest": "update"},
             {"app:latest": {"local_version": "2.3.0", "remote_version": "2.4.1"}},
+            {},
         )
 
     async def fake_describe(images: dict[str, dict[str, str]]) -> dict[str, dict[str, Any]]:

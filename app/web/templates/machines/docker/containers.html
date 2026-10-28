@@ -61,6 +61,16 @@
             {{ t(request, "docker.containers.hint") }}
             {% if machine.docker_images_checked_at %}— {{ t(request, "monitoring.containers.images_checked_at", when=(machine.docker_images_checked_at | local_time('%Y-%m-%d %H:%M'))) }}{% endif %}
           </p>
+          {% set image_check = machine.docker_image_check or {} %}
+          {% if image_check and not image_check.ok %}
+            <p class="chart-card-subtitle text-warn">{{ t(request, "docker.image_check.failed", error=image_check.error or "?") }}</p>
+          {% endif %}
+          {% if image_check.rate_limited %}
+            <p class="chart-card-subtitle text-warn">{{ t(request, "docker.image_check.rate_limited", count=image_check.rate_limited) }}</p>
+          {% endif %}
+          {% if image_check.hub_requests %}
+            <p class="chart-card-subtitle">{{ t(request, "docker.image_check.hub_requests", count=image_check.hub_requests) }}</p>
+          {% endif %}
         </div>
         <div class="page-header-actions">
           {% if can_manage and machine.host_key_fingerprint %}
@@ -151,7 +161,7 @@
                     <div class="cell-badges">
                       {% if c.compose_project %}<span class="table-summary">{{ t(request, "docker.stack_label", name=c.compose_project) }}</span>{% endif %}
                       {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
-                      {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}</span>{% endif %}
+                      {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}{% if setting.update_policy in ('minor', 'patch') %} · {{ t(request, "docker.policy.badge_" ~ setting.update_policy) }}{% endif %}</span>{% endif %}
                     </div>
                     {% if can_act %}
                       <div class="row-actions">
@@ -175,6 +185,10 @@
                       {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
                       <span class="cell-truncate" title="{{ c.image }}">{{ c.image }}</span>
                     </div>
+                    {% if img_status == 'unknown' %}
+                      {% set unknown_reason = ((machine.docker_image_check or {}).get('reasons') or {}).get(c.image) %}
+                      {% if unknown_reason %}<div class="table-summary table-muted">{{ t(request, "docker.image_check.reason." ~ unknown_reason) }}</div>{% endif %}
+                    {% endif %}
                     {% if img_status == 'update' and img_versions.remote_version and img_versions.remote_version != img_versions.local_version %}
                       <div class="table-summary">{{ t(request, "monitoring.containers.image_new_build", new=img_versions.remote_version, current=(img_versions.local_version or '?')) }}</div>
                     {% endif %}
@@ -184,6 +198,10 @@
                         {% if img_versions.series and img_versions.newest %} · {% endif %}
                         {% if img_versions.newest %}{{ t(request, "monitoring.containers.image_newest", tag=img_versions.newest) }}{% endif %}
                       </div>
+                    {% endif %}
+                    {% set policy_tag = (img_versions.allowed or {}).get(setting.update_policy) if setting and setting.auto_update else none %}
+                    {% if policy_tag %}
+                      <div class="table-summary">{{ t(request, "docker.policy.allowed_compose" if c.compose_project else "docker.policy.allowed_bump", tag=policy_tag) }}</div>
                     {% endif %}
                     {% if img_status == 'update' or img_versions.series or img_versions.newest %}
                       <div class="table-summary">{{ image_links(request, ov.image_links) }}</div>

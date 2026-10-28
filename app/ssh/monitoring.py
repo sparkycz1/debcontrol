@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from app.db.models.machine import Machine
 from app.ssh import proxmox
@@ -144,6 +144,12 @@ _HARDWARE_COMMAND = (
 # than `stats`' rounded, human-readable NetIO — which is only the fallback
 # when that file isn't readable. Host-network containers are skipped
 # there, since their namespace *is* the host's.
+#
+# `@@EVENTS` prints the machine's own clock (Unix seconds), then — when the
+# caller set `DC_EVENTS_SINCE` to the clock of its previous sample — the
+# container events since then that can call for a notification (exit,
+# OOM kill, health check result), at most the last hour and 200 of them
+# (`app.services.container_events`).
 _DOCKER_COMMAND = (
     "echo ===DOCKER===; "
     "if command -v docker >/dev/null 2>&1; then "
@@ -163,6 +169,13 @@ _DOCKER_COMMAND = (
     "awk -v n=\"${n#/}\" 'NR>2 {gsub(\":\", \" \"); if ($1 != \"lo\") {rx+=$2; tx+=$10}} "
     "END {printf \"%s %.0f %.0f\\n\", n, rx, tx}' \"/proc/$p/net/dev\" 2>/dev/null; "
     "done; "
+    "fi; "
+    "echo @@EVENTS; n=\"$(date +%s)\"; echo \"$n\"; s=\"${DC_EVENTS_SINCE:-}\"; "
+    "if [ -n \"$s\" ]; then "
+    "[ \"$s\" -lt \"$((n-3600))\" ] && s=\"$((n-3600))\"; "
+    "$D events --since \"$s\" --until \"$n\" --filter type=container "
+    "--filter event=die --filter event=oom --filter event=health_status "
+    "--format '{{json .}}' 2>/dev/null | tail -n 200; "
     "fi; "
     "fi; "
     "fi"
@@ -258,6 +271,11 @@ class MonitoringSample(TypedDict):
     # since the container started; `link_labels` is just the labels the
     # Docker tab turns into links (`link_labels_of`).
     docker_containers: list[dict[str, Any]]
+    # The machine's clock (Unix seconds) when Docker was read, and the
+    # container events since `DC_EVENTS_SINCE` (`_parse_docker_events`) —
+    # absent when Docker wasn't readable.
+    docker_clock: NotRequired[int | None]
+    docker_events: NotRequired[list[dict[str, Any]]]
     # --- Hardware — only ever populated for a physical machine
     # (Machine.is_physical); always [] / None on a VM, meaning "not
     # applicable", not "nothing found". ---
@@ -385,6 +403,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         failed_services_count = int(failed_lines[0])
 
     docker_status, docker_containers = _parse_docker(sections.get("DOCKER"))
+    docker_clock, docker_events = _parse_docker_events(sections.get("DOCKER"))
 
     sensor_temps, sensor_fans, sensor_gpu_power_watts = _parse_sensors_json(
         hardware_sections.get("SENSORS", "")
@@ -417,6 +436,8 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         failed_units=failed_units,
         docker_status=docker_status,
         docker_containers=docker_containers,
+        docker_clock=docker_clock,
+        docker_events=docker_events,
         sensor_temps=sensor_temps,
         sensor_fans=sensor_fans,
         smart_disks=smart_disks,
@@ -731,7 +752,7 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
     if "@@NOACCESS" in raw:
         return "no_access", []
 
-    blocks: dict[str, list[str]] = {"@@PS": [], "@@STATS": [], "@@NET": []}
+    blocks: dict[str, list[str]] = {"@@PS": [], "@@STATS": [], "@@NET": [], "@@EVENTS": []}
     current: list[str] | None = None
     for line in raw.splitlines():
         stripped = line.strip()
@@ -810,14 +831,65 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
     return "ok", containers
 
 
+# What `docker events` reports (`_parse_docker_events` keeps these keys).
+_EVENT_ACTIONS = ("die", "oom", "health_status: unhealthy", "health_status: healthy")
+
+
+def _parse_docker_events(raw: str | None) -> tuple[int | None, list[dict[str, Any]]]:
+    """`(machine clock, events)` from the `@@EVENTS` block: each event
+    `{"action": "die" | "oom" | "unhealthy" | "healthy", "name",
+    "exit_code" (die only, None if not given), "image", "time"}`, oldest
+    first."""
+    if raw is None or "@@EVENTS" not in raw:
+        return None, []
+    lines = [line.strip() for line in raw.split("@@EVENTS", 1)[1].splitlines() if line.strip()]
+    if not lines or not lines[0].isdigit():
+        return None, []
+    clock = int(lines[0])
+    events: list[dict[str, Any]] = []
+    for line in lines[1:]:
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        action = str(row.get("Action") or row.get("status") or "")
+        if action not in _EVENT_ACTIONS:
+            continue
+        actor_raw = row.get("Actor")
+        actor: dict[str, Any] = actor_raw if isinstance(actor_raw, dict) else {}
+        attributes_raw = actor.get("Attributes")
+        attributes: dict[str, Any] = attributes_raw if isinstance(attributes_raw, dict) else {}
+        name = str(attributes.get("name") or "").lstrip("/")[:255]
+        if not name:
+            continue
+        exit_code = str(attributes.get("exitCode") or "")
+        when = row.get("time")
+        events.append(
+            {
+                "action": action.removeprefix("health_status: "),
+                "name": name,
+                "exit_code": int(exit_code) if exit_code.isdigit() else None,
+                "image": str(attributes.get("image") or row.get("from") or "")[:512],
+                "time": int(when) if isinstance(when, int | float) else None,
+            }
+        )
+    return clock, events
+
+
 async def gather_monitoring_sample(
     machine: Machine, secret: str | None, timeout_seconds: int
 ) -> MonitoringSample:
     """Connect to a machine and take one monitoring sample — plus, only
     when `machine.is_physical`, hardware sensors/fans/S.M.A.R.T./power/GPUs
-    (see _HARDWARE_COMMAND). Requires a pinned host key."""
+    (see _HARDWARE_COMMAND). Requires a pinned host key. Container events
+    are read from where the previous sample's left off
+    (`Machine.docker_events_since`)."""
     is_physical = bool(machine.is_physical)
     command = f"{MONITORING_COMMAND}; {_HARDWARE_COMMAND}" if is_physical else MONITORING_COMMAND
+    if machine.docker_events_since is not None:
+        command = f"DC_EVENTS_SINCE={int(machine.docker_events_since)}; {command}"
     async with machine_connection(machine, secret, timeout_seconds) as conn:
         # `docker stats --no-stream` alone takes a couple of seconds (it
         # waits for two cgroup readings), on top of the CPU probe's own

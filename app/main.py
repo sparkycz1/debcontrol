@@ -33,6 +33,7 @@ from app.web.routes import (
     api_v1_checks,
     api_v1_dashboard,
     api_v1_docker,
+    api_v1_docker_vulnerabilities,
     api_v1_metrics,
     api_v1_notifications,
     api_v1_roles,
@@ -310,6 +311,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_search.router)
     app.include_router(api_v1_metrics.router)
     app.include_router(api_v1_docker.router)
+    app.include_router(api_v1_docker_vulnerabilities.router)
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)

@@ -307,7 +307,13 @@ async def docker_overview_api(
                 "image_update": (machine.docker_image_updates or {}).get(
                     str(container.get("image"))
                 ),
+                # Why `image_update` is "unknown" (`app.ssh.image_updates.
+                # UNKNOWN_REASONS`), when it is.
+                "image_check_reason": (
+                    (machine.docker_image_check or {}).get("reasons") or {}
+                ).get(str(container.get("image"))),
                 "auto_update": bool(setting and setting.auto_update),
+                "update_policy": setting.update_policy if setting else "any",
                 "vulnerability_gate": setting.vulnerability_gate if setting else "off",
                 "vulnerabilities": (scan.counts or {}) if scan else None,
                 **docker_overview.describe(machine, container),
@@ -318,6 +324,9 @@ async def docker_overview_api(
         "state_counts": docker_overview.state_counts(docker_overview.containers_of(machine)),
         "protected_project": await docker_jobs.protected_project(db, machine),
         "images_checked_at": _iso(machine.docker_images_checked_at),
+        # The last image update check, successful or not: {"at", "ok",
+        # "error", "reasons", "rate_limited", "hub_requests"}.
+        "image_check": machine.docker_image_check,
         "vulnerabilities": machine.docker_vulnerabilities,
         "last_backup_ok_at": _iso(machine.docker_backup_ok_at),
         "containers": containers,
@@ -353,6 +362,7 @@ async def docker_container_api(
     return {
         "container": container,
         "auto_update": bool(setting and setting.auto_update),
+        "update_policy": setting.update_policy if setting else "any",
         "vulnerability_gate": setting.vulnerability_gate if setting else "off",
         "rollback_image_id": docker_jobs.rollback_image(docker_jobs.last_update(jobs, name)),
         "scan": _scan(scan) if scan else None,
@@ -363,6 +373,9 @@ async def docker_container_api(
 class _ContainerSettings(BaseModel):
     auto_update: bool = False
     vulnerability_gate: str = "off"
+    # How far a scheduled update may go: "any", "minor" or "patch"
+    # (`app.services.update_policy`). Left out = unchanged.
+    update_policy: Literal["any", "minor", "patch"] | None = None
 
 
 @router.put("/containers/{name}/settings", dependencies=[_updates])
@@ -384,6 +397,7 @@ async def docker_container_settings_api(
         auto_update=body.auto_update,
         gate=body.vulnerability_gate,
         actor=user.username,
+        update_policy=body.update_policy,
     )
     await db.commit()
     await _audit(
@@ -392,7 +406,12 @@ async def docker_container_settings_api(
         machine,
         "machine.docker.container.settings",
         f'Changed update settings of container "{name}" on "{machine.name}"',
-        {"container": name, "auto_update": body.auto_update, "gate": body.vulnerability_gate},
+        {
+            "container": name,
+            "auto_update": body.auto_update,
+            "update_policy": body.update_policy,
+            "gate": body.vulnerability_gate,
+        },
     )
     return {"ok": True}
 
@@ -568,12 +587,18 @@ async def docker_container_rollback_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     _ready(machine)
     jobs = await docker_jobs.list_jobs(db, machine.id, limit=20, target=name)
-    image_id = docker_jobs.rollback_image(docker_jobs.last_update(jobs, name))
+    last = docker_jobs.last_update(jobs, name)
+    image_id = docker_jobs.rollback_image(last)
     if image_id is None:
         raise _bad("There's no earlier image to go back to.")
     try:
         job = await docker_actions.rollback_container(
-            db, machine, name, image_id, started_by=user.username
+            db,
+            machine,
+            name,
+            image_id,
+            started_by=user.username,
+            ref=docker_jobs.rollback_ref(last),
         )
     except docker_jobs.ProtectedError as exc:
         await _audit(
