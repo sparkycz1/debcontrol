@@ -498,7 +498,6 @@
     "monitoring.interval_seconds": "{seconds} s",
     "monitoring.interval_default": "{seconds} s, výchozí hodnota instance",
     "monitoring.apply": "Použít",
-    "monitoring.truncated_hint": "Toto zařízení má v tomto okně více vzorků, než lze najednou zobrazit — grafy níže pokrývají jen nejnovější vzorky, ne celý rozsah. Zvolte kratší rozsah, nebo zkraťte dobu uchovávání v Nastavení.",
     "monitoring.threshold_percent": "Upozornění ≥ {value} %",
     "monitoring.no_data": "V tomto rozsahu nejsou žádná data.",
     "monitoring.network.none_found": "Nenalezena žádná síťová rozhraní.",

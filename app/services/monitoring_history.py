@@ -8,7 +8,9 @@ than have Postgres or the ORM do time-bucketed aggregation (which would
 need either a raw/dialect-specific query or pulling in a real
 time-series-friendly extension neither this app nor its SQLite test
 backend has), this fetches the raw rows in the requested window (capped —
-see `MAX_RAW_SAMPLES`) and downsamples them in Python by simple
+see `MAX_RAW_SAMPLES`; a longer window keeps every n-th row, evenly
+across the whole window, see `load_spread_rows`) and downsamples them in
+Python by simple
 positional bucketing (every consecutive run of rows averaged into one
 point) — not time-aligned buckets, just "spread evenly across however many
 rows came back," which is good enough for a *trend* line and keeps this
@@ -33,8 +35,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_reachability_sample import MachineReachabilitySample
@@ -51,10 +54,9 @@ TIME_RANGES: tuple[tuple[str, str, timedelta], ...] = (
 )
 DEFAULT_TIME_RANGE = "1h"
 
-# A hard cap on how many raw rows one request will pull into memory before
-# downsampling — protects against a machine whose interval override is much
-# shorter than expected, or a retention override far longer than the
-# selected range would normally imply.
+# At most this many raw rows (plus the newest one) are pulled into memory
+# per series before downsampling; a window holding more is thinned evenly
+# (`load_spread_rows`), never cut short.
 MAX_RAW_SAMPLES = 20_000
 
 # How many points a downsampled series targets — enough resolution for a
@@ -298,8 +300,9 @@ def _scalar_rate_series(
 class MonitoringHistory:
     range_key: str
     sample_count: int
-    truncated: bool  # True if MAX_RAW_SAMPLES was hit — the window shown is
-    # actually shorter than the selected range implies.
+    # Kept for API compatibility; always False since 0.126.2 (a long window
+    # is thinned evenly instead of cut short, see `load_spread_rows`).
+    truncated: bool
     # One timestamp per point in every series below — they all bucket
     # identically (see _bucket_timestamps), so this is shared rather than
     # repeated per graph. Rendered as data attributes for the hover
@@ -407,10 +410,10 @@ def _bucketed(series: dict[str, list[float | None]]) -> dict[str, list[float | N
 def build_monitoring_history(
     samples: list[MachineMonitoringSample], range_key: str
 ) -> MonitoringHistory:
-    """Pure function, no I/O — the caller (`app.web.routes.machines`) does
-    the DB query (oldest-first, capped at `MAX_RAW_SAMPLES`, within the
-    requested window) and hands the rows here."""
-    truncated = len(samples) >= MAX_RAW_SAMPLES
+    """Pure function, no I/O — the caller (`load_machine_history`) does
+    the DB query (oldest first, within the requested window, thinned to
+    about `MAX_RAW_SAMPLES` rows) and hands the rows here."""
+    truncated = False
     timestamps = [s.sampled_at for s in samples]
     bucket_timestamps = _bucket_timestamps(timestamps, _TARGET_POINTS)
 
@@ -580,9 +583,10 @@ def build_availability_history(
     samples: list[MachineReachabilitySample], range_key: str
 ) -> AvailabilityHistory:
     """Pure function, no I/O — same shape as `build_monitoring_history`:
-    the caller does the DB query (oldest-first, capped at `MAX_RAW_SAMPLES`,
-    within the requested window) and hands the rows here."""
-    truncated = len(samples) >= MAX_RAW_SAMPLES
+    the caller does the DB query (oldest first, within the requested
+    window, thinned to about `MAX_RAW_SAMPLES` rows) and hands the rows
+    here."""
+    truncated = False
     timestamps = [s.checked_at for s in samples]
     bucket_timestamps = _bucket_timestamps(timestamps, _TARGET_POINTS)
 
@@ -614,15 +618,54 @@ def normalize_range_key(range_key: str) -> str:
     return range_key if range_key in valid else DEFAULT_TIME_RANGE
 
 
+async def load_spread_rows[RowT](
+    db: AsyncSession,
+    model: type[RowT],
+    id_column: InstrumentedAttribute[uuid.UUID],
+    time_column: InstrumentedAttribute[datetime],
+    conditions: list[Any],
+) -> tuple[list[RowT], int]:
+    """The rows of `model` matching `conditions`, oldest first, and how
+    many there are in all. Up to `MAX_RAW_SAMPLES` rows come back as they
+    are; more are thinned to every n-th row (plus the newest one), so the
+    result still spans the whole window. Cutting the list at
+    `MAX_RAW_SAMPLES` instead would silently drop the newest days of a
+    30/90-day view. Every kept row is a real sample, so rates computed from
+    consecutive cumulative counters stay right. Portable SQL (a window
+    function), so the SQLite test backend runs the same query."""
+    total = (
+        await db.execute(select(func.count()).select_from(model).where(*conditions))
+    ).scalar_one()
+    query = select(model).where(*conditions).order_by(time_column)
+    if total > MAX_RAW_SAMPLES:
+        stride = -(-total // MAX_RAW_SAMPLES)
+        numbered = (
+            select(
+                id_column.label("row_id"),
+                func.row_number().over(order_by=time_column).label("rn"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
+        query = (
+            select(model)
+            .join(numbered, id_column == numbered.c.row_id)
+            .where(or_((numbered.c.rn - 1) % stride == 0, numbered.c.rn == total))
+            .order_by(time_column)
+        )
+    rows = list((await db.execute(query)).scalars().all())
+    return rows, total
+
+
 async def load_machine_history(
     db: AsyncSession, machine_id: uuid.UUID, window: TimeWindow | str
 ) -> tuple[MonitoringHistory, AvailabilityHistory]:
     """Fetch one machine's monitoring and reachability samples inside
-    `window` (oldest first, each capped at `MAX_RAW_SAMPLES`) and
-    downsample both. A plain range key (already normalized,
-    `normalize_range_key`) is accepted for "that preset, ending now". Both
-    queries are served by the `(machine_id, sampled_at)`/`(machine_id,
-    checked_at)` indexes."""
+    `window` (oldest first, thinned evenly to about `MAX_RAW_SAMPLES` each,
+    `load_spread_rows`) and downsample both. A plain range key (already
+    normalized, `normalize_range_key`) is accepted for "that preset, ending
+    now". Both queries are served by the `(machine_id, sampled_at)`/
+    `(machine_id, checked_at)` indexes."""
     if isinstance(window, str):
         window = resolve_window(window)
     range_key = window.range_key
@@ -637,21 +680,23 @@ async def load_machine_history(
     if window.until is not None:
         sampled.append(MachineMonitoringSample.sampled_at <= window.until)
         checked.append(MachineReachabilitySample.checked_at <= window.until)
-    result = await db.execute(
-        select(MachineMonitoringSample)
-        .where(*sampled)
-        .order_by(MachineMonitoringSample.sampled_at)
-        .limit(MAX_RAW_SAMPLES)
+    samples, sample_total = await load_spread_rows(
+        db,
+        MachineMonitoringSample,
+        MachineMonitoringSample.id,
+        MachineMonitoringSample.sampled_at,
+        sampled,
     )
-    history = build_monitoring_history(list(result.scalars().all()), range_key)
+    history = build_monitoring_history(samples, range_key)
+    history.sample_count = sample_total
 
-    reachability_result = await db.execute(
-        select(MachineReachabilitySample)
-        .where(*checked)
-        .order_by(MachineReachabilitySample.checked_at)
-        .limit(MAX_RAW_SAMPLES)
+    checks, check_total = await load_spread_rows(
+        db,
+        MachineReachabilitySample,
+        MachineReachabilitySample.id,
+        MachineReachabilitySample.checked_at,
+        checked,
     )
-    availability = build_availability_history(
-        list(reachability_result.scalars().all()), range_key
-    )
+    availability = build_availability_history(checks, range_key)
+    availability.sample_count = check_total
     return history, availability
