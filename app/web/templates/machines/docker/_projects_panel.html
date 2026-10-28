@@ -59,6 +59,9 @@
                 {% if can_terminal and p.config_files and not stack %}
                   <a class="button button-secondary log-small-button" href="{{ docker_base }}/projects/{{ p.name }}/compose">{{ t(request, "docker.projects.view_compose") }}</a>
                 {% endif %}
+                {% if can_terminal and p.containers %}
+                  <a class="button button-secondary log-small-button" href="/machines/{{ machine.id }}/logs?source=docker&amp;container={{ ('@' ~ p.name) | urlencode }}">{{ t(request, "docker.projects.logs") }}</a>
+                {% endif %}
               </td>
             {% endif %}
           </tr>

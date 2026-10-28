@@ -76,6 +76,7 @@ async def follow_logs_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> 
     search = params.get("search", "")
     priority = params.get("priority", "")
     unit = params.get("unit", "")
+    level = params.get("level", "")
     try:
         command = build_follow_command(
             source=source,
@@ -84,6 +85,7 @@ async def follow_logs_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> 
             search=search,
             priority=priority,
             unit=unit,
+            level=level,
         )
     except LogAccessError as exc:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc)[:120])
@@ -95,7 +97,13 @@ async def follow_logs_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> 
         app_settings = await get_or_create_app_settings(db)
 
     await websocket.accept()
-    labels = {"journal": "the journal", "file": f'"{path}"', "docker": f'container "{container}"'}
+    labels = {
+        "journal": "the journal",
+        "file": f'"{path}"',
+        "docker": (
+            f'stack "{container[1:]}"' if container.startswith("@") else f'container "{container}"'
+        ),
+    }
     label = labels.get(source, source)
 
     try:

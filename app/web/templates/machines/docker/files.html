@@ -13,6 +13,10 @@
   </div>
   <p class="hint">{{ t(request, "docker.files.hint_" ~ target.kind) }}</p>
   {% include "machines/docker/_file_crumbs.html" %}
+  {% if not error %}
+    <p><a class="button button-secondary log-small-button" href="{{ files_url(path, 'archive') }}">{{ t(request, "docker.files.download_this_folder") }}</a>
+      <span class="hint">{{ t(request, "docker.files.download_folder_hint", size=(max_download | bytes)) }}</span></p>
+  {% endif %}
 
   {% if error %}
     <div class="alert alert-error"><p>{{ error }}</p></div>
@@ -46,6 +50,8 @@
               <td class="container-actions">
                 {% if e.kind == 'file' %}
                   <a class="button button-secondary log-small-button" href="{{ files_url(full, 'download') }}">{{ t(request, "docker.files.download") }}</a>
+                {% elif e.kind == 'dir' %}
+                  <a class="button button-secondary log-small-button" href="{{ files_url(full, 'archive') }}" title="{{ t(request, 'docker.files.download_folder_hint', size=(max_download | bytes)) }}">{{ t(request, "docker.files.download_folder") }}</a>
                 {% endif %}
                 {% if e.kind in ('file', 'link', 'dir') %}
                   <form method="post" action="{{ files_url(path, 'delete') }}" class="inline-form"
@@ -69,8 +75,10 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="path" value="{{ path }}">
         <label for="file-upload">{{ t(request, "docker.files.upload_label") }}</label>
-        <input id="file-upload" type="file" name="upload" required>
-        <p class="hint">{{ t(request, "docker.files.upload_hint", size=(max_upload | bytes)) }}</p>
+        <input id="file-upload" type="file" name="upload" multiple>
+        <label for="folder-upload">{{ t(request, "docker.files.upload_folder_label") }}</label>
+        <input id="folder-upload" type="file" name="folder_upload" webkitdirectory>
+        <p class="hint">{{ t(request, "docker.files.upload_hint", size=(max_upload | bytes)) }} {{ t(request, "docker.files.upload_many_hint", count=max_upload_files) }}</p>
         <button type="submit" class="button button-secondary">{{ t(request, "docker.files.upload") }}</button>
       </form>
       <form method="post" action="{{ files_url(path, 'mkdir') }}" class="form" autocomplete="off">

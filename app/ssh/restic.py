@@ -43,6 +43,7 @@ from app.ssh.docker_cli import (
     DockerCommandError,
     as_dict,
     as_list,
+    is_container_name_valid,
     is_volume_name_valid,
     q,
 )
@@ -180,17 +181,29 @@ def _mounts(config: ResticConfig, *, writable: bool) -> str:
     return " ".join(parts)
 
 
-def _prelude(config: ResticConfig, *, mounts: str) -> list[str]:
+def _prelude(
+    config: ResticConfig, *, mounts: str, post_hook: str = "", extra_cleanup: str = ""
+) -> list[str]:
+    """`post_hook` (a command line) runs from `cleanup` once `$dc_post` is
+    set, after the stopped containers are started again; `extra_cleanup`
+    runs last (removing a temporary volume)."""
     config.validate()
+    post = (
+        f'[ -z "$dc_post" ] || {{ dc_post=; echo "@@DC_STEP post"; {post_hook} '
+        '|| echo "@@DC_HOOK_FAILED post"; }; '
+        if post_hook
+        else ""
+    )
     return [
         "set -u",
         "umask 077",
         'renv="$(mktemp)"',
         "stopped=",
+        "dc_post=",
         # Containers stopped for the job are started again however it ends.
         (
             'cleanup() { rm -f "$renv"; [ -z "$stopped" ] || { echo "@@DC_STEP start"; '
-            "$D start $stopped >/dev/null; }; }"
+            f"$D start $stopped >/dev/null; }}; {post}{extra_cleanup}}}"
         ),
         "trap cleanup EXIT",
         f"cat > \"$renv\" <<'DC_RESTIC_ENV_END'\n{_env_file(config)}DC_RESTIC_ENV_END",
@@ -222,16 +235,61 @@ def _keep_flags(keep: dict[str, int | None]) -> str:
     return " ".join(flags)
 
 
+MAX_HOOK_CHARS = 4000
+
+
+@dataclass(frozen=True)
+class BackupHooks:
+    """Commands run with `docker exec` in one container around a backup:
+    `pre` before it (and before the containers are stopped) — a non-zero
+    exit stops the backup; `post` after it, once the containers run again,
+    whether the backup worked or not."""
+
+    container: str = ""
+    pre: str = ""
+    post: str = ""
+
+    def validate(self) -> None:
+        if not self.pre and not self.post:
+            return
+        if not is_container_name_valid(self.container):
+            raise DockerCommandError("Choose the container the backup commands run in.")
+        for command in (self.pre, self.post):
+            if len(command) > MAX_HOOK_CHARS or "\0" in command:
+                raise DockerCommandError("A backup command is too long or invalid.")
+
+    def exec_line(self, command: str) -> str:
+        return f"$D exec {q(self.container)} sh -c {q(command)}"
+
+
 def build_backup_script(
-    config: ResticConfig, *, stop_containers: bool, keep: dict[str, int | None]
+    config: ResticConfig,
+    *,
+    stop_containers: bool,
+    keep: dict[str, int | None],
+    hooks: BackupHooks | None = None,
 ) -> str:
     if not config.volumes and not config.paths:
         raise DockerCommandError("Nothing to back up.")
-    lines = _prelude(config, mounts=_mounts(config, writable=False))
+    hooks = hooks or BackupHooks()
+    hooks.validate()
+    lines = _prelude(
+        config,
+        mounts=_mounts(config, writable=False),
+        post_hook=hooks.exec_line(hooks.post) if hooks.post else "",
+    )
     lines += [
         "echo '@@DC_STEP init'",
         "R cat config >/dev/null 2>&1 || R init || { echo '@@DC_FAILED init'; exit 1; }",
     ]
+    if hooks.post:
+        # From here on the post command runs however the job ends.
+        lines.append("dc_post=1")
+    if hooks.pre:
+        lines += [
+            "echo '@@DC_STEP pre'",
+            f"{hooks.exec_line(hooks.pre)} || {{ echo '@@DC_FAILED pre'; exit 1; }}",
+        ]
     if stop_containers:
         lines += _stop_users(config)
     excludes = " ".join(f"--exclude {q(e)}" for e in config.excludes)
@@ -243,6 +301,12 @@ def build_backup_script(
     if stop_containers:
         lines += ['[ -z "$stopped" ] || { echo "@@DC_STEP start"; $D start $stopped >/dev/null; }',
                   "stopped="]
+    if hooks.post:
+        lines += [
+            "dc_post=",
+            "echo '@@DC_STEP post'",
+            f"{hooks.exec_line(hooks.post)} || echo '@@DC_HOOK_FAILED post'",
+        ]
     flags = _keep_flags(keep)
     if flags:
         lines += [
@@ -302,6 +366,101 @@ def build_restore_script(config: ResticConfig, snapshot: str, *, delete: bool) -
         "echo '@@DC_DONE'",
     ]
     return "\n".join(lines) + "\n"
+
+
+def verify_volume(config: ResticConfig) -> str:
+    """The temporary volume a test restore of this backup goes into."""
+    return f"debcontrol-verify-{config.backup_id[:8]}"
+
+
+def build_verify_script(config: ResticConfig, snapshot: str = "latest") -> str:
+    """Test restore: restore `snapshot` (by default this backup's newest)
+    into a new temporary volume with `--verify` (restic reads every
+    restored file back and compares it with the repository), and remove
+    the volume however the job ends. Nothing the containers use is touched; the
+    machine needs room for one more copy of the backup meanwhile."""
+    if not _SNAPSHOT_RE.match(snapshot):
+        raise DockerCommandError("Invalid snapshot.")
+    volume = verify_volume(config)
+    mounts = f"-v {q(volume)}:/restore"
+    if config.repository.startswith("/"):
+        mounts += f" -v {q(config.repository)}:{q(config.repository)}"
+    remove = f"$D volume rm -f {q(volume)} >/dev/null 2>&1"
+    lines = _prelude(config, mounts=mounts, extra_cleanup=f"{remove}; ")
+    # "latest" means this backup's newest snapshot, not the repository's.
+    which = f"latest --tag {q(config.tag)}" if snapshot == "latest" else q(snapshot)
+    lines += [
+        "echo '@@DC_STEP prepare'",
+        remove,
+        f"$D volume create --label {HELPER_LABEL} {q(volume)} >/dev/null "
+        "|| { echo '@@DC_FAILED prepare'; exit 1; }",
+        "echo '@@DC_STEP restore'",
+        f"R restore {which} --target /restore --verify --json "
+        "|| { echo '@@DC_FAILED restore'; exit 1; }",
+        "echo '@@DC_DONE'",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@dataclass
+class VerifySummary:
+    """What a test restore found: how much the snapshot holds and how much
+    of it was restored and verified."""
+
+    snapshot_id: str = ""
+    expected_files: int | None = None
+    expected_bytes: int | None = None
+    restored_files: int | None = None
+    restored_bytes: int | None = None
+    errors: int = 0
+
+    @property
+    def complete(self) -> bool:
+        """Every file the snapshot holds came back, with no error."""
+        return (
+            self.errors == 0
+            and self.restored_files is not None
+            and self.expected_files is not None
+            and self.restored_files >= self.expected_files
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "expected_files": self.expected_files,
+            "expected_bytes": self.expected_bytes,
+            "restored_files": self.restored_files,
+            "restored_bytes": self.restored_bytes,
+            "errors": self.errors,
+        }
+
+
+def parse_verify_output(raw: str) -> VerifySummary:
+    """The `summary` and `error` messages `restic restore --json` prints
+    (restic 0.17 and later). Never raises."""
+    summary = VerifySummary()
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        kind = data.get("message_type")
+        if kind == "error":
+            summary.errors += 1
+        elif kind == "summary":
+            snapshot = str(data.get("snapshot_id") or "")
+            if _SNAPSHOT_RE.match(snapshot):
+                summary.snapshot_id = snapshot
+            summary.expected_files = _int(data.get("total_files"))
+            summary.expected_bytes = _int(data.get("total_bytes"))
+            summary.restored_files = _int(data.get("files_restored"))
+            summary.restored_bytes = _int(data.get("bytes_restored"))
+    return summary
 
 
 def build_snapshots_script(config: ResticConfig, *, all_snapshots: bool = False) -> str:

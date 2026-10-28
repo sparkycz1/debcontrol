@@ -22,6 +22,8 @@ absolute, or holds a newline or NUL, is refused before anything runs.
 
 from __future__ import annotations
 
+import difflib
+import hashlib
 import io
 import posixpath
 import tarfile
@@ -239,3 +241,149 @@ def build_delete_command(target: Target, path: str) -> str:
 def build_mkdir_command(target: Target, path: str) -> str:
     inside = target.inside(path)
     return target.run('mkdir -p -- "$1" && echo @@DC_DONE', inside, writable=True)
+
+
+# --- Several files at once, folders as archives, changes before saving ------------
+
+# Files in one upload (a folder from the browser counts each file in it).
+MAX_UPLOAD_FILES = 1000
+# Lines of a "show changes" diff shown; the rest is summarized.
+MAX_DIFF_LINES = 2000
+
+
+def content_sha256(content: bytes) -> str:
+    """The fingerprint of a file as opened in the editor: saving with it
+    refuses to overwrite a file that changed on the machine meanwhile."""
+    return hashlib.sha256(content).hexdigest()
+
+
+def relative_upload_path(name: str) -> str:
+    """A file's path inside the folder it is uploaded to, as the browser
+    sends it ("notes.txt", or "photos/2026/a.jpg" for a folder upload).
+    Every part must be a plain name: no "..", nothing absolute, no control
+    characters. Raises `DockerCommandError`."""
+    name = name.replace("\\", "/")
+    parts = [part for part in name.split("/") if part]
+    if not parts or len(parts) > 32 or len(name) > 4096:
+        raise DockerCommandError("Invalid file name.")
+    for part in parts:
+        if part in (".", "..") or len(part) > 255 or any(ord(c) < 32 or c == "\x7f" for c in part):
+            raise DockerCommandError("Invalid file name.")
+    return "/".join(parts)
+
+
+def build_upload_tar(files: list[tuple[str, bytes]]) -> bytes:
+    """A tar stream of several files under relative paths
+    (`relative_upload_path`), with the folders they need. New files are
+    root's with mode 644, folders 755; an existing file of the same name is
+    replaced."""
+    if not files or len(files) > MAX_UPLOAD_FILES:
+        raise DockerCommandError("Invalid upload.")
+    now = int(time.time())
+    seen_dirs: set[str] = set()
+    seen_files: set[str] = set()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for raw_name, content in files:
+            name = relative_upload_path(raw_name)
+            if name in seen_files or name in seen_dirs:
+                raise DockerCommandError("The same file is in the upload twice.")
+            parts = name.split("/")
+            for depth in range(1, len(parts)):
+                folder = "/".join(parts[:depth])
+                if folder in seen_files:
+                    raise DockerCommandError("Invalid upload.")
+                if folder not in seen_dirs:
+                    seen_dirs.add(folder)
+                    info = tarfile.TarInfo(name=f"./{folder}")
+                    info.type = tarfile.DIRTYPE
+                    info.mode = 0o755
+                    info.mtime = now
+                    archive.addfile(info)
+            seen_files.add(name)
+            info = tarfile.TarInfo(name=f"./{name}")
+            info.size = len(content)
+            info.mode = 0o644
+            info.mtime = now
+            archive.addfile(info, io.BytesIO(content))
+    return buffer.getvalue()
+
+
+def check_upload_tar(tar_bytes: bytes) -> int:
+    """Check, before it is unpacked on the machine, that a tar stream holds
+    only regular files and folders under relative paths that stay where
+    they are unpacked. Returns the number of files; raises
+    `DockerCommandError`."""
+    count = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as archive:
+            for member in archive:
+                if not (member.isreg() or member.isdir()):
+                    raise DockerCommandError("Invalid upload.")
+                name = member.name.removeprefix("./")
+                if name.startswith("/") or relative_upload_path(name) != name.rstrip("/"):
+                    raise DockerCommandError("Invalid upload.")
+                if member.isreg():
+                    count += 1
+    except (tarfile.TarError, OSError, EOFError) as exc:
+        raise DockerCommandError("Invalid upload.") from exc
+    if count == 0 or count > MAX_UPLOAD_FILES:
+        raise DockerCommandError("Invalid upload.")
+    return count
+
+
+def is_tar_stream(tar_bytes: bytes) -> bool:
+    """Whether `tar_bytes` is a complete tar stream (a folder read with
+    `build_read_command`), not one cut short."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as archive:
+            for member in archive:
+                if member.isreg() and archive.extractfile(member) is None:
+                    return False
+            return bool(archive.getmembers())
+    except (tarfile.TarError, OSError, EOFError, ValueError):
+        return False
+
+
+def archive_filename(target: Target, path: str) -> str:
+    """`<folder>.tar.gz` for a folder download (the container's or the
+    volume's name for its top folder)."""
+    base = posixpath.basename(normalize_path(path)) or target.name
+    return f"{base}.tar.gz"
+
+
+@dataclass(frozen=True)
+class TextDiff:
+    lines: list[str]
+    added: int
+    removed: int
+    truncated: bool
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.added or self.removed)
+
+
+def text_diff(old: str, new: str, path: str) -> TextDiff:
+    """A unified diff of the file on the machine (`old`) and what is about
+    to be saved (`new`), at most `MAX_DIFF_LINES` lines of it."""
+    lines: list[str] = []
+    added = removed = 0
+    truncated = False
+    for line in difflib.unified_diff(
+        old.splitlines(),
+        new.splitlines(),
+        fromfile=f"{path} (on the machine)",
+        tofile=f"{path} (edited)",
+        lineterm="",
+        n=3,
+    ):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+        if len(lines) < MAX_DIFF_LINES:
+            lines.append(line)
+        else:
+            truncated = True
+    return TextDiff(lines, added, removed, truncated)

@@ -31,7 +31,9 @@ from app.db.models.docker import DockerBackup
 from app.db.models.machine import Machine
 from app.ssh.docker_cli import DockerCommandError, is_volume_name_valid
 from app.ssh.restic import (
+    MAX_HOOK_CHARS,
     MAX_SOURCES,
+    BackupHooks,
     ResticConfig,
     is_repository_valid,
     normalize_host_path,
@@ -103,6 +105,11 @@ class BackupForm:
     clear_env: bool = False
     # List every snapshot in the repository, not just this backup's.
     all_snapshots: bool = False
+    # The commands around the backup (`restic.BackupHooks`); None = keep
+    # what is stored (an API call that leaves them out).
+    hook_container: str | None = None
+    pre_command: str | None = None
+    post_command: str | None = None
     errors: list[str] = field(default_factory=list)
 
     _parsed: dict[str, object] = field(default_factory=dict, init=False, repr=False)
@@ -141,6 +148,11 @@ class BackupForm:
         excludes = _lines(self.excludes)
         if any(len(e) > 512 or "\0" in e for e in excludes):
             errors.append("docker.backup.error.excludes")
+        hooks = self.hooks(existing)
+        try:
+            hooks.validate()
+        except DockerCommandError:
+            errors.append("docker.backup.error.hooks")
         keep: dict[str, int | None] = {}
         for key in ("last", "daily", "weekly", "monthly"):
             try:
@@ -157,6 +169,19 @@ class BackupForm:
         }
         self.errors = errors
         return errors
+
+    def hooks(self, existing: DockerBackup | None) -> BackupHooks:
+        """The commands this form leaves the backup with."""
+        stored = hooks_of(existing) if existing is not None else BackupHooks()
+
+        def pick(value: str | None, kept: str) -> str:
+            return kept if value is None else value.replace("\r\n", "\n").strip()
+
+        return BackupHooks(
+            container=pick(self.hook_container, stored.container),
+            pre=pick(self.pre_command, stored.pre),
+            post=pick(self.post_command, stored.post),
+        )
 
     @property
     def volume_list(self) -> list[str]:
@@ -180,6 +205,10 @@ class BackupForm:
         backup.volumes = list(parsed["volumes"])  # type: ignore[call-overload]
         backup.paths = list(parsed["paths"])  # type: ignore[call-overload]
         backup.excludes = list(parsed["excludes"])  # type: ignore[call-overload]
+        hooks = self.hooks(backup if backup.id is not None else None)
+        backup.hook_container = hooks.container if (hooks.pre or hooks.post) else None
+        backup.pre_command = hooks.pre or None
+        backup.post_command = hooks.post or None
         backup.stop_containers = self.stop_containers
         backup.all_snapshots = self.all_snapshots
         backup.enabled = self.enabled
@@ -188,6 +217,14 @@ class BackupForm:
         backup.keep_daily = keep.get("daily")
         backup.keep_weekly = keep.get("weekly")
         backup.keep_monthly = keep.get("monthly")
+
+
+def hooks_of(backup: DockerBackup) -> BackupHooks:
+    return BackupHooks(
+        container=backup.hook_container or "",
+        pre=backup.pre_command or "",
+        post=backup.post_command or "",
+    )
 
 
 def keep_of(backup: DockerBackup) -> dict[str, int | None]:
@@ -261,6 +298,9 @@ def export_definition(backup: DockerBackup) -> dict[str, Any]:
         "paths": list(backup.paths or []),
         "excludes": list(backup.excludes or []),
         "stop_containers": backup.stop_containers,
+        "hook_container": backup.hook_container or "",
+        "pre_command": backup.pre_command or "",
+        "post_command": backup.post_command or "",
         "enabled": backup.enabled,
         "keep_last": backup.keep_last,
         "keep_daily": backup.keep_daily,
@@ -303,6 +343,10 @@ def _definition(row: Any) -> dict[str, Any] | None:
         "paths": _str_list(row.get("paths")),
         "excludes": _str_list(row.get("excludes")),
         "stop_containers": row.get("stop_containers") is True,
+        **{
+            key: str(row.get(key))[:MAX_HOOK_CHARS] if isinstance(row.get(key), str) else ""
+            for key in ("hook_container", "pre_command", "post_command")
+        },
         "enabled": row.get("enabled") is not False,
         **{
             f"keep_{k}": _opt_int(row.get(f"keep_{k}"))
@@ -355,6 +399,9 @@ def form_from_definition(definition: dict[str, Any]) -> BackupForm:
         paths="\n".join(definition.get("paths") or []),
         excludes="\n".join(definition.get("excludes") or []),
         stop_containers=bool(definition.get("stop_containers")),
+        hook_container=str(definition.get("hook_container") or ""),
+        pre_command=str(definition.get("pre_command") or ""),
+        post_command=str(definition.get("post_command") or ""),
         enabled=bool(definition.get("enabled", True)),
         keep_last=keep("last"),
         keep_daily=keep("daily"),

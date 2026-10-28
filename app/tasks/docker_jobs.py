@@ -30,6 +30,7 @@ import asyncio
 import base64
 import contextlib
 import dataclasses
+import gzip
 import logging
 import time
 import uuid
@@ -124,8 +125,10 @@ from app.ssh.restic import (
     build_restore_script,
     build_restore_to_script,
     build_snapshots_script,
+    build_verify_script,
     parse_backup_summary,
     parse_snapshots,
+    parse_verify_output,
 )
 from app.ssh.restic import failed_step as restic_failed_step
 from app.tasks.celery_app import celery_app
@@ -137,6 +140,10 @@ AREA = "docker"
 # The probe in front of every job script: in a job, no access is an error
 # (exit 3), not the read-only "nothing to show" of `DOCKER_ACCESS_PROBE`.
 _JOB_PROBE = DOCKER_ACCESS_PROBE.replace("exit 0", "exit 3")
+# Cancelling a job signals its process group (`detached_jobs.build_stop_command`);
+# a plain exit on SIGTERM lets the script's EXIT traps run (temporary files
+# removed, stopped containers started again).
+_STOP_TRAP = "trap 'exit 143' TERM HUP\n"
 
 # How long each kind of job may run on the machine.
 _TIMEOUTS: dict[str, int] = {
@@ -151,6 +158,7 @@ _TIMEOUTS: dict[str, int] = {
     DockerJobKind.BACKUP_CHECK: 6 * 60 * 60,
     DockerJobKind.BACKUP_FORGET: 3 * 60 * 60,
     DockerJobKind.BACKUP_RESTORE: 12 * 60 * 60,
+    DockerJobKind.BACKUP_VERIFY: 12 * 60 * 60,
 }
 # Celery's kill switch, above the longest job.
 _JOB_TASK_TIME_LIMIT = 12 * 60 * 60 + 30 * 60
@@ -176,6 +184,10 @@ class _JobFailedError(Exception):
 
 class _NothingToDoError(Exception):
     """The job ends as skipped: there was nothing for it to do."""
+
+
+class _JobCancelledError(Exception):
+    """The job ends as cancelled, on someone's request."""
 
 
 @dataclass
@@ -339,7 +351,10 @@ async def _after_close(ctx: _Context, status: DockerJobStatus) -> None:
                 machine=machine,
                 context={"stack": job.target, "details": details},
             )
-    elif job.kind == DockerJobKind.BACKUP_RUN and status == DockerJobStatus.FAILED:
+    elif (
+        job.kind in (DockerJobKind.BACKUP_RUN, DockerJobKind.BACKUP_VERIFY)
+        and status == DockerJobStatus.FAILED
+    ):
         await notify(
             session,
             NotificationEventType.DOCKER_BACKUP_FAILED,
@@ -391,9 +406,13 @@ async def _run_phase(
     remote = remote_id(job.id, phase)
     timeout = _TIMEOUTS.get(job.kind, 30 * 60)
     if ctx.result.get("phase") != phase:
+        # Asked to stop before this phase began: nothing of it has run.
+        if await _cancel_requested(ctx):
+            raise _JobCancelledError
         script = await build()
         await detached_jobs.start(
-            ctx.machine, ctx.secret, AREA, remote, _JOB_PROBE + script, ctx.connect_timeout
+            ctx.machine, ctx.secret, AREA, remote, _STOP_TRAP + _JOB_PROBE + script,
+            ctx.connect_timeout,
         )
         # Recorded after starting: a resumed job that finds this phase
         # follows it rather than starting it again.
@@ -416,6 +435,9 @@ async def _run_phase(
     if started.tzinfo is None:
         started = started.replace(tzinfo=UTC)
     remaining = timeout - (datetime.now(UTC) - started).total_seconds()
+    async def stop_requested() -> bool:
+        return await _cancel_requested(ctx)
+
     followed = await detached_jobs.follow(
         ctx.machine,
         ctx.secret,
@@ -424,9 +446,14 @@ async def _run_phase(
         ctx.connect_timeout,
         max(remaining, 60),
         on_output=persist,
+        stop_requested=(
+            stop_requested if docker_jobs.phase_cancellable(job.kind, phase) else None
+        ),
     )
     job.output = docker_jobs.truncate_output(earlier + _visible_output(followed.output))
     await ctx.session.commit()
+    if followed.stopped and followed.state in ("finished", "lost", "missing"):
+        raise _JobCancelledError
     if DOCKER_NO_ACCESS_MARKER in followed.output.splitlines()[:3]:
         raise DockerAccessError(NO_ACCESS_MESSAGE)
     if followed.state == "finished":
@@ -450,6 +477,13 @@ async def _run_phase(
             "The job stopped on the machine before it finished (was the machine restarted?)."
         )
     raise _JobFailedError("The job's log on the machine is gone; how it ended is unknown.")
+
+
+async def _cancel_requested(ctx: _Context) -> bool:
+    requested = await ctx.session.scalar(
+        select(DockerJob.cancel_requested_at).where(DockerJob.id == ctx.job.id)
+    )
+    return requested is not None
 
 
 # --- Containers --------------------------------------------------------------
@@ -1050,6 +1084,8 @@ async def _backup(ctx: _Context) -> DockerBackup:
 def _restic_error(output: str, default: str) -> str:
     step = restic_failed_step(output)
     tail = " ".join(output.strip().splitlines()[-3:])[-300:]
+    if step == "pre":
+        return f"The command before the backup failed: {tail}"
     return f"restic failed at step \"{step}\": {tail}" if step else default
 
 
@@ -1064,11 +1100,14 @@ async def _job_backup_run(ctx: _Context) -> None:
             config,
             stop_containers=backup.stop_containers,
             keep=docker_backups.keep_of(backup),
+            hooks=docker_backups.hooks_of(backup),
         )
 
     status, output = await _run_phase(ctx, "run", build)
     now = datetime.now(UTC)
     summary = parse_backup_summary(output)
+    if "@@DC_HOOK_FAILED post" in output:
+        ctx.result["post_hook_failed"] = True
     backup.last_backup_at = now
     if status == 0 and summary.snapshot_id:
         backup.last_backup_status = "ok"
@@ -1162,6 +1201,40 @@ async def _job_backup_restore(ctx: _Context) -> None:
         await _close(ctx, DockerJobStatus.FAILED, _restic_error(output, "The restore failed."))
 
 
+async def _job_backup_verify(ctx: _Context) -> None:
+    """Test restore into a temporary volume (`restic.build_verify_script`)."""
+    backup = await _backup(ctx)
+    snapshot = str(ctx.params.get("snapshot") or "latest")
+
+    async def build() -> str:
+        return build_verify_script(docker_backups.config_for(backup, ctx.machine), snapshot)
+
+    status, output = await _run_phase(ctx, "run", build)
+    summary = parse_verify_output(output)
+    details = summary.as_dict()
+    ok = status == 0 and "@@DC_DONE" in output and summary.complete
+    message = None
+    if not ok:
+        if status == 0 and "@@DC_DONE" in output:
+            message = (
+                f"The test restore brought back {summary.restored_files} of "
+                f"{summary.expected_files} files"
+                + (f", with {summary.errors} errors." if summary.errors else ".")
+            )
+        else:
+            message = _restic_error(output, "The test restore failed — see the output.")
+        details["error"] = message[:500]
+    backup.last_verify_at = datetime.now(UTC)
+    backup.last_verify_status = "ok" if ok else "failed"
+    backup.last_verify_details = details
+    ctx.result["verify"] = details
+    await ctx.session.commit()
+    if ok:
+        await _close(ctx, DockerJobStatus.SUCCEEDED)
+    else:
+        await _close(ctx, DockerJobStatus.FAILED, message)
+
+
 _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.CONTAINER_UPDATE: _job_container_update,
     DockerJobKind.CONTAINER_ROLLBACK: _job_container_rollback,
@@ -1174,6 +1247,7 @@ _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.BACKUP_CHECK: _job_backup_check,
     DockerJobKind.BACKUP_FORGET: _job_backup_forget,
     DockerJobKind.BACKUP_RESTORE: _job_backup_restore,
+    DockerJobKind.BACKUP_VERIFY: _job_backup_verify,
 }
 
 
@@ -1203,6 +1277,11 @@ async def _execute(session: AsyncSession, job: DockerJob) -> None:
             await handler(ctx)
         except _TryLaterError:
             raise
+        except _JobCancelledError:
+            who = await ctx.session.scalar(
+                select(DockerJob.cancel_requested_by).where(DockerJob.id == job.id)
+            )
+            await _close(ctx, DockerJobStatus.CANCELLED, f"Cancelled by {who or 'someone'}.")
         except docker_jobs.ProtectedError:
             await _close(ctx, DockerJobStatus.FAILED, docker_jobs.PROTECTED_MESSAGE)
         except (_JobFailedError, DockerCommandError, DockerAccessError, ValueError) as exc:
@@ -1494,15 +1573,21 @@ async def _docker_files(
     path: str,
     data_b64: str = "",
     filename: str = "",
+    expect_sha256: str = "",
 ) -> dict[str, Any]:
     """One file-browser operation on a container or a volume
     (`app.ssh.docker_files`): list, read (to edit), download, write,
-    upload, mkdir, delete."""
+    unpack (several files at once), archive (a folder), mkdir, delete.
+
+    `expect_sha256` (write): the file must still be what the editor
+    opened, or nothing is written (`"error": "changed"`)."""
     async with db_session.AsyncSessionLocal() as session:
         try:
             machine, secret, timeout = await _machine_and_secret(session, machine_id)
             target = docker_files.Target(kind, name)  # type: ignore[arg-type]
-            return await _files_op(machine, secret, timeout, target, op, path, data_b64, filename)
+            return await _files_op(
+                machine, secret, timeout, target, op, path, data_b64, filename, expect_sha256
+            )
         except _READ_ERRORS as exc:
             return _error(exc)
 
@@ -1516,6 +1601,7 @@ async def _files_op(
     path: str,
     data_b64: str,
     filename: str,
+    expect_sha256: str = "",
 ) -> dict[str, Any]:
     if op == "list":
         output = await run_script(
@@ -1547,37 +1633,18 @@ async def _files_op(
             "uid": found.uid,
             "gid": found.gid,
             "size": len(found.content),
+            "sha256": docker_files.content_sha256(found.content),
             "data_b64": base64.b64encode(found.content).decode(),
             "status": status,
         }
+    if op == "archive":
+        return await _files_archive(machine, secret, timeout, target, path)
+    if op == "unpack":
+        return await _files_unpack(machine, secret, timeout, target, path, data_b64)
     if op == "write":
-        content = base64.b64decode(data_b64.encode(), validate=True)
-        if len(content) > docker_files.MAX_UPLOAD_BYTES:
-            return {"ok": False, "error": "too_large"}
-        normalized = docker_files.normalize_path(path)
-        directory, base = normalized.rsplit("/", 1)
-        base = filename or base
-        mode, uid, gid = 0o644, 0, 0
-        # A file being replaced keeps its owner and mode.
-        _status, head, _stderr = await run_binary(
-            machine,
-            secret,
-            timeout,
-            docker_files.build_read_command(
-                target, (directory or "") + "/" + base, docker_files.HEADER_BYTES - 1
-            ),
+        return await _files_write(
+            machine, secret, timeout, target, path, data_b64, filename, expect_sha256
         )
-        owner = docker_files.first_member_owner(head)
-        if owner is not None:
-            mode, uid, gid = owner
-        tar = docker_files.build_tar(base, content, mode=mode, uid=uid, gid=gid)
-        status, _stdout, stderr = await run_binary(
-            machine, secret, timeout, docker_files.build_write_command(target, directory or "/"),
-            stdin=tar, run_timeout_seconds=300,
-        )
-        if status != 0:
-            return {"ok": False, "error": stderr.strip()[-300:] or "Could not write the file."}
-        return {"ok": True}
     if op in ("delete", "mkdir"):
         command = (
             docker_files.build_delete_command(target, path)
@@ -1591,6 +1658,101 @@ async def _files_op(
     return {"ok": False, "error": f"Unknown operation {op!r}."}
 
 
+async def _files_archive(
+    machine: Machine,
+    secret: str | None,
+    timeout: int,  # noqa: ASYNC109 - the SSH connect timeout, not a deadline
+    target: docker_files.Target,
+    path: str,
+) -> dict[str, Any]:
+    """A folder as a .tar.gz, base64-encoded."""
+    limit = docker_files.MAX_DOWNLOAD_BYTES
+    _status, stdout, stderr = await run_binary(
+        machine, secret, timeout, docker_files.build_read_command(target, path, limit),
+        run_timeout_seconds=300,
+    )
+    if len(stdout) > limit:
+        return {"ok": False, "error": "too_large"}
+    if not docker_files.is_tar_stream(stdout):
+        return {"ok": False, "error": stderr.strip()[-300:] or "Not a readable folder."}
+    packed = gzip.compress(stdout, compresslevel=6, mtime=0)
+    return {"ok": True, "size": len(packed), "data_b64": base64.b64encode(packed).decode()}
+
+
+async def _files_unpack(
+    machine: Machine,
+    secret: str | None,
+    timeout: int,  # noqa: ASYNC109 - the SSH connect timeout, not a deadline
+    target: docker_files.Target,
+    path: str,
+    data_b64: str,
+) -> dict[str, Any]:
+    """Several files (`docker_files.build_upload_tar`) into folder `path`."""
+    tar = base64.b64decode(data_b64.encode(), validate=True)
+    if len(tar) > docker_files.MAX_UPLOAD_BYTES + docker_files.MAX_UPLOAD_FILES * 2048:
+        return {"ok": False, "error": "too_large"}
+    count = docker_files.check_upload_tar(tar)
+    status, _stdout, stderr = await run_binary(
+        machine, secret, timeout, docker_files.build_write_command(target, path),
+        stdin=tar, run_timeout_seconds=300,
+    )
+    if status != 0:
+        return {"ok": False, "error": stderr.strip()[-300:] or "Could not write the files."}
+    return {"ok": True, "files": count}
+
+
+async def _files_write(
+    machine: Machine,
+    secret: str | None,
+    timeout: int,  # noqa: ASYNC109 - the SSH connect timeout, not a deadline
+    target: docker_files.Target,
+    path: str,
+    data_b64: str,
+    filename: str,
+    expect_sha256: str,
+) -> dict[str, Any]:
+    """One file written; an existing one keeps its owner and mode."""
+    content = base64.b64decode(data_b64.encode(), validate=True)
+    if len(content) > docker_files.MAX_UPLOAD_BYTES:
+        return {"ok": False, "error": "too_large"}
+    normalized = docker_files.normalize_path(path)
+    directory, base = normalized.rsplit("/", 1)
+    base = filename or base
+    mode, uid, gid = 0o644, 0, 0
+    file_path = (directory or "") + "/" + base
+    owner: tuple[int, int, int] | None
+    if expect_sha256:
+        # Saved from the editor: only over the version it opened.
+        limit = docker_files.MAX_EDIT_BYTES
+        _status, current, _stderr = await run_binary(
+            machine, secret, timeout,
+            docker_files.build_read_command(target, file_path, limit + 4096),
+        )
+        found = docker_files.first_file(current)
+        if found is None or docker_files.content_sha256(found.content) != expect_sha256:
+            return {"ok": False, "error": "changed"}
+        owner = (found.mode, found.uid, found.gid)
+    else:
+        # A file being replaced keeps its owner and mode.
+        _status, head, _stderr = await run_binary(
+            machine,
+            secret,
+            timeout,
+            docker_files.build_read_command(target, file_path, docker_files.HEADER_BYTES - 1),
+        )
+        owner = docker_files.first_member_owner(head)
+    if owner is not None:
+        mode, uid, gid = owner
+    tar = docker_files.build_tar(base, content, mode=mode, uid=uid, gid=gid)
+    status, _stdout, stderr = await run_binary(
+        machine, secret, timeout, docker_files.build_write_command(target, directory or "/"),
+        stdin=tar, run_timeout_seconds=300,
+    )
+    if status != 0:
+        return {"ok": False, "error": stderr.strip()[-300:] or "Could not write the file."}
+    return {"ok": True}
+
+
 @celery_app.task(name="app.tasks.docker_jobs.docker_files", time_limit=_SHORT_TASK_TIME_LIMIT)
 def docker_files_task(
     machine_id: str,
@@ -1600,8 +1762,11 @@ def docker_files_task(
     path: str,
     data_b64: str = "",
     filename: str = "",
+    expect_sha256: str = "",
 ) -> dict[str, Any]:
-    return asyncio.run(_docker_files(machine_id, op, kind, name, path, data_b64, filename))
+    return asyncio.run(
+        _docker_files(machine_id, op, kind, name, path, data_b64, filename, expect_sha256)
+    )
 
 
 # --- Git stacks: auto-sync -----------------------------------------------------

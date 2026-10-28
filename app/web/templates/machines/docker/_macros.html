@@ -2,7 +2,7 @@
 
 {#- A Docker job's status as a badge. -#}
 {% macro job_status(request, job) -%}
-  {%- set cls = {'pending': 'badge-warn', 'running': 'badge-warn', 'succeeded': 'badge-ok', 'failed': 'badge-error', 'blocked': 'badge-error'}.get(job.status, '') -%}
+  {%- set cls = {'pending': 'badge-warn', 'running': 'badge-warn', 'succeeded': 'badge-ok', 'failed': 'badge-error', 'blocked': 'badge-error', 'cancelled': 'badge-warn'}.get(job.status, '') -%}
   <span class="badge {{ cls }}">{{ t(request, "docker.job.status." ~ job.status) }}</span>
 {%- endmacro %}
 

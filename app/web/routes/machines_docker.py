@@ -976,7 +976,11 @@ async def docker_job_page(
         machine,
         current_user,
         "jobs",
-        {"job": job, "output_hidden": docker_jobs.output_hidden(job, current_user)},
+        {
+            "job": job,
+            "output_hidden": docker_jobs.output_hidden(job, current_user),
+            "can_cancel": docker_jobs.may_cancel(job, current_user),
+        },
     )
 
 
@@ -998,8 +1002,40 @@ async def docker_job_status(
             "docker_base": docker_base(machine),
             "job": job,
             "output_hidden": docker_jobs.output_hidden(job, current_user),
+            "can_cancel": docker_jobs.may_cancel(job, current_user),
         },
     )
+
+
+@router.post(
+    "/{machine_id}/docker/jobs/{job_id}/cancel", dependencies=[Depends(verify_csrf)]
+)
+async def docker_job_cancel(
+    request: Request,
+    machine_id: uuid.UUID,
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Cancel a waiting job, or stop a running one where that is safe
+    (`docker_jobs.can_cancel`). Needs the permission that starts the job."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    job = await _job_or_404(db, machine, job_id)
+    back = f"{docker_base(machine)}/jobs/{job.id}"
+    if not current_user.has_permission(docker_jobs.cancel_permission(job.kind)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    outcome = await docker_actions.cancel_job(db, job, actor=actor(current_user))
+    if outcome is None:
+        return redirect(back, error=LocalizedText(request, "docker.job.cannot_cancel"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.job.cancel",
+        f'Cancelled Docker job "{job.kind}" ({job.target}) on "{machine.name}"',
+        details={"job": str(job.id), "kind": job.kind, "target": job.target, "was": outcome},
+    )
+    return redirect(back, notice=LocalizedText(request, f"docker.job.cancel_{outcome}"))
 
 
 def job_label(request: Request, job: DockerJob) -> str:

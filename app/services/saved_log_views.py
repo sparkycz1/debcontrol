@@ -14,13 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.saved_log_view import SavedLogView
 from app.services.saved_views import MAX_VIEW_NAME_LENGTH, DuplicateViewNameError
-from app.ssh.logs import normalize_boot, normalize_priority, normalize_unit
+from app.ssh.logs import normalize_boot, normalize_level, normalize_priority, normalize_unit
 
 # The Logs tab's own filters, in a fixed order. No machine: a log view is
 # replayed on whichever machine's Logs tab it's picked from.
 ALLOWED_LOG_VIEW_PARAMS = (
     "source", "path", "container", "priority", "unit", "boot", "hide_own", "search",
-    "since", "until", "lines",
+    "since", "until", "lines", "level",
 )
 _SOURCES = ("journal", "file", "docker")
 
@@ -48,6 +48,10 @@ def build_log_query_string(params: dict[str, str]) -> str:
                 continue
         if key == "boot":
             value = normalize_boot(value)
+            if not value:
+                continue
+        if key == "level":
+            value = normalize_level(value)
             if not value:
                 continue
         if key == "hide_own":

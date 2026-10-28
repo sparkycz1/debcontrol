@@ -29,8 +29,9 @@ import base64
 import posixpath
 import uuid
 from typing import Any, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -109,6 +110,9 @@ def _job(job: DockerJob, *, output: bool = False) -> dict[str, Any]:
         "error": job.error,
         "started_by": job.started_by,
         "batch_id": str(job.batch_id) if job.batch_id else None,
+        "cancel_requested_by": job.cancel_requested_by,
+        "cancel_requested_at": _iso(job.cancel_requested_at),
+        "cancellable": docker_jobs.can_cancel(job),
         "created_at": _iso(job.created_at),
         "started_at": _iso(job.started_at),
         "finished_at": _iso(job.finished_at),
@@ -168,7 +172,10 @@ def _stack(stack: DockerStack, *, secrets: bool) -> dict[str, Any]:
     return data
 
 
-def _backup(backup: DockerBackup) -> dict[str, Any]:
+def _backup(backup: DockerBackup, *, commands: bool) -> dict[str, Any]:
+    """A backup as the API shows it. The hook commands (which may carry a
+    database password) only for `action.terminal`, like the web page and
+    the export; anyone else sees `hooks_set`."""
     return {
         "id": str(backup.id),
         "name": backup.name,
@@ -191,6 +198,13 @@ def _backup(backup: DockerBackup) -> dict[str, Any]:
         "last_error": backup.last_error,
         "last_check_at": _iso(backup.last_check_at),
         "last_check_status": backup.last_check_status,
+        "hook_container": backup.hook_container,
+        "hooks_set": bool(backup.pre_command or backup.post_command),
+        "pre_command": backup.pre_command if commands else None,
+        "post_command": backup.post_command if commands else None,
+        "last_verify_at": _iso(backup.last_verify_at),
+        "last_verify_status": backup.last_verify_status,
+        "last_verify_details": backup.last_verify_details,
         "created_by": backup.created_by,
         "created_at": _iso(backup.created_at),
     }
@@ -831,6 +845,41 @@ async def docker_job_api(
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
     return _job(job, output=not docker_jobs.output_hidden(job, user))
+
+
+@router.post("/jobs/{job_id}/cancel", dependencies=[_view])
+async def docker_job_cancel_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Cancel a waiting job (`"outcome": "cancelled"`), or ask a running one
+    to stop where that is safe (`"requested"`; it then ends as
+    `cancelled`). 409 when the job can't be cancelled (any more). Needs the
+    permission that starts the job: `action.updates`, `action.power` for a
+    stack start/stop, `action.terminal` for a stack deploy or check."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    job = await docker_jobs.get_job(db, machine.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    if not user.has_permission(docker_jobs.cancel_permission(job.kind)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    outcome = await docker_actions.cancel_job(db, job, actor=user.username)
+    if outcome is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This job can't be cancelled now."
+        )
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.job.cancel",
+        f'Cancelled Docker job "{job.kind}" ({job.target}) on "{machine.name}"',
+        {"job": str(job.id), "kind": job.kind, "target": job.target, "was": outcome},
+    )
+    return {"outcome": outcome, "job": _job(job)}
 
 
 # --- Stacks and Compose projects --------------------------------------------------
@@ -1653,6 +1702,11 @@ class _BackupSave(BaseModel):
     keep_daily: int | None = None
     keep_weekly: int | None = None
     keep_monthly: int | None = None
+    # Commands run with `docker exec` in `hook_container` before and after
+    # the backup; left out (null) = keep the stored ones, "" = none.
+    hook_container: str | None = Field(default=None, max_length=255)
+    pre_command: str | None = Field(default=None, max_length=4000)
+    post_command: str | None = Field(default=None, max_length=4000)
 
 
 def _backup_form(body: _BackupSave) -> docker_backups.BackupForm:
@@ -1675,6 +1729,9 @@ def _backup_form(body: _BackupSave) -> docker_backups.BackupForm:
         keep_daily=keep(body.keep_daily),
         keep_weekly=keep(body.keep_weekly),
         keep_monthly=keep(body.keep_monthly),
+        hook_container=body.hook_container,
+        pre_command=body.pre_command,
+        post_command=body.post_command,
     )
 
 
@@ -1684,6 +1741,8 @@ def _backup_details(backup: DockerBackup) -> dict[str, Any]:
         "repository": backup.repository_display,
         "volumes": backup.volumes,
         "paths": backup.paths,
+        "hook_container": backup.hook_container,
+        "commands": bool(backup.pre_command or backup.post_command),
     }
 
 
@@ -1694,7 +1753,10 @@ async def docker_backups_api(
     user: User = Depends(get_api_token_user),
 ) -> list[dict[str, Any]]:
     machine = await _get_machine_or_404(machine_id, db, user)
-    return [_backup(b) for b in await docker_backups.list_backups(db, machine.id)]
+    commands = user.has_permission(Permission.ACTION_TERMINAL)
+    return [
+        _backup(b, commands=commands) for b in await docker_backups.list_backups(db, machine.id)
+    ]
 
 
 @router.post("/backups", dependencies=[_terminal], status_code=status.HTTP_201_CREATED)
@@ -1724,7 +1786,7 @@ async def docker_backup_create_api(
         f'Created Docker backup "{backup.name}" on "{machine.name}"',
         _backup_details(backup),
     )
-    return _backup(backup)
+    return _backup(backup, commands=True)  # _terminal
 
 
 @router.get("/backups/export", dependencies=[_terminal])
@@ -1751,7 +1813,8 @@ async def docker_backup_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     backup = await _backup_or_404(db, machine, backup_id)
     jobs = await docker_jobs.list_jobs(db, machine.id, limit=20, ref_id=backup.id)
-    return {**_backup(backup), "jobs": [_job(job) for job in jobs]}
+    commands = user.has_permission(Permission.ACTION_TERMINAL)
+    return {**_backup(backup, commands=commands), "jobs": [_job(job) for job in jobs]}
 
 
 @router.put("/backups/{backup_id}", dependencies=[_terminal])
@@ -1784,7 +1847,7 @@ async def docker_backup_save_api(
         f'Edited Docker backup "{backup.name}" on "{machine.name}"',
         _backup_details(backup),
     )
-    return _backup(backup)
+    return _backup(backup, commands=True)  # _terminal
 
 
 @router.delete("/backups/{backup_id}", dependencies=[_terminal])
@@ -2020,12 +2083,13 @@ async def docker_backup_job_api(
     request: Request,
     machine_id: uuid.UUID,
     backup_id: uuid.UUID,
-    what: Literal["run", "check", "forget"],
+    what: Literal["run", "check", "forget", "verify"],
     body: _BackupJobRequest | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
-    """Back up now, check the repository, or prune it to the retention."""
+    """Back up now, check the repository, prune it to the retention, or
+    test-restore the newest snapshot into a temporary volume (`verify`)."""
     machine = await _get_machine_or_404(machine_id, db, user)
     backup = await _backup_or_404(db, machine, backup_id)
     _ready(machine)
@@ -2156,6 +2220,7 @@ async def docker_file_read_api(
         "mode": result.get("mode"),
         "uid": result.get("uid"),
         "gid": result.get("gid"),
+        "sha256": result.get("sha256"),
         "content_b64": result.get("data_b64") or "",
     }
 
@@ -2163,6 +2228,10 @@ async def docker_file_read_api(
 class _FileWrite(BaseModel):
     path: str = Field(max_length=4096)
     content_b64: str
+    # The file's sha256 as read (GET .../files/content): nothing is written,
+    # and 409 is answered, when it changed on the machine since. Files up
+    # to the editor's size only (docker_files.MAX_EDIT_BYTES).
+    expect_sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
 
 
 @router.put("/{kind}/{name}/files/content", dependencies=[_terminal])
@@ -2190,21 +2259,170 @@ async def docker_file_write_api(
         raise _bad("content_b64 isn't valid base64.") from exc
     if len(data) > docker_files.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="too_large")
+    expect = (body.expect_sha256 or "").lower()
+    if expect and len(data) > docker_files.MAX_EDIT_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="too_large")
     _result, error = await _files(
-        request, db, machine, "write", target, path, data_b64=base64.b64encode(data).decode()
+        request,
+        db,
+        machine,
+        "write",
+        target,
+        path,
+        data_b64=base64.b64encode(data).decode(),
+        **({"expect_sha256": expect} if expect else {}),
+    )
+    conflict = error == "changed"
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.file.write",
+        f'Saved {path} in {target.kind} "{name}" on "{machine.name}"'
+        if not conflict
+        else f'Did not save {path} in {target.kind} "{name}" on "{machine.name}": '
+        "it changed on the machine since it was read",
+        {
+            "kind": target.kind,
+            "name": name,
+            "path": path,
+            "bytes": len(data),
+            **({"conflict": True} if conflict else {}),
+        },
+        ok=error is None,
+    )
+    if conflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The file changed on the machine since it was read; nothing was written.",
+        )
+    if error is not None:
+        raise _file_error(error)
+    return {"ok": True, "path": path, "bytes": len(data)}
+
+
+class _UploadFile(BaseModel):
+    # Relative to the folder uploaded to; may hold subfolders ("a/b.txt").
+    path: str = Field(max_length=4096)
+    content_b64: str
+
+
+class _Upload(BaseModel):
+    path: str = Field(max_length=4096)
+    files: list[_UploadFile] = Field(min_length=1, max_length=docker_files.MAX_UPLOAD_FILES)
+
+
+@router.post("/{kind}/{name}/files/upload", dependencies=[_terminal])
+async def docker_files_upload_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    kind: str,
+    name: str,
+    body: _Upload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Several files (and the subfolders they name) into folder `path` in
+    one go, as the web page's folder upload does: up to
+    `MAX_UPLOAD_FILES` files and `MAX_UPLOAD_BYTES` in all, new files
+    owned by root (644, folders 755), existing ones replaced."""
+    target = _target(kind, name)
+    machine = await _get_machine_or_404(machine_id, db, user)
+    directory = _path(body.path)
+    files: list[tuple[str, bytes]] = []
+    total = 0
+    for item in body.files:
+        if len(item.content_b64) > (docker_files.MAX_UPLOAD_BYTES * 4) // 3 + 8:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="too_large")
+        try:
+            relative = docker_files.relative_upload_path(item.path)
+            data = base64.b64decode(item.content_b64, validate=True)
+        except DockerCommandError as exc:
+            raise _bad(f"Invalid file path: {item.path[:200]!r}") from exc
+        except ValueError as exc:
+            raise _bad("content_b64 isn't valid base64.") from exc
+        total += len(data)
+        if total > docker_files.MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="too_large")
+        files.append((relative, data))
+    try:
+        tar = docker_files.build_upload_tar(files)
+    except DockerCommandError as exc:
+        raise _bad(str(exc)) from exc
+    _result, error = await _files(
+        request, db, machine, "unpack", target, directory, data_b64=base64.b64encode(tar).decode()
     )
     await _audit(
         db,
         request,
         machine,
         "machine.docker.file.write",
-        f'Saved {path} in {target.kind} "{name}" on "{machine.name}"',
-        {"kind": target.kind, "name": name, "path": path, "bytes": len(data)},
+        f'Uploaded {len(files)} files to {directory} in {target.kind} "{name}" '
+        f'on "{machine.name}"',
+        {
+            "kind": target.kind,
+            "name": name,
+            "path": directory,
+            "files": len(files),
+            "names": [relative for relative, _data in files[:50]],
+            "bytes": total,
+        },
         ok=error is None,
     )
     if error is not None:
         raise _file_error(error)
-    return {"ok": True, "path": path, "bytes": len(data)}
+    return {"ok": True, "path": directory, "files": len(files), "bytes": total}
+
+
+@router.get(
+    "/{kind}/{name}/files/archive",
+    dependencies=[_terminal],
+    response_class=Response,
+    responses={200: {"content": {"application/gzip": {}}}},
+)
+async def docker_folder_archive_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    kind: str,
+    name: str,
+    path: str = "/",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    """A folder with everything in it as a .tar.gz (owners and modes kept),
+    up to `MAX_DOWNLOAD_BYTES` before compression (413 beyond). Audited
+    like a download."""
+    target = _target(kind, name)
+    machine = await _get_machine_or_404(machine_id, db, user)
+    path = _path(path)
+    result, error = await _files(request, db, machine, "archive", target, path)
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.file.download",
+        f'Downloaded folder {path} from {target.kind} "{name}" on "{machine.name}"',
+        {
+            "kind": target.kind,
+            "name": name,
+            "path": path,
+            "archive": True,
+            **({"error": error} if error else {}),
+        },
+        ok=error is None,
+    )
+    if error is not None or result is None:
+        raise _file_error(error or "?")
+    filename = docker_files.archive_filename(target, path)
+    return Response(
+        content=base64.b64decode(str(result.get("data_b64") or "")),
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 class _Mkdir(BaseModel):

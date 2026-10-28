@@ -48,6 +48,7 @@ __all__ = [
     "build_cleanup_command",
     "build_poll_command",
     "build_start_command",
+    "build_stop_command",
     "follow",
     "start",
 ]
@@ -81,7 +82,15 @@ def build_start_command(area: str, job_id: str) -> str:
     # The wrapper records the script's exit status once it has ended —
     # written to a temporary name and renamed, so a reader never sees half
     # of it, and only after the last line of output is in the log.
-    wrapper = 'sh "$1.sh"; echo $? > "$1.status.tmp" && mv "$1.status.tmp" "$1.status"'
+    #
+    # The script itself runs in a process group of its own (`setsid`, when
+    # the machine has it), its id kept in `<job>.cpid`: cancelling a job
+    # (`build_stop_command`) signals that group — the script and whatever
+    # it started — but not this wrapper, which still records how it ended.
+    wrapper = (
+        '$2 sh "$1.sh" & echo $! > "$1.cpid"; wait $!; '
+        'echo $? > "$1.status.tmp" && mv "$1.status.tmp" "$1.status"'
+    )
     return (
         "umask 077; "
         + _job_file(area, job_id)
@@ -91,7 +100,7 @@ def build_start_command(area: str, job_id: str) -> str:
         + 'cat > "$f.sh" || exit 1; '
         + 'cat /proc/sys/kernel/random/boot_id > "$f.boot" 2>/dev/null; '
         + "if command -v setsid >/dev/null 2>&1; then dc_detach=setsid; else dc_detach=; fi; "
-        + f"nohup $dc_detach sh -c '{wrapper}' sh \"$f\" "
+        + f"nohup $dc_detach sh -c '{wrapper}' sh \"$f\" \"$dc_detach\" "
         + '>> "$f.log" 2>&1 < /dev/null & '
         + 'echo $! > "$f.pid"; '
         + f"echo {_STARTED}"
@@ -118,9 +127,24 @@ def build_poll_command(area: str, job_id: str, offset: int) -> str:
     )
 
 
+def build_stop_command(area: str, job_id: str) -> str:
+    """Ask a running job to stop: SIGTERM to the script's process group
+    (its own process when the machine has no `setsid`, or the whole job of
+    one started before 0.126.0, which kept no `.cpid`). The script's EXIT
+    traps still run — each job script turns SIGTERM into a plain exit —
+    so containers it stopped are started again."""
+    return _job_file(area, job_id) + (
+        'p="$(cat "$f.cpid" 2>/dev/null)"; [ -n "$p" ] || p="$(cat "$f.pid" 2>/dev/null)"; '
+        'case "$p" in ""|*[!0-9]*) exit 0;; esac; '
+        # dash's kill takes no "--"; bash's and busybox's take either form.
+        'kill -TERM "-$p" 2>/dev/null || kill -TERM -- "-$p" 2>/dev/null '
+        '|| kill -TERM "$p" 2>/dev/null; exit 0'
+    )
+
+
 def build_cleanup_command(area: str, job_id: str) -> str:
     return _job_file(area, job_id) + (
-        'rm -f "$f.log" "$f.sh" "$f.status" "$f.status.tmp" "$f.pid" "$f.boot"'
+        'rm -f "$f.log" "$f.sh" "$f.status" "$f.status.tmp" "$f.pid" "$f.cpid" "$f.boot"'
     )
 
 
@@ -166,13 +190,18 @@ async def follow(
     timeout_seconds: float,
     *,
     on_output: Callable[[str], Awaitable[None]] | None = None,
+    stop_requested: Callable[[], Awaitable[bool]] | None = None,
     poll_seconds: float = POLL_SECONDS,
     reconnect_seconds: float = RECONNECT_SECONDS,
 ) -> FollowResult:
     """Read the job's log until it ends or `timeout_seconds` pass — see
     `detached_updates.follow`, which this mirrors: a dropped connection is
     retried until the time is up, at least one look is always taken, and a
-    changed host key is never retried."""
+    changed host key is never retried.
+
+    `stop_requested` is asked on every look while the job runs; once it
+    says yes the job is signalled to stop (`build_stop_command`, once) and
+    followed on until it has ended (`FollowResult.stopped`)."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(timeout_seconds, 0)
     received = bytearray()
@@ -181,6 +210,7 @@ async def follow(
     dropped = 0
     state: str | None = None
     last_error: str | None = None
+    stopped = False
     first = True
     while first or loop.time() < deadline:
         first = False
@@ -209,9 +239,21 @@ async def follow(
                         if poll.state == "finished":
                             with contextlib.suppress(asyncssh.Error, OSError):
                                 await conn.run(build_cleanup_command(area, job_id), check=False)
-                        return FollowResult(poll.state, poll.exit_status, output)
+                        return FollowResult(
+                            poll.state, poll.exit_status, output, stopped=stopped
+                        )
                     if loop.time() >= deadline:
-                        return FollowResult("timeout", None, received.decode(errors="replace"))
+                        return FollowResult(
+                            "timeout", None, received.decode(errors="replace"), stopped=stopped
+                        )
+                    if not stopped and stop_requested is not None and await stop_requested():
+                        await conn.run(
+                            build_stop_command(area, job_id),
+                            check=False,
+                            timeout=connect_timeout_seconds + 30,
+                        )
+                        stopped = True
+                        continue
                     await asyncio.sleep(poll_seconds)
         except HostKeyError:
             raise
@@ -221,5 +263,9 @@ async def follow(
             break
         await asyncio.sleep(min(reconnect_seconds, max(deadline - loop.time(), 0)))
     if state == "running":
-        return FollowResult("timeout", None, received.decode(errors="replace"), last_error)
-    return FollowResult("unreachable", None, received.decode(errors="replace"), last_error)
+        return FollowResult(
+            "timeout", None, received.decode(errors="replace"), last_error, stopped=stopped
+        )
+    return FollowResult(
+        "unreachable", None, received.decode(errors="replace"), last_error, stopped=stopped
+    )
