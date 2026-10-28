@@ -52,7 +52,7 @@ def test_a_valid_git_stack_is_normalized() -> None:
 def test_stack_form_rejects_bad_input() -> None:
     form = _git_form(
         name="bad name!",
-        git_url="ssh://git@example.com/app.git",
+        git_url="git://example.com/app.git",
         git_branch="main..evil",
         git_compose_path="../../etc/passwd",
         git_token="token\ninjected",

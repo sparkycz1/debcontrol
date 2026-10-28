@@ -945,7 +945,12 @@ async def docker_job_page(
     machine = await _get_machine_or_404(machine_id, db, current_user)
     job = await _job_or_404(db, machine, job_id)
     return render(
-        request, "machines/docker/job.html", machine, current_user, "jobs", {"job": job}
+        request,
+        "machines/docker/job.html",
+        machine,
+        current_user,
+        "jobs",
+        {"job": job, "output_hidden": docker_jobs.output_hidden(job, current_user)},
     )
 
 
@@ -962,7 +967,12 @@ async def docker_job_status(
     return render_partial(
         request,
         "machines/docker/_job_status.html",
-        {"machine": machine, "docker_base": docker_base(machine), "job": job},
+        {
+            "machine": machine,
+            "docker_base": docker_base(machine),
+            "job": job,
+            "output_hidden": docker_jobs.output_hidden(job, current_user),
+        },
     )
 
 

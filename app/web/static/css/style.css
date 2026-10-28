@@ -2068,6 +2068,8 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 
 /* A row's own actions: small text buttons under the container's name. */
 .row-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
+.cell-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.wrap-anywhere { overflow-wrap: anywhere; }
 .row-action {
   padding: 0.1rem 0.45rem;
   border: 1px solid var(--color-border);

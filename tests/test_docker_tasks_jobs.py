@@ -69,6 +69,11 @@ class FakeMachine:
 
 @pytest.fixture
 def machine_shell(monkeypatch: pytest.MonkeyPatch, db_session_factory: Any) -> FakeMachine:
+    return install_fake_machine(monkeypatch, db_session_factory)
+
+
+def install_fake_machine(monkeypatch: pytest.MonkeyPatch, db_session_factory: Any) -> FakeMachine:
+    """Replace the SSH side of the job runner with a `FakeMachine`."""
     fake = FakeMachine()
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_session_factory)
 

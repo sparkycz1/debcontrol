@@ -21,12 +21,13 @@ from app.auth.dependencies import get_current_user
 from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.db.models.audit_log import AuditOutcome
-from app.db.models.docker import DockerStack, StackSource
+from app.db.models.docker import DockerJobKind, DockerStack, StackSource
 from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.services import docker_actions, docker_jobs, docker_stacks
+from app.services.docker_gate import GATES
 from app.ssh.docker_cli import DockerCommandError, is_project_name_valid
 from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.tasks import docker_jobs as docker_tasks
@@ -201,6 +202,16 @@ def _form_from_request(form: Any) -> docker_stacks.StackForm:
     elif choice == "remove":
         token = ""
     env_action = str(form.get("env_action") or "set")
+    # The deploy key: "keep", "generate" a new one, "set" a pasted one, "remove".
+    key_choice = str(form.get("git_ssh_key_action") or "keep")
+    ssh_key: str | None = None
+    if key_choice == "generate":
+        ssh_key = docker_stacks.GENERATE_KEY
+    elif key_choice == "set":
+        ssh_key = str(form.get("git_ssh_key") or "") or None
+    elif key_choice == "remove":
+        ssh_key = ""
+    overrides = str(form.get("git_compose_overrides") or "").replace("\r\n", "\n")
     return docker_stacks.StackForm(
         name=str(form.get("name") or ""),
         source=str(form.get("source") or StackSource.EDITOR),
@@ -213,7 +224,28 @@ def _form_from_request(form: Any) -> docker_stacks.StackForm:
         auto_sync=form.get("auto_sync") == "1",
         # Chosen once, on the new-stack form; the edit form has no such field.
         directory=str(form.get("directory") or "") if "directory" in form else None,
+        git_compose_overrides=[line for line in overrides.split("\n") if line.strip()],
+        git_ssh_key=ssh_key,
+        git_known_hosts=(
+            str(form.get("git_known_hosts") or "") if "git_known_hosts" in form else None
+        ),
+        keep_history=form.get("keep_history") == "1",
+        auto_rollback=form.get("auto_rollback") == "1",
+        vulnerability_gate=str(form.get("vulnerability_gate") or "off"),
     )
+
+
+def _settings_details(stack: DockerStack) -> dict[str, Any]:
+    """What an audit entry of a stack's settings records (no secrets)."""
+    return {
+        "stack": stack.name,
+        "source": stack.source,
+        "git_url": stack.git_url,
+        "keep_history": stack.keep_history,
+        "auto_rollback": stack.auto_rollback,
+        "vulnerability_gate": stack.vulnerability_gate,
+        "has_deploy_key": stack.git_ssh_key_encrypted is not None,
+    }
 
 
 @router.get("/{machine_id}/docker/stacks/new", dependencies=[need_terminal])
@@ -275,12 +307,7 @@ async def docker_stack_create(
         machine,
         "machine.docker.stack.create",
         f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        details={
-            "stack": stack.name,
-            "source": stack.source,
-            "git_url": stack.git_url,
-            "directory": stack.directory,
-        },
+        details={**_settings_details(stack), "directory": stack.directory},
     )
     if raw.get("deploy") == "1" and current_user.has_permission(Permission.ACTION_UPDATES):
         return await _deploy(request, db, machine, current_user, stack, pull=True)
@@ -328,6 +355,10 @@ async def _stack_page(
             "jobs": await docker_jobs.list_jobs(db, machine.id, limit=20, ref_id=stack.id),
             "changed": docker_stacks.is_changed(stack),
             "webhook_url": webhook_url,
+            "versions": (
+                await docker_stacks.list_versions(db, stack.id) if stack.keep_history else []
+            ),
+            "gates": GATES,
         },
         status_code=status_code,
     )
@@ -351,7 +382,7 @@ async def docker_stack_save(
     form.name = stack.name
     # And its directory: the files are already there.
     form.directory = None
-    errors = form.validate()
+    errors = form.validate(stack)
     if errors:
         return await _stack_page(
             request,
@@ -371,10 +402,12 @@ async def docker_stack_save(
         machine,
         "machine.docker.stack.edit",
         f'Edited Docker stack "{stack.name}" on "{machine.name}"',
-        details={"stack": stack.name, "source": stack.source, "git_url": stack.git_url},
+        details=_settings_details(stack),
     )
     if raw.get("deploy") == "1" and current_user.has_permission(Permission.ACTION_UPDATES):
         return await _deploy(request, db, machine, current_user, stack, pull=True)
+    if raw.get("check") == "1" and current_user.has_permission(Permission.ACTION_UPDATES):
+        return await _check(request, db, machine, current_user, stack)
     return redirect(
         f"{docker_base(machine)}/stacks/{stack.id}",
         notice=LocalizedText(request, "docker.stack.saved"),
@@ -389,11 +422,12 @@ async def _deploy(
     stack: DockerStack,
     *,
     pull: bool,
+    commit: str = "",
 ) -> Response:
     back = f"{docker_base(machine)}/stacks/{stack.id}"
     try:
         job = await docker_actions.deploy_stack(
-            db, machine, stack, started_by=actor(user), pull=pull
+            db, machine, stack, started_by=actor(user), pull=pull, commit=commit
         )
     except docker_jobs.ProtectedError:
         return redirect(back, error=LocalizedText(request, "docker.protected"))
@@ -408,6 +442,123 @@ async def _deploy(
         details={"stack": stack.name, "pull": pull},
     )
     return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+async def _check(
+    request: Request, db: AsyncSession, machine: Machine, user: User, stack: DockerStack
+) -> Response:
+    job = await docker_actions.check_stack(db, machine, stack, started_by=actor(user))
+    if job is None:
+        return redirect(
+            f"{docker_base(machine)}/stacks/{stack.id}",
+            error=LocalizedText(request, "docker.job.already_queued"),
+        )
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.check",
+        f'Started checking Docker stack "{stack.name}" on "{machine.name}" before a deploy',
+        details={"stack": stack.name},
+    )
+    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+@router.post(
+    "/{machine_id}/docker/stacks/{stack_id}/check",
+    dependencies=[need_terminal, Depends(verify_csrf)],
+)
+async def docker_stack_check(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Show what a deploy would change and run `docker compose config` on
+    the new files, without deploying."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    return await _check(request, db, machine, current_user, stack)
+
+
+@router.get(
+    "/{machine_id}/docker/stacks/{stack_id}/versions/{version_id}",
+    dependencies=[need_terminal],
+)
+async def docker_stack_version(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """One deployed version: its compose file, and how it differs from the
+    stack as saved now (`.env` by variable name only)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    version = await docker_stacks.get_version(db, stack, version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such version.")
+    return render(
+        request,
+        "machines/docker/stack_version.html",
+        machine,
+        current_user,
+        "stacks",
+        {
+            "stack": stack,
+            "version": version,
+            "diff": docker_stacks.version_diff(stack, version),
+        },
+    )
+
+
+@router.post(
+    "/{machine_id}/docker/stacks/{stack_id}/versions/{version_id}/rollback",
+    dependencies=[need_terminal, need_updates, Depends(verify_csrf)],
+)
+async def docker_stack_rollback(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Make a kept version the stack's settings again and deploy it (a Git
+    stack at that version's commit, with auto-sync turned off)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    version = await docker_stacks.get_version(db, stack, version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such version.")
+    back = f"{docker_base(machine)}/stacks/{stack.id}"
+    try:
+        await docker_jobs.check_project(db, machine, stack.name)
+    except docker_jobs.ProtectedError:
+        return redirect(back, error=LocalizedText(request, "docker.protected"))
+    if await docker_jobs.active_job(db, machine.id, DockerJobKind.STACK_DEPLOY, stack.name):
+        return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
+    was_syncing = stack.auto_sync
+    commit = docker_stacks.restore_version(stack, version)
+    await db.commit()
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.rollback",
+        f'Rolled Docker stack "{stack.name}" on "{machine.name}" back to the version of '
+        f"{version.created_at:%Y-%m-%d %H:%M}",
+        details={
+            "stack": stack.name,
+            "version": str(version.id),
+            "commit": commit or None,
+            "auto_sync_turned_off": was_syncing and not stack.auto_sync,
+        },
+    )
+    return await _deploy(request, db, machine, current_user, stack, pull=True, commit=commit)
 
 
 @router.post(

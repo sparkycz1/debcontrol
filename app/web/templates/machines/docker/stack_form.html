@@ -11,6 +11,11 @@
   {% set v_git_branch = form.git_branch if form else (stack.git_branch or 'main' if stack else 'main') %}
   {% set v_git_path = form.git_compose_path if form else (stack.git_compose_path or 'compose.yaml' if stack else 'compose.yaml') %}
   {% set v_auto_sync = form.auto_sync if form else (stack.auto_sync if stack else false) %}
+  {% set v_overrides = (form.git_compose_overrides if form else (stack.git_compose_overrides or [] if stack else [])) | join('\n') %}
+  {% set v_known_hosts = (form.git_known_hosts if form and form.git_known_hosts is not none else (stack.git_known_hosts or '' if stack else '')) %}
+  {% set v_keep_history = form.keep_history if form else (stack.keep_history if stack else false) %}
+  {% set v_auto_rollback = form.auto_rollback if form else (stack.auto_rollback if stack else false) %}
+  {% set v_gate = form.vulnerability_gate if form else (stack.vulnerability_gate if stack else 'off') %}
 
   <div class="panel-header">
     <h2>{{ t(request, "docker.stack.heading", name=stack.name) if stack else t(request, "docker.stacks.new") }}</h2>
@@ -32,7 +37,17 @@
     <section class="panel">
       <dl class="detail-list">
         <dt>{{ t(request, "docker.stacks.source") }}</dt>
-        <dd>{% if stack.source == 'git' %}Git · <code>{{ stack.git_url }}</code> ({{ stack.git_branch }}, {{ stack.git_compose_path }}){% else %}{{ t(request, "docker.stacks.source_editor") }}{% endif %}</dd>
+        <dd>{% if stack.source == 'git' %}Git · <code>{{ stack.git_url }}</code> ({{ stack.git_branch }}, {{ stack.git_compose_path }}{% for o in stack.git_compose_overrides or [] %} + {{ o }}{% endfor %}){% else %}{{ t(request, "docker.stacks.source_editor") }}{% endif %}</dd>
+        {% if stack.source == 'git' and stack.git_ssh_public_key %}
+          <dt>{{ t(request, "docker.stack.deploy_key") }}</dt>
+          <dd><code class="wrap-anywhere">{{ stack.git_ssh_public_key }}</code>
+            <p class="hint">{{ t(request, "docker.stack.deploy_key_add") }}</p>
+            <p class="hint">{{ t(request, "docker.stack.host_key_pinned") if stack.git_known_hosts else t(request, "docker.stack.host_key_first") }}</p></dd>
+        {% endif %}
+        <dt>{{ t(request, "docker.stack.safety") }}</dt>
+        <dd>{{ t(request, "docker.stack.keep_history_short") if stack.keep_history else t(request, "docker.stack.no_history_short") }}
+          · {{ t(request, "docker.stack.auto_rollback_short") if stack.auto_rollback else t(request, "docker.stack.no_auto_rollback_short") }}
+          · {{ t(request, "docker.stack.gate_short") }}: {{ t(request, "docker.gate." ~ stack.vulnerability_gate) }}</dd>
         <dt>{{ t(request, "docker.stack.directory") }}</dt>
         <dd><code>{{ stack.directory or ("~/.local/share/debcontrol/stacks/" ~ stack.name) }}</code></dd>
         <dt>{{ t(request, "docker.stacks.deployed") }}</dt>
@@ -61,6 +76,10 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="pull" value="0">
             <button type="submit" class="button button-secondary">{{ t(request, "docker.stack.deploy") }}</button>
+          </form>
+          <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/check" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.stack.check") }}</button>
           </form>
           {% if stack.source == 'git' %}
             <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/sync" class="inline-form">
@@ -105,11 +124,16 @@
         <fieldset class="docker-fieldset">
           <legend>{{ t(request, "docker.stack.git_legend") }}</legend>
           <label for="stack-git-url">{{ t(request, "docker.stack.git_url") }}</label>
-          <input id="stack-git-url" name="git_url" type="url" value="{{ v_git_url }}" placeholder="https://github.com/owner/repo.git" spellcheck="false">
+          <input id="stack-git-url" name="git_url" value="{{ v_git_url }}" placeholder="https://github.com/owner/repo.git" spellcheck="false" autocapitalize="off">
+          <p class="hint">{{ t(request, "docker.stack.git_url_hint") }}</p>
           <label for="stack-git-branch">{{ t(request, "docker.stack.git_branch") }}</label>
           <input id="stack-git-branch" name="git_branch" value="{{ v_git_branch }}" spellcheck="false">
           <label for="stack-git-path">{{ t(request, "docker.stack.git_path") }}</label>
           <input id="stack-git-path" name="git_compose_path" value="{{ v_git_path }}" spellcheck="false">
+          <label for="stack-git-overrides">{{ t(request, "docker.stack.git_overrides") }}</label>
+          <textarea id="stack-git-overrides" name="git_compose_overrides" rows="2" class="code-input" spellcheck="false" placeholder="compose.prod.yaml">
+{{ v_overrides }}</textarea>
+          <p class="hint">{{ t(request, "docker.stack.git_overrides_hint") }}</p>
           <label for="stack-git-token-action">{{ t(request, "docker.stack.git_token") }}</label>
           <select id="stack-git-token-action" name="git_token_action">
             {% if stack and stack.git_token_encrypted %}<option value="keep" selected>{{ t(request, "docker.stack.token_keep") }}</option>{% else %}<option value="keep" selected>{{ t(request, "docker.stack.token_none") }}</option>{% endif %}
@@ -118,6 +142,19 @@
           </select>
           <input name="git_token" type="password" autocomplete="new-password" aria-label="{{ t(request, 'docker.stack.git_token') }}">
           <p class="hint">{{ t(request, "docker.stack.git_token_hint") }}</p>
+          <label for="stack-git-key-action">{{ t(request, "docker.stack.deploy_key") }}</label>
+          <select id="stack-git-key-action" name="git_ssh_key_action">
+            {% if stack and stack.git_ssh_key_encrypted %}<option value="keep" selected>{{ t(request, "docker.stack.key_keep") }}</option>{% else %}<option value="keep" selected>{{ t(request, "docker.stack.key_none") }}</option>{% endif %}
+            <option value="generate">{{ t(request, "docker.stack.key_generate") }}</option>
+            <option value="set">{{ t(request, "docker.stack.key_set") }}</option>
+            {% if stack and stack.git_ssh_key_encrypted %}<option value="remove">{{ t(request, "docker.stack.key_remove") }}</option>{% endif %}
+          </select>
+          <textarea name="git_ssh_key" rows="3" class="code-input" spellcheck="false" autocomplete="off" aria-label="{{ t(request, 'docker.stack.deploy_key') }}" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+          <p class="hint">{{ t(request, "docker.stack.deploy_key_hint") }}</p>
+          <label for="stack-known-hosts">{{ t(request, "docker.stack.known_hosts") }}</label>
+          <textarea id="stack-known-hosts" name="git_known_hosts" rows="2" class="code-input" spellcheck="false" placeholder="github.com ssh-ed25519 AAAA...">
+{{ v_known_hosts }}</textarea>
+          <p class="hint">{{ t(request, "docker.stack.known_hosts_hint") }}</p>
           <label><input type="checkbox" name="auto_sync" value="1" {% if v_auto_sync %}checked{% endif %}> {{ t(request, "docker.stack.auto_sync") }}</label>
           <p class="hint">{{ t(request, "docker.stack.auto_sync_hint") }}</p>
         </fieldset>
@@ -128,10 +165,28 @@
 {{ v_env }}</textarea>
         <p class="hint">{{ t(request, "docker.stack.env_hint") }}</p>
 
+        <fieldset class="docker-fieldset">
+          <legend>{{ t(request, "docker.stack.safety") }}</legend>
+          <label><input type="checkbox" name="keep_history" value="1" {% if v_keep_history %}checked{% endif %}> {{ t(request, "docker.stack.keep_history") }}</label>
+          <p class="hint">{{ t(request, "docker.stack.keep_history_hint") }}</p>
+          <label><input type="checkbox" name="auto_rollback" value="1" {% if v_auto_rollback %}checked{% endif %}> {{ t(request, "docker.stack.auto_rollback") }}</label>
+          <p class="hint">{{ t(request, "docker.stack.auto_rollback_hint") }}</p>
+          <label for="stack-gate">{{ t(request, "docker.stack.gate") }}</label>
+          <select id="stack-gate" name="vulnerability_gate">
+            {% for g in gates %}<option value="{{ g }}" {% if v_gate == g %}selected{% endif %}>{{ t(request, "docker.gate." ~ g) }}</option>{% endfor %}
+          </select>
+          <p class="hint">{{ t(request, "docker.stack.gate_hint") }}</p>
+        </fieldset>
+
         {% if not stack and can_updates %}
           <label><input type="checkbox" name="deploy" value="1" checked> {{ t(request, "docker.stack.deploy_now") }}</label>
         {% endif %}
-        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+        <div class="page-header-actions">
+          <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+          {% if stack and can_updates and ready %}
+            <button type="submit" name="check" value="1" class="button button-secondary">{{ t(request, "docker.stack.save_and_check") }}</button>
+          {% endif %}
+        </div>
         {% if stack %}<p class="hint">{{ t(request, "docker.stack.save_hint") }}</p>{% endif %}
       </form>
     </section>
@@ -158,6 +213,47 @@
     {% endif %}
   {% elif stack and stack.source == 'editor' %}
     <p class="hint">{{ t(request, "docker.stack.compose_hidden") }}</p>
+  {% endif %}
+
+  {% if stack and stack.keep_history %}
+    <section class="panel">
+      <h2>{{ t(request, "docker.stack.history") }}</h2>
+      {% if versions %}
+        <div class="table-wrap table-cards-wrap">
+        <table class="table table-cards">
+          <thead><tr>
+            <th>{{ t(request, "docker.stack.version_deployed") }}</th>
+            <th>{{ t(request, "docker.stack.version_by") }}</th>
+            <th>{{ t(request, "docker.stack.version_what") }}</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+          {% for v in versions %}
+            {% set current = v.content_hash == stack.deployed_hash and (v.commit or '') == (stack.deployed_commit or '') %}
+            <tr>
+              <td>{{ v.created_at | local_time }}{% if current and loop.first %} <span class="badge badge-ok">{{ t(request, "docker.stack.version_current") }}</span>{% endif %}</td>
+              <td>{{ v.deployed_by or '—' }}</td>
+              <td>{% if v.commit %}<code>{{ v.commit[:12] }}</code>{% else %}<code>{{ v.content_hash[:12] }}</code>{% endif %}</td>
+              <td><div class="cell-actions">
+                {% if can_terminal %}<a class="button button-secondary log-small-button" href="{{ docker_base }}/stacks/{{ stack.id }}/versions/{{ v.id }}">{{ t(request, "docker.stack.version_show") }}</a>{% endif %}
+                {% if can_terminal and can_updates and ready and not (current and loop.first) %}
+                  <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/versions/{{ v.id }}/rollback" class="inline-form"
+                        data-confirm="{{ t(request, 'docker.stack.rollback_confirm', name=stack.name) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="button log-small-button">{{ t(request, "docker.stack.rollback") }}</button>
+                  </form>
+                {% endif %}
+              </div></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% if stack.source == 'git' %}<p class="hint">{{ t(request, "docker.stack.rollback_git_hint") }}</p>{% endif %}
+      {% else %}
+        <p class="hint">{{ t(request, "docker.stack.history_empty") }}</p>
+      {% endif %}
+    </section>
   {% endif %}
 
   {% if stack %}

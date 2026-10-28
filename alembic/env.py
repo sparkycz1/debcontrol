@@ -21,6 +21,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     DockerImageScan,
     DockerJob,
     DockerStack,
+    DockerStackVersion,
     EndpointCheck,
     EndpointCheckResult,
     FleetSnapshot,

@@ -76,8 +76,12 @@ from app.ssh.docker_compose import (
     build_remote_head_command,
     build_remove_script,
     build_stack_action_script,
+    build_stack_restore_script,
+    build_stack_up_script,
     build_write_file_script,
     parse_commit,
+    parse_host_keys,
+    parse_stack_images,
 )
 from app.ssh.docker_compose import failed_step as compose_failed_step
 from app.ssh.docker_inventory import read_inventory
@@ -129,6 +133,7 @@ _TIMEOUTS: dict[str, int] = {
     DockerJobKind.CONTAINER_ROLLBACK: 20 * 60,
     DockerJobKind.STACK_ACTION: 30 * 60,
     DockerJobKind.STACK_DEPLOY: 45 * 60,
+    DockerJobKind.STACK_CHECK: 15 * 60,
     DockerJobKind.IMAGE_SCAN: 2 * 60 * 60,
     DockerJobKind.PRUNE: 60 * 60,
     DockerJobKind.BACKUP_RUN: 12 * 60 * 60,
@@ -316,7 +321,7 @@ async def _after_close(ctx: _Context, status: DockerJobStatus) -> None:
                 context={"container": job.target, "details": details},
             )
     elif job.kind in (DockerJobKind.STACK_DEPLOY, DockerJobKind.STACK_ACTION):
-        if status == DockerJobStatus.FAILED:
+        if status in (DockerJobStatus.FAILED, DockerJobStatus.BLOCKED):
             await notify(
                 session,
                 NotificationEventType.DOCKER_STACK_FAILED,
@@ -589,22 +594,156 @@ async def _stack(ctx: _Context) -> DockerStack:
     return stack
 
 
+def _keep_host_keys(stack: DockerStack, output: str) -> None:
+    """The repository host's keys seen on a first SSH connection: kept, and
+    required from then on."""
+    if not stack.git_known_hosts:
+        keys = parse_host_keys(output)
+        if keys:
+            stack.git_known_hosts = keys
+
+
 async def _job_stack_deploy(ctx: _Context) -> None:
+    """Deploy a managed stack. Without a vulnerability gate one phase
+    ("run") does it all. With one: "prepare" writes the files and pulls,
+    "scan" scans the images that would newly run, then "up" starts them —
+    or, when the gate stops it, "restore" puts the previous files and tags
+    back and the job ends blocked."""
     stack = await _stack(ctx)
     await docker_jobs.check_project(ctx.session, ctx.machine, stack.name)
     pull = bool(ctx.params.get("pull", True))
+    commit = str(ctx.params.get("commit") or "")
+    # Decided when the job starts, so a resumed job keeps to it.
+    gate = normalize_gate(str(ctx.result.setdefault("gate_policy", stack.vulnerability_gate)))
+    phase = ctx.result.get("phase")
+    if gate == "off" or phase == "run":
 
-    async def build() -> str:
-        return docker_stacks.deploy_script(stack, pull=pull)
+        async def build_run() -> str:
+            return docker_stacks.deploy_script(stack, pull=pull, commit=commit)
 
-    status, output = await _run_phase(ctx, "run", build)
-    commit = parse_commit(output)
+        status, output = await _run_phase(ctx, "run", build_run)
+        await _finish_stack_deploy(ctx, stack, status, output, parse_commit(output))
+        return
+
+    if phase in (None, "prepare"):
+
+        async def build_prepare() -> str:
+            return docker_stacks.deploy_script(
+                stack, pull=pull, commit=commit, up=False, report_images=True
+            )
+
+        status, output = await _run_phase(ctx, "prepare", build_prepare)
+        _keep_host_keys(stack, output)
+        if status != 0 or "@@DC_PREPARED" not in output:
+            await _finish_stack_deploy(ctx, stack, status, output, None)
+            return
+        old, new = parse_stack_images(output)
+        running = set(old.values())
+        ctx.result.update(
+            {
+                "commit": parse_commit(output),
+                "images_old": old,
+                # Only what would newly run is judged: an image already
+                # running is not what this deploy changes.
+                "gate_images": {r: i for r, i in new.items() if i and i not in running},
+            }
+        )
+        await ctx.save()
+        phase = "prepare"
+
+    gate_images = {str(k): str(v) for k, v in dict(ctx.result.get("gate_images") or {}).items()}
+    old_images = {str(k): str(v) for k, v in dict(ctx.result.get("images_old") or {}).items()}
+    if phase in ("prepare", "scan") and gate_images:
+        blocked = await _stack_gate(ctx, gate, gate_images, old_images)
+        if blocked:
+            phase = "restore"
+    if phase == "restore":
+        await _restore_blocked_stack(ctx, stack, gate, gate_images, old_images)
+        return
+
+    async def build_up() -> str:
+        return build_stack_up_script(
+            docker_stacks.stack_files(stack, commit=commit),
+            health=stack.auto_rollback,
+            previous=docker_stacks.previous_files(stack) if stack.auto_rollback else None,
+        )
+
+    status, output = await _run_phase(ctx, "up", build_up)
+    await _finish_stack_deploy(ctx, stack, status, output, ctx.result.get("commit"))
+
+
+async def _stack_gate(
+    ctx: _Context, gate: str, images: dict[str, str], old_images: dict[str, str]
+) -> bool:
+    """Scan the stack's new images and judge them; True when the gate stops
+    the deploy. Each image is compared with what its tag ran before."""
+    if "stack_gate" in ctx.result:
+        return not all(v.get("allowed") for v in dict(ctx.result["stack_gate"]).values())
+
+    async def build_scan() -> str:
+        return build_scan_script(list(images))
+
+    _status, output = await _run_phase(ctx, "scan", build_scan)
+    counts = await docker_scans.store(
+        ctx.session, ctx.machine.id, parse_scan_output(output), images
+    )
+    verdicts: dict[str, dict[str, Any]] = {}
+    for ref, image_id in images.items():
+        old_id = old_images.get(ref, "")
+        old_counts = (
+            counts.get(old_id)
+            or docker_scans.counts_of(
+                await docker_scans.get_scan(ctx.session, ctx.machine.id, old_id)
+            )
+            if old_id
+            else None
+        )
+        verdicts[ref] = evaluate_gate(gate, counts.get(image_id), old_counts).as_dict()
+    ctx.result["stack_gate"] = verdicts
+    await ctx.save()
+    return not all(v["allowed"] for v in verdicts.values())
+
+
+async def _restore_blocked_stack(
+    ctx: _Context,
+    stack: DockerStack,
+    gate: str,
+    images: dict[str, str],
+    old_images: dict[str, str],
+) -> None:
+    verdicts = dict(ctx.result.get("stack_gate") or {})
+    stopped = [ref for ref, v in verdicts.items() if not dict(v).get("allowed")]
+    retag = {ref: old_images[ref] for ref in images if old_images.get(ref)}
+
+    async def build_restore() -> str:
+        return build_stack_restore_script(
+            stack.name, stack.directory or "", docker_stacks.previous_files(stack), retag
+        )
+
+    await _run_phase(ctx, "restore", build_restore)
+    reasons = "; ".join(
+        f"{ref}: {_GATE_MESSAGES.get(str(dict(verdicts[ref]).get('reason')), '')}"
+        for ref in stopped
+    )
+    message = f"Stopped by the vulnerability gate ({gate}): {reasons}."[:1000]
+    stack.last_checked_at = datetime.now(UTC)
+    stack.last_status = "blocked"
+    stack.last_error = message
+    await ctx.session.commit()
+    await _close(ctx, DockerJobStatus.BLOCKED, message)
+
+
+async def _finish_stack_deploy(
+    ctx: _Context, stack: DockerStack, status: int | None, output: str, commit: str | None
+) -> None:
+    _keep_host_keys(stack, output)
+    if commit:
+        ctx.result["commit"] = commit
     stack.last_checked_at = datetime.now(UTC)
     if status == 0 and "@@DC_DONE" in output:
-        stack.deployed_commit = commit or (
-            stack.deployed_commit if stack.source == StackSource.GIT else None
+        await docker_stacks.record_deployed(
+            ctx.session, stack, commit=commit, deployed_by=ctx.job.started_by
         )
-        stack.deployed_hash = docker_stacks.content_hash(stack)
         stack.deployed_at = datetime.now(UTC)
         stack.last_status = "ok"
         stack.last_error = None
@@ -613,10 +752,42 @@ async def _job_stack_deploy(ctx: _Context) -> None:
         await _close(ctx, DockerJobStatus.SUCCEEDED)
         return
     step = compose_failed_step(output) or "deploy"
-    message = f"The deployment failed at step \"{step}\" — see the output."
+    rolled_back = "@@DC_ROLLED_BACK" in output
+    ctx.result["rolled_back"] = rolled_back
+    if rolled_back:
+        message = (
+            f'The new version did not come up (step "{step}"); '
+            "the previous version was put back — see the output."
+        )
+    elif "@@DC_ROLLBACK_FAILED" in output:
+        message = (
+            f'The new version did not come up (step "{step}"), and putting the '
+            "previous version back failed too — see the output."
+        )
+    else:
+        message = f"The deployment failed at step \"{step}\" — see the output."
     stack.last_status = "failed"
     stack.last_error = message
     await ctx.session.commit()
+    await _close(ctx, DockerJobStatus.FAILED, message)
+
+
+async def _job_stack_check(ctx: _Context) -> None:
+    """The check before a deploy: changes nothing on the machine."""
+    stack = await _stack(ctx)
+
+    async def build() -> str:
+        return docker_stacks.check_script(stack)
+
+    status, output = await _run_phase(ctx, "run", build)
+    _keep_host_keys(stack, output)
+    ctx.result["commit"] = parse_commit(output)
+    await ctx.session.commit()
+    if status == 0 and "@@DC_CHECK_OK" in output:
+        await _close(ctx, DockerJobStatus.SUCCEEDED)
+        return
+    step = compose_failed_step(output) or "check"
+    message = f'The check failed at step "{step}" — see the output.'
     await _close(ctx, DockerJobStatus.FAILED, message)
 
 
@@ -908,6 +1079,7 @@ _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.CONTAINER_UPDATE: _job_container_update,
     DockerJobKind.CONTAINER_ROLLBACK: _job_container_rollback,
     DockerJobKind.STACK_DEPLOY: _job_stack_deploy,
+    DockerJobKind.STACK_CHECK: _job_stack_check,
     DockerJobKind.STACK_ACTION: _job_stack_action,
     DockerJobKind.IMAGE_SCAN: _job_image_scan,
     DockerJobKind.PRUNE: _job_prune,
@@ -1375,6 +1547,28 @@ async def queue_stack_deploy(
     return job
 
 
+async def _last_deploy_stopped_at(session: AsyncSession, stack: DockerStack, commit: str) -> bool:
+    """Whether the stack's newest deploy job ended failed or blocked at
+    `commit`."""
+    job = (
+        await session.execute(
+            select(DockerJob)
+            .where(
+                DockerJob.machine_id == stack.machine_id,
+                DockerJob.ref_id == stack.id,
+                DockerJob.kind == DockerJobKind.STACK_DEPLOY,
+            )
+            .order_by(DockerJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return (
+        job is not None
+        and job.status in (DockerJobStatus.FAILED, DockerJobStatus.BLOCKED)
+        and dict(job.result or {}).get("commit") == commit
+    )
+
+
 async def _sync_git_stack(stack_id: str, *, started_by: str) -> dict[str, Any]:
     """Deploy a Git stack when its branch has a commit that is not deployed
     (the auto-sync poll; a webhook deploys without asking)."""
@@ -1396,11 +1590,17 @@ async def _sync_git_stack(stack_id: str, *, started_by: str) -> dict[str, Any]:
             await session.commit()
             return _error(exc)
         head = parse_commit(output.output)
+        _keep_host_keys(stack, output.output)
         stack.last_checked_at = datetime.now(UTC)
         await session.commit()
         if head is None:
             return {"ok": False, "error": output.output.strip()[-300:] or "No such branch."}
         if head == stack.deployed_commit and not docker_stacks.is_changed(stack):
+            return {"ok": True, "deployed": False, "commit": head}
+        if await _last_deploy_stopped_at(session, stack, head):
+            # Failed, rolled back or stopped by the gate at this very commit:
+            # not tried again every few minutes (a new commit, or a deploy
+            # by hand, is).
             return {"ok": True, "deployed": False, "commit": head}
         try:
             await docker_jobs.check_project(session, machine, stack.name)

@@ -26,13 +26,25 @@
   {% if r.gate %}
     <div class="alert {{ 'alert-ok' if r.gate.allowed else 'alert-error' }}">
       <p>{{ t(request, "docker.gate.verdict." ~ r.gate.reason) }}</p>
-      {% if r.gate.new_counts is not none %}<p>{{ t(request, "docker.gate.new_image") }} {{ severity_counts(request, r.gate.new_counts) }}</p>{% endif %}
-      {% if r.gate.old_counts is not none %}<p>{{ t(request, "docker.gate.old_image") }} {{ severity_counts(request, r.gate.old_counts) }}</p>{% endif %}
+      {% if r.gate.new is not none %}<p>{{ t(request, "docker.gate.new_image") }} {{ severity_counts(request, r.gate.new) }}</p>{% endif %}
+      {% if r.gate.old is not none %}<p>{{ t(request, "docker.gate.old_image") }} {{ severity_counts(request, r.gate.old) }}</p>{% endif %}
     </div>
   {% endif %}
+  {% if r.stack_gate %}
+    {% for ref, v in r.stack_gate.items() %}
+      <div class="alert {{ 'alert-ok' if v.allowed else 'alert-error' }}">
+        <p><code>{{ ref }}</code>: {{ t(request, "docker.gate.verdict." ~ v.reason) }}</p>
+        {% if v.new is not none %}<p>{{ t(request, "docker.gate.new_image") }} {{ severity_counts(request, v.new) }}</p>{% endif %}
+        {% if v.old is not none %}<p>{{ t(request, "docker.gate.old_image") }} {{ severity_counts(request, v.old) }}</p>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+  {% if r.rolled_back %}<div class="alert alert-warn"><p>{{ t(request, "docker.stack.rolled_back") }}</p></div>{% endif %}
   {% if r.restored %}<div class="alert alert-warn"><p>{{ t(request, "docker.job.restored") }}</p></div>{% endif %}
   {% if job.error %}<div class="alert alert-error"><p>{{ job.error }}</p></div>{% endif %}
-  {% if job.output %}
+  {% if output_hidden %}
+    <p class="hint">{{ t(request, "docker.job.output_hidden") }}</p>
+  {% elif job.output %}
     <pre class="run-output" data-run-output tabindex="0">{{ job.output }}</pre>
   {% elif active %}
     <p class="hint">{{ t(request, "docker.job.waiting") }}</p>

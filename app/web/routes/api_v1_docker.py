@@ -44,6 +44,7 @@ from app.db.models.docker import (
     DockerJob,
     DockerJobKind,
     DockerStack,
+    DockerStackVersion,
     StackSource,
 )
 from app.db.models.machine import Machine
@@ -141,7 +142,14 @@ def _stack(stack: DockerStack, *, secrets: bool) -> dict[str, Any]:
         "git_url": stack.git_url,
         "git_branch": stack.git_branch,
         "git_compose_path": stack.git_compose_path,
+        "git_compose_overrides": list(stack.git_compose_overrides or []),
         "has_git_token": stack.git_token_encrypted is not None,
+        # The deploy key's public half (to add to the repository host).
+        "git_ssh_public_key": stack.git_ssh_public_key,
+        "git_known_hosts": stack.git_known_hosts,
+        "keep_history": stack.keep_history,
+        "auto_rollback": stack.auto_rollback,
+        "vulnerability_gate": stack.vulnerability_gate,
         "auto_sync": stack.auto_sync,
         "has_webhook": stack.webhook_token_hash is not None,
         "webhook_last_at": _iso(stack.webhook_last_at),
@@ -797,7 +805,7 @@ async def docker_job_api(
     job = await docker_jobs.get_job(db, machine.id, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-    return _job(job, output=True)
+    return _job(job, output=not docker_jobs.output_hidden(job, user))
 
 
 # --- Stacks and Compose projects --------------------------------------------------
@@ -839,10 +847,25 @@ class _StackSave(BaseModel):
     # Where the files go on the machine (absolute or ~/...), chosen on
     # create only; None/"" = the default directory.
     directory: str | None = Field(default=None, max_length=1024)
+    # More compose files from the repository (overrides); None keeps them.
+    git_compose_overrides: list[str] | None = Field(default=None, max_length=5)
+    # The SSH deploy key: None keeps it, "" removes it, "generate" makes a
+    # new one (its public half is in the answer), else a private key.
+    git_ssh_key: str | None = Field(default=None, max_length=16384)
+    # known_hosts lines of the repository host: None keeps them, "" forgets
+    # them (the next connection records them).
+    git_known_hosts: str | None = Field(default=None, max_length=8192)
+    # Opt-in deploy safety; None keeps what is set (off for a new stack).
+    keep_history: bool | None = None
+    auto_rollback: bool | None = None
+    vulnerability_gate: Literal["off", "critical", "high", "worse"] | None = None
     deploy: bool = False
 
 
-def _stack_form(body: _StackSave) -> docker_stacks.StackForm:
+def _stack_form(body: _StackSave, stack: DockerStack | None = None) -> docker_stacks.StackForm:
+    def keep[T](value: T | None, stored: T) -> T:
+        return stored if value is None else value
+
     return docker_stacks.StackForm(
         name=body.name,
         source=body.source,
@@ -854,16 +877,45 @@ def _stack_form(body: _StackSave) -> docker_stacks.StackForm:
         git_token=body.git_token,
         auto_sync=body.auto_sync,
         directory=body.directory,
+        git_compose_overrides=keep(
+            body.git_compose_overrides,
+            list(stack.git_compose_overrides or []) if stack is not None else [],
+        ),
+        git_ssh_key=body.git_ssh_key,
+        git_known_hosts=body.git_known_hosts,
+        keep_history=keep(body.keep_history, stack.keep_history if stack else False),
+        auto_rollback=keep(body.auto_rollback, stack.auto_rollback if stack else False),
+        vulnerability_gate=keep(
+            body.vulnerability_gate, stack.vulnerability_gate if stack else "off"
+        ),
     )
 
 
+def _settings_details(stack: DockerStack) -> dict[str, Any]:
+    return {
+        "stack": stack.name,
+        "source": stack.source,
+        "git_url": stack.git_url,
+        "keep_history": stack.keep_history,
+        "auto_rollback": stack.auto_rollback,
+        "vulnerability_gate": stack.vulnerability_gate,
+        "has_deploy_key": stack.git_ssh_key_encrypted is not None,
+    }
+
+
 async def _deploy(
-    request: Request, db: AsyncSession, machine: Machine, user: User, stack: DockerStack, pull: bool
+    request: Request,
+    db: AsyncSession,
+    machine: Machine,
+    user: User,
+    stack: DockerStack,
+    pull: bool,
+    commit: str = "",
 ) -> dict[str, Any]:
     _ready(machine)
     try:
         job = await docker_actions.deploy_stack(
-            db, machine, stack, started_by=user.username, pull=pull
+            db, machine, stack, started_by=user.username, pull=pull, commit=commit
         )
     except docker_jobs.ProtectedError as exc:
         raise _protected() from exc
@@ -923,12 +975,7 @@ async def docker_stack_create_api(
         machine,
         "machine.docker.stack.create",
         f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        {
-            "stack": stack.name,
-            "source": stack.source,
-            "git_url": stack.git_url,
-            "directory": stack.directory,
-        },
+        {**_settings_details(stack), "directory": stack.directory},
     )
     answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
     if body.deploy:
@@ -966,7 +1013,7 @@ async def docker_stack_save_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     stack = await _stack_or_404(db, machine, stack_id)
     _check_deploy(body, user, machine)
-    form = _stack_form(body)
+    form = _stack_form(body, stack)
     form.name = stack.name
     # The directory is chosen once, when the stack is made.
     if (body.directory or None) not in (None, stack.directory):
@@ -975,7 +1022,7 @@ async def docker_stack_save_api(
             detail=["docker.stack.error.directory_fixed"],
         )
     form.directory = None
-    errors = form.validate()
+    errors = form.validate(stack)
     if errors:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=errors)
     form.apply(stack)
@@ -986,7 +1033,7 @@ async def docker_stack_save_api(
         machine,
         "machine.docker.stack.edit",
         f'Edited Docker stack "{stack.name}" on "{machine.name}"',
-        {"stack": stack.name, "source": stack.source, "git_url": stack.git_url},
+        _settings_details(stack),
     )
     answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
     if body.deploy:
@@ -1012,6 +1059,140 @@ async def docker_stack_deploy_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     stack = await _stack_or_404(db, machine, stack_id)
     return await _deploy(request, db, machine, user, stack, body.pull if body else True)
+
+
+@router.post(
+    "/stacks/{stack_id}/check", dependencies=[_terminal], status_code=status.HTTP_202_ACCEPTED
+)
+async def docker_stack_check_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Queue the check before a deploy: what would change (for a stack
+    written in debcontrol, the `.env` by variable name only) and
+    `docker compose config` on the new files. Changes nothing; the job's
+    output has the result."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    _ready(machine)
+    job = await docker_actions.check_stack(db, machine, stack, started_by=user.username)
+    answer = _queued(job)
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.check",
+        f'Started checking Docker stack "{stack.name}" on "{machine.name}" before a deploy',
+        {"stack": stack.name},
+    )
+    return answer
+
+
+def _version(
+    version: DockerStackVersion, stack: DockerStack, *, secrets: bool
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "id": str(version.id),
+        "created_at": _iso(version.created_at),
+        "deployed_by": version.deployed_by,
+        "source": version.source,
+        "git_url": version.git_url,
+        "git_branch": version.git_branch,
+        "git_compose_path": version.git_compose_path,
+        "git_compose_overrides": list(version.git_compose_overrides or []),
+        "commit": version.commit,
+        "content_hash": version.content_hash,
+        "current": version.content_hash == stack.deployed_hash
+        and (version.commit or "") == (stack.deployed_commit or ""),
+    }
+    if secrets and version.source == StackSource.EDITOR:
+        data["compose"] = version.compose_content or ""
+        data["diff"] = docker_stacks.version_diff(stack, version)
+    return data
+
+
+@router.get("/stacks/{stack_id}/versions", dependencies=[_view])
+async def docker_stack_versions_api(
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> list[dict[str, Any]]:
+    """The kept versions, newest first (empty unless `keep_history`)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    return [
+        _version(version, stack, secrets=False)
+        for version in await docker_stacks.list_versions(db, stack.id)
+    ]
+
+
+@router.get("/stacks/{stack_id}/versions/{version_id}", dependencies=[_terminal])
+async def docker_stack_version_api(
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """One version with its compose file and the differences against the
+    stack as saved now (`.env` by variable name only)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    version = await docker_stacks.get_version(db, stack, version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such version.")
+    return _version(version, stack, secrets=True)
+
+
+@router.post(
+    "/stacks/{stack_id}/versions/{version_id}/rollback",
+    dependencies=[_terminal, _updates],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def docker_stack_rollback_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Make a kept version the stack's settings again and deploy it (a Git
+    stack at that version's commit; auto-sync is turned off)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    version = await docker_stacks.get_version(db, stack, version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such version.")
+    _ready(machine)
+    try:
+        await docker_jobs.check_project(db, machine, stack.name)
+    except docker_jobs.ProtectedError as exc:
+        raise _protected() from exc
+    if await docker_jobs.active_job(db, machine.id, DockerJobKind.STACK_DEPLOY, stack.name):
+        raise _conflict()
+    was_syncing = stack.auto_sync
+    commit = docker_stacks.restore_version(stack, version)
+    await db.commit()
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.rollback",
+        f'Rolled Docker stack "{stack.name}" on "{machine.name}" back to the version of '
+        f"{version.created_at:%Y-%m-%d %H:%M}",
+        {
+            "stack": stack.name,
+            "version": str(version.id),
+            "commit": commit or None,
+            "auto_sync_turned_off": was_syncing and not stack.auto_sync,
+        },
+    )
+    return await _deploy(request, db, machine, user, stack, True, commit)
 
 
 @router.post("/stacks/{stack_id}/sync", dependencies=[_updates])
