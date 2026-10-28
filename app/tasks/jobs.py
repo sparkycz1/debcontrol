@@ -70,6 +70,7 @@ from app.services import (
     ai_cause,
     auto_backup,
     config_drift,
+    container_events,
     disk_forecast,
     health_events,
     image_versions,
@@ -108,7 +109,7 @@ from app.ssh.exceptions import HostKeyMismatchError, SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import check_reboot_required, gather_facts
 from app.ssh.identity import get_or_create_identity
-from app.ssh.image_updates import ImageCheckError, check_images
+from app.ssh.image_updates import ImageCheckError, check_images, is_docker_hub
 from app.ssh.logs import (
     LogAccessError,
     filter_own_sessions,
@@ -558,9 +559,29 @@ def forecast_all_machine_disks() -> None:
     asyncio.run(_forecast_all_machine_disks())
 
 
+def _image_check_record(
+    *, error: str | None, reasons: dict[str, str] | None = None, images: list[str] | None = None
+) -> dict[str, Any]:
+    """`Machine.docker_image_check`: how the last check went."""
+    reasons = reasons or {}
+    return {
+        "at": datetime.now(UTC).isoformat(),
+        "ok": error is None,
+        "error": error[:500] if error else None,
+        "reasons": dict(reasons),
+        "rate_limited": sum(1 for reason in reasons.values() if reason == "rate_limited"),
+        "hub_requests": sum(
+            1
+            for image in images or []
+            if is_docker_hub(image) and reasons.get(image) not in ("pinned", "local")
+        ),
+    }
+
+
 async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
     """Compare every running image's local digest with its registry digest
-    (app.ssh.image_updates) and store the result on the machine."""
+    (app.ssh.image_updates) and store the result on the machine, with why
+    any image could not be compared (`Machine.docker_image_check`)."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
 
@@ -573,13 +594,16 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
         secret = await resolve_machine_credential(machine, session)
 
         try:
-            statuses, declared = await check_images(
+            statuses, declared, reasons = await check_images(
                 machine, secret, app_settings.ssh_connect_timeout
             )
-        except ImageCheckError as exc:
-            return {"ok": False, "error": str(exc)}
-        except SSHConnectionError as exc:
-            logger.warning("check_machine_image_updates failed for %s: %s", machine.name, exc)
+        except (ImageCheckError, SSHConnectionError) as exc:
+            if isinstance(exc, SSHConnectionError):
+                logger.warning("check_machine_image_updates failed for %s: %s", machine.name, exc)
+            # Remembered, so the hourly sweep doesn't retry it every hour
+            # and the Docker tab can say what went wrong.
+            machine.docker_image_check = _image_check_record(error=str(exc))
+            await session.commit()
             return {"ok": False, "error": str(exc)}
 
         machine.docker_image_updates = dict(statuses)
@@ -595,6 +619,9 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
         except Exception:
             logger.warning("Image version lookup failed for %s", machine.name, exc_info=True)
         machine.docker_images_checked_at = datetime.now(UTC)
+        machine.docker_image_check = _image_check_record(
+            error=None, reasons=reasons, images=list(statuses)
+        )
         await session.commit()
         return {"ok": True, "updates": sum(1 for s in statuses.values() if s == "update")}
 
@@ -607,18 +634,45 @@ def check_machine_image_updates(machine_id: str) -> dict[str, Any]:
     return run_in_worker_loop(_check_machine_image_updates(machine_id))
 
 
+# A machine is due a little before its interval is up, so the hourly sweep
+# doesn't push each check an hour later every time.
+_IMAGE_CHECK_SLACK = timedelta(minutes=10)
+
+
+def _image_check_last_at(machine: Machine) -> datetime | None:
+    """When the machine's images were last checked, successfully or not."""
+    candidates: list[datetime] = []
+    if machine.docker_images_checked_at is not None:
+        candidates.append(machine.docker_images_checked_at)
+    at = (machine.docker_image_check or {}).get("at")
+    if isinstance(at, str):
+        with contextlib.suppress(ValueError):
+            candidates.append(datetime.fromisoformat(at))
+    aware = [c if c.tzinfo else c.replace(tzinfo=UTC) for c in candidates]
+    return max(aware) if aware else None
+
+
 async def _check_all_machine_image_updates() -> None:
-    """Daily fan-out over machines where Docker is readable — never awaited
-    inline, one task per machine."""
+    """Hourly fan-out over machines where Docker is readable and whose
+    last check is older than Settings → Checks & retention's image check
+    interval (`docker_image_check_interval_hours`) — never awaited inline,
+    one task per machine."""
     async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        interval = timedelta(hours=app_settings.docker_image_check_interval_hours)
+        due_before = datetime.now(UTC) - interval + _IMAGE_CHECK_SLACK
         result = await session.execute(
-            select(Machine.id).where(
+            select(Machine).where(
                 Machine.is_active,
                 Machine.host_key_fingerprint.is_not(None),
                 Machine.docker_status == "ok",
             )
         )
-        machine_ids = [row[0] for row in result.all()]
+        machine_ids = [
+            machine.id
+            for machine in result.scalars().all()
+            if (last := _image_check_last_at(machine)) is None or last <= due_before
+        ]
     for machine_id in machine_ids:
         check_machine_image_updates.delay(str(machine_id))
 
@@ -1719,8 +1773,15 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         machine.docker_containers = (
             sample["docker_containers"] if sample["docker_status"] == "ok" else None
         )
+        # Container events: read from where this sample left off next time.
+        # The first sample after an upgrade (no marker yet) read none.
+        incidents = container_events.classify(sample.get("docker_events") or [])
+        if sample.get("docker_clock") is not None:
+            machine.docker_events_since = sample.get("docker_clock")
         machine.monitoring_updated_at = now
         await session.commit()
+        if incidents:
+            await container_events.notify_incidents(session, machine, incidents)
         await health_events.notify_monitoring_changes(
             session,
             machine,

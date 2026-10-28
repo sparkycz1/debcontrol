@@ -94,6 +94,11 @@
                min="60" max="604800" step="1" value="{{ app_settings.facts_refresh_interval_seconds }}">
         <p class="hint">{{ t(request, "settings.checks.facts_refresh_hint") }}</p>
 
+        <label for="docker_image_check_interval_hours">{{ t(request, "settings.checks.docker_image_check") }}</label>
+        <input type="number" id="docker_image_check_interval_hours" name="docker_image_check_interval_hours"
+               min="1" max="168" step="1" value="{{ app_settings.docker_image_check_interval_hours }}">
+        <p class="hint">{{ t(request, "settings.checks.docker_image_check_hint") }}</p>
+
         <h3>{{ t(request, "settings.checks.update_run_history") }}</h3>
         <p class="hint">{{ t(request, "settings.checks.update_run_hint") }}</p>
         <label for="machine_update_run_retention_days">{{ t(request, "settings.checks.keep_update_run_days") }}</label>

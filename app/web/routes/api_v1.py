@@ -888,6 +888,7 @@ async def get_machine_hardware_api(
             if machine.docker_images_checked_at
             else None
         ),
+        "docker_image_check": machine.docker_image_check,
         "sampled_at": latest.sampled_at.isoformat() if latest else None,
         "sensor_temps": latest.sensor_temps if latest else None,
         "sensor_fans": latest.sensor_fans if latest else None,
@@ -1546,7 +1547,11 @@ async def check_image_updates_api(
     if error is not None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error)
     await db.refresh(machine)
-    return {"ok": True, "images": machine.docker_image_updates or {}}
+    return {
+        "ok": True,
+        "images": machine.docker_image_updates or {},
+        "check": machine.docker_image_check,
+    }
 
 
 @router.post(

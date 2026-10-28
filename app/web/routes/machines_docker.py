@@ -29,6 +29,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.services import (
+    docker_acceptances,
     docker_actions,
     docker_jobs,
     docker_overview,
@@ -36,6 +37,7 @@ from app.services import (
     monitoring_history,
 )
 from app.services.docker_gate import GATES
+from app.services.update_policy import POLICIES
 from app.ssh.docker_cli import (
     DockerCommandError,
     is_container_name_valid,
@@ -206,6 +208,7 @@ async def docker_container_page(
             "name": name,
             "setting": settings,
             "gates": GATES,
+            "update_policies": POLICIES,
             "jobs": jobs,
             "rollback_image": docker_jobs.rollback_image(last),
             "is_protected": bool(protected)
@@ -308,13 +311,15 @@ async def docker_container_settings(
     name: str,
     auto_update: str = Form(""),
     gate: str = Form("off"),
+    update_policy: str = Form("any"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """Whether the "Update Docker containers" schedule updates this
-    container, and which vulnerabilities stop its updates."""
+    container, how far such an update may go (`app.services.
+    update_policy`), and which vulnerabilities stop its updates."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    if not is_container_name_valid(name) or gate not in GATES:
+    if not is_container_name_valid(name) or gate not in GATES or update_policy not in POLICIES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
     await docker_jobs.save_container_setting(
         db,
@@ -323,6 +328,7 @@ async def docker_container_settings(
         auto_update=auto_update == "1",
         gate=gate,
         actor=actor(current_user),
+        update_policy=update_policy,
     )
     await db.commit()
     await _audit(
@@ -331,8 +337,13 @@ async def docker_container_settings(
         machine,
         "machine.docker.container.settings",
         f'Docker settings of container "{name}" on "{machine.name}": '
-        f"auto-update {'on' if auto_update == '1' else 'off'}, gate {gate}",
-        details={"container": name, "auto_update": auto_update == "1", "gate": gate},
+        f"auto-update {'on' if auto_update == '1' else 'off'} ({update_policy}), gate {gate}",
+        details={
+            "container": name,
+            "auto_update": auto_update == "1",
+            "update_policy": update_policy,
+            "gate": gate,
+        },
     )
     return redirect(
         f"{docker_base(machine)}/containers/{name}",
@@ -561,13 +572,19 @@ async def docker_container_rollback(
     if not is_container_name_valid(name):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
     jobs = await docker_jobs.list_jobs(db, machine.id, limit=20, target=name)
-    image_id = docker_jobs.rollback_image(docker_jobs.last_update(jobs, name))
+    last = docker_jobs.last_update(jobs, name)
+    image_id = docker_jobs.rollback_image(last)
     base = f"{docker_base(machine)}/containers/{name}"
     if image_id is None:
         return redirect(base, error=LocalizedText(request, "docker.rollback.nothing"))
     try:
         job = await docker_actions.rollback_container(
-            db, machine, name, image_id, started_by=actor(current_user)
+            db,
+            machine,
+            name,
+            image_id,
+            started_by=actor(current_user),
+            ref=docker_jobs.rollback_ref(last),
         )
     except docker_jobs.ProtectedError:
         await _audit(
@@ -722,7 +739,16 @@ async def docker_image_vulnerabilities(
         machine,
         current_user,
         "images",
-        {"scan": scan, "findings": findings, "severity": severity, "q": q},
+        {
+            "scan": scan,
+            "findings": findings,
+            "severity": severity,
+            "q": q,
+            # Accepted critical/high ones (`app.services.docker_acceptances`).
+            "accepted": docker_acceptances.accepted_for(
+                await docker_acceptances.active(db), scan.image_ref
+            ),
+        },
     )
 
 

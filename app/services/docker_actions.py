@@ -31,6 +31,7 @@ from app.db.models.docker import (
 from app.db.models.machine import Machine
 from app.services import docker_backups, docker_jobs
 from app.services.docker_gate import normalize_gate
+from app.services.update_policy import normalize_policy
 from app.ssh.containers import BULK_ACTIONS, MAX_BULK_CONTAINERS
 from app.ssh.docker_cli import (
     DockerCommandError,
@@ -181,9 +182,12 @@ async def update_containers(
     *,
     started_by: str | None,
     gate: str | None = None,
+    use_policy: bool = False,
 ) -> Queued:
     """Update each container to the newest image of its tag. `gate` None =
-    each container's own setting."""
+    each container's own setting. `use_policy`: keep to each container's
+    update policy (`app.services.update_policy`) — for scheduled updates
+    only; one started by hand is not limited."""
     queued = Queued()
     settings = await docker_jobs.container_settings(db, machine.id)
     protected = await docker_jobs.protected_project(db, machine)
@@ -203,12 +207,17 @@ async def update_containers(
         policy = normalize_gate(
             gate if gate is not None else (setting.vulnerability_gate if setting else None)
         )
+        params: dict[str, Any] = {"gate": policy}
+        if use_policy and setting is not None:
+            limit = normalize_policy(setting.update_policy)
+            if limit != "any":
+                params["policy"] = limit
         jobs.append(
             DockerJob(
                 machine_id=machine.id,
                 kind=DockerJobKind.CONTAINER_UPDATE,
                 target=name,
-                params={"gate": policy},
+                params=params,
                 started_by=started_by,
                 batch_id=batch_id,
             )
@@ -220,18 +229,29 @@ async def update_containers(
 
 
 async def rollback_container(
-    db: AsyncSession, machine: Machine, name: str, image_id: str, *, started_by: str | None
+    db: AsyncSession,
+    machine: Machine,
+    name: str,
+    image_id: str,
+    *,
+    started_by: str | None,
+    ref: str | None = None,
 ) -> DockerJob | None:
+    """Back to `image_id` — and to the tag `ref`, when the update being
+    undone moved the container to another tag (`docker_jobs.rollback_ref`)."""
     if not is_container_name_valid(name) or not is_image_id_valid(image_id):
         raise DockerCommandError("Nothing to roll back to.")
     await docker_jobs.check_container(db, machine, name)
+    params: dict[str, Any] = {"image_id": image_id}
+    if ref:
+        params["ref"] = ref
     return await queue_job(
         db,
         machine,
         DockerJobKind.CONTAINER_ROLLBACK,
         name,
         started_by=started_by,
-        params={"image_id": image_id},
+        params=params,
     )
 
 
@@ -508,7 +528,12 @@ async def trigger_container_updates(
         if not names:
             continue
         queued = await update_containers(
-            db, machine, names, started_by=started_by, gate=gate if gate else None
+            db,
+            machine,
+            names,
+            started_by=started_by,
+            gate=gate if gate else None,
+            use_policy=scope == "auto",
         )
         attempted += 1 if queued.jobs else 0
     return attempted, skipped

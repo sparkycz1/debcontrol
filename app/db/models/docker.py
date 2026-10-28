@@ -11,9 +11,15 @@ about it. See wiki/Docker for the whole feature.
 - `DockerImageScan` — the latest vulnerability scan (Trivy and Grype) of
   one image on one machine, keyed by the image's id: a new scan of the
   same image replaces it, and a changed image gets its own.
+- `DockerImageFinding` — the critical and high findings of each stored
+  scan, one row each, so the fleet can be asked "which machines and
+  images have CVE-…" with an index instead of reading every scan.
+- `DockerVulnerabilityAcceptance` — a critical or high vulnerability an
+  admin accepted until a date (for every image, or one image
+  repository): left out of the counts, the gate and alerts until then.
 - `DockerContainerSetting` — per container: updated automatically by the
-  "Update Docker containers" schedule or not, and which vulnerabilities
-  stop an update.
+  "Update Docker containers" schedule or not, how far such an update may
+  go (`UpdatePolicy`), and which vulnerabilities stop an update.
 - `DockerStack` — a Compose stack debcontrol deploys itself, written in
   debcontrol or taken from a Git repository. Stacks debcontrol finds on a
   machine without having deployed them are read live, not stored.
@@ -137,14 +143,79 @@ class DockerImageScan(Base):
     image_ref: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     # Which scanners answered, with their versions: {"trivy": "0.58.1", ...}.
     scanners: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
-    # {"critical": 2, "high": 10, "medium": 31, "low": 4, "unknown": 0}
+    # {"critical": 2, "high": 10, "medium": 31, "low": 4, "unknown": 0} —
+    # without accepted vulnerabilities (`DockerVulnerabilityAcceptance`),
+    # which is what the gate, summaries and alerts read.
     counts: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
+    # What the scanners found, accepted ones included; None = same as
+    # `counts` (no acceptance applied yet, or a scan from before 0.125.0).
+    raw_counts: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
     # [{"id", "pkg", "installed", "fixed", "severity", "title", "url",
     #   "scanners": [...]}], most severe first (`docker_scan.MAX_FINDINGS`).
     vulnerabilities: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # {"grype": "error text"} for a scanner that failed.
     errors: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     scanned_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class DockerImageFinding(Base):
+    """One critical or high finding of a stored scan (`DockerImageScan.
+    vulnerabilities` keeps them all); replaced with the scan."""
+
+    __tablename__ = "docker_image_findings"
+    __table_args__ = (
+        Index("ix_docker_image_findings_vuln", "vuln_id"),
+        Index("ix_docker_image_findings_scan", "scan_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    scan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("docker_image_scans.id", ondelete="CASCADE"), nullable=False
+    )
+    machine_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=False
+    )
+    # CVE-2026-1234, GHSA-..., as the scanner named it.
+    vuln_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    pkg: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    installed: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    fixed: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+
+class DockerVulnerabilityAcceptance(Base):
+    """A vulnerability accepted until `expires_at` (`app.services.
+    docker_acceptances`): fleet-wide, for every image (`image` == "") or
+    for one image repository (`image_versions.repository_key`, e.g.
+    "docker.io/library/nginx"). Removed once it has expired and the
+    counts have been put back."""
+
+    __tablename__ = "docker_vulnerability_acceptances"
+    __table_args__ = (
+        UniqueConstraint("vuln_id", "image", name="uq_docker_vuln_acceptances_vuln_image"),
+        Index("ix_docker_vuln_acceptances_expires", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    vuln_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    image: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class UpdatePolicy(enum.StrEnum):
+    """How far an automatic (scheduled) update of a container may go,
+    judged by semantic versions (`app.services.update_policy`)."""
+
+    # Whatever the registry has under the tag (what every container did
+    # before 0.125.0).
+    ANY = "any"
+    # Within the same major version (1.4 -> 1.5, never 1.x -> 2.0).
+    MINOR = "minor"
+    # Within the same major.minor version (1.4.2 -> 1.4.3 only).
+    PATCH = "patch"
 
 
 class VulnerabilityGate(enum.StrEnum):
@@ -174,6 +245,10 @@ class DockerContainerSetting(Base):
     auto_update: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     vulnerability_gate: Mapped[str] = mapped_column(
         String(16), nullable=False, default=VulnerabilityGate.OFF.value
+    )
+    # `UpdatePolicy`: applies to automatic (scheduled) updates.
+    update_policy: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=UpdatePolicy.ANY.value, server_default="any"
     )
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

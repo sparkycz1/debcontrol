@@ -35,6 +35,10 @@ add another):
   fired only on the true transition of a rule's own
   `NotificationCondition`s (see `app.db.models.notification_condition`),
   the same "transition, not every tick" rule as reachability above.
+- `app.tasks.jobs._take_monitoring_sample` (via
+  `app.services.container_events`) — DOCKER_CONTAINER_CRASHED /
+  _RESTART_LOOP / _OOM / _UNHEALTHY, for the container events since the
+  previous sample.
 """
 
 from __future__ import annotations
@@ -215,6 +219,26 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "The restic backup {backup} on {machine_name} ({machine_ip}) failed at "
             "{timestamp}.\n\n{details}",
         ),
+        NotificationEventType.DOCKER_CONTAINER_CRASHED: (
+            "debcontrol: Docker container {containers} crashed on {machine_name}",
+            "On {machine_name} ({machine_ip}), these containers exited with an error "
+            "(seen at {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_RESTART_LOOP: (
+            "debcontrol: Docker container {containers} keeps restarting on {machine_name}",
+            "On {machine_name} ({machine_ip}), these containers keep exiting and "
+            "restarting (seen at {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_OOM: (
+            "debcontrol: Docker container {containers} ran out of memory on {machine_name}",
+            "On {machine_name} ({machine_ip}), the kernel killed a process in these "
+            "containers for running out of memory (seen at {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_UNHEALTHY: (
+            "debcontrol: Docker container {containers} is unhealthy on {machine_name}",
+            "On {machine_name} ({machine_ip}), the health check of these containers "
+            "turned unhealthy (seen at {timestamp}):\n\n{details}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -344,6 +368,26 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: Docker záloha {backup} na {machine_name} selhala",
             "Restic záloha {backup} na {machine_name} ({machine_ip}) v {timestamp} "
             "selhala.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_CRASHED: (
+            "debcontrol: Docker kontejner {containers} na {machine_name} spadl",
+            "Na {machine_name} ({machine_ip}) tyto kontejnery skončily s chybou "
+            "(zjištěno v {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_RESTART_LOOP: (
+            "debcontrol: Docker kontejner {containers} na {machine_name} se stále restartuje",
+            "Na {machine_name} ({machine_ip}) tyto kontejnery stále končí a znovu "
+            "startují (zjištěno v {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_OOM: (
+            "debcontrol: Docker kontejneru {containers} na {machine_name} došla paměť",
+            "Na {machine_name} ({machine_ip}) jádro v těchto kontejnerech ukončilo "
+            "proces kvůli nedostatku paměti (zjištěno v {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_UNHEALTHY: (
+            "debcontrol: Docker kontejner {containers} na {machine_name} je unhealthy",
+            "Na {machine_name} ({machine_ip}) kontrola stavu těchto kontejnerů hlásí "
+            "unhealthy (zjištěno v {timestamp}):\n\n{details}",
         ),
     },
 }

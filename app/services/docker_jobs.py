@@ -28,13 +28,14 @@ from app.db.models.docker import (
     DockerJob,
     DockerJobKind,
     DockerJobStatus,
+    UpdatePolicy,
     VulnerabilityGate,
 )
 from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.services import self_host
-from app.ssh.docker_cli import is_image_id_valid
+from app.ssh.docker_cli import is_image_id_valid, is_image_ref_valid
 
 # How long finished jobs are kept.
 KEEP_DAYS = 90
@@ -136,7 +137,10 @@ async def save_container_setting(
     auto_update: bool,
     gate: str,
     actor: str | None,
+    update_policy: str | None = None,
 ) -> DockerContainerSetting:
+    """`update_policy` None keeps the stored one (a caller that doesn't
+    know about it, e.g. an older API client)."""
     result = await db.execute(
         select(DockerContainerSetting).where(
             DockerContainerSetting.machine_id == machine_id,
@@ -149,6 +153,10 @@ async def save_container_setting(
         db.add(setting)
     setting.auto_update = auto_update
     setting.vulnerability_gate = gate if gate in VulnerabilityGate else VulnerabilityGate.OFF
+    if update_policy is not None:
+        setting.update_policy = update_policy if update_policy in UpdatePolicy else "any"
+    elif setting.update_policy is None:
+        setting.update_policy = UpdatePolicy.ANY.value
     setting.updated_by = actor
     setting.updated_at = datetime.now(UTC)
     await db.flush()
@@ -240,6 +248,17 @@ def rollback_image(job: DockerJob | None) -> str | None:
     # Only a full image id can be gone back to (anything else came from a
     # broken or hostile answer and would be refused anyway).
     return previous if is_image_id_valid(previous) else None
+
+
+def rollback_ref(job: DockerJob | None) -> str | None:
+    """The tag a rollback after `job` goes back to, when `job` moved the
+    container to another one (the update policy's tag bump)."""
+    if job is None:
+        return None
+    previous = str((job.result or {}).get("previous_ref") or "")
+    if not previous or "@" in previous or not is_image_ref_valid(previous):
+        return None
+    return previous
 
 
 async def purge_old(db: AsyncSession) -> int:

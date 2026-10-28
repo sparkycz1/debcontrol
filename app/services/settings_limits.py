@@ -23,6 +23,7 @@ BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "reachability_check_concurrency": (1, 1000),
     "notification_condition_check_interval_seconds": (10, 86400),
     "monitoring_downsample_interval_minutes": (1, 1440),
+    "docker_image_check_interval_hours": (1, 168),
     # Settings -> Security's sign-in policy (app.auth.session_policy).
     "session_idle_timeout_minutes": (5, 43200),
     "session_absolute_max_hours": (1, 8760),
@@ -69,6 +70,7 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "monitoring_interval_seconds": "settings.background_checks.update",
     "reachability_check_concurrency": "settings.background_checks.update",
     "notification_condition_check_interval_seconds": "settings.background_checks.update",
+    "docker_image_check_interval_hours": "settings.background_checks.update",
     "audit_log_retention_days": "settings.audit_retention.update",
     "dashboard_trends_retention_days": "settings.dashboard_trends_retention.update",
     "machine_update_run_retention_days": "settings.machine_update_run_retention.update",

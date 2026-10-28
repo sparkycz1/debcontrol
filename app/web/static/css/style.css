@@ -2722,3 +2722,13 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .copy-once { user-select: all; word-break: break-all; }
 
 .docker-restore-row td { border-top: none; padding-top: 0; }
+
+/* A warning line in a card's subtitle (an image check that failed, a
+   registry rate limit). */
+.text-warn { color: var(--color-warn); }
+
+/* A list without bullets (accepted vulnerabilities). */
+.plain-list { list-style: none; padding: 0; margin: 0; }
+.plain-list li + li { margin-top: var(--space-3); }
+/* A panel below a table on the same page, not glued to it. */
+.section-spaced { margin-top: var(--space-5); }

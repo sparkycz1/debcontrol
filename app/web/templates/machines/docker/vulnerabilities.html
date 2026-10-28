@@ -16,6 +16,9 @@
     <a class="button button-secondary log-small-button" href="{{ docker_base }}/images">{{ t(request, "docker.back_to_images") }}</a>
   </div>
   <p>{{ severity_counts(request, scan.counts) }}</p>
+  {% if scan.raw_counts %}
+    <p class="hint">{{ t(request, "docker.vulns.accepted_hint", critical=(scan.raw_counts.critical or 0), high=(scan.raw_counts.high or 0)) }}</p>
+  {% endif %}
   {% for name, message in (scan.errors or {}).items() %}
     <div class="alert alert-warn"><p>{{ t(request, "docker.scan.scanner_failed", scanner=name) }} {{ message }}</p></div>
   {% endfor %}
@@ -47,6 +50,8 @@
             <tr>
               <td class="cell-nowrap">
                 {% if f.url %}<a href="{{ f.url }}" target="_blank" rel="noopener noreferrer">{{ f.id }}</a>{% else %}{{ f.id }}{% endif %}
+                {% set acc = accepted.get(f.id) if f.severity in ('critical', 'high') else none %}
+                {% if acc %}<a class="badge badge-tag" href="/security/containers/{{ f.id | urlencode }}" title="{{ acc.reason }}">{{ t(request, "docker.vulns.accepted_until", date=(acc.expires_at | local_time('%Y-%m-%d'))) }}</a>{% elif f.severity in ('critical', 'high') %}<a class="table-summary" href="/security/containers/{{ f.id | urlencode }}">{{ t(request, "docker.vulns.fleet_link") }}</a>{% endif %}
                 {% if f.title %}<div class="table-summary cell-truncate" title="{{ f.title }}">{{ f.title }}</div>{% endif %}
               </td>
               <td><span class="badge {{ {'critical': 'badge-error', 'high': 'badge-warn'}.get(f.severity, '') }}">{{ t(request, "docker.severity." ~ f.severity) }}</span></td>

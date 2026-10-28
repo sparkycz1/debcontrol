@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+
+{% block title %}{{ t(request, "security.containers.tab") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "nav.security") }}</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "security.containers.intro") }}</p>
+
+  <form method="get" action="/security/containers" class="search-form">
+    <input type="search" name="q" value="{{ q }}" placeholder="{{ t(request, 'security.containers.search') }}" aria-label="{{ t(request, 'security.containers.search') }}">
+    <button type="submit" class="button">{{ t(request, "machines.search.submit") }}</button>
+  </form>
+
+  {% if truncated %}
+    <div class="alert alert-warn"><p>{{ t(request, "security.containers.truncated", count=(rows | length)) }}</p></div>
+  {% endif %}
+
+  {% if rows %}
+    <div class="monitoring-table-wrap table-cards-wrap">
+      <table class="data-table table-cards" id="fleet-vulns-table">
+        <thead>
+          <tr>
+            <th data-sort="text">{{ t(request, "docker.vulns.id") }}</th>
+            <th data-sort="text">{{ t(request, "docker.vulns.severity") }}</th>
+            <th data-sort="number">{{ t(request, "security.containers.machines") }}</th>
+            <th data-sort="number">{{ t(request, "security.containers.images") }}</th>
+            <th data-sort="text">{{ t(request, "docker.vulns.fixed") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td data-label="{{ t(request, 'docker.vulns.id') }}">
+                <a href="/security/containers/{{ row.vuln_id | urlencode }}">{{ row.vuln_id }}</a>
+                {% if row.accepted %}<span class="badge badge-tag">{{ t(request, "security.containers.accepted") }}</span>{% endif %}
+              </td>
+              <td data-label="{{ t(request, 'docker.vulns.severity') }}"><span class="badge {{ 'badge-error' if row.severity == 'critical' else 'badge-warn' }}">{{ t(request, "docker.severity." ~ row.severity) }}</span></td>
+              <td data-label="{{ t(request, 'security.containers.machines') }}">{{ row.machines }}</td>
+              <td data-label="{{ t(request, 'security.containers.images') }}">{{ row.images }}</td>
+              <td data-label="{{ t(request, 'docker.vulns.fixed') }}">{% if row.fixable %}{{ t(request, "docker.yes") }}{% else %}<span class="table-muted">{{ t(request, "docker.vulns.no_fix") }}</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="hint">{{ t(request, "security.containers.none") }}</p>
+  {% endif %}
+
+  {% if acceptances %}
+    <section class="panel section-spaced">
+      <h2>{{ t(request, "security.containers.accepted_heading") }}</h2>
+      <div class="monitoring-table-wrap table-cards-wrap">
+        <table class="data-table table-cards">
+          <thead>
+            <tr>
+              <th>{{ t(request, "docker.vulns.id") }}</th>
+              <th>{{ t(request, "security.containers.scope") }}</th>
+              <th>{{ t(request, "security.containers.reason") }}</th>
+              <th>{{ t(request, "security.containers.until") }}</th>
+              <th>{{ t(request, "security.containers.by") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in acceptances %}
+              <tr>
+                <td data-label="{{ t(request, 'docker.vulns.id') }}"><a href="/security/containers/{{ a.vuln_id | urlencode }}">{{ a.vuln_id }}</a></td>
+                <td data-label="{{ t(request, 'security.containers.scope') }}">{% if a.image %}<code>{{ a.image }}</code>{% else %}{{ t(request, "security.containers.every_image") }}{% endif %}</td>
+                <td data-label="{{ t(request, 'security.containers.reason') }}">{{ a.reason or '—' }}</td>
+                <td data-label="{{ t(request, 'security.containers.until') }}">{{ a.expires_at | local_time('%Y-%m-%d') }}</td>
+                <td data-label="{{ t(request, 'security.containers.by') }}">{{ a.created_by or '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

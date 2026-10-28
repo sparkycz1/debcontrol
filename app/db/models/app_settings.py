@@ -328,6 +328,14 @@ class AppSettings(Base):
         Integer, nullable=True, default=180
     )
 
+    # How often (hours) each machine's running Docker images are compared
+    # with their registry (app.tasks.jobs.check_all_machine_image_updates,
+    # which runs hourly and picks the machines due). Each check costs one
+    # Docker Hub request per image, counted against Hub's rate limit.
+    docker_image_check_interval_hours: Mapped[int] = mapped_column(
+        Integer, default=24, server_default="24", nullable=False
+    )
+
     # --- Automatic full backups (app.services.auto_backup) ---
     # Off until an admin sets a passphrase and switches it on.
     auto_backup_enabled: Mapped[bool] = mapped_column(

@@ -230,6 +230,7 @@ _CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
     ("notification_condition_check_interval_seconds", "settings.checks.condition_check_interval"),
     ("update_timeout_seconds", "settings.checks.update_timeout"),
     ("facts_refresh_interval_seconds", "settings.checks.facts_refresh"),
+    ("docker_image_check_interval_hours", "settings.checks.docker_image_check"),
 )
 _CHECKS_TAB_RETENTION: tuple[str, ...] = (
     "monitoring_history_retention_days",
