@@ -15,8 +15,8 @@
     {% for v in backup.volumes %}<option value="/backup/volumes/{{ v }}">{% endfor %}
     {% for p in backup.paths %}<option value="/backup/paths{{ p }}">{% endfor %}
   </datalist>
-  <div class="monitoring-table-wrap">
-    <table class="data-table" id="snapshots-table">
+  <div class="monitoring-table-wrap table-cards-wrap">
+    <table class="data-table table-cards" id="snapshots-table" data-remember="docker-snapshots-table">
       <thead><tr>
         <th>{{ t(request, "docker.backup.snapshot") }}</th>
         <th>{{ t(request, "docker.jobs.when") }}</th>

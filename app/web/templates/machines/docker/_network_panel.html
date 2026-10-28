@@ -31,7 +31,7 @@
   <section class="panel">
     <h2>{{ t(request, "docker.network.addressing") }}</h2>
     {% if n.subnets %}
-      <div class="monitoring-table-wrap">
+      <div class="monitoring-table-wrap table-cards-wrap">
         <table class="data-table">
           <thead><tr>
             <th>{{ t(request, "docker.network.subnet") }}</th>
@@ -53,8 +53,8 @@
   <section class="panel">
     <h2>{{ t(request, "docker.networks.containers") }}</h2>
     {% if n.containers %}
-      <div class="monitoring-table-wrap">
-        <table class="data-table" id="network-containers-table">
+      <div class="monitoring-table-wrap table-cards-wrap">
+        <table class="data-table table-cards" id="network-containers-table" data-remember="docker-network-containers-table">
           <thead><tr>
             <th data-sort="text">{{ t(request, "monitoring.containers.name") }}</th>
             <th data-sort="text">IPv4</th>

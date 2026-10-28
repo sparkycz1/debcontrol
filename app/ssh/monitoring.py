@@ -252,9 +252,11 @@ class MonitoringSample(TypedDict):
     docker_status: str | None
     # Each {"name", "image", "state", "status", "health", "ports",
     # "cpu_percent", "mem_bytes", "mem_limit_bytes", "net_rx_bytes",
-    # "net_tx_bytes"} — every container `docker ps -a` lists, stats only
-    # for running ones (None otherwise). Net bytes are cumulative since the
-    # container started.
+    # "net_tx_bytes", "block_read_bytes", "block_write_bytes",
+    # "link_labels"} — every container `docker ps -a` lists, stats only
+    # for running ones (None otherwise). Net and block bytes are cumulative
+    # since the container started; `link_labels` is just the labels the
+    # Docker tab turns into links (`link_labels_of`).
     docker_containers: list[dict[str, Any]]
     # --- Hardware — only ever populated for a physical machine
     # (Machine.is_physical); always [] / None on a VM, meaning "not
@@ -690,6 +692,38 @@ def parse_label_string(raw: Any) -> dict[str, str]:
     return labels
 
 
+# The labels the Docker tab turns into links (app.services.container_links):
+# Traefik routers, caddy-docker-proxy, debcontrol's own and the OCI image
+# source. Everything else stays out of the stored sample.
+_LINK_LABEL_PREFIXES = ("traefik.http.routers.", "caddy", "debcontrol.")
+_LINK_LABEL_KEYS = frozenset(
+    {
+        "traefik.enable",
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.url",
+        "org.opencontainers.image.documentation",
+    }
+)
+_MAX_LINK_LABELS = 40
+_MAX_LINK_LABEL_VALUE = 512
+
+
+def link_labels_of(labels: dict[str, str]) -> dict[str, str]:
+    """The link-related subset of a container's labels, capped in number
+    and length (a label is whatever the image or compose file says)."""
+    kept: dict[str, str] = {}
+    for key in sorted(labels):
+        if len(kept) >= _MAX_LINK_LABELS:
+            break
+        if key in _LINK_LABEL_KEYS or key.startswith(_LINK_LABEL_PREFIXES):
+            if key.startswith("traefik.http.routers.") and not key.endswith(
+                (".rule", ".tls", ".entrypoints", ".tls.certresolver")
+            ):
+                continue
+            kept[key] = labels[key][:_MAX_LINK_LABEL_VALUE]
+    return kept
+
+
 def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
     """`(status, containers)` — see `MonitoringSample.docker_status`."""
     if raw is None or not raw.strip():
@@ -734,6 +768,7 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
         status = str(row.get("Status", ""))
         stats = stats_by_name.get(name)
         cpu_percent = mem_bytes = mem_limit = net_rx = net_tx = None
+        block_read = block_write = None
         if stats is not None:
             cpu_percent = _parse_percent(stats.get("CPUPerc"))
             mem_parts = str(stats.get("MemUsage", "")).split("/")
@@ -745,6 +780,10 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
                 net_parts = str(stats.get("NetIO", "")).split("/")
                 if len(net_parts) == 2:
                     net_rx, net_tx = _parse_size(net_parts[0]), _parse_size(net_parts[1])
+            block_parts = str(stats.get("BlockIO", "")).split("/")
+            if len(block_parts) == 2:
+                block_read = _parse_size(block_parts[0].strip())
+                block_write = _parse_size(block_parts[1].strip())
         labels = parse_label_string(row.get("Labels"))
         containers.append(
             {
@@ -762,6 +801,9 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
                 "mem_limit_bytes": mem_limit,
                 "net_rx_bytes": net_rx,
                 "net_tx_bytes": net_tx,
+                "block_read_bytes": block_read,
+                "block_write_bytes": block_write,
+                "link_labels": link_labels_of(labels),
             }
         )
     containers.sort(key=lambda c: c["name"])

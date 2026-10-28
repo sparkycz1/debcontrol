@@ -406,3 +406,33 @@ def test_parse_monitoring_output_docker_netio_fallback():
 
     assert web["net_rx_bytes"] == 66_000
     assert web["net_tx_bytes"] == 4_100
+
+
+def test_parse_monitoring_output_docker_block_io_and_link_labels():
+    labels = (
+        "com.docker.compose.project=site,traefik.enable=true,"
+        "traefik.http.routers.web.rule=Host(`app.example.com`),"
+        "traefik.http.routers.web.middlewares=auth,"
+        "org.opencontainers.image.source=https://github.com/acme/app,"
+        "maintainer=someone"
+    )
+    raw = _base(
+        "===DOCKER===\n@@PS\n"
+        '{"Names":"web","Image":"nginx","State":"running","Status":"Up 1 hour","Ports":"",'
+        f'"Labels":"{labels}"}}\n'
+        "@@STATS\n"
+        '{"Name":"web","CPUPerc":"1.50%","MemUsage":"10MiB / 1GiB","NetIO":"1kB / 1kB",'
+        '"BlockIO":"12.5MB / 4.1kB"}\n'
+        "@@NET\n"
+    )
+
+    (web,) = parse_monitoring_output(raw)["docker_containers"]
+
+    assert web["block_read_bytes"] == 12_500_000
+    assert web["block_write_bytes"] == 4_100
+    # Only the labels that become links are kept.
+    assert web["link_labels"] == {
+        "org.opencontainers.image.source": "https://github.com/acme/app",
+        "traefik.enable": "true",
+        "traefik.http.routers.web.rule": "Host(`app.example.com`)",
+    }

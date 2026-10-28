@@ -1,7 +1,7 @@
 {#- A list of Docker jobs (`jobs`), newest first. -#}
 {% from "machines/docker/_macros.html" import job_status, job_title %}
-<div class="monitoring-table-wrap">
-  <table class="data-table">
+<div class="monitoring-table-wrap table-cards-wrap">
+  <table class="data-table table-cards">
     <thead><tr>
       <th>{{ t(request, "docker.jobs.when") }}</th>
       <th>{{ t(request, "docker.jobs.what") }}</th>

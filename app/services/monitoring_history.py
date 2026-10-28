@@ -369,6 +369,8 @@ class MonitoringHistory:
     docker_cpu_by_container: dict[str, list[float | None]]
     docker_mem_by_container: dict[str, list[float | None]]
     docker_net_by_container: dict[str, list[float | None]]
+    # Read + write bytes/sec of each container's block devices.
+    docker_blkio_by_container: dict[str, list[float | None]]
 
 
 def _gpu_history(
@@ -535,6 +537,13 @@ def build_monitoring_history(
         ),
         docker_net_by_container=_rate_series_by_key(
             samples, timestamps, "docker_stats", "name", ("net_rx_bytes", "net_tx_bytes")
+        ),
+        docker_blkio_by_container=_rate_series_by_key(
+            samples,
+            timestamps,
+            "docker_stats",
+            "name",
+            ("block_read_bytes", "block_write_bytes"),
         ),
     )
 

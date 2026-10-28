@@ -10,8 +10,8 @@
       <input type="search" class="chart-filter" data-table-filter="volumes-table"
              placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
     </header>
-    <div class="monitoring-table-wrap">
-      <table class="data-table" id="volumes-table">
+    <div class="monitoring-table-wrap table-cards-wrap">
+      <table class="data-table table-cards" id="volumes-table" data-remember="docker-volumes-table">
         <thead><tr>
           <th data-sort="text">{{ t(request, "docker.volumes.name") }}</th>
           <th data-sort="text">{{ t(request, "docker.volumes.driver") }}</th>

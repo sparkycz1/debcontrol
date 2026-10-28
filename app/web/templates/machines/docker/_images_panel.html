@@ -30,8 +30,8 @@
       {% endif %}
     </header>
     {% if images %}
-      <div class="monitoring-table-wrap">
-        <table class="data-table" id="images-table">
+      <div class="monitoring-table-wrap table-cards-wrap">
+        <table class="data-table table-cards" id="images-table" data-remember="docker-images-table">
           <thead><tr>
             <th data-sort="text">{{ t(request, "docker.images.ref") }}</th>
             <th data-sort="text">{{ t(request, "docker.images.id") }}</th>

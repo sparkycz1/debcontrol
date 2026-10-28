@@ -1,6 +1,6 @@
 {#- One container as `docker inspect` describes it right now
     (machines_docker.docker_container_panel). -#}
-{% from "machines/docker/_macros.html" import severity_counts, container_state %}
+{% from "machines/docker/_macros.html" import severity_counts, container_state, web_links, image_links %}
 {% if error %}
   <div class="alert alert-error"><p>{{ error }}</p></div>
 {% elif container is none %}
@@ -29,7 +29,8 @@
     {% endif %}
     <dl class="detail-list">
       <dt>{{ t(request, "docker.container.image") }}</dt>
-      <dd><code>{{ c.image }}</code><div class="table-summary"><code>{{ c.image_id[:19] }}</code></div></dd>
+      <dd><code>{{ c.image }}</code><div class="table-summary"><code>{{ c.image_id[:19] }}</code></div>
+        {% if overview %}<div class="table-summary">{{ image_links(request, overview.image_links) }}</div>{% endif %}</dd>
       {% if c.compose_project %}
         <dt>{{ t(request, "docker.container.stack") }}</dt>
         <dd><a href="{{ docker_base }}/stacks">{{ c.compose_project }}</a>{% if c.compose_service %} · {{ t(request, "docker.container.service", name=c.compose_service) }}{% endif %}</dd>
@@ -46,6 +47,9 @@
       <dt>{{ t(request, "docker.container.network_mode") }}</dt><dd>{{ c.network_mode or '—' }}</dd>
       {% if c.networks %}<dt>{{ t(request, "docker.container.networks") }}</dt><dd>{% for net in c.networks %}<a href="{{ docker_base }}/networks/{{ net | urlencode }}">{{ net }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
       <dt>{{ t(request, "monitoring.containers.ports") }}</dt><dd>{{ c.ports | join(', ') if c.ports else '—' }}</dd>
+      {% if overview and overview.web_links %}
+        <dt>{{ t(request, "docker.links.heading") }}</dt><dd>{{ web_links(request, overview.web_links) }}</dd>
+      {% endif %}
       {% if c.env_names %}
         <dt>{{ t(request, "docker.container.env") }}</dt>
         <dd><span class="hint">{{ t(request, "docker.container.env_hint") }}</span><br>{% for n in c.env_names %}<code>{{ n }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</dd>
@@ -56,8 +60,8 @@
   {% if c.mounts %}
     <section class="panel">
       <h2>{{ t(request, "docker.container.mounts") }}</h2>
-      <div class="monitoring-table-wrap">
-        <table class="data-table">
+      <div class="monitoring-table-wrap table-cards-wrap">
+        <table class="data-table table-cards">
           <thead><tr>
             <th>{{ t(request, "docker.container.mount_type") }}</th>
             <th>{{ t(request, "docker.container.mount_source") }}</th>

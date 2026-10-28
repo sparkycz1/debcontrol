@@ -15,8 +15,8 @@
   </div>
 
   {% if stacks %}
-    <div class="monitoring-table-wrap">
-      <table class="data-table" id="stacks-table">
+    <div class="monitoring-table-wrap table-cards-wrap">
+      <table class="data-table table-cards" id="stacks-table" data-remember="docker-stacks-table">
         <thead><tr>
           <th>{{ t(request, "docker.stacks.name") }}</th>
           <th>{{ t(request, "docker.stacks.source") }}</th>

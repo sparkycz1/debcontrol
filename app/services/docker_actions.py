@@ -4,16 +4,21 @@ is for the rest of a machine's actions.
 
 Every function here creates `DockerJob` rows, commits, then queues them
 (`app.tasks.docker_jobs.run_docker_job`); the jobs of one machine run one
-after another. None of them checks permissions — the callers do, with the
-same `Permission` on the web and the API side.
+after another. The one exception is `run_bulk_action` (start, stop,
+restart or remove the selected containers), which is quick and waits for
+the answer like a single container's start/stop does. None of them
+checks permissions — the callers do, with the same `Permission` on the
+web and the API side.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from celery.exceptions import TimeoutError as CeleryTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.docker import (
@@ -26,6 +31,7 @@ from app.db.models.docker import (
 from app.db.models.machine import Machine
 from app.services import docker_backups, docker_jobs
 from app.services.docker_gate import normalize_gate
+from app.ssh.containers import BULK_ACTIONS, MAX_BULK_CONTAINERS
 from app.ssh.docker_cli import (
     DockerCommandError,
     is_container_name_valid,
@@ -41,6 +47,7 @@ from app.tasks.docker_jobs import run_docker_job
 
 SCAN_SCOPES = ("in_use", "unscanned", "all")
 UPDATE_SCOPES = ("auto", "with_update", "all")
+MAX_SCAN_REFS = 100
 BACKUP_JOB_KINDS = {
     "run": DockerJobKind.BACKUP_RUN,
     "check": DockerJobKind.BACKUP_CHECK,
@@ -102,6 +109,69 @@ async def queue_job(
 
 
 # --- Containers --------------------------------------------------------------
+
+
+@dataclass
+class BulkResult:
+    """What a start/stop/restart/remove of the selected containers did:
+    the names it ran for, those it left out (`{name: reason}`), and the
+    error docker or the connection reported (None = it worked)."""
+
+    names: list[str] = field(default_factory=list)
+    skipped: dict[str, str] = field(default_factory=dict)
+    error: str | None = None
+    output: str = ""
+
+
+async def run_bulk_action(
+    db: AsyncSession,
+    machine: Machine,
+    action: str,
+    names: list[str],
+    *,
+    timeout: float,  # noqa: ASYNC109 - Celery's result timeout, not a deadline here
+) -> BulkResult:
+    """Start/stop/restart/remove the given containers in one docker command
+    on the machine and wait for its answer (`app.ssh.containers`).
+    debcontrol's own containers are left out of everything but `start`."""
+    # Imported here: app.tasks.jobs imports the scheduler, which imports
+    # this module.
+    from app.tasks import jobs as tasks
+
+    if action not in BULK_ACTIONS:
+        raise DockerCommandError("Unknown container action.")
+    result = BulkResult()
+    protected = await docker_jobs.protected_project(db, machine)
+    for name in dict.fromkeys(names):
+        if not is_container_name_valid(name):
+            result.skipped[name] = "invalid"
+        elif (
+            action != "start"
+            and protected
+            and docker_jobs.container_project(machine, name) == protected
+        ):
+            result.skipped[name] = "protected"
+        else:
+            result.names.append(name)
+    result.names = result.names[:MAX_BULK_CONTAINERS]
+    if not result.names:
+        return result
+    try:
+        async_result = tasks.run_container_action_task.delay(
+            str(machine.id), action=action, containers=result.names
+        )
+        answer = await asyncio.to_thread(async_result.get, timeout=timeout)
+    except CeleryTimeoutError:
+        result.error = "The command did not finish in time."
+        return result
+    except Exception as exc:
+        result.error = str(exc) or type(exc).__name__
+        return result
+    if isinstance(answer, dict) and answer.get("ok"):
+        result.output = str(answer.get("output") or "")
+    else:
+        result.error = str((answer or {}).get("error") or "Unknown error.")
+    return result
 
 
 async def update_containers(
@@ -175,11 +245,20 @@ async def scan_images(
     started_by: str | None,
     images: dict[str, str] | None = None,
     scope: str | None = None,
+    refs: list[str] | None = None,
 ) -> DockerJob | None:
-    """Scan the given images (`{name: image id}`) or those of a scope
+    """Scan the given images (`{name: image id}`), the images of the given
+    references (`refs`, e.g. the selected containers' images — resolved to
+    ids on the machine when the job runs) or those of a scope
     (`SCAN_SCOPES`)."""
     params: dict[str, Any] = {}
-    if images:
+    if refs is not None:
+        clean_refs = sorted({ref for ref in refs if is_image_valid(ref)})[:MAX_SCAN_REFS]
+        if not clean_refs:
+            raise DockerCommandError("No valid image to scan.")
+        params["refs"] = clean_refs
+        target = clean_refs[0] if len(clean_refs) == 1 else f"{len(clean_refs)} images"
+    elif images:
         clean = {
             name: image_id
             for name, image_id in images.items()

@@ -411,3 +411,23 @@ def test_build_availability_history_downsampled_uptime_is_a_percentage():
     assert sum(p for p in history.uptime_percent if p is not None) / len(
         history.uptime_percent
     ) == 80.0
+
+
+def test_docker_block_io_series_and_older_samples_without_it():
+    now = datetime.now(UTC)
+    samples = [_sample(4), _sample(2), _sample(0)]
+    for offset, sample in zip((20, 10, 0), samples, strict=True):
+        sample.sampled_at = now - timedelta(seconds=offset)
+    # A sample from before block bytes were collected has none.
+    samples[0].docker_stats = [{"name": "web", "net_rx_bytes": 0, "net_tx_bytes": 0}]
+    samples[1].docker_stats = [
+        {"name": "web", "block_read_bytes": 1000, "block_write_bytes": 0}
+    ]
+    samples[2].docker_stats = [
+        {"name": "web", "block_read_bytes": 1500, "block_write_bytes": 500}
+    ]
+
+    history = build_monitoring_history(samples, "1h")
+
+    assert history.docker_blkio_by_container["web"][1] is None
+    assert history.docker_blkio_by_container["web"][2] == pytest.approx(100.0)

@@ -698,15 +698,42 @@ async def _images_to_scan(ctx: _Context, scope: str) -> dict[str, str]:
     return dict(list(chosen.items())[:MAX_SCAN_IMAGES])
 
 
+async def _images_of_refs(ctx: _Context, refs: list[str]) -> dict[str, str]:
+    """{reference: image id} for the images the given references name on
+    the machine (the selected containers' images)."""
+    inventory = await read_inventory(
+        ctx.machine, ctx.secret, ctx.connect_timeout, sections=("images", "inspect")
+    )
+    wanted = set(refs)
+    chosen: dict[str, str] = {}
+    for image in inventory.images:
+        image_id = str(image.get("id") or "")
+        ref = str(image.get("ref") or "")
+        if image_id and ref in wanted and image_id not in chosen.values():
+            chosen[ref] = image_id
+    # A container started from an image that was re-tagged since names
+    # it by the container's own image id.
+    for container in inventory.containers:
+        ref = str(container.get("image") or "")
+        image_id = str(container.get("image_id") or "")
+        if ref in wanted and ref not in chosen and image_id and image_id not in chosen.values():
+            chosen[ref] = image_id
+    return dict(list(chosen.items())[:MAX_SCAN_IMAGES])
+
+
 async def _job_image_scan(ctx: _Context) -> None:
     images: dict[str, str] = {
         str(k): str(v) for k, v in dict(ctx.params.get("images") or {}).items()
     }
     scope = str(ctx.params.get("scope") or "")
+    refs = [str(r) for r in ctx.params.get("refs") or []]
 
     async def build() -> str:
-        if scope:
-            images.update(await _images_to_scan(ctx, scope))
+        if scope or refs:
+            if scope:
+                images.update(await _images_to_scan(ctx, scope))
+            if refs:
+                images.update(await _images_of_refs(ctx, refs))
             if not images:
                 raise _NothingToDoError
         ctx.result["images"] = dict(images)

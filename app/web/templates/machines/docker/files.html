@@ -17,8 +17,8 @@
   {% if error %}
     <div class="alert alert-error"><p>{{ error }}</p></div>
   {% else %}
-    <div class="monitoring-table-wrap">
-      <table class="data-table" id="files-table">
+    <div class="monitoring-table-wrap table-cards-wrap">
+      <table class="data-table table-cards" id="files-table" data-remember="docker-files-table">
         <thead><tr>
           <th data-sort="text">{{ t(request, "docker.files.name") }}</th>
           <th data-sort="number">{{ t(request, "docker.images.size") }}</th>

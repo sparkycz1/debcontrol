@@ -50,7 +50,14 @@ from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import docker_actions, docker_backups, docker_jobs, docker_scans, docker_stacks
+from app.services import (
+    docker_actions,
+    docker_backups,
+    docker_jobs,
+    docker_overview,
+    docker_scans,
+    docker_stacks,
+)
 from app.services.docker_gate import GATES
 from app.ssh import docker_files
 from app.ssh.docker_cli import (
@@ -273,7 +280,9 @@ async def docker_overview_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
     """The containers of the latest monitoring sample, with their update,
-    auto-update and scan state."""
+    auto-update and scan state, state group (`row_state`, what the tiles
+    on the web page count — totals in `state_counts`), web links and image
+    links (`app.services.container_links`)."""
     machine = await _get_machine_or_404(machine_id, db, user)
     settings = await docker_jobs.container_settings(db, machine.id)
     scans = await docker_scans.scans_by_image(db, machine.id)
@@ -293,10 +302,12 @@ async def docker_overview_api(
                 "auto_update": bool(setting and setting.auto_update),
                 "vulnerability_gate": setting.vulnerability_gate if setting else "off",
                 "vulnerabilities": (scan.counts or {}) if scan else None,
+                **docker_overview.describe(machine, container),
             }
         )
     return {
         "status": machine.docker_status,
+        "state_counts": docker_overview.state_counts(docker_overview.containers_of(machine)),
         "protected_project": await docker_jobs.protected_project(db, machine),
         "images_checked_at": _iso(machine.docker_images_checked_at),
         "vulnerabilities": machine.docker_vulnerabilities,
@@ -461,6 +472,78 @@ async def docker_update_many_api(
     return await _update(request, db, machine, user, names, body.vulnerability_gate)
 
 
+class _BulkRequest(BaseModel):
+    action: Literal["start", "stop", "restart", "remove"]
+    containers: list[str] = Field(default_factory=list, max_length=100)
+
+
+# Same split as the web page's buttons under the containers table.
+_BULK_PERMISSION = {
+    "start": Permission.ACTION_POWER,
+    "stop": Permission.ACTION_POWER,
+    "restart": Permission.ACTION_POWER,
+    "remove": Permission.ACTION_UPDATES,
+}
+
+
+@router.post("/containers/bulk", dependencies=[_view])
+async def docker_containers_bulk_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    body: _BulkRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Start, stop, restart or remove (stopped ones only) several containers
+    in one go — the web page's buttons for the selected rows. Start/stop/
+    restart need `action.power`, remove `action.updates`. Updating or
+    scanning the selected containers is `POST .../update` or
+    `POST .../images/scan` with `refs`."""
+    if not user.has_permission(_BULK_PERMISSION[body.action]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    names = [n for n in body.containers if is_container_name_valid(n)]
+    if not names:
+        raise _bad("No valid container names.")
+    app_settings = await get_or_create_app_settings(db)
+    result = await docker_actions.run_bulk_action(
+        db, machine, body.action, names, timeout=app_settings.ssh_connect_timeout + 120
+    )
+    for name in result.names:
+        await _audit(
+            db,
+            request,
+            machine,
+            f"machine.container.{body.action}",
+            f'Container "{name}" {body.action} on "{machine.name}"',
+            {"container": name, **({"error": result.error} if result.error else {})},
+            ok=result.error is None,
+        )
+    for name, reason in result.skipped.items():
+        if reason == "protected":
+            await _audit(
+                db,
+                request,
+                machine,
+                f"machine.container.{body.action}",
+                f'Refused to {body.action} container "{name}" on "{machine.name}": '
+                "debcontrol runs in it",
+                {"container": name, "reason": reason},
+                denied=True,
+            )
+    if result.error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.error)
+    if not result.names:
+        raise _protected()
+    return {
+        "ok": True,
+        "containers": result.names,
+        "skipped": result.skipped,
+        "output": result.output,
+    }
+
+
 @router.post(
     "/containers/{name}/rollback", dependencies=[_updates], status_code=status.HTTP_202_ACCEPTED
 )
@@ -530,9 +613,11 @@ async def docker_images_api(
 
 
 class _ScanRequest(BaseModel):
-    # One image (ref + id), or a scope: in_use / unscanned / all.
+    # One image (ref + id), the images of some references (`refs`, e.g. the
+    # selected containers' `image`), or a scope: in_use / unscanned / all.
     image: str = ""
     image_id: str = ""
+    refs: list[str] = Field(default_factory=list, max_length=100)
     scope: str = ""
 
 
@@ -553,6 +638,10 @@ async def docker_images_scan_api(
                 raise DockerCommandError("Invalid image.")
             job = await docker_actions.scan_images(
                 db, machine, started_by=user.username, images={body.image: body.image_id}
+            )
+        elif body.refs:
+            job = await docker_actions.scan_images(
+                db, machine, started_by=user.username, refs=body.refs
             )
         else:
             job = await docker_actions.scan_images(
