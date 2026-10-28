@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -361,7 +362,7 @@ async def accept_container_vulnerability(
         },
     )
     return RedirectResponse(
-        url=f"/security/containers/{vuln_id}?saved=accepted",
+        url=f"/security/containers/{quote(vuln_id, safe='')}?saved=accepted",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -399,6 +400,6 @@ async def revoke_container_vulnerability(
         details={"vuln_id": vuln_id, "image": image},
     )
     return RedirectResponse(
-        url=f"/security/containers/{vuln_id}?saved=revoked",
+        url=f"/security/containers/{quote(vuln_id, safe='')}?saved=revoked",
         status_code=status.HTTP_303_SEE_OTHER,
     )
