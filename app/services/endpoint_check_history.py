@@ -5,8 +5,12 @@ and the most recent failures.
 
 Same approach as the machines' Monitoring tab
 (`app.services.monitoring_history`): fetch the raw rows in the window
-(capped at `MAX_RAW_SAMPLES`), downsample in Python, reuse its time ranges
-so both pages offer the same selector.
+(thinned evenly to about `MAX_RAW_SAMPLES`, `load_spread_rows`),
+downsample in Python, reuse its time ranges so both pages offer the same
+selector. Uptime, failure count and average latency are counted in SQL over
+every result in the window, and the latest failures are their own query,
+so thinning never changes them; p95 latency comes from the (evenly) thinned
+rows.
 """
 
 from __future__ import annotations
@@ -15,16 +19,16 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.services.monitoring_history import (
     _TARGET_POINTS,
-    MAX_RAW_SAMPLES,
     TimeWindow,
     _bucket_average,
     _bucket_timestamps,
+    load_spread_rows,
     resolve_window,
 )
 
@@ -43,6 +47,7 @@ class CheckFailure:
 class EndpointCheckHistory:
     range_key: str
     sample_count: int
+    # Kept for API compatibility; always False since 0.126.2.
     truncated: bool
     # Share of probes in the window that were up, 0-100; None with no data.
     uptime_percent: float | None
@@ -73,7 +78,7 @@ def build_check_history(
     return EndpointCheckHistory(
         range_key=range_key,
         sample_count=len(results),
-        truncated=len(results) >= MAX_RAW_SAMPLES,
+        truncated=False,
         uptime_percent=round(up / len(results) * 100, 2) if results else None,
         failure_count=len(results) - up,
         avg_latency_ms=round(sum(latencies) / len(latencies), 1) if latencies else None,
@@ -105,10 +110,35 @@ async def load_check_history(
     ]
     if window.until is not None:
         conditions.append(EndpointCheckResult.checked_at <= window.until)
-    result = await db.execute(
-        select(EndpointCheckResult)
-        .where(*conditions)
-        .order_by(EndpointCheckResult.checked_at)
-        .limit(MAX_RAW_SAMPLES)
+    results, _total = await load_spread_rows(
+        db, EndpointCheckResult, EndpointCheckResult.id, EndpointCheckResult.checked_at, conditions
     )
-    return build_check_history(list(result.scalars().all()), window.range_key)
+    history = build_check_history(results, window.range_key)
+    if len(results) < _total:
+        # Thinned: count over every result instead of the kept ones.
+        total, up, avg_latency = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.coalesce(func.sum(case((EndpointCheckResult.ok, 1), else_=0)), 0),
+                    func.avg(EndpointCheckResult.latency_ms),
+                ).where(*conditions)
+            )
+        ).one()
+        failed = (
+            await db.execute(
+                select(EndpointCheckResult)
+                .where(*conditions, EndpointCheckResult.ok.is_(False))
+                .order_by(EndpointCheckResult.checked_at.desc())
+                .limit(RECENT_FAILURES)
+            )
+        ).scalars()
+        history.sample_count = total
+        history.uptime_percent = round(up / total * 100, 2) if total else None
+        history.failure_count = total - up
+        history.avg_latency_ms = round(avg_latency, 1) if avg_latency is not None else None
+        history.recent_failures = [
+            CheckFailure(checked_at=r.checked_at, status_code=r.status_code, error=r.error)
+            for r in failed
+        ]
+    return history

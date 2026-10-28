@@ -484,7 +484,6 @@
     "monitoring.interval_seconds": "{seconds} s",
     "monitoring.interval_default": "{seconds} s, the instance default",
     "monitoring.apply": "Apply",
-    "monitoring.truncated_hint": "This machine has more samples in this window than can be shown at once — the graphs below cover the most recent samples rather than the full range. Pick a shorter range, or shorten the retention window in Settings.",
     "monitoring.threshold_percent": "Alert ≥ {value}%",
     "monitoring.no_data": "No data in this range.",
     "monitoring.network.none_found": "No network interfaces found.",

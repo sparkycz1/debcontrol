@@ -53,9 +53,6 @@
       </p>
     </section>
   {% else %}
-    {% if history.truncated or availability.truncated %}
-      <div class="alert alert-warn"><p>{{ t(request, "monitoring.truncated_hint") }}</p></div>
-    {% endif %}
 
     {% set ts = history.bucket_timestamps %}
 
