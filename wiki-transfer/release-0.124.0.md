@@ -1,3 +1,7 @@
+## Changes
+
+### Docker upgrade #2: safer stack deploys, SSH Git and rollback (0.124.0) (#130)
+
 Git stacks
 - SSH repositories (git@host:owner/repo.git, ssh://git@host[:port]/...)
   with a deploy key: "Generate a new key" makes an Ed25519 key and shows
@@ -61,3 +65,5 @@ Upgrade notes
   keep working unchanged (every new switch is off, their content hash is
   unchanged).
 
+
+**Full diff:** https://github.com/sparkycz1/debcontrol/compare/v0.123.0...v0.124.0
