@@ -361,8 +361,14 @@ async def accept_container_vulnerability(
             "expires_at": row.expires_at.isoformat(),
         },
     )
+    # The page to go back to is named by the stored row, not the request.
+    stored_id = await db.scalar(
+        select(DockerVulnerabilityAcceptance.vuln_id).where(
+            DockerVulnerabilityAcceptance.id == row.id
+        )
+    )
     return RedirectResponse(
-        url=f"/security/containers/{quote(vuln_id, safe='')}?saved=accepted",
+        url=f"/security/containers/{quote(stored_id or '', safe='')}?saved=accepted",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
