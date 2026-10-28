@@ -1622,6 +1622,7 @@ async def machine_logs_api(
     unit: str = "",
     boot: str = "",
     hide_own: bool = False,
+    level: str = "",
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """The API equivalent of `GET /machines/{id}/logs` — journal by default
@@ -1629,7 +1630,10 @@ async def machine_logs_api(
     worse, `unit` = one systemd unit, `boot` = 0 for this boot or -1, -2, …
     for earlier ones, `hide_own=true` drops debcontrol's own SSH logins),
     one allow-listed file when `path` is given, or one Docker container's
-    logs when `container` is given. A journal read also returns `entries`
+    logs when `container` is given (`@<project>` merges a Compose project's
+    containers, sorted by time). `level` (`error`, or `warn` for warnings
+    and errors) filters a file's or a container's lines. `lines` goes up to
+    20000 (the web page's download). A journal read also returns `entries`
     (`{"text", "priority"}` per line, journald priority 0-7) and `hidden`. Gated behind
     `ACTION_TERMINAL`, same as the web route, not `MACHINE_VIEW` — see
     `app.ssh.logs`'s module docstring for why. Never stored anywhere."""
@@ -1642,7 +1646,10 @@ async def machine_logs_api(
             detail="Confirm the host key fingerprint before viewing logs.",
         )
 
-    clamped_lines = max(1, min(lines, ssh_logs.MAX_LINE_LIMIT))
+    clamped_lines = max(1, min(lines, ssh_logs.MAX_DOWNLOAD_LINES))
+    level_option = (
+        {"level": ssh_logs.normalize_level(level)} if ssh_logs.normalize_level(level) else {}
+    )
     output: str | None = None
     error: str | None = None
     extra: dict[str, object] = {}
@@ -1655,10 +1662,15 @@ async def machine_logs_api(
                 search=search,
                 since=since,
                 until=until,
+                **level_option,
             )
         elif path.strip():
             async_result = tasks.view_machine_log_file.delay(
-                str(machine.id), path=path.strip(), lines=clamped_lines, search=search
+                str(machine.id),
+                path=path.strip(),
+                lines=clamped_lines,
+                search=search,
+                **level_option,
             )
         else:
             journal_options: dict[str, object] = {}

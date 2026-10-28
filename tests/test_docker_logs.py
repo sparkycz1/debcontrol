@@ -35,7 +35,7 @@ def test_docker_logs_command_tails_and_quotes():
         container="web", lines=99999, search="", since="-1h; id", until=""
     )
 
-    assert "$D logs --timestamps --since '-1h; id' --tail 5000 web 2>&1" in command
+    assert "$D logs --timestamps --since '-1h; id' --tail 20000 web 2>&1" in command
     assert "sudo -n -l" in command
 
 

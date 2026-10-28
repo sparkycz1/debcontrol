@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.docker import (
@@ -270,3 +270,121 @@ async def purge_old(db: AsyncSession) -> int:
     )
     await db.commit()
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+# --- Cancelling ----------------------------------------------------------------
+
+# Running jobs that stop cleanly when signalled: nothing they do is left
+# half-done in a way that breaks what runs (a scan, a pull, restic, which
+# keeps its repository consistent when interrupted). A container update
+# only while it pulls, before anything is recreated; a stack deploy or a
+# start/stop of a stack never once it runs. A restore can be stopped too —
+# its volumes are then left partly restored, which the page warns about.
+CANCELLABLE_RUNNING_KINDS = frozenset(
+    {
+        DockerJobKind.IMAGE_SCAN.value,
+        DockerJobKind.PRUNE.value,
+        DockerJobKind.STACK_CHECK.value,
+        DockerJobKind.BACKUP_RUN.value,
+        DockerJobKind.BACKUP_CHECK.value,
+        DockerJobKind.BACKUP_FORGET.value,
+        DockerJobKind.BACKUP_RESTORE.value,
+        DockerJobKind.BACKUP_VERIFY.value,
+    }
+)
+# (kind, phase) pairs that may be stopped although the kind as a whole can't.
+_CANCELLABLE_PHASES = frozenset({(DockerJobKind.CONTAINER_UPDATE.value, "pull")})
+
+
+def cancel_permission(kind: str) -> Permission:
+    """The permission that cancels a job: the one that starts that kind."""
+    if kind == DockerJobKind.STACK_ACTION:
+        return Permission.ACTION_POWER
+    if kind in (
+        DockerJobKind.STACK_CHECK,
+        DockerJobKind.STACK_DEPLOY,
+        DockerJobKind.BACKUP_RESTORE,
+    ):
+        return Permission.ACTION_TERMINAL
+    return Permission.ACTION_UPDATES
+
+
+def phase_cancellable(kind: str, phase: str | None) -> bool:
+    """Whether a running job of `kind` in `phase` may be signalled to stop."""
+    return kind in CANCELLABLE_RUNNING_KINDS or (kind, phase or "") in _CANCELLABLE_PHASES
+
+
+def can_cancel(job: DockerJob) -> bool:
+    """Whether the job can be cancelled now: any job still waiting, a
+    running one only in a phase that stops cleanly, and only once."""
+    if job.status == DockerJobStatus.PENDING:
+        return True
+    if job.status != DockerJobStatus.RUNNING or job.cancel_requested_at is not None:
+        return False
+    return phase_cancellable(job.kind, str((job.result or {}).get("phase") or ""))
+
+
+def may_cancel(job: DockerJob, user: User) -> bool:
+    return can_cancel(job) and user.has_permission(cancel_permission(job.kind))
+
+
+async def request_cancel(db: AsyncSession, job: DockerJob, actor: str) -> str | None:
+    """Cancel a waiting job at once ("cancelled"), or ask the worker
+    following a running one to stop it ("requested"); None when it can't be
+    cancelled (any more). Commits."""
+    if not can_cancel(job):
+        return None
+    now = datetime.now(UTC)
+    if job.status == DockerJobStatus.PENDING:
+        done = await db.execute(
+            update(DockerJob)
+            .where(DockerJob.id == job.id, DockerJob.status == DockerJobStatus.PENDING)
+            .values(
+                status=DockerJobStatus.CANCELLED,
+                cancel_requested_by=actor[:255],
+                cancel_requested_at=now,
+                error=f"Cancelled by {actor} before it started."[:1024],
+                finished_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        if getattr(done, "rowcount", 0) == 1:
+            await db.refresh(job)
+            return "cancelled"
+        await db.refresh(job)
+        # Claimed meanwhile: ask the running job instead.
+        if not can_cancel(job):
+            return None
+    asked = await db.execute(
+        update(DockerJob)
+        .where(
+            DockerJob.id == job.id,
+            DockerJob.status == DockerJobStatus.RUNNING,
+            DockerJob.cancel_requested_at.is_(None),
+        )
+        .values(cancel_requested_by=actor[:255], cancel_requested_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    await db.refresh(job)
+    return "requested" if getattr(asked, "rowcount", 0) == 1 else None
+
+
+async def next_pending(db: AsyncSession, machine_id: uuid.UUID) -> uuid.UUID | None:
+    """The machine's oldest waiting job, when none of its jobs runs."""
+    running = await db.execute(
+        select(DockerJob.id)
+        .where(DockerJob.machine_id == machine_id, DockerJob.status == DockerJobStatus.RUNNING)
+        .limit(1)
+    )
+    if running.first() is not None:
+        return None
+    found = await db.execute(
+        select(DockerJob.id)
+        .where(DockerJob.machine_id == machine_id, DockerJob.status == DockerJobStatus.PENDING)
+        .order_by(DockerJob.created_at, DockerJob.id)
+        .limit(1)
+    )
+    row = found.first()
+    return row[0] if row is not None else None

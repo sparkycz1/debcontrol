@@ -53,6 +53,7 @@ BACKUP_JOB_KINDS = {
     "run": DockerJobKind.BACKUP_RUN,
     "check": DockerJobKind.BACKUP_CHECK,
     "forget": DockerJobKind.BACKUP_FORGET,
+    "verify": DockerJobKind.BACKUP_VERIFY,
 }
 
 
@@ -107,6 +108,17 @@ async def queue_job(
     )
     await _queue(db, [job])
     return job
+
+
+async def cancel_job(db: AsyncSession, job: DockerJob, *, actor: str) -> str | None:
+    """Cancel a job (`docker_jobs.request_cancel`). A waiting job that is
+    cancelled hands its turn to the machine's next one."""
+    outcome = await docker_jobs.request_cancel(db, job, actor)
+    if outcome == "cancelled":
+        nxt = await docker_jobs.next_pending(db, job.machine_id)
+        if nxt is not None:
+            run_docker_job.delay(str(nxt))
+    return outcome
 
 
 # --- Containers --------------------------------------------------------------
@@ -413,6 +425,8 @@ async def backup_job(
     params: dict[str, Any] = {}
     if what == "check":
         params["read_data_percent"] = max(0, min(int(read_data_percent), 100))
+    if what == "verify":
+        params["snapshot"] = "latest"
     return await queue_job(
         db, machine, kind, backup.name, started_by=started_by, params=params, ref_id=backup.id
     )

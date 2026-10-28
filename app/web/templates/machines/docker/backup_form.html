@@ -32,6 +32,17 @@
         </dd>
         {% if backup.last_snapshot_id %}<dt>{{ t(request, "docker.backup.snapshot") }}</dt><dd><code>{{ backup.last_snapshot_id[:12] }}</code>{% if backup.last_backup_bytes is number %} · {{ t(request, "docker.backup.added", size=(backup.last_backup_bytes | bytes)) }}{% endif %}</dd>{% endif %}
         <dt>{{ t(request, "docker.backup.last_check") }}</dt><dd>{{ backup.last_check_at | local_time }}{% if backup.last_check_status %} · {{ t(request, "docker.job.status." ~ ('succeeded' if backup.last_check_status == 'ok' else 'failed')) }}{% endif %}</dd>
+        <dt>{{ t(request, "docker.backup.last_verify") }}</dt>
+        <dd>
+          {% if backup.last_verify_at %}{{ backup.last_verify_at | local_time }} · {{ t(request, "docker.job.status." ~ ('succeeded' if backup.last_verify_status == 'ok' else 'failed')) }}
+            {% set v = backup.last_verify_details or {} %}
+            {% if v.restored_files is number %}<div class="table-summary">{{ t(request, "docker.backup.verify_result", files=v.restored_files, total=(v.expected_files if v.expected_files is number else '?'), size=((v.restored_bytes or 0) | bytes)) }}{% if v.snapshot_id %} · <code>{{ v.snapshot_id[:12] }}</code>{% endif %}</div>{% endif %}
+          {% else %}{{ t(request, "docker.backup.never") }}{% endif %}
+        </dd>
+        {% if backup.pre_command or backup.post_command %}
+          <dt>{{ t(request, "docker.backup.hooks") }}</dt>
+          <dd>{{ t(request, "docker.backup.hooks_set", container=backup.hook_container) }}</dd>
+        {% endif %}
         <dt>{{ t(request, "docker.backup.retention") }}</dt>
         <dd>{% if has_retention %}{% for key in ('last', 'daily', 'weekly', 'monthly') %}{% if backup['keep_' ~ key] %}{{ t(request, "docker.backup.keep_" ~ key) }}: {{ backup['keep_' ~ key] }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}{% else %}{{ t(request, "docker.backup.keep_all") }}{% endif %}</dd>
       </dl>
@@ -54,6 +65,11 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="read_data_percent" value="10">
             <button type="submit" class="button button-secondary">{{ t(request, "docker.backup.check_data") }}</button>
+          </form>
+          <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/verify" class="inline-form"
+                data-confirm="{{ t(request, 'docker.backup.verify_confirm') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.backup.verify") }}</button>
           </form>
           {% if has_retention %}
             <form method="post" action="{{ docker_base }}/backups/{{ backup.id }}/forget" class="inline-form"
@@ -116,6 +132,23 @@
 
         <label><input type="checkbox" name="stop_containers" value="1" {% if (form.stop_containers if form else (backup.stop_containers if backup else false)) %}checked{% endif %}> {{ t(request, "docker.backup.stop_containers") }}</label>
         <p class="hint">{{ t(request, "docker.backup.stop_containers_hint") }}</p>
+
+        <fieldset class="docker-fieldset">
+          <legend>{{ t(request, "docker.backup.hooks") }}</legend>
+          <p class="hint">{{ t(request, "docker.backup.hooks_hint") }}</p>
+          <label for="b-hook-container">{{ t(request, "docker.backup.hook_container") }}</label>
+          <input id="b-hook-container" name="hook_container" maxlength="255" list="b-hook-containers" spellcheck="false"
+                 value="{{ form.hook_container if form and form.hook_container is not none else (backup.hook_container or '' if backup else '') }}">
+          <datalist id="b-hook-containers">
+            {% for c in machine.docker_containers or [] %}{% if c.name %}<option value="{{ c.name }}"></option>{% endif %}{% endfor %}
+          </datalist>
+          <label for="b-pre">{{ t(request, "docker.backup.pre_command") }}</label>
+          <textarea id="b-pre" name="pre_command" rows="2" class="code-input" spellcheck="false" maxlength="4000"
+                    placeholder="pg_dumpall -U postgres > /var/lib/postgresql/data/dump.sql">{{ form.pre_command if form and form.pre_command is not none else (backup.pre_command or '' if backup else '') }}</textarea>
+          <label for="b-post">{{ t(request, "docker.backup.post_command") }}</label>
+          <textarea id="b-post" name="post_command" rows="2" class="code-input" spellcheck="false" maxlength="4000"
+                    placeholder="rm -f /var/lib/postgresql/data/dump.sql">{{ form.post_command if form and form.post_command is not none else (backup.post_command or '' if backup else '') }}</textarea>
+        </fieldset>
 
         <fieldset class="docker-fieldset">
           <legend>{{ t(request, "docker.backup.retention") }}</legend>

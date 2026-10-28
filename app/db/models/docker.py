@@ -75,6 +75,8 @@ class DockerJobKind(enum.StrEnum):
     BACKUP_CHECK = "backup_check"
     BACKUP_FORGET = "backup_forget"
     BACKUP_RESTORE = "backup_restore"
+    # Restore the newest snapshot into a temporary volume, verify it, remove it.
+    BACKUP_VERIFY = "backup_verify"
 
 
 class DockerJobStatus(enum.StrEnum):
@@ -86,6 +88,8 @@ class DockerJobStatus(enum.StrEnum):
     BLOCKED = "blocked"
     # Nothing to do (the image was already the newest).
     SKIPPED = "skipped"
+    # Stopped on request (`DockerJob.cancel_requested_by`).
+    CANCELLED = "cancelled"
 
 
 class DockerJob(Base):
@@ -119,6 +123,10 @@ class DockerJob(Base):
     ref_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # When debcontrol last read the job's state on the machine.
     heartbeat_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Someone asked a running job to stop; the worker following it signals
+    # the job on the machine and closes it as cancelled.
+    cancel_requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
@@ -413,6 +421,18 @@ class DockerBackup(Base):
     last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     last_check_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_check_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Commands run with `docker exec` in `hook_container` before the backup
+    # (a database dump: a non-zero exit stops the backup) and after it,
+    # whether it succeeded or not (removing the dump). Edited only with
+    # `action.terminal`, like the container shell.
+    hook_container: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pre_command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    post_command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The last test restore (`DockerJobKind.BACKUP_VERIFY`): "ok" / "failed",
+    # with the snapshot it restored and what was found.
+    last_verify_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_verify_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_verify_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

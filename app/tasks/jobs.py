@@ -368,7 +368,7 @@ def view_machine_journal(
 
 
 async def _view_machine_log_file(
-    machine_id: str, *, path: str, lines: int, search: str
+    machine_id: str, *, path: str, lines: int, search: str, level: str = ""
 ) -> dict[str, Any]:
     """The Logs tab's "view a file" mode — restricted to `LOG_FILE_ALLOWED_
     PATHS`, checked inside `view_file` itself (never reaches the machine at
@@ -392,6 +392,7 @@ async def _view_machine_log_file(
                 path=path,
                 lines=lines,
                 search=search,
+                level=level,
             )
         except LogAccessError as exc:
             return {"ok": False, "error": str(exc)}
@@ -406,12 +407,23 @@ async def _view_machine_log_file(
     name="app.tasks.jobs.view_machine_log_file",
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
-def view_machine_log_file(machine_id: str, *, path: str, lines: int, search: str) -> dict[str, Any]:
-    return asyncio.run(_view_machine_log_file(machine_id, path=path, lines=lines, search=search))
+def view_machine_log_file(
+    machine_id: str, *, path: str, lines: int, search: str, level: str = ""
+) -> dict[str, Any]:
+    return asyncio.run(
+        _view_machine_log_file(machine_id, path=path, lines=lines, search=search, level=level)
+    )
 
 
 async def _view_machine_docker_logs(
-    machine_id: str, *, container: str, lines: int, search: str, since: str, until: str
+    machine_id: str,
+    *,
+    container: str,
+    lines: int,
+    search: str,
+    since: str,
+    until: str,
+    level: str = "",
 ) -> dict[str, Any]:
     """The Logs tab's Docker mode — one container's `docker logs`, same
     no-persistence live round trip as the journal/file modes."""
@@ -436,6 +448,7 @@ async def _view_machine_docker_logs(
                 search=search,
                 since=since,
                 until=until,
+                level=level,
             )
         except LogAccessError as exc:
             return {"ok": False, "error": str(exc)}
@@ -451,11 +464,24 @@ async def _view_machine_docker_logs(
     time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
 )
 def view_machine_docker_logs(
-    machine_id: str, *, container: str, lines: int, search: str, since: str, until: str
+    machine_id: str,
+    *,
+    container: str,
+    lines: int,
+    search: str,
+    since: str,
+    until: str,
+    level: str = "",
 ) -> dict[str, Any]:
     return asyncio.run(
         _view_machine_docker_logs(
-            machine_id, container=container, lines=lines, search=search, since=since, until=until
+            machine_id,
+            container=container,
+            lines=lines,
+            search=search,
+            since=since,
+            until=until,
+            level=level,
         )
     )
 

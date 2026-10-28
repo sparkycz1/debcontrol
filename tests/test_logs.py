@@ -54,7 +54,7 @@ def test_build_journal_command_quotes_untrusted_input():
 
 
 def test_build_journal_command_clamps_line_count():
-    assert "-n 5000" in build_journal_command(lines=999_999, search="", since="", until="")
+    assert "-n 20000" in build_journal_command(lines=999_999, search="", since="", until="")
     assert "-n 1" in build_journal_command(lines=0, search="", since="", until="")
 
 

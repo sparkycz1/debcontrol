@@ -64,11 +64,19 @@
         <label class="log-field log-field-grow">
           <span>{{ t(request, "machine.logs.container") }}</span>
           <select name="container" data-autosubmit>
+            {% if docker_stacks %}<optgroup label="{{ t(request, 'machine.logs.containers_group') }}">{% endif %}
             {% for c in docker_containers %}
               <option value="{{ c.name }}" {% if c.name == container %}selected{% endif %}>
                 {{ c.name }} — {{ c.state }}{% if c.health %} ({{ c.health }}){% endif %}
               </option>
             {% endfor %}
+            {% if docker_stacks %}</optgroup>
+              <optgroup label="{{ t(request, 'machine.logs.stacks_group') }}">
+                {% for p in docker_stacks %}
+                  <option value="{{ stack_prefix }}{{ p }}" {% if (stack_prefix ~ p) == container %}selected{% endif %}>{{ t(request, "machine.logs.stack_option", name=p) }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endif %}
           </select>
         </label>
       {% else %}
@@ -116,6 +124,17 @@
         </select>
       </label>
     {% endif %}
+    {% if source != 'journal' %}
+      <label class="log-field">
+        <span>{{ t(request, "machine.logs.level") }}</span>
+        <select name="level">
+          <option value="" {% if not level %}selected{% endif %}>{{ t(request, "machine.logs.level_any") }}</option>
+          {% for l in levels %}
+            <option value="{{ l }}" {% if l == level %}selected{% endif %}>{{ t(request, "machine.logs.level." ~ l) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
     {% if source != 'file' %}
       <label class="log-field">
         <span>{{ t(request, "machine.logs.since") }}</span>
@@ -158,6 +177,7 @@
       <input type="hidden" name="since" value="{{ since }}">
       <input type="hidden" name="until" value="{{ until }}">
       <input type="hidden" name="lines" value="{{ lines if lines != default_lines else '' }}">
+      <input type="hidden" name="level" value="{{ level }}">
       <input type="text" name="name" class="inline-text-input" maxlength="100" required
              placeholder="{{ t(request, 'machine.logs.save_view_placeholder') }}">
       <button type="submit" class="button button-secondary">{{ t(request, 'machines.save_view.submit') }}</button>
@@ -167,7 +187,7 @@
   {% if output is not none %}
     {% set can_follow = source == 'journal' or (source == 'file' and path) or (source == 'docker' and container) %}
     <section class="log-viewer" data-log-viewer
-      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}&amp;priority={{ priority | urlencode }}&amp;unit={{ unit | urlencode }}"
+      {% if can_follow %}data-follow-url="{{ base }}/follow/ws?source={{ source | urlencode }}&amp;path={{ path | urlencode }}&amp;container={{ container | urlencode }}&amp;search={{ search | urlencode }}&amp;priority={{ priority | urlencode }}&amp;unit={{ unit | urlencode }}&amp;level={{ level | urlencode }}"
       data-search="{{ search }}"
       data-label-follow="{{ t(request, 'machine.logs.follow') }}"
       data-label-stop="{{ t(request, 'machine.logs.follow_stop') }}"
@@ -176,7 +196,8 @@
       data-status-ended="{{ t(request, 'machine.logs.follow_ended') }}"{% endif %}>
       <header class="log-viewer-header">
         <div class="log-viewer-title">
-          {% if source == 'docker' %}<span class="badge">Docker</span> <code>{{ container }}</code>
+          {% if source == 'docker' and container.startswith(stack_prefix) %}<span class="badge">{{ t(request, "machine.logs.source_stack") }}</span> <code>{{ container[1:] }}</code>
+          {% elif source == 'docker' %}<span class="badge">Docker</span> <code>{{ container }}</code>
           {% elif source == 'file' %}<span class="badge">{{ t(request, "machine.logs.source_file") }}</span> <code>{{ path }}</code>
           {% else %}<span class="badge">{{ t(request, "machine.logs.source_journal") }}</span>{% endif %}
           <span class="log-viewer-count" data-log-count>{{ t(request, "machine.logs.line_count", count=(log_lines | length)) }}</span>
@@ -187,6 +208,7 @@
           {% if can_follow %}<button type="button" class="button button-secondary log-small-button" data-log-follow aria-pressed="false">{{ t(request, "machine.logs.follow") }}</button>{% endif %}
           <button type="button" class="button button-secondary log-small-button" data-log-wrap aria-pressed="true">{{ t(request, "machine.logs.wrap") }}</button>
           <button type="button" class="button button-secondary log-small-button" data-log-bottom>{{ t(request, "machine.logs.to_bottom") }}</button>
+          {% if can_download %}<a class="button button-secondary log-small-button" href="{{ base }}/download?{{ log_view_qs }}" download title="{{ t(request, 'machine.logs.download_hint', count=download_lines) }}">{{ t(request, "machine.logs.download") }}</a>{% endif %}
         </div>
       </header>
       {% if log_lines or can_follow %}

@@ -2717,6 +2717,9 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
   gap: var(--space-4);
   margin-top: var(--space-4);
 }
+.docker-file-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.docker-file-diff { margin-bottom: var(--space-4); }
+.docker-file-diff .file-diff { max-height: 32rem; overflow: auto; }
 
 /* A webhook URL shown once: easy to select whole. */
 .copy-once { user-select: all; word-break: break-all; }

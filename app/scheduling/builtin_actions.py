@@ -462,6 +462,18 @@ def register_builtin_actions() -> None:
     )
     register_action(
         ScheduledActionSpec(
+            key="docker_backup_verify",
+            label="Test-restore Docker backups",
+            description=(
+                "Restores the newest snapshot of every enabled backup into a temporary "
+                "volume, verifies every file and removes the volume again. Needs room "
+                "for one more copy of the largest backup."
+            ),
+            run=_docker_backup_runner("verify"),
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
             key="docker_backup_prune",
             label="Prune Docker backups",
             description=(

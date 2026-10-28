@@ -39,9 +39,20 @@
       </div>
     {% endfor %}
   {% endif %}
+  {% if r.post_hook_failed %}<div class="alert alert-warn"><p>{{ t(request, "docker.backup.post_hook_failed") }}</p></div>{% endif %}
+  {% if r.verify and r.verify.restored_files is number %}<p>{{ t(request, "docker.backup.verify_result", files=r.verify.restored_files, total=(r.verify.expected_files if r.verify.expected_files is number else '?'), size=((r.verify.restored_bytes or 0) | bytes)) }}</p>{% endif %}
   {% if r.rolled_back %}<div class="alert alert-warn"><p>{{ t(request, "docker.stack.rolled_back") }}</p></div>{% endif %}
   {% if r.restored %}<div class="alert alert-warn"><p>{{ t(request, "docker.job.restored") }}</p></div>{% endif %}
-  {% if job.error %}<div class="alert alert-error"><p>{{ job.error }}</p></div>{% endif %}
+  {% if job.error %}<div class="alert {{ 'alert-warn' if job.status == 'cancelled' else 'alert-error' }}"><p>{{ job.error }}</p></div>{% endif %}
+  {% if job.status == 'running' and job.cancel_requested_at %}
+    <p class="hint">{{ t(request, "docker.job.cancel_pending", who=job.cancel_requested_by) }}</p>
+  {% elif can_cancel %}
+    <form method="post" action="{{ docker_base }}/jobs/{{ job.id }}/cancel" class="inline-form"
+          data-confirm="{{ t(request, 'docker.job.cancel_confirm_restore' if job.kind == 'backup_restore' and job.status == 'running' else 'docker.job.cancel_confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+      <button type="submit" class="button button-danger">{{ t(request, "docker.job.cancel") }}</button>
+    </form>
+  {% endif %}
   {% if output_hidden %}
     <p class="hint">{{ t(request, "docker.job.output_hidden") }}</p>
   {% elif job.output %}

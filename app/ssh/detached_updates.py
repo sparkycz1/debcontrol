@@ -170,6 +170,9 @@ class FollowResult:
     exit_status: int | None
     output: str
     error: str | None = None
+    # Whether debcontrol signalled the job to stop (a cancelled Docker job,
+    # `app.ssh.detached_jobs.follow`).
+    stopped: bool = False
 
 
 async def follow(

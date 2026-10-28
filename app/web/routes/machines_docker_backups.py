@@ -107,6 +107,9 @@ def _form(raw: Any) -> docker_backups.BackupForm:
         keep_monthly=str(raw.get("keep_monthly") or ""),
         clear_env=raw.get("clear_env") == "1",
         all_snapshots=raw.get("all_snapshots") == "1",
+        hook_container=str(raw.get("hook_container") or ""),
+        pre_command=str(raw.get("pre_command") or ""),
+        post_command=str(raw.get("post_command") or ""),
     )
 
 
@@ -294,6 +297,8 @@ async def docker_backup_create(
             "repository": backup.repository_display,
             "volumes": backup.volumes,
             "paths": backup.paths,
+            "hook_container": backup.hook_container,
+            "commands": bool(backup.pre_command or backup.post_command),
         },
     )
     return redirect(f"{docker_base(machine)}/backups/{backup.id}")
@@ -382,6 +387,8 @@ async def docker_backup_save(
             "repository": backup.repository_display,
             "volumes": backup.volumes,
             "paths": backup.paths,
+            "hook_container": backup.hook_container,
+            "commands": bool(backup.pre_command or backup.post_command),
         },
     )
     return redirect(

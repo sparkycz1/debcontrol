@@ -77,8 +77,37 @@ def is_path_allowed(path: str, allowed_prefixes: list[str]) -> bool:
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in allowed_prefixes)
 
 
+# A download may ask for more than a page shows (`MAX_LINE_LIMIT`); the
+# routes clamp what they show, the commands only this.
+MAX_DOWNLOAD_LINES = 20_000
+
+
 def _clamp_lines(lines: int) -> int:
-    return max(1, min(lines, MAX_LINE_LIMIT))
+    return max(1, min(lines, MAX_DOWNLOAD_LINES))
+
+
+# The "level" filter of a file or a container's log: the same words the
+# Logs tab colours lines by (`app.web.log_lines`), as whole words, any
+# case. "warn" keeps warnings and errors.
+LOG_LEVELS = ("error", "warn")
+_ERROR_WORDS = (
+    "error|err|fail|failed|failure|fatal|crit|critical|panic|emerg|alert|"
+    "exception|traceback|denied|segfault"
+)
+_LEVEL_WORDS = {"error": _ERROR_WORDS, "warn": _ERROR_WORDS + "|warn|warning|deprecated"}
+
+
+def normalize_level(level: str) -> str:
+    value = level.strip().lower()
+    return value if value in LOG_LEVELS else ""
+
+
+def _level_filter(level: str, *, follow: bool = False) -> str:
+    words = _LEVEL_WORDS.get(normalize_level(level))
+    if not words:
+        return ""
+    buffered = "--line-buffered " if follow else ""
+    return f" | grep {buffered}-iwE -- {shlex.quote(words)}"
 
 
 # journalctl's own priority names, most to least severe; `-p <name>` shows
@@ -360,16 +389,19 @@ def parse_directory_listing(raw: str) -> list[tuple[str, bool]]:
     return entries
 
 
-def build_file_command(*, path: str, lines: int, search: str) -> str:
-    """`tail`, or `grep | tail` when searching — the *last* N matches
-    within an allowed file, not the first N, so a search against a huge
-    log still returns its most recent hits rather than possibly nothing
-    from years ago."""
+def build_file_command(*, path: str, lines: int, search: str, level: str = "") -> str:
+    """`tail`, or `grep | tail` when searching or filtering by level — the
+    *last* N matches within an allowed file, not the first N, so a search
+    against a huge log still returns its most recent hits rather than
+    possibly nothing from years ago."""
     quoted_path = shlex.quote(path)
     clamped = _clamp_lines(lines)
+    levels = _level_filter(level)
     if search.strip():
         quoted_search = shlex.quote(search.strip())
-        return f"grep -F -- {quoted_search} {quoted_path} 2>/dev/null | tail -n {clamped}"
+        return f"grep -F -- {quoted_search} {quoted_path} 2>/dev/null{levels} | tail -n {clamped}"
+    if levels:
+        return f"cat -- {quoted_path} 2>/dev/null{levels} | tail -n {clamped}"
     return f"tail -n {clamped} -- {quoted_path} 2>/dev/null"
 
 
@@ -413,6 +445,7 @@ async def view_file(
     path: str,
     lines: int = DEFAULT_LINE_LIMIT,
     search: str = "",
+    level: str = "",
 ) -> str:
     """Connect to a machine and return the last N (optionally
     search-matching) lines of one allowed file. Requires a pinned host key.
@@ -422,7 +455,7 @@ async def view_file(
     if not is_path_allowed(path, settings.log_file_allowed_path_list):
         raise LogAccessError(f'"{path}" is outside the allowed log paths.')
 
-    command = build_file_command(path=path, lines=lines, search=search)
+    command = build_file_command(path=path, lines=lines, search=search, level=level)
     async with await open_connection(machine, secret, timeout_seconds) as conn:
         result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds)
     stdout = result.stdout or ""
@@ -456,29 +489,78 @@ def is_container_name_valid(name: str) -> bool:
     return bool(_CONTAINER_NAME_RE.match(name))
 
 
+# A whole Compose project's logs are asked for as container "@<project>" —
+# "@" is never part of a container name. Compose's own project-name rule.
+STACK_PREFIX = "@"
+_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}\Z")
+
+
+def stack_of(container: str) -> str | None:
+    """The project of a "@<project>" log source, or None for a container."""
+    if not container.startswith(STACK_PREFIX):
+        return None
+    project = container[len(STACK_PREFIX) :]
+    if not _PROJECT_RE.match(project):
+        raise LogAccessError(f'"{project}" is not a valid Compose project name.')
+    return project
+
+
+def _stack_containers(project: str, *, running: bool) -> str:
+    """The names of the project's containers, one per line."""
+    all_flag = "" if running else "-a "
+    label = shlex.quote(f"label=com.docker.compose.project={project}")
+    return f"$D ps {all_flag}--filter {label} --format '{{{{.Names}}}}'"
+
+
+# `docker logs --timestamps` starts each line with a fixed-width RFC 3339
+# time: put the container's name after it, so the merged lines sort by time
+# and still say where they came from.
+_NAME_AFTER_TIME = (
+    'awk -v n="$c" \'{ t = $1; sub(/^[^ ]* ?/, ""); print t " " n " | " $0; fflush() }\''
+)
+
+
 def build_docker_logs_command(
-    *, container: str, lines: int, search: str, since: str, until: str
+    *, container: str, lines: int, search: str, since: str, until: str, level: str = ""
 ) -> str:
     """`docker logs --timestamps` for one container, stdout and stderr
     merged (a container's errors usually go to stderr). Same Docker access
     probe as the monitoring sample (`app.ssh.monitoring`): plain `docker`
     for an account in the `docker` group, else `sudo -n docker` when a
     sudoers rule allows exactly that binary, else `DOCKER_NO_ACCESS_MARKER`.
-    Searching filters the *whole* log and keeps the last N matches, same as
-    `build_file_command`, rather than searching only the last N lines."""
-    if not is_container_name_valid(container):
+    Searching (or a level filter) reads the *whole* log and keeps the last
+    N matches, same as `build_file_command`, rather than searching only the
+    last N lines.
+
+    "@<project>" merges the logs of every container of that Compose
+    project (running or not), each line as "<time> <container> | <text>",
+    sorted by time."""
+    project = stack_of(container)
+    if project is None and not is_container_name_valid(container):
         raise LogAccessError(f'"{container}" is not a valid container name.')
     clamped = _clamp_lines(lines)
+    levels = _level_filter(level)
+    filtered = bool(search.strip() or levels)
     options = ["--timestamps"]
     if since.strip():
         options += ["--since", shlex.quote(since.strip())]
     if until.strip():
         options += ["--until", shlex.quote(until.strip())]
-    if not search.strip():
+    if not filtered:
         options += ["--tail", str(clamped)]
-    logs = f"$D logs {' '.join(options)} {shlex.quote(container)} 2>&1"
+    if project is None:
+        logs = f"$D logs {' '.join(options)} {shlex.quote(container)} 2>&1"
+    else:
+        logs = (
+            f"{_stack_containers(project, running=False)} | while read -r c; do "
+            f'$D logs {" ".join(options)} "$c" 2>&1 </dev/null | {_NAME_AFTER_TIME}; '
+            "done | sort -s -k1,1"
+        )
     if search.strip():
-        logs += f" | grep -F -- {shlex.quote(search.strip())} | tail -n {clamped}"
+        logs += f" | grep -F -- {shlex.quote(search.strip())}"
+    logs += levels
+    if filtered or project is not None:
+        logs += f" | tail -n {clamped}"
     return f"{DOCKER_ACCESS_PROBE}{logs}"
 
 
@@ -492,13 +574,14 @@ async def view_docker_logs(
     search: str = "",
     since: str = "",
     until: str = "",
+    level: str = "",
 ) -> str:
     """Connect to a machine and return one container's recent log lines.
     Requires a pinned host key. Raises `LogAccessError` for an invalid
     container name (never sent to the machine) or when this account can't
     reach the Docker daemon."""
     command = build_docker_logs_command(
-        container=container, lines=lines, search=search, since=since, until=until
+        container=container, lines=lines, search=search, since=since, until=until, level=level
     )
     async with await open_connection(machine, secret, timeout_seconds) as conn:
         result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds)
@@ -524,6 +607,7 @@ def build_follow_command(
     search: str,
     priority: str = "",
     unit: str = "",
+    level: str = "",
 ) -> str:
     """The streaming (`-f`) variant of each Logs source, for the live-follow
     WebSocket (`app/web/routes/logs_ws.py`): `journalctl -f`, `tail -F`
@@ -533,6 +617,7 @@ def build_follow_command(
     one-shot commands: the path allowlist, Docker's container-name rule."""
     term = search.strip()
     grep = f" | grep --line-buffered -F -- {shlex.quote(term)}" if term else ""
+    grep += _level_filter(level, follow=True)
     n = FOLLOW_INITIAL_LINES
     if source == "journal":
         options = f" -g {shlex.quote(term)}" if term else ""
@@ -546,6 +631,16 @@ def build_follow_command(
             raise LogAccessError(f'"{path}" is outside the allowed log paths.')
         return f"tail -n {n} -F -- {shlex.quote(path)} 2>&1{grep}"
     if source == "docker":
+        project = stack_of(container)
+        if project is not None:
+            # One `docker logs -f` per running container, side by side.
+            return (
+                f"{DOCKER_ACCESS_PROBE}"
+                f"{_stack_containers(project, running=True)} | {{ while read -r c; do "
+                f'( $D logs -f --tail {n} --timestamps "$c" 2>&1 </dev/null '
+                f"| {_NAME_AFTER_TIME} ) & "
+                f"done; wait; }}{grep}"
+            )
         if not is_container_name_valid(container):
             raise LogAccessError(f'"{container}" is not a valid container name.')
         return (
