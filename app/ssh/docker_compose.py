@@ -22,14 +22,28 @@ debcontrol wrote there, never the directory's other content:
   container (`docker_cli.GIT_IMAGE`) running as the same account, plus
   `.env` next to it — the `.env` never goes into the repository.
 
-Only HTTPS repositories are accepted (`is_git_url_valid`), with an
-optional access token for a private one. The token reaches git through a
-credential helper reading an environment variable, from an `--env-file`
-written with mode 600 and removed again; never a command line or the
-repository's config.
+A repository is reached over HTTPS (`is_git_url_valid`), with an optional
+access token for a private one, or over SSH (`is_ssh_git_url_valid`) with
+a deploy key. The token reaches git through a credential helper reading
+an environment variable, from an `--env-file` written with mode 600 and
+removed again; never a command line or the repository's config. The
+deploy key and the repository host's known_hosts lines go into a mode-700
+temporary directory mounted into the helper; ssh runs with
+`StrictHostKeyChecking=yes` once a host key is pinned, and records it
+(`accept-new`, printed as `@@DC_HOSTKEY`) on the first connection.
 
-The deploy script carries the `.env` and the token, so it is only ever
-sent on standard input and kept with mode 600 (`app.ssh.detached_jobs`).
+**Deploy safety** (`build_stack_script`): with a health check, `up` is
+followed by waiting for every container to run and be healthy, and a
+failure deploys the previous version again (`@@DC_ROLLED_BACK`). For the
+vulnerability gate a deploy stops before `up` (`@@DC_PREPARED`, with the
+old and new image of each tag), and either continues
+(`build_stack_up_script`) or is undone (`build_stack_restore_script`).
+`build_stack_check_script` shows what a deploy would change and runs
+`docker compose config` on the new files, changing nothing.
+
+The deploy script carries the `.env`, the token and the deploy key, so it
+is only ever sent on standard input and kept with mode 600
+(`app.ssh.detached_jobs`).
 """
 
 from __future__ import annotations
@@ -45,6 +59,8 @@ from app.ssh.docker_cli import (
     GIT_IMAGE,
     HELPER_LABEL,
     DockerCommandError,
+    is_image_id_valid,
+    is_image_ref_valid,
     is_project_name_valid,
     q,
 )
@@ -278,43 +294,455 @@ class GitSource:
     branch: str
     compose_path: str
     token: str = ""
+    # More compose files in the repository, applied after `compose_path`.
+    overrides: tuple[str, ...] = ()
+    # An SSH repository address: the deploy key (OpenSSH private key) and
+    # the host's known_hosts lines ("" = record them on this connection).
+    ssh_key: str = ""
+    known_hosts: str = ""
+    # Deploy exactly this commit instead of the branch's newest (a rollback).
+    commit: str = ""
+
+    @property
+    def is_ssh(self) -> bool:
+        return is_ssh_git_url_valid(self.url)
+
+    def compose_paths(self) -> list[str]:
+        return [self.compose_path, *self.overrides]
 
 
-def _git_env_file_lines(source: GitSource) -> list[str]:
-    username, _, password = source.token.partition(":") if ":" in source.token else ("", "", "")
-    if not password:
-        username, password = "x-access-token", source.token
+MAX_COMPOSE_OVERRIDES = 5
+MAX_KNOWN_HOSTS_BYTES = 8 * 1024
+_SSH_USER_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}\Z")
+_SSH_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}\Z")
+_SSH_PATH_RE = re.compile(r"^[A-Za-z0-9._~][A-Za-z0-9._~/-]{0,400}\Z")
+_SCP_RE = re.compile(r"^(?P<user>[^@:/]{1,64})@(?P<host>[^@:/]{1,253}):(?P<path>[^:]{1,401})\Z")
+_KNOWN_HOST_RE = re.compile(
+    r"^[^\s#]{1,1024} (ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|"
+    r"ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) "
+    r"[A-Za-z0-9+/]{16,2048}={0,2}( [^\n]{0,200})?\Z"
+)
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?\Z")
+
+
+def is_ssh_git_url_valid(url: str) -> bool:
+    """An SSH repository address — `git@host:owner/repo.git` or
+    `ssh://git@host[:port]/owner/repo.git` — with a user, plain host and
+    path characters only: nothing git or ssh would read as an option or
+    a command (`-oProxyCommand=...`, `ext::`)."""
+    if not url or len(url) > 512 or any(c.isspace() for c in url) or url.startswith("-"):
+        return False
+    if url.startswith("ssh://"):
+        try:
+            parts = urlsplit(url)
+            port = parts.port
+        except ValueError:
+            return False
+        if parts.query or parts.fragment or parts.password is not None or not parts.username:
+            return False
+        host = parts.hostname or ""
+        path = parts.path.lstrip("/")
+        return (
+            bool(_SSH_USER_RE.match(parts.username))
+            and bool(_SSH_HOST_RE.match(host))
+            and (port is None or 0 < port < 65536)
+            and bool(_SSH_PATH_RE.match(path))
+            and ".." not in path.split("/")
+        )
+    match = _SCP_RE.match(url)
+    if match is None:
+        return False
+    path = match.group("path").lstrip("/")
+    return (
+        bool(_SSH_USER_RE.match(match.group("user")))
+        and bool(_SSH_HOST_RE.match(match.group("host")))
+        and bool(_SSH_PATH_RE.match(path))
+        and ".." not in path.split("/")
+    )
+
+
+def is_repository_url_valid(url: str) -> bool:
+    return is_git_url_valid(url) or is_ssh_git_url_valid(url)
+
+
+def normalize_known_hosts(text: str) -> str | None:
+    """known_hosts lines as pasted (comments and blank lines dropped), or
+    None when a line is not one."""
+    if len(text.encode()) > MAX_KNOWN_HOSTS_BYTES or "\0" in text:
+        return None
+    lines = [line.strip() for line in text.replace("\r\n", "\n").split("\n")]
+    kept = [line for line in lines if line and not line.startswith("#")]
+    if any(not _KNOWN_HOST_RE.match(line) for line in kept):
+        return None
+    return "\n".join(kept)
+
+
+def is_commit_valid(value: str) -> bool:
+    return bool(_COMMIT_RE.match(value))
+
+
+def _check_git(git: GitSource) -> list[str]:
+    """The source's compose paths, after checking every part of it."""
+    if not is_repository_url_valid(git.url) or not is_branch_valid(git.branch):
+        raise DockerCommandError("Invalid Git repository or branch.")
+    if git.is_ssh != bool(git.ssh_key):
+        raise DockerCommandError("An SSH repository needs a deploy key (and HTTPS none).")
+    if git.commit and not is_commit_valid(git.commit):
+        raise DockerCommandError("Invalid commit.")
+    if git.known_hosts and normalize_known_hosts(git.known_hosts) != git.known_hosts:
+        raise DockerCommandError("Invalid known_hosts lines.")
+    if len(git.overrides) > MAX_COMPOSE_OVERRIDES:
+        raise DockerCommandError("Too many compose files.")
+    paths = [normalize_compose_path(path) for path in git.compose_paths()]
+    if any(path is None for path in paths):
+        raise DockerCommandError("Invalid compose file path.")
+    return [path for path in paths if path is not None]
+
+
+def _git_env_file_lines(source: GitSource, *, deployed: str = "") -> list[str]:
     lines = [f"DC_GIT_URL={source.url}", f"DC_GIT_BRANCH={source.branch}"]
-    if password:
-        lines += [f"DC_GIT_USER={username}", f"DC_GIT_TOKEN={password}"]
+    if source.commit:
+        lines.append(f"DC_GIT_COMMIT={source.commit}")
+    if deployed:
+        lines.append(f"DC_GIT_DEPLOYED={deployed}")
+    if source.is_ssh:
+        # Without known host keys yet, the first connection records them
+        # (printed as @@DC_HOSTKEY and kept); from then on they must match.
+        strict = "yes" if source.known_hosts else "accept-new"
+        lines += ["DC_SSH=1", f"DC_SSH_STRICT={strict}"]
+    else:
+        username, _, password = (
+            source.token.partition(":") if ":" in source.token else ("", "", "")
+        )
+        if not password:
+            username, password = "x-access-token", source.token
+        if password:
+            lines += [f"DC_GIT_USER={username}", f"DC_GIT_TOKEN={password}"]
     for line in lines:
         if "\n" in line or "\r" in line:
             raise DockerCommandError("Invalid Git settings.")
     return lines
 
 
-# Runs inside the git helper container, with the settings in its environment.
-_GIT_SCRIPT = (
+# Runs first inside the git helper container: how to authenticate.
+_GIT_AUTH = (
     "set -e; cd /work; "
     'if [ -n "${DC_GIT_TOKEN:-}" ]; then '
     "git config --global credential.helper "
     "'!f() { echo \"username=$DC_GIT_USER\"; echo \"password=$DC_GIT_TOKEN\"; }; f'; fi; "
+    'if [ -n "${DC_SSH:-}" ]; then '
+    'export GIT_SSH_COMMAND="ssh -i /dc-ssh/key -o IdentitiesOnly=yes -o BatchMode=yes '
+    "-o UserKnownHostsFile=/dc-ssh/known_hosts -o StrictHostKeyChecking=$DC_SSH_STRICT\"; fi; "
     "git config --global advice.detachedHead false; "
-    'if [ -d repo/.git ]; then git -C repo remote set-url origin "$DC_GIT_URL"; '
-    'git -C repo fetch --depth 1 origin "$DC_GIT_BRANCH"; '
-    "git -C repo checkout -q -f FETCH_HEAD; git -C repo clean -fdq; "
-    'else rm -rf repo; git clone -q --depth 1 --branch "$DC_GIT_BRANCH" -- "$DC_GIT_URL" repo; fi; '
-    'echo "@@DC_COMMIT $(git -C repo rev-parse HEAD)"'
+)
+# The host keys recorded on a first SSH connection.
+_GIT_HOSTKEYS = (
+    'if [ "${DC_SSH_STRICT:-}" = accept-new ] && [ -s /dc-ssh/known_hosts ]; then '
+    "sed 's/^/@@DC_HOSTKEY /' /dc-ssh/known_hosts; fi; "
+)
+# Brings `repo/` to the branch's newest commit, or to DC_GIT_COMMIT (a
+# rollback: fetched by its id, or from the branch's recent history when
+# the server doesn't hand out single commits).
+_GIT_SCRIPT = (
+    _GIT_AUTH
+    + 'if [ -d repo/.git ]; then git -C repo remote set-url origin "$DC_GIT_URL"; '
+    'else rm -rf repo; git init -q repo; git -C repo remote add origin "$DC_GIT_URL"; fi; '
+    'if [ -n "${DC_GIT_COMMIT:-}" ]; then '
+    'git -C repo fetch -q --depth 1 origin "$DC_GIT_COMMIT" '
+    '|| git -C repo fetch -q --depth 500 origin "$DC_GIT_BRANCH"; '
+    'git -C repo checkout -q -f "$DC_GIT_COMMIT"; '
+    'else git -C repo fetch -q --depth 1 origin "$DC_GIT_BRANCH"; '
+    "git -C repo checkout -q -f FETCH_HEAD; fi; "
+    "git -C repo clean -fdq; "
+    + _GIT_HOSTKEYS
+    + 'echo "@@DC_COMMIT $(git -C repo rev-parse HEAD)"'
+)
+# The check before a deploy: the branch's newest commit in a scratch clone,
+# and what changed in the repository since the deployed commit.
+_GIT_CHECK_SCRIPT = (
+    _GIT_AUTH
+    + 'git init -q repo; git -C repo remote add origin "$DC_GIT_URL"; '
+    'git -C repo fetch -q --depth 1 origin "$DC_GIT_BRANCH"; '
+    "git -C repo checkout -q -f FETCH_HEAD; "
+    + _GIT_HOSTKEYS
+    + 'echo "@@DC_COMMIT $(git -C repo rev-parse HEAD)"; '
+    'if [ -n "${DC_GIT_DEPLOYED:-}" ]; then '
+    'if [ "$(git -C repo rev-parse HEAD)" = "$DC_GIT_DEPLOYED" ]; then '
+    "echo 'No new commits since the deployed one.'; "
+    'elif git -C repo fetch -q --depth 1 origin "$DC_GIT_DEPLOYED" 2>/dev/null; then '
+    'git -C repo --no-pager log --oneline -n 20 "$DC_GIT_DEPLOYED..HEAD" 2>/dev/null || true; '
+    'git -C repo --no-pager diff --stat "$DC_GIT_DEPLOYED" HEAD; '
+    'if [ -n "${DC_GIT_PATHS:-}" ]; then '
+    'git -C repo --no-pager diff "$DC_GIT_DEPLOYED" HEAD -- $DC_GIT_PATHS; fi; '
+    "else echo 'The deployed commit could not be fetched to compare with.'; fi; fi"
 )
 
 
-def _git_run(env_file_var: str, workdir_var: str, script: str, *, pull: str) -> str:
+def _git_run(env_file_var: str, workdir_var: str, script: str, *, pull: str, ssh: bool) -> str:
+    # For SSH: the key and known_hosts in a mode-700 directory, and a passwd
+    # line for the account's uid (ssh refuses to run as a uid it can't name).
+    ssh_mounts = '-v "$sshd":/dc-ssh -v "$sshd/passwd":/etc/passwd:ro ' if ssh else ""
     return (
         f"$D run --rm --pull {pull} --label {HELPER_LABEL} "
         '--user "$(id -u):$(id -g)" -e HOME=/tmp '
-        f'--env-file "${env_file_var}" -v "${workdir_var}":/work '
+        f'--env-file "${env_file_var}" -v "${workdir_var}":/work {ssh_mounts}'
         f"--entrypoint sh {GIT_IMAGE} -c {q(script)}"
     )
+
+
+def _git_setup_lines(
+    git: GitSource, *, deployed: str = "", paths: list[str] | None = None
+) -> list[str]:
+    """Shell lines writing the git helper's env file (and, for SSH, its key
+    directory) into temporary files removed on exit."""
+    env_lines = _git_env_file_lines(git, deployed=deployed)
+    if paths:
+        env_lines.append("DC_GIT_PATHS=" + " ".join(paths))
+    lines = ['genv="$(mktemp)"; sshd="$(mktemp -d)"; trap \'rm -rf "$genv" "$sshd"\' EXIT']
+    lines.append(f'cat > "$genv" {_heredoc("DC_GIT_ENV_END", chr(10).join(env_lines) + chr(10))}')
+    if git.is_ssh:
+        key = git.ssh_key if git.ssh_key.endswith("\n") else git.ssh_key + "\n"
+        lines += [
+            f'cat > "$sshd/key" {_heredoc("DC_SSH_KEY_END", key)}',
+            f'cat > "$sshd/known_hosts" {_heredoc("DC_KNOWN_HOSTS_END", git.known_hosts)}',
+            'printf \'dc:x:%s:%s::/tmp:/bin/sh\\n\' "$(id -u)" "$(id -g)" > "$sshd/passwd"',
+            'chmod 600 "$sshd/key" "$sshd/known_hosts"; chmod 644 "$sshd/passwd"',
+        ]
+    return lines
+
+
+@dataclass(frozen=True)
+class StackFiles:
+    """What one version of a managed stack is made of: exactly one of
+    `compose` (written in debcontrol) and `git`."""
+
+    name: str
+    compose: str | None = None
+    env: str = ""
+    git: GitSource | None = None
+    directory: str = ""
+
+    def check(self) -> list[str]:
+        """Validates everything; returns the compose files' paths inside
+        the stack directory (`repo/...` for Git)."""
+        if not is_project_name_valid(self.name):
+            raise DockerCommandError(f'"{self.name}" is not a valid stack name.')
+        if (self.compose is None) == (self.git is None):
+            raise DockerCommandError("A stack needs a compose file or a Git repository.")
+        _check_size(self.env, ".env file")
+        stack_dir_shell(self.name, self.directory)
+        if self.compose is not None:
+            _check_size(self.compose, "compose file")
+            return ["compose.yaml"]
+        assert self.git is not None
+        return [f"repo/{path}" for path in _check_git(self.git)]
+
+
+def _compose_fn(files: StackFiles, paths: list[str]) -> str:
+    """`dc`: `docker compose` for the stack's project, files and .env."""
+    file_args = " ".join(f'-f "$dir/{path}"' for path in paths)
+    return f'dc() {{ $D compose -p {q(files.name)} {file_args} --env-file "$dir/.env" "$@"; }}'
+
+
+def _write_files_lines(files: StackFiles, paths: list[str]) -> list[str]:
+    """Write the stack's files into `$dir` (the Git ones: clone or fetch)."""
+    lines: list[str] = []
+    if files.directory:
+        lines.append(
+            f'if [ -d "$dir" ] && '
+            f'[ "$(cat "$dir/{STACK_MARKER}" 2>/dev/null)" != {q(files.name)} ] && '
+            '[ -n "$(ls -A "$dir" 2>/dev/null)" ]; then '
+            'echo "$dir already holds other files; a stack goes into a new or empty directory."; '
+            "echo '@@DC_FAILED directory_not_empty'; exit 1; fi"
+        )
+    lines += [
+        "echo '@@DC_STEP files'",
+        "mkdir -p \"$dir\" || { echo '@@DC_FAILED files'; exit 1; }",
+        'cd "$dir" || exit 1',
+        f'printf "%s\\n" {q(files.name)} > "$dir/{STACK_MARKER}" || '
+        "{ echo '@@DC_FAILED files'; exit 1; }",
+        f'cat > "$dir/.env" {_heredoc("DC_ENV_END", files.env)}',
+    ]
+    if files.compose is not None:
+        lines.append(f'cat > "$dir/compose.yaml" {_heredoc("DC_COMPOSE_END", files.compose)}')
+        return lines
+    git = files.git
+    assert git is not None
+    lines += _git_setup_lines(git)
+    lines += [
+        "echo '@@DC_STEP git'",
+        f"{_git_run('genv', 'dir', _GIT_SCRIPT, pull='always', ssh=git.is_ssh)} || "
+        "{ echo '@@DC_FAILED git'; exit 1; }",
+        'rm -rf "$genv" "$sshd"',
+    ]
+    for path in paths:
+        lines.append(f"[ -f \"$dir/{path}\" ] || {{ echo '@@DC_FAILED compose_missing'; exit 1; }}")
+    return lines
+
+
+# After `up`: wait until every container runs (or exited 0, a one-off job),
+# none is unhealthy or restarting, and that holds for three checks in a row.
+_HEALTH_FUNCTIONS = r"""dc_restarts() {
+  ids="$(dc ps -aq 2>/dev/null)"
+  [ -n "$ids" ] || { echo 0; return; }
+  $D inspect --format '{{.RestartCount}}' $ids 2>/dev/null | awk '{s+=$1} END {print s+0}'
+}
+dc_healthy() {
+  sleep 5
+  base="$(dc_restarts)"; good=0; i=0
+  while [ "$i" -lt 36 ]; do
+    out="$(dc ps -a --format '{{.Name}}|{{.State}}|{{.Health}}|{{.ExitCode}}')" || return 1
+    bad="$(printf '%s\n' "$out" | awk -F'|' \
+      '$2=="restarting"||$2=="dead"||$3=="unhealthy"||($2=="exited"&&$4!="0")')"
+    if [ -n "$bad" ]; then
+      echo "Not running or unhealthy:"; printf '%s\n' "$bad"; return 1
+    fi
+    if [ "$(dc_restarts)" != "$base" ]; then
+      echo "A container restarted after the deploy."; return 1
+    fi
+    if printf '%s\n' "$out" | awk -F'|' '$3=="starting"||$2=="created"' | grep -q .; then
+      good=0
+    else
+      good=$((good+1))
+    fi
+    [ "$good" -ge 3 ] && return 0
+    i=$((i+1)); sleep 5
+  done
+  echo "The containers were still starting after 3 minutes."; return 1
+}"""
+
+
+def _up_command(files: StackFiles) -> str:
+    # A Git stack may build images from the repository: rebuild them from
+    # the new commit (cached layers make an unchanged build quick).
+    build = " --build" if files.git is not None else ""
+    return f"dc up -d --remove-orphans{build}"
+
+
+def _restore_lines(previous: StackFiles, *, up: bool) -> list[str]:
+    """Put the previous version's files back (and start it with `up`); runs
+    in a subshell so its own failure is reported, not fatal."""
+    paths = previous.check()
+    inner = _write_files_lines(previous, paths)
+    inner.append(_compose_fn(previous, paths))
+    if up:
+        inner.append(f"{_up_command(previous)} || exit 1")
+    body = "\n".join(inner)
+    return [
+        "echo '@@DC_STEP rollback'",
+        f"( set -u\n{body}\n) && echo '@@DC_ROLLED_BACK' || echo '@@DC_ROLLBACK_FAILED'",
+    ]
+
+
+def build_stack_script(
+    files: StackFiles,
+    *,
+    pull: bool = True,
+    up: bool = True,
+    report_images: bool = False,
+    health: bool = False,
+    previous: StackFiles | None = None,
+) -> str:
+    """The detached job deploying a managed stack: write its files, check
+    them with `docker compose config`, pull (when asked), then `up`.
+
+    - `report_images`: print the image each container runs before the
+      pull (`@@DC_OLD <ref> <id>`) and each image the stack uses after it
+      (`@@DC_NEW <ref> <id>`) — for the vulnerability gate, which stops
+      before `up` (`up=False`) and continues with `build_stack_up_script`.
+    - `health`: after `up`, wait for the containers to run and be healthy;
+      when they don't and `previous` is given, deploy `previous` again
+      (`@@DC_ROLLED_BACK`). The job fails either way.
+    """
+    paths = files.check()
+    lines = ["set -u", "umask 077", f"dir={stack_dir_shell(files.name, files.directory)}"]
+    lines += _write_files_lines(files, paths)
+    lines += [
+        _compose_fn(files, paths),
+        "echo '@@DC_STEP config'",
+        "dc config -q || { echo '@@DC_FAILED config'; exit 1; }",
+    ]
+    if report_images:
+        lines.append(
+            'ids="$(dc ps -aq 2>/dev/null)"; [ -z "$ids" ] || '
+            "$D inspect --format '@@DC_OLD {{.Config.Image}} {{.Image}}' $ids 2>/dev/null || true"
+        )
+    if pull:
+        lines += [
+            "echo '@@DC_STEP pull'",
+            # `--ignore-buildable` skips services built on the machine (Compose
+            # 2.15+); an older Compose gets a plain pull.
+            "dc pull --ignore-buildable || dc pull || { echo '@@DC_FAILED pull'; exit 1; }",
+        ]
+    if report_images:
+        lines.append(
+            "dc config --images 2>/dev/null | while read -r ref; do "
+            "id=\"$($D image inspect --format '{{.Id}}' \"$ref\" 2>/dev/null)\"; "
+            'echo "@@DC_NEW $ref $id"; done'
+        )
+    if not up:
+        lines.append("echo '@@DC_PREPARED'")
+        return "\n".join(lines) + "\n"
+    lines += _up_lines(files, health=health, previous=previous)
+    return "\n".join(lines) + "\n"
+
+
+def _up_lines(files: StackFiles, *, health: bool, previous: StackFiles | None) -> list[str]:
+    on_failure = ["echo '@@DC_FAILED up'"]
+    if health and previous is not None:
+        on_failure = [*_restore_lines(previous, up=True), "echo '@@DC_FAILED up'"]
+    lines = [
+        "echo '@@DC_STEP up'",
+        f"if ! {_up_command(files)}; then",
+        *on_failure,
+        "exit 1; fi",
+    ]
+    if health:
+        unhealthy = ["echo '@@DC_FAILED health'"]
+        if previous is not None:
+            unhealthy = [*_restore_lines(previous, up=True), "echo '@@DC_FAILED health'"]
+        lines += [
+            _HEALTH_FUNCTIONS,
+            "echo '@@DC_STEP health'",
+            "if ! dc_healthy; then",
+            *unhealthy,
+            "exit 1; fi",
+        ]
+    lines.append("echo '@@DC_DONE'")
+    return lines
+
+
+def build_stack_up_script(
+    files: StackFiles, *, health: bool = False, previous: StackFiles | None = None
+) -> str:
+    """`up` of files `build_stack_script(up=False)` already wrote and pulled."""
+    paths = files.check()
+    lines = [
+        "set -u",
+        "umask 077",
+        f"dir={stack_dir_shell(files.name, files.directory)}",
+        'cd "$dir" || { echo \'@@DC_FAILED files\'; exit 1; }',
+        _compose_fn(files, paths),
+    ]
+    lines += _up_lines(files, health=health, previous=previous)
+    return "\n".join(lines) + "\n"
+
+
+def build_stack_restore_script(
+    name: str, directory: str, previous: StackFiles | None, retag: dict[str, str]
+) -> str:
+    """After the vulnerability gate stopped a deploy: point each pulled tag
+    at the image its container runs again (nothing starts the stopped
+    image by accident) and put the previous version's files back."""
+    for ref, image_id in retag.items():
+        if not is_image_ref_valid(ref) or not is_image_id_valid(image_id):
+            raise DockerCommandError("Invalid image.")
+    lines = ["set -u", "umask 077", f"dir={stack_dir_shell(name, directory)}"]
+    lines += [f"$D tag {q(image_id)} {q(ref)} || true" for ref, image_id in retag.items()]
+    if previous is not None:
+        lines += _restore_lines(previous, up=False)
+    lines.append("echo '@@DC_DONE'")
+    return "\n".join(lines) + "\n"
 
 
 def build_deploy_script(
@@ -326,79 +754,72 @@ def build_deploy_script(
     pull: bool = True,
     directory: str = "",
 ) -> str:
-    """The detached job that writes a managed stack's files and runs
-    `docker compose up -d` (after `pull` when asked). Exactly one of
-    `compose` (written in debcontrol) and `git` is given; `directory` is
-    where they go when it isn't the default."""
-    if not is_project_name_valid(name):
-        raise DockerCommandError(f'"{name}" is not a valid stack name.')
-    if (compose is None) == (git is None):
-        raise DockerCommandError("A stack needs a compose file or a Git repository.")
-    _check_size(env, ".env file")
+    """The plain deploy (no gate, no health check): `build_stack_script`."""
+    return build_stack_script(
+        StackFiles(name=name, compose=compose, env=env, git=git, directory=directory), pull=pull
+    )
+
+
+def build_stack_check_script(
+    files: StackFiles, *, diff: str = "", deployed_commit: str = ""
+) -> str:
+    """Check a stack before deploying it, changing nothing: print `diff`
+    (written in debcontrol: what changed against the deployed version) or,
+    for Git, the commits and compose changes since `deployed_commit`; then
+    run `docker compose config -q` on the new files with the new `.env`, in
+    a scratch directory. Prints `@@DC_CHECK_OK`, or `@@DC_FAILED <step>`."""
+    paths = files.check()
+    if deployed_commit and not is_commit_valid(deployed_commit):
+        raise DockerCommandError("Invalid commit.")
     lines = [
         "set -u",
         "umask 077",
-        f"dir={stack_dir_shell(name, directory)}",
+        f"dir={stack_dir_shell(files.name, files.directory)}",
+        'tmp="$(mktemp -d)"',
     ]
-    if directory:
-        lines.append(
-            f'if [ -d "$dir" ] && '
-            f'[ "$(cat "$dir/{STACK_MARKER}" 2>/dev/null)" != {q(name)} ] && '
-            '[ -n "$(ls -A "$dir" 2>/dev/null)" ]; then '
-            'echo "$dir already holds other files; a stack goes into a new or empty directory."; '
-            "echo '@@DC_FAILED directory_not_empty'; exit 1; fi"
+    if files.compose is not None:
+        lines += [
+            "trap 'rm -rf \"$tmp\"' EXIT",
+            f'cat > "$tmp/.env" {_heredoc("DC_ENV_END", files.env)}',
+            f'cat > "$tmp/compose.yaml" {_heredoc("DC_COMPOSE_END", files.compose)}',
+            "echo '@@DC_STEP diff'",
+            f"cat {_heredoc('DC_DIFF_END', diff or 'No changes against the deployed version.')}",
+            # Relative paths in the file mean the stack's own directory.
+            'pd="$dir"; [ -d "$pd" ] || pd="$tmp"',
+        ]
+        check = (
+            f'$D compose -p {q(files.name)} --project-directory "$pd" -f "$tmp/compose.yaml" '
+            '--env-file "$tmp/.env" config -q'
         )
-    lines += [
-        "echo '@@DC_STEP files'",
-        "mkdir -p \"$dir\" || { echo '@@DC_FAILED files'; exit 1; }",
-        'cd "$dir" || exit 1',
-        f'printf "%s\\n" {q(name)} > "$dir/{STACK_MARKER}" || '
-        "{ echo '@@DC_FAILED files'; exit 1; }",
-        f'cat > "$dir/.env" {_heredoc("DC_ENV_END", env)}',
-    ]
-    if compose is not None:
-        _check_size(compose, "compose file")
-        lines += [
-            f'cat > "$dir/compose.yaml" {_heredoc("DC_COMPOSE_END", compose)}',
-            'compose_file="$dir/compose.yaml"',
-        ]
     else:
+        git = files.git
         assert git is not None
-        if not is_git_url_valid(git.url) or not is_branch_valid(git.branch):
-            raise DockerCommandError("Invalid Git repository or branch.")
-        path = normalize_compose_path(git.compose_path)
-        if path is None:
-            raise DockerCommandError("Invalid compose file path.")
-        env_lines = "\n".join(_git_env_file_lines(git)) + "\n"
+        repo_paths = [path.removeprefix("repo/") for path in paths]
+        # The compose changes are shown for paths git can take unquoted.
+        plain = [path for path in repo_paths if " " not in path]
+        setup = _git_setup_lines(git, deployed=deployed_commit, paths=plain)
+        # One trap for all the temporary files.
+        setup[0] = (
+            'genv="$(mktemp)"; sshd="$(mktemp -d)"; '
+            "trap 'rm -rf \"$genv\" \"$sshd\" \"$tmp\"' EXIT"
+        )
+        lines += setup
         lines += [
-            'genv="$(mktemp)"; trap \'rm -f "$genv"\' EXIT',
-            f'cat > "$genv" {_heredoc("DC_GIT_ENV_END", env_lines)}',
+            f'cat > "$tmp/.env" {_heredoc("DC_ENV_END", files.env)}',
             "echo '@@DC_STEP git'",
-            f"{_git_run('genv', 'dir', _GIT_SCRIPT, pull='always')} || "
+            f"{_git_run('genv', 'tmp', _GIT_CHECK_SCRIPT, pull='always', ssh=git.is_ssh)} || "
             "{ echo '@@DC_FAILED git'; exit 1; }",
-            'rm -f "$genv"',
-            f"compose_file=\"$dir/repo/{path}\"",
-            "[ -f \"$compose_file\" ] || { echo '@@DC_FAILED compose_missing'; exit 1; }",
         ]
-    compose_cmd = (
-        f'$D compose -p {q(name)} -f "$compose_file" --env-file "$dir/.env"'
-    )
+        for path in repo_paths:
+            lines.append(
+                f"[ -f \"$tmp/repo/{path}\" ] || {{ echo '@@DC_FAILED compose_missing'; exit 1; }}"
+            )
+        file_args = " ".join(f'-f "$tmp/repo/{path}"' for path in repo_paths)
+        check = f'$D compose -p {q(files.name)} {file_args} --env-file "$tmp/.env" config -q'
     lines += [
         "echo '@@DC_STEP config'",
-        f"{compose_cmd} config -q || {{ echo '@@DC_FAILED config'; exit 1; }}",
-    ]
-    if pull:
-        lines += [
-            "echo '@@DC_STEP pull'",
-            # `--ignore-buildable` skips services built on the machine (Compose
-            # 2.15+); an older Compose gets a plain pull.
-            f"{compose_cmd} pull --ignore-buildable || {compose_cmd} pull || "
-            "{ echo '@@DC_FAILED pull'; exit 1; }",
-        ]
-    lines += [
-        "echo '@@DC_STEP up'",
-        f"{compose_cmd} up -d --remove-orphans || {{ echo '@@DC_FAILED up'; exit 1; }}",
-        "echo '@@DC_DONE'",
+        f"{check} || {{ echo '@@DC_FAILED config'; exit 1; }}",
+        "echo '@@DC_CHECK_OK'",
     ]
     return "\n".join(lines) + "\n"
 
@@ -428,23 +849,49 @@ def build_remove_script(name: str, *, volumes: bool, directory: str = "") -> str
 
 def build_remote_head_command(source: GitSource) -> str:
     """The newest commit of the branch, without cloning (`git ls-remote`) —
-    the auto-sync check. Prints `@@DC_COMMIT <sha>`."""
-    if not is_git_url_valid(source.url) or not is_branch_valid(source.branch):
-        raise DockerCommandError("Invalid Git repository or branch.")
-    env_lines = "\n".join(_git_env_file_lines(source)) + "\n"
+    the auto-sync check. Prints `@@DC_COMMIT <sha>` (and, on a first SSH
+    connection, `@@DC_HOSTKEY` lines)."""
+    _check_git(source)
     script = (
-        "set -e; "
-        'if [ -n "${DC_GIT_TOKEN:-}" ]; then '
-        "git config --global credential.helper "
-        "'!f() { echo \"username=$DC_GIT_USER\"; echo \"password=$DC_GIT_TOKEN\"; }; f'; fi; "
-        'sha="$(git ls-remote -- "$DC_GIT_URL" "refs/heads/$DC_GIT_BRANCH" | cut -f1)"; '
-        'echo "@@DC_COMMIT $sha"'
+        _GIT_AUTH
+        + 'sha="$(git ls-remote -- "$DC_GIT_URL" "refs/heads/$DC_GIT_BRANCH" | cut -f1)"; '
+        + _GIT_HOSTKEYS
+        + 'echo "@@DC_COMMIT $sha"'
     )
-    return (
-        'genv="$(mktemp)"; wd="$(mktemp -d)"; trap \'rm -rf "$genv" "$wd"\' EXIT; '
-        f'cat > "$genv" {_heredoc("DC_GIT_ENV_END", env_lines)}\n'
-        + _git_run("genv", "wd", script, pull="missing")
+    setup = _git_setup_lines(source)
+    setup[0] = (
+        'genv="$(mktemp)"; sshd="$(mktemp -d)"; wd="$(mktemp -d)"; '
+        "trap 'rm -rf \"$genv\" \"$sshd\" \"$wd\"' EXIT"
     )
+    run = _git_run("genv", "wd", script, pull="missing", ssh=source.is_ssh)
+    return "\n".join(setup) + "\n" + run
+
+
+def parse_host_keys(raw: str) -> str:
+    """The known_hosts lines a first SSH connection recorded, checked."""
+    lines = [
+        line[len("@@DC_HOSTKEY ") :].strip()
+        for line in raw.splitlines()
+        if line.startswith("@@DC_HOSTKEY ")
+    ]
+    return normalize_known_hosts("\n".join(lines)) or ""
+
+
+def parse_stack_images(raw: str) -> tuple[dict[str, str], dict[str, str]]:
+    """(image each container ran before the pull, image each service uses
+    after it), both `{ref: image id}`; refs or ids that don't look right
+    are left out."""
+    old: dict[str, str] = {}
+    new: dict[str, str] = {}
+    for line in raw.splitlines():
+        for prefix, target in (("@@DC_OLD ", old), ("@@DC_NEW ", new)):
+            if line.startswith(prefix):
+                parts = line[len(prefix) :].split()
+                ref = parts[0] if parts else ""
+                image_id = parts[1] if len(parts) > 1 else ""
+                if is_image_ref_valid(ref):
+                    target[ref] = image_id if is_image_id_valid(image_id) else ""
+    return old, new
 
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?\Z")

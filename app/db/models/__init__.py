@@ -14,6 +14,7 @@ from app.db.models.docker import (
     DockerJobKind,
     DockerJobStatus,
     DockerStack,
+    DockerStackVersion,
     StackSource,
     VulnerabilityGate,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "DockerJobKind",
     "DockerJobStatus",
     "DockerStack",
+    "DockerStackVersion",
     "EndpointCheck",
     "EndpointCheckResult",
     "FleetSnapshot",

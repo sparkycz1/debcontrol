@@ -26,10 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.docker import (
     DockerContainerSetting,
     DockerJob,
+    DockerJobKind,
     DockerJobStatus,
     VulnerabilityGate,
 )
 from app.db.models.machine import Machine
+from app.db.models.role import Permission
+from app.db.models.user import User
 from app.services import self_host
 from app.ssh.docker_cli import is_image_id_valid
 
@@ -173,6 +176,14 @@ async def list_jobs(
         query = query.where(DockerJob.ref_id == ref_id)
     result = await db.execute(query.order_by(DockerJob.created_at.desc()).limit(limit))
     return list(result.scalars().all())
+
+
+def output_hidden(job: DockerJob, user: User) -> bool:
+    """A stack check's output shows the compose file's changes (and a Git
+    repository's): only for whoever may read the compose file itself."""
+    return job.kind == DockerJobKind.STACK_CHECK and not user.has_permission(
+        Permission.ACTION_TERMINAL
+    )
 
 
 async def get_job(db: AsyncSession, machine_id: uuid.UUID, job_id: uuid.UUID) -> DockerJob | None:

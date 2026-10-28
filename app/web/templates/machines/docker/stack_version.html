@@ -1,0 +1,36 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ stack.name }}{% endblock %}
+
+{% block docker_content %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.stack.version_heading", name=stack.name, when=(version.created_at | local_time)) }}</h2>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/stacks/{{ stack.id }}">{{ t(request, "docker.stack.back_to_stack") }}</a>
+  </div>
+  <section class="panel">
+    <dl class="detail-list">
+      <dt>{{ t(request, "docker.stack.version_by") }}</dt><dd>{{ version.deployed_by or '—' }}</dd>
+      <dt>{{ t(request, "docker.stacks.source") }}</dt>
+      <dd>{% if version.source == 'git' %}Git · <code>{{ version.git_url }}</code> ({{ version.git_branch }}, {{ version.git_compose_path }}{% for o in version.git_compose_overrides or [] %} + {{ o }}{% endfor %}){% else %}{{ t(request, "docker.stacks.source_editor") }}{% endif %}</dd>
+      {% if version.commit %}<dt>{{ t(request, "docker.job.commit") }}</dt><dd><code>{{ version.commit }}</code></dd>{% endif %}
+    </dl>
+    {% if can_updates and machine.host_key_fingerprint %}
+      <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/versions/{{ version.id }}/rollback" class="inline-form"
+            data-confirm="{{ t(request, 'docker.stack.rollback_confirm', name=stack.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button">{{ t(request, "docker.stack.rollback") }}</button>
+      </form>
+      {% if version.source == 'git' %}<p class="hint">{{ t(request, "docker.stack.rollback_git_hint") }}</p>{% endif %}
+    {% endif %}
+  </section>
+  {% if version.source == 'editor' %}
+    <section class="panel">
+      <h3>{{ t(request, "docker.stack.version_diff") }}</h3>
+      {% if diff %}<pre class="run-output" tabindex="0">{{ diff }}</pre>{% else %}<p class="hint">{{ t(request, "docker.stack.version_same") }}</p>{% endif %}
+    </section>
+    <section class="panel">
+      <h3>compose.yaml</h3>
+      <pre class="run-output" tabindex="0">{{ version.compose_content }}</pre>
+    </section>
+  {% endif %}
+{% endblock %}

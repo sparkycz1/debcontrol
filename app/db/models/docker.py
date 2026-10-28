@@ -17,6 +17,8 @@ about it. See wiki/Docker for the whole feature.
 - `DockerStack` — a Compose stack debcontrol deploys itself, written in
   debcontrol or taken from a Git repository. Stacks debcontrol finds on a
   machine without having deployed them are read live, not stored.
+- `DockerStackVersion` — what a stack looked like each time it was
+  deployed (when the stack keeps a history), to roll back to.
 - `DockerBackup` — a restic backup of Docker volumes and host paths,
   run in restic's own container on the machine.
 
@@ -59,6 +61,8 @@ class DockerJobKind(enum.StrEnum):
     CONTAINER_ROLLBACK = "container_rollback"
     STACK_ACTION = "stack_action"
     STACK_DEPLOY = "stack_deploy"
+    # Check a stack before deploying it: the differences and `docker compose config`.
+    STACK_CHECK = "stack_check"
     IMAGE_SCAN = "image_scan"
     PRUNE = "prune"
     BACKUP_RUN = "backup_run"
@@ -180,7 +184,8 @@ class DockerContainerSetting(Base):
 class StackSource(enum.StrEnum):
     # Written in debcontrol (compose file and .env).
     EDITOR = "editor"
-    # Taken from a Git repository (HTTPS), optionally with a token.
+    # Taken from a Git repository: HTTPS (optionally with a token) or SSH
+    # with a deploy key.
     GIT = "git"
 
 
@@ -211,6 +216,17 @@ class DockerStack(Base):
     # The compose file's path inside the repository.
     git_compose_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     git_token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # More compose files from the repository, applied after the first one in
+    # this order (overrides), e.g. ["compose.prod.yaml"]. None = just one.
+    git_compose_overrides: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # SSH deploy key (an OpenSSH private key, encrypted) for an SSH
+    # repository address, and its public half to show and add to the
+    # repository host.
+    git_ssh_key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    git_ssh_public_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # The repository host's SSH key(s), known_hosts lines: pasted by the
+    # admin, or recorded on the first connection and required from then on.
+    git_known_hosts: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Check the branch for new commits every few minutes and deploy them.
     auto_sync: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # SHA-256 of the webhook token (`/hooks/docker/<token>`); None = no webhook.
@@ -219,11 +235,31 @@ class DockerStack(Base):
     )
     webhook_last_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # Opt-in safety for deploys (all off for an existing stack):
+    # keep each deployed version to roll back to (`DockerStackVersion`) …
+    keep_history: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # … put the previous version back when the containers don't come up
+    # (exit, restart loop, unhealthy) after a deploy …
+    auto_rollback: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # … and scan new images before `up`, stopping the deploy like the
+    # container update gate (`VulnerabilityGate`).
+    vulnerability_gate: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="off", server_default="off"
+    )
+
     # What is on the machine now.
     deployed_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # SHA-256 of the compose file and .env deployed, to tell "changed since".
     deployed_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     deployed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Written in debcontrol: the compose file and `.env` (encrypted) deployed
+    # last, to show what a deploy would change. None before 0.124.0.
+    deployed_compose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deployed_env_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     last_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -233,6 +269,31 @@ class DockerStack(Base):
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class DockerStackVersion(Base):
+    """One deployed version of a stack that keeps a history: everything
+    needed to deploy exactly it again (secrets encrypted like the stack's
+    own). The newest `docker_stacks.HISTORY_LIMIT` are kept per stack."""
+
+    __tablename__ = "docker_stack_versions"
+    __table_args__ = (Index("ix_docker_stack_versions_stack_created", "stack_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    stack_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("docker_stacks.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    compose_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    env_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    git_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    git_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    git_compose_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    git_compose_overrides: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    deployed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
 
 class DockerBackup(Base):

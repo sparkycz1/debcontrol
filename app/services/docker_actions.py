@@ -292,16 +292,42 @@ async def prune(
 
 
 async def deploy_stack(
-    db: AsyncSession, machine: Machine, stack: DockerStack, *, started_by: str | None, pull: bool
+    db: AsyncSession,
+    machine: Machine,
+    stack: DockerStack,
+    *,
+    started_by: str | None,
+    pull: bool,
+    commit: str = "",
 ) -> DockerJob | None:
+    """Queue a deploy of `stack` as stored (a Git stack at `commit` when
+    given: a rollback)."""
     await docker_jobs.check_project(db, machine, stack.name)
+    params: dict[str, Any] = {"pull": pull}
+    if commit:
+        params["commit"] = commit
     return await queue_job(
         db,
         machine,
         DockerJobKind.STACK_DEPLOY,
         stack.name,
         started_by=started_by,
-        params={"pull": pull},
+        params=params,
+        ref_id=stack.id,
+    )
+
+
+async def check_stack(
+    db: AsyncSession, machine: Machine, stack: DockerStack, *, started_by: str | None
+) -> DockerJob | None:
+    """Queue the check before a deploy (`docker_jobs.STACK_CHECK`)."""
+    return await queue_job(
+        db,
+        machine,
+        DockerJobKind.STACK_CHECK,
+        stack.name,
+        started_by=started_by,
+        params={},
         ref_id=stack.id,
     )
 

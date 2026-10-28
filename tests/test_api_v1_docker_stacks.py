@@ -142,7 +142,7 @@ async def test_stack_create_validation(client, db_session_factory):
     assert "docker.stack.error.name" in bad_name.json()["detail"]
 
     bad_git = await create_stack(
-        client, machine_id, headers, source="git", git_url="ssh://git@example.com/x.git"
+        client, machine_id, headers, source="git", git_url="git://example.com/x.git"
     )
     assert bad_git.status_code == 422
     assert "docker.stack.error.git_url" in bad_git.json()["detail"]
