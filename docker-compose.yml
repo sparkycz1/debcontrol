@@ -29,8 +29,28 @@ x-app-image: &app-image
   security_opt:
     - no-new-privileges:true
 
+# Which optional services run is chosen with Compose profiles, set once in
+# .env as COMPOSE_PROFILES (comma-separated) — see wiki/Installation:
+#
+#   postgres      the bundled PostgreSQL (`db`)
+#   timescaledb   the bundled TimescaleDB instead (PostgreSQL + the
+#                 TimescaleDB extension, reachable under the same host name
+#                 `db`) — never together with `postgres`
+#   caddy         the bundled Caddy reverse proxy (TLS, HTTP/3)
+#
+# Neither database profile = your own PostgreSQL, configured in .env
+# (POSTGRES_HOST/POSTGRES_PORT or DATABASE_URL). The app, its worker, beat
+# and Redis always run.
+#
+# Switching between `postgres` and `timescaledb` moves the data by itself:
+# the `import-from-*` service of the newly chosen profile copies everything
+# from the other database's volume on the next start (scripts/db_import.sh)
+# and keeps that volume untouched as a backup. scripts/switch_db.sh does the
+# whole switch in one command.
+
 services:
   db:
+    profiles: [postgres]
     # Pinned to an exact patch version on purpose — the floating "18" tag
     # would silently pull newer minor releases on a rebuild. Bump this
     # deliberately (and re-test) rather than letting it happen implicitly.
@@ -70,6 +90,8 @@ services:
       - autovacuum_vacuum_scale_factor=${POSTGRES_AUTOVACUUM_VACUUM_SCALE_FACTOR:-0.05}
       - -c
       - autovacuum_analyze_scale_factor=${POSTGRES_AUTOVACUUM_ANALYZE_SCALE_FACTOR:-0.02}
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
     # Mounted at the parent directory, not .../data — as of the postgres:18
     # image, PGDATA defaults to a major-version-specific subdirectory it
     # manages itself (/var/lib/postgresql/18/docker), mirroring
@@ -89,6 +111,105 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # PostgreSQL with the TimescaleDB extension (same PostgreSQL major and
+  # patch version as `db` above), an alternative to it for big fleets.
+  # Answers to the host name `db` too, so nothing else needs configuring.
+  # Same tuning variables as `db`. Switching between the two moves the data
+  # (import-from-* below, scripts/switch_db.sh).
+  timescaledb:
+    profiles: [timescaledb]
+    image: timescale/timescaledb:2.31.0-pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ:-UTC}
+      # No usage reports to Timescale, and no automatic tuning at first
+      # start (the settings below are the tuning).
+      TIMESCALEDB_TELEMETRY: "off"
+      NO_TS_TUNE: "true"
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb
+      - -c
+      - timescaledb.telemetry_level=off
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-768MB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-8MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-128MB}
+      - -c
+      - autovacuum_vacuum_scale_factor=${POSTGRES_AUTOVACUUM_VACUUM_SCALE_FACTOR:-0.05}
+      - -c
+      - autovacuum_analyze_scale_factor=${POSTGRES_AUTOVACUUM_ANALYZE_SCALE_FACTOR:-0.02}
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+      # Background workers run compression and retention; 4 cover ~100
+      # machines. max_worker_processes must exceed them plus PostgreSQL's
+      # own parallel workers (8) by a few.
+      - -c
+      - timescaledb.max_background_workers=${TIMESCALEDB_MAX_BACKGROUND_WORKERS:-4}
+      - -c
+      - max_worker_processes=${TIMESCALEDB_MAX_WORKER_PROCESSES:-16}
+    volumes:
+      - ts_data:/var/lib/postgresql
+    networks:
+      default:
+        aliases: [db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Move the data over when the database profile changed: each runs once
+  # per `up` (after `migrate` created the empty schema), finds nothing to do
+  # in a second or two in the normal case, and otherwise starts the other
+  # database from its volume inside this container, copies every table into
+  # the new one and marks the old volume as moved (it is kept as a backup).
+  # See scripts/db_import.sh for every safety check.
+  import-from-postgres:
+    profiles: [timescaledb]
+    image: postgres:18.6
+    restart: "no"
+    entrypoint: ["bash", "/db_import.sh"]
+    environment: &db-import-env
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TARGET_HOST: db
+      DEBCONTROL_DB_IMPORT_FORCE: ${DEBCONTROL_DB_IMPORT_FORCE:-}
+    volumes:
+      - ./scripts/db_import.sh:/db_import.sh:ro
+      - pg_data:/var/lib/postgresql
+      - ts_data:/target-volume
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  import-from-timescaledb:
+    profiles: [postgres]
+    image: timescale/timescaledb:2.31.0-pg18
+    restart: "no"
+    entrypoint: ["bash", "/db_import.sh"]
+    environment: *db-import-env
+    volumes:
+      - ./scripts/db_import.sh:/db_import.sh:ro
+      - ts_data:/var/lib/postgresql
+      - pg_data:/target-volume
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   redis:
     # Same reasoning as the Postgres image above — pinned to an exact patch.
@@ -114,10 +235,17 @@ services:
   migrate:
     <<: *app-image
     restart: "no"
-    command: ["alembic", "upgrade", "head"]
+    # app.db.precheck first: a clear message instead of a connection error
+    # when no database profile is on and no own database is configured, or
+    # when both bundled databases answer to `db` at once.
+    command: ["sh", "-c", "python -m app.db.precheck && alembic upgrade head"]
     depends_on:
       db:
         condition: service_healthy
+        required: false
+      timescaledb:
+        condition: service_healthy
+        required: false
 
   web:
     <<: *app-image
@@ -126,8 +254,8 @@ services:
       # container always listens on 8080 internally. Published on all
       # interfaces by default (APP_BIND_ADDRESS, default 0.0.0.0), and
       # plain HTTP — this app is meant to sit behind a TLS-terminating
-      # reverse proxy (the bundled `caddy` service from
-      # docker-compose.caddy.yml, or your own; see the wiki), but nothing
+      # reverse proxy (the bundled `caddy` service, profile `caddy`, or
+      # your own; see the wiki), but nothing
       # here restricts direct access to loopback. If you don't want this
       # port reachable from outside this host, set
       # APP_BIND_ADDRESS=127.0.0.1 in .env (no compose edit needed) or
@@ -146,12 +274,16 @@ services:
       - ./self-update/request:/app/self-update/request
       - ./self-update/status:/app/self-update/status:ro
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      import-from-postgres:
+        condition: service_completed_successfully
+        required: false
+      import-from-timescaledb:
+        condition: service_completed_successfully
+        required: false
 
   # Executes background tasks (SSH connects, facts/package refreshes, apt
   # runs, power commands, scheduled-task fan-out). Safe to scale to several
@@ -179,12 +311,16 @@ services:
     volumes:
       - ssh_data:/app/data
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      import-from-postgres:
+        condition: service_completed_successfully
+        required: false
+      import-from-timescaledb:
+        condition: service_completed_successfully
+        required: false
     # Overrides the image's own Dockerfile HEALTHCHECK (curls web's own
     # :8080/healthz, a port this service never listens on — every worker
     # container would otherwise show "unhealthy" permanently regardless of
@@ -217,12 +353,16 @@ services:
     volumes:
       - ssh_data:/app/data
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      import-from-postgres:
+        condition: service_completed_successfully
+        required: false
+      import-from-timescaledb:
+        condition: service_completed_successfully
+        required: false
     # See the worker service's own comment above — same reasoning, just
     # matching "beat" in the process's command line instead of "worker".
     healthcheck:
@@ -232,7 +372,37 @@ services:
       start_period: 15s
       retries: 3
 
+  # Optional Caddy reverse proxy (profile `caddy`): TLS 1.3 only, HTTP/3,
+  # automatic HTTPS via Let's Encrypt and basic hardening (see ./Caddyfile).
+  # Needs DOMAIN and ACME_EMAIL in .env, DNS for DOMAIN pointing at this
+  # host, and ports 80/tcp, 443/tcp and 443/udp reachable. Skip it if you
+  # already run nginx, Traefik or your own Caddy — see the reverse-proxy
+  # guides in the wiki.
+  caddy:
+    profiles: [caddy]
+    # Pinned to an exact patch version, same reasoning as Postgres/Redis.
+    image: caddy:2.11.7
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-UTC}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
 volumes:
   pg_data:
+  ts_data:
   redis_data:
   ssh_data:
+  caddy_data:
+  caddy_config:

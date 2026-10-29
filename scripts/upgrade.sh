@@ -75,6 +75,16 @@ for arg in "$@"; do
   esac
 done
 
+# Step 4 of the header above, since 0.128.0 (the header can't change: see
+# tests/test_upgrade_script.py): which bundled services run is
+# COMPOSE_PROFILES in .env. An
+# .env from before gets it here, from what this stack runs right now
+# (postgres, plus caddy when the bundled Caddy is running) — before the
+# .env sync below, which would otherwise add the plain example value.
+# shellcheck source=scripts/compose_profiles.sh
+. scripts/compose_profiles.sh
+ensure_compose_profiles
+
 # A newer release can add variables to .env.example that this deployment's
 # existing .env predates (a new background-check interval, a new feature's
 # own setting, ...) — scripts/env_sync.py only ever appends what's missing,
@@ -88,14 +98,9 @@ else
   echo "==> Skipping .env sync — no python3 on PATH. Diff .env.example by hand if unsure." >&2
 fi
 
+# Profiles (database, Caddy) come from COMPOSE_PROFILES in .env.
 compose_files=(-f docker-compose.yml)
-if docker ps \
-    --filter "label=com.docker.compose.project=debcontrol" \
-    --filter "label=com.docker.compose.service=caddy" \
-    --format '{{.Names}}' | grep -q .; then
-  echo "==> Bundled Caddy reverse proxy detected — including docker-compose.caddy.yml."
-  compose_files+=(-f docker-compose.caddy.yml)
-fi
+echo "==> Profiles: ${COMPOSE_PROFILES:-$(current_profiles)}"
 
 # What this stack runs on *before* the upgrade. Afterwards everything
 # debcontrol no longer uses is removed — see scripts/upgrade_cleanup.sh
@@ -123,6 +128,9 @@ docker compose "${compose_files[@]}" pull --ignore-buildable --quiet 2>/dev/null
 echo "==> Building images..."
 export GIT_COMMIT="$(git rev-parse HEAD)"
 docker compose "${compose_files[@]}" build
+
+# A database whose profile was switched off keeps running otherwise.
+stop_unused_database
 
 echo "==> Applying migrations and restarting services..."
 docker compose "${compose_files[@]}" up -d

@@ -13,8 +13,10 @@
 #   ./scripts/backup.sh
 #
 # What it does, in order:
-#   1. `docker compose exec db pg_dump` — a live, consistent snapshot via
-#      Postgres's own MVCC; the stack does NOT need to be stopped for this.
+#   1. `pg_dump` in the bundled database (`db`, or `timescaledb` with that
+#      profile) — a live, consistent snapshot via Postgres's own MVCC; the
+#      stack does NOT need to be stopped for this. With your own database
+#      (no database profile) this step is skipped.
 #   2. Archives the `ssh_data` Docker volume (the app's SSH keypair, see
 #      SSH_DATA_DIR in .env.example) with a short-lived helper container —
 #      also doesn't need the stack stopped, the key file is never rewritten
@@ -55,14 +57,25 @@ dest="${backup_dir}/${timestamp}"
 
 mkdir -p "$dest"
 
-if ! docker compose ps db --format '{{.State}}' 2>/dev/null | grep -q .; then
-  echo "error: the 'db' service isn't running (docker compose ps). Start the stack first." >&2
-  exit 1
+# The bundled database is `db` (profile postgres) or `timescaledb`; with
+# neither, the database is your own and is backed up with its own tools.
+# shellcheck source=scripts/compose_profiles.sh
+. scripts/compose_profiles.sh
+db_service="$(database_service)"
+if [ -z "$db_service" ]; then
+  echo "==> No bundled database (COMPOSE_PROFILES='$(current_profiles)'): back up your own"
+  echo "    database with its own tools; this saves the SSH key and .env only."
+else
+  if ! docker compose ps "$db_service" --format '{{.State}}' 2>/dev/null | grep -q .; then
+    echo "error: the '$db_service' service isn't running (docker compose ps). Start the stack first." >&2
+    exit 1
+  fi
+  echo "==> Dumping database (${POSTGRES_DB:-debcontrol}, $db_service)..."
+  docker compose exec -T "$db_service" pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" \
+    | gzip > "${dest}/db.sql.gz"
+  # restore.sh needs to know: a TimescaleDB dump only restores into TimescaleDB.
+  echo "$db_service" > "${dest}/db-kind"
 fi
-
-echo "==> Dumping database (${POSTGRES_DB:-debcontrol})..."
-docker compose exec -T db pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" \
-  | gzip > "${dest}/db.sql.gz"
 
 echo "==> Archiving the ssh_data volume (app's SSH identity key)..."
 docker run --rm \

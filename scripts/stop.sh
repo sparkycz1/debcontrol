@@ -6,10 +6,8 @@
 #
 #   ./scripts/stop.sh
 #
-# Auto-detects whether the bundled Caddy reverse proxy is currently
-# running and stops it too, the same detection `upgrade.sh` already uses
-# (a running container labeled for the "caddy" compose service) — so this
-# never leaves half a stack up because the extra `-f` was forgotten.
+# Stops every service of the project, whichever profiles are on, so
+# nothing is left half up.
 
 set -euo pipefail
 
@@ -20,14 +18,9 @@ if [ ! -f docker-compose.yml ]; then
   exit 1
 fi
 
-compose_files=(-f docker-compose.yml)
-if docker ps \
-    --filter "label=com.docker.compose.project=debcontrol" \
-    --filter "label=com.docker.compose.service=caddy" \
-    --format '{{.Names}}' | grep -q .; then
-  echo "==> Bundled Caddy reverse proxy detected — including docker-compose.caddy.yml."
-  compose_files+=(-f docker-compose.caddy.yml)
-fi
+# Every service of the project, whatever its profile: also a database
+# whose profile was switched off but still runs.
+compose_files=(-f docker-compose.yml --profile '*')
 
 echo "==> Stopping..."
 docker compose "${compose_files[@]}" stop

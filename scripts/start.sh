@@ -6,11 +6,8 @@
 #
 #   ./scripts/start.sh
 #
-# Auto-detects whether the bundled Caddy reverse proxy is part of this
-# stack and starts it too. Unlike `stop.sh`/`upgrade.sh`'s detection (a
-# *running* container to catch), everything here is stopped by
-# definition, so this looks at every container for the project instead of
-# just running ones (`docker ps -a`, not `docker ps`).
+# Starts what COMPOSE_PROFILES in .env names (the bundled database and,
+# if chosen, Caddy) together with the app.
 
 set -euo pipefail
 
@@ -21,14 +18,12 @@ if [ ! -f docker-compose.yml ]; then
   exit 1
 fi
 
+# Which services belong to this stack (database, Caddy) is
+# COMPOSE_PROFILES in .env; an .env from before 0.128.0 gets it here.
+# shellcheck source=scripts/compose_profiles.sh
+. scripts/compose_profiles.sh
+ensure_compose_profiles
 compose_files=(-f docker-compose.yml)
-if docker ps -a \
-    --filter "label=com.docker.compose.project=debcontrol" \
-    --filter "label=com.docker.compose.service=caddy" \
-    --format '{{.Names}}' | grep -q .; then
-  echo "==> Bundled Caddy reverse proxy detected — including docker-compose.caddy.yml."
-  compose_files+=(-f docker-compose.caddy.yml)
-fi
 
 echo "==> Starting..."
 docker compose "${compose_files[@]}" start
