@@ -317,11 +317,27 @@ def _prompt_database(lines: list[str]) -> tuple[list[str], str]:
     lines = _set_env_line(lines, "POSTGRES_PORT", _prompt("Database port", default="5432"))
     lines = _set_env_line(lines, "POSTGRES_DB", _prompt("Database name", default="debcontrol"))
     lines = _set_env_line(lines, "POSTGRES_USER", _prompt("Database user", default="debcontrol"))
-    password = ""
-    while not password:
-        password = getpass.getpass("Database password: ")
-    lines = _set_env_line(lines, "POSTGRES_PASSWORD", password)
+    # The password is the one generated above (POSTGRES_PASSWORD in .env),
+    # never typed in here: it only ever lives in .env.
+    print("  The user's password is generated (POSTGRES_PASSWORD in .env); you'll")
+    print("  create the user with it, or put your existing user's password in .env,")
+    print("  once .env is written.")
     return lines, "own"
+
+
+def _wait_for_own_database(lines: list[str]) -> None:
+    """With an own database: the user and database must exist before the
+    stack starts. Shows how to create them; the password stays in .env."""
+    values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+    user = values.get("POSTGRES_USER", "debcontrol")
+    database = values.get("POSTGRES_DB", "debcontrol")
+    print()
+    print("Your own database: create the user and an empty database on it, with the")
+    print(f"password from {ENV_PATH} (grep POSTGRES_PASSWORD .env), for example:")
+    print(f"  CREATE ROLE {user} LOGIN PASSWORD '<POSTGRES_PASSWORD from .env>';")
+    print(f"  CREATE DATABASE {database} OWNER {user};")
+    print("Or, for a user that already exists, put its password into .env instead.")
+    input("Press Enter when the database is ready... ")
 
 
 def _wait_until_healthy(port: str) -> bool:
@@ -434,6 +450,8 @@ def main() -> None:
     )
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n==> Wrote {ENV_PATH}")
+    if database == "own":
+        _wait_for_own_database(lines)
 
     compose_files = ["-f", "docker-compose.yml"]
 
