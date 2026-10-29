@@ -27,7 +27,7 @@ class FleetSnapshot(Base):
     # One row per calendar day (UTC) — the daily job is a no-op if today's
     # row already exists (e.g. a worker restart re-firing the cron tick),
     # enforced here too via a unique constraint, not just in the job.
-    snapshot_date: Mapped[date] = mapped_column(Date, unique=True, nullable=False, index=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
 
     total_machines: Mapped[int] = mapped_column(Integer, nullable=False)
     online_machines: Mapped[int] = mapped_column(Integer, nullable=False)

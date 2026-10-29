@@ -848,6 +848,7 @@
     "settings.checks.keep_monitoring_days": "Keep monitoring history for (days)",
     "settings.checks.keep_monitoring_hint": "Empty = forever. Default 90 days.",
     "settings.checks.monitoring_downsampling": "Downsampling",
+    "settings.checks.timescaledb_note": "Database: TimescaleDB {version}. The history is kept in one-day chunks: monitoring samples are compressed after {monitoring} days (a day after downsampling, when that is on), availability and endpoint check results after {other} days, and whole days past every machine's retention are dropped at once.",
     "settings.checks.monitoring_downsampling_hint": "Thins out old samples instead of deleting them — charts already bucket old data for display, so this saves storage without losing trend shape.",
     "settings.checks.downsample_after_days": "Start thinning after (days)",
     "settings.checks.downsample_disabled": "disabled",

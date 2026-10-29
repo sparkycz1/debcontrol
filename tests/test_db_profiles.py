@@ -150,7 +150,9 @@ def test_importers(
 
 
 def test_migrate_runs_precheck(services: dict[str, Any]) -> None:
-    assert "python -m app.db.precheck" in " ".join(services["migrate"]["command"])
+    command = " ".join(services["migrate"]["command"])
+    assert "python -m app.db.precheck" in command
+    assert command.index("alembic upgrade head") < command.index("python -m app.db.timescale")
 
 
 def test_caddy_file_is_a_compatibility_stub() -> None:

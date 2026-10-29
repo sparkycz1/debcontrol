@@ -29,11 +29,13 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as day_start
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import DateTime, Integer, Uuid, case, column, func, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import timescale
 from app.db.models.app_settings import AppSettings
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
@@ -198,6 +200,37 @@ def _rounded(value: Any) -> float | None:
     return None if value is None else round(float(value), 1)
 
 
+async def _aggregate_counts(
+    db: AsyncSession, view: str, key: str, ids: list[uuid.UUID], today: date
+) -> tuple[dict[uuid.UUID, tuple[int, int]], dict[uuid.UUID, dict[date, tuple[int, int]]]]:
+    """TimescaleDB: (up, total) per item over the window's whole days and
+    per day, from a daily continuous aggregate (app.db.timescale) instead
+    of counting every sample."""
+    first_day = datetime.combine(today - timedelta(days=WINDOW_DAYS - 1), day_start(), UTC)
+    aggregate = table(
+        view,
+        column(key, Uuid()),
+        column("day", DateTime(timezone=True)),
+        column("up", Integer()),
+        column("total", Integer()),
+    )
+    rows = await db.execute(
+        select(aggregate.c[key], aggregate.c.day, aggregate.c.up, aggregate.c.total).where(
+            aggregate.c[key].in_(ids), aggregate.c.day >= first_day
+        )
+    )
+    totals: dict[uuid.UUID, tuple[int, int]] = {}
+    daily: dict[uuid.UUID, dict[date, tuple[int, int]]] = {}
+    for item_id, raw_day, ups, total in rows.all():
+        ups, total = int(ups or 0), int(total or 0)
+        previous = totals.get(item_id, (0, 0))
+        totals[item_id] = (previous[0] + ups, previous[1] + total)
+        parsed = _day_of(raw_day)
+        if parsed is not None:
+            daily.setdefault(item_id, {})[parsed] = (ups, total)
+    return totals, daily
+
+
 async def build(db: AsyncSession, app_settings: AppSettings) -> Status:
     """The page's content, read fresh."""
     now = datetime.now(UTC)
@@ -206,6 +239,7 @@ async def build(db: AsyncSession, app_settings: AppSettings) -> Status:
     latency_since = now - timedelta(hours=LATENCY_WINDOW_HOURS)
     show_latency = bool(app_settings.status_page_show_latency)
     show_history = bool(app_settings.status_page_show_history)
+    use_aggregates = await timescale.enabled(db)
     items: list[Item] = []
 
     check_ids = chosen_check_ids(app_settings)
@@ -216,15 +250,21 @@ async def build(db: AsyncSession, app_settings: AppSettings) -> Status:
             .order_by(EndpointCheck.name)
         )
         up = func.sum(case((EndpointCheckResult.ok.is_(True), 1), else_=0))
-        counted = await db.execute(
-            select(EndpointCheckResult.check_id, up, func.count())
-            .where(
-                EndpointCheckResult.check_id.in_(check_ids),
-                EndpointCheckResult.checked_at >= since,
+        daily: dict[uuid.UUID, dict[date, tuple[int, int]]] = {}
+        if use_aggregates:
+            totals, daily = await _aggregate_counts(
+                db, timescale.ENDPOINT_CHECK_DAILY, "check_id", check_ids, today
             )
-            .group_by(EndpointCheckResult.check_id)
-        )
-        totals = {row[0]: (int(row[1] or 0), int(row[2] or 0)) for row in counted.all()}
+        else:
+            counted = await db.execute(
+                select(EndpointCheckResult.check_id, up, func.count())
+                .where(
+                    EndpointCheckResult.check_id.in_(check_ids),
+                    EndpointCheckResult.checked_at >= since,
+                )
+                .group_by(EndpointCheckResult.check_id)
+            )
+            totals = {row[0]: (int(row[1] or 0), int(row[2] or 0)) for row in counted.all()}
         averages: dict[uuid.UUID, Any] = {}
         if show_latency:
             averaged = await db.execute(
@@ -237,8 +277,7 @@ async def build(db: AsyncSession, app_settings: AppSettings) -> Status:
                 .group_by(EndpointCheckResult.check_id)
             )
             averages = {row[0]: row[1] for row in averaged.all()}
-        daily: dict[uuid.UUID, dict[date, tuple[int, int]]] = {}
-        if show_history:
+        if show_history and not use_aggregates:
             day = func.date(EndpointCheckResult.checked_at)
             per_day = await db.execute(
                 select(EndpointCheckResult.check_id, day, up, func.count())
@@ -278,15 +317,21 @@ async def build(db: AsyncSession, app_settings: AppSettings) -> Status:
             .order_by(Machine.name)
         )
         up = func.sum(case((MachineReachabilitySample.reachable.is_(True), 1), else_=0))
-        counted = await db.execute(
-            select(MachineReachabilitySample.machine_id, up, func.count())
-            .where(
-                MachineReachabilitySample.machine_id.in_(machine_ids),
-                MachineReachabilitySample.checked_at >= since,
+        machine_daily: dict[uuid.UUID, dict[date, tuple[int, int]]] = {}
+        if use_aggregates:
+            totals, machine_daily = await _aggregate_counts(
+                db, timescale.REACHABILITY_DAILY, "machine_id", machine_ids, today
             )
-            .group_by(MachineReachabilitySample.machine_id)
-        )
-        totals = {row[0]: (int(row[1] or 0), int(row[2] or 0)) for row in counted.all()}
+        else:
+            counted = await db.execute(
+                select(MachineReachabilitySample.machine_id, up, func.count())
+                .where(
+                    MachineReachabilitySample.machine_id.in_(machine_ids),
+                    MachineReachabilitySample.checked_at >= since,
+                )
+                .group_by(MachineReachabilitySample.machine_id)
+            )
+            totals = {row[0]: (int(row[1] or 0), int(row[2] or 0)) for row in counted.all()}
         latest: dict[uuid.UUID, Any] = {}
         machine_averages: dict[uuid.UUID, Any] = {}
         if show_latency:
@@ -315,8 +360,7 @@ async def build(db: AsyncSession, app_settings: AppSettings) -> Status:
                 )
             )
             latest = {row[0]: row[1] for row in latest_rows.all()}
-        machine_daily: dict[uuid.UUID, dict[date, tuple[int, int]]] = {}
-        if show_history:
+        if show_history and not use_aggregates:
             day = func.date(MachineReachabilitySample.checked_at)
             per_day = await db.execute(
                 select(MachineReachabilitySample.machine_id, day, up, func.count())

@@ -113,7 +113,8 @@ services:
       retries: 10
 
   # PostgreSQL with the TimescaleDB extension (same PostgreSQL major and
-  # patch version as `db` above), an alternative to it for big fleets.
+  # patch version as `db` above), an alternative to it for big fleets: the
+  # history is kept in compressed daily chunks (app/db/timescale.py).
   # Answers to the host name `db` too, so nothing else needs configuring.
   # Same tuning variables as `db`. Switching between the two moves the data
   # (import-from-* below, scripts/switch_db.sh).
@@ -237,8 +238,10 @@ services:
     restart: "no"
     # app.db.precheck first: a clear message instead of a connection error
     # when no database profile is on and no own database is configured, or
-    # when both bundled databases answer to `db` at once.
-    command: ["sh", "-c", "python -m app.db.precheck && alembic upgrade head"]
+    # when both bundled databases answer to `db` at once. app.db.timescale
+    # last: hypertables, compression and daily aggregates when the database
+    # has TimescaleDB (nothing on PostgreSQL).
+    command: ["sh", "-c", "python -m app.db.precheck && alembic upgrade head && python -m app.db.timescale"]
     depends_on:
       db:
         condition: service_healthy

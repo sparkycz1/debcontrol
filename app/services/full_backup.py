@@ -57,6 +57,7 @@ from app.core.security import (
     encrypt_secret_with_key,
 )
 from app.core.version import APP_VERSION
+from app.db import timescale
 from app.db.base import Base
 
 APP_NAME = "debcontrol"
@@ -350,6 +351,8 @@ async def _restore_from_archive(
     except (KeyError, ValueError, TypeError, sa.exc.DBAPIError) as exc:
         await db.rollback()
         raise BackupError(f"The backup couldn't be restored: {exc}") from exc
+    # TimescaleDB's daily aggregates still hold the old history.
+    await timescale.refresh_aggregates(db)
     return {key: value for key, value in manifest.items() if key != "encryption_key"}
 
 

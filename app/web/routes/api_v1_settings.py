@@ -79,6 +79,7 @@ from app.auth import session_policy
 from app.auth.dependencies import require_api_permission
 from app.core.app_settings import get_or_create_app_settings
 from app.core.version import APP_VERSION, commit_url, get_git_commit
+from app.db import timescale
 from app.db.models.role import Permission
 from app.db.session import get_db
 from app.services import app_update
@@ -117,6 +118,9 @@ async def get_settings_api(db: AsyncSession = Depends(get_db)) -> dict[str, obje
         # by a person on Settings -> Security, not by a script.
         "terminal_recording_enabled": app_settings.terminal_recording_enabled,
         "terminal_recording_retention_days": app_settings.terminal_recording_retention_days,
+        # Read-only: TimescaleDB's version and compression ages, or null
+        # on plain PostgreSQL.
+        "timescaledb": await timescale.describe(db),
     }
 
 
@@ -170,6 +174,8 @@ async def update_settings_api(
     for field, value in changed.items():
         setattr(app_settings, field, value)
     await db.commit()
+    if "monitoring_downsample_after_days" in changed:
+        await timescale.apply_policies(db, app_settings.monitoring_downsample_after_days)
     if SIGN_IN_POLICY_FIELDS & changed.keys():
         session_policy.invalidate()
 

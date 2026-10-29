@@ -61,6 +61,12 @@
         <label for="monitoring_downsample_interval_minutes">{{ t(request, "settings.checks.downsample_interval_minutes") }}</label>
         <input type="number" id="monitoring_downsample_interval_minutes" name="monitoring_downsample_interval_minutes"
                min="1" max="1440" step="1" value="{{ app_settings.monitoring_downsample_interval_minutes }}">
+        {% if timescaledb %}
+        <p class="hint">{{ t(request, "settings.checks.timescaledb_note",
+            version=timescaledb.version,
+            monitoring=timescaledb.compress_after_days.get("machine_monitoring_samples", "-"),
+            other=timescaledb.compress_after_days.get("machine_reachability_samples", "-")) }}</p>
+        {% endif %}
       </div>
     </section>
 

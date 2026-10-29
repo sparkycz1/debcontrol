@@ -46,6 +46,7 @@ from app.audit import log_event
 from app.core.app_settings import get_or_create_app_settings
 from app.core.timezones import display_zone
 from app.db import session as db_session
+from app.db import timescale
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
@@ -2034,6 +2035,34 @@ async def _delete_ids_in_batches(session: AsyncSession, model: Any, ids: list[uu
     return len(ids)
 
 
+async def _drop_old_history_chunks(
+    session: AsyncSession,
+    machine_retentions: list[tuple[uuid.UUID, int | None]],
+    default_retention_days: int | None,
+    now: datetime,
+) -> int:
+    """TimescaleDB only: drop whole chunks (days) of history that every
+    machine's retention has passed: older than the longest retention any
+    machine has, and only when no machine keeps its history forever. What
+    a shorter per-machine retention still covers goes row by row after
+    this, as on PostgreSQL. Returns the number of chunks dropped."""
+    dropped = 0
+    effective = [override or default_retention_days for _, override in machine_retentions]
+    if effective and all(effective):
+        horizon = now - timedelta(days=max(d for d in effective if d))
+        for relation in (
+            timescale.MONITORING.table,
+            timescale.REACHABILITY.table,
+            timescale.REACHABILITY_DAILY,
+        ):
+            dropped += await timescale.drop_old_chunks(session, relation, horizon)
+    if default_retention_days:
+        horizon = now - timedelta(days=default_retention_days)
+        for relation in (timescale.ENDPOINT_RESULTS.table, timescale.ENDPOINT_CHECK_DAILY):
+            dropped += await timescale.drop_old_chunks(session, relation, horizon)
+    return dropped
+
+
 async def _purge_old_monitoring_samples() -> None:
     """Delete `MachineMonitoringSample`, `MachineReachabilitySample` **and**
     `EndpointCheckResult` rows older than each machine's effective
@@ -2054,9 +2083,14 @@ async def _purge_old_monitoring_samples() -> None:
         result = await session.execute(
             select(Machine.id, Machine.monitoring_history_retention_days)
         )
-        rows = result.all()
+        rows = [(row[0], row[1]) for row in result.all()]
 
         now = datetime.now(UTC)
+        chunks_dropped = 0
+        if await timescale.enabled(session):
+            chunks_dropped = await _drop_old_history_chunks(
+                session, rows, default_retention_days, now
+            )
         total_deleted = 0
         for machine_id, override_days in rows:
             retention_days = override_days or default_retention_days
@@ -2099,18 +2133,23 @@ async def _purge_old_monitoring_samples() -> None:
             (MachineChange.detected_at < now - timedelta(days=MACHINE_CHANGE_RETENTION_DAYS),),
         )
 
-        if not total_deleted:
+        if not total_deleted and not chunks_dropped:
             return
 
+        summary = (
+            f"Purged {total_deleted} monitoring sample"
+            f"{'s' if total_deleted != 1 else ''} past their machine's retention window"
+        )
+        details: dict[str, int] = {"deleted_count": total_deleted}
+        if chunks_dropped:
+            summary += f", and {chunks_dropped} whole day chunk{'s' if chunks_dropped != 1 else ''}"
+            details["chunks_dropped"] = chunks_dropped
         await log_event(
             session,
             actor=_MONITORING_SAMPLE_PURGE_ACTOR,
             action="monitoring_samples.purge",
-            summary=(
-                f"Purged {total_deleted} monitoring sample"
-                f"{'s' if total_deleted != 1 else ''} past their machine's retention window"
-            ),
-            details={"deleted_count": total_deleted},
+            summary=summary,
+            details=details,
         )
 
 
@@ -2142,24 +2181,31 @@ async def _downsample_old_monitoring_samples() -> None:
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         after_days = app_settings.monitoring_downsample_after_days
+        # TimescaleDB: the compression age follows this setting.
+        await timescale.apply_policies(session, after_days)
         if not after_days:
             return
         interval = timedelta(minutes=app_settings.monitoring_downsample_interval_minutes)
-        cutoff = datetime.now(UTC) - timedelta(days=after_days)
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(days=after_days)
+        conditions: list[Any] = [MachineMonitoringSample.sampled_at < cutoff]
+        if await timescale.enabled(session):
+            # Compressed chunks were thinned before they were compressed
+            # (the compression waits a day longer); only the days since.
+            conditions.append(
+                MachineMonitoringSample.sampled_at
+                >= now
+                - timedelta(days=timescale.compress_after_days(timescale.MONITORING, after_days))
+            )
 
-        machine_ids = (
-            await session.execute(select(MachineMonitoringSample.machine_id).distinct())
-        ).scalars().all()
+        machine_ids = (await session.execute(select(Machine.id))).scalars().all()
 
         total_deleted = 0
         for machine_id in machine_ids:
             rows = (
                 await session.execute(
                     select(MachineMonitoringSample.id, MachineMonitoringSample.sampled_at)
-                    .where(
-                        MachineMonitoringSample.machine_id == machine_id,
-                        MachineMonitoringSample.sampled_at < cutoff,
-                    )
+                    .where(MachineMonitoringSample.machine_id == machine_id, *conditions)
                     .order_by(MachineMonitoringSample.sampled_at)
                 )
             ).all()

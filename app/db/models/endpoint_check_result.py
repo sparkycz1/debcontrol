@@ -41,7 +41,8 @@ class EndpointCheckResult(Base):
     check_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("endpoint_checks.id", ondelete="CASCADE"), nullable=False
     )
-    checked_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Part of the primary key for TimescaleDB (see MachineMonitoringSample).
+    checked_at: Mapped[datetime] = mapped_column(primary_key=True, nullable=False)
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
