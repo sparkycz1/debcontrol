@@ -35,7 +35,7 @@ class ScheduledTaskRun(Base):
 
     __tablename__ = "scheduled_task_runs"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
 
     scheduled_task_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False, index=True

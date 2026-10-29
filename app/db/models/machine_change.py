@@ -34,7 +34,7 @@ class MachineChange(Base):
         Index("ix_machine_changes_detected_at", "detected_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     machine_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("machines.id", ondelete="CASCADE"), nullable=False
     )

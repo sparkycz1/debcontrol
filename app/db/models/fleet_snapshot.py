@@ -23,7 +23,7 @@ from app.db.base import Base
 class FleetSnapshot(Base):
     __tablename__ = "fleet_snapshots"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     # One row per calendar day (UTC) — the daily job is a no-op if today's
     # row already exists (e.g. a worker restart re-firing the cron tick),
     # enforced here too via a unique constraint, not just in the job.
