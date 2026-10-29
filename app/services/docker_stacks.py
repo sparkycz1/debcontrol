@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import yaml_safety
 from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models.docker import DockerStack, DockerStackVersion, StackSource
 from app.services.docker_gate import GATES, normalize_gate
@@ -164,7 +165,7 @@ def validate_compose(content: str) -> None:
     if len(content.encode()) > MAX_FILE_BYTES:
         raise DockerCommandError("The compose file is too large.")
     try:
-        parsed = yaml.safe_load(content)
+        parsed = yaml_safety.load(content)
     except yaml.YAMLError as exc:
         raise DockerCommandError(f"The compose file is not valid YAML: {exc}") from exc
     if not isinstance(parsed, dict) or not isinstance(parsed.get("services"), dict):

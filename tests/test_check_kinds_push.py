@@ -72,7 +72,7 @@ async def test_ssh_probe_reads_the_banner_and_checks_the_expected_text() -> None
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         writer.write(b"Welcome\r\nSSH-2.0-OpenSSH_9.6p1 Debian\r\n")
         await writer.drain()
-        await asyncio.sleep(2)  # like sshd: waits for the client's banner
+        await asyncio.sleep(0.5)  # like sshd: waits for the client's banner
         writer.close()
 
     async with _server(handler) as port:

@@ -43,7 +43,6 @@ async def watched_files_page(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     diff: uuid.UUID | None = None,
-    paths_text: str | None = None,
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
     rows = await watched_files.list_files(db, machine.id)

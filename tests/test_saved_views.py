@@ -8,6 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import select
 
 from app.db.models.user import User
@@ -23,16 +24,16 @@ from tests.test_api_v1_extended import _api_token
 from tests.test_web import _create_machine
 
 
-def test_build_query_string_only_includes_known_params_in_order():
-    assert build_query_string({"tag": "prod", "q": "web"}) == "q=web&tag=prod"
-
-
-def test_build_query_string_drops_blank_values():
-    assert build_query_string({"q": "", "tag": "prod"}) == "tag=prod"
-
-
-def test_build_query_string_empty_when_nothing_set():
-    assert build_query_string({"q": "", "tag": ""}) == ""
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"tag": "prod", "q": "web"}, "q=web&tag=prod"),  # known params, in order
+        ({"q": "", "tag": "prod"}, "tag=prod"),  # blanks dropped
+        ({"q": "", "tag": ""}, ""),
+    ],
+)
+def test_build_query_string(params: dict[str, str | list[str]], expected: str) -> None:
+    assert build_query_string(params) == expected
 
 
 async def _admin_user(db_session_factory: Any) -> User:
