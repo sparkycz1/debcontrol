@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
+import tempfile
 
 # Set these BEFORE importing `app.main` — configuration (`Settings`) is
 # validated right at import time, and tests don't run against real
@@ -21,16 +24,20 @@ os.environ.setdefault("INFORM_TOKEN", "test-only-inform-token-not-for-real-use-0
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from collections.abc import Set as AbstractSet
+from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
+from argon2 import PasswordHasher
 from celery.app.task import Task
 from httpx2 import ASGITransport, AsyncClient
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.ai.config import invalidate_ai_availability
+from app.auth import security as auth_security
 from app.auth import session_policy
 from app.auth.security import hash_password
 from app.auth.sessions import SESSION_COOKIE_NAME, create_session
@@ -143,6 +150,40 @@ class FakeRedis:
         return True
 
 
+# Argon2 at its production cost takes ~90 ms per hash, and nearly every
+# test creates or signs in an account. The tests check what is hashed and
+# verified, not how slowly, so they use the cheapest parameters.
+auth_security._hasher = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+
+# Creating the schema (67 tables) took ~150 ms per test, most of the
+# suite's time. It is created once per process into a template file;
+# each test gets a byte copy of it, on tmpfs when there is one.
+_SHM = Path("/dev/shm")  # noqa: S108 - mkdtemp below makes a private (0700) directory
+_DB_DIR = Path(
+    tempfile.mkdtemp(prefix="debcontrol-tests-", dir=_SHM if _SHM.is_dir() else None)
+)
+_TEMPLATE_DB = _DB_DIR / "template.sqlite"
+
+
+def _fast_sqlite(dbapi_connection: Any, _record: Any) -> None:
+    """A throwaway test database needs no durability."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=MEMORY")
+    cursor.execute("PRAGMA synchronous=OFF")
+    cursor.close()
+
+
+def _fresh_database_file() -> Path:
+    if not _TEMPLATE_DB.exists():
+        engine = create_engine(f"sqlite:///{_TEMPLATE_DB}")
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        atexit.register(shutil.rmtree, _DB_DIR, True)
+    path = _DB_DIR / f"{uuid.uuid4().hex}.sqlite"
+    shutil.copyfile(_TEMPLATE_DB, path)
+    return path
+
+
 @pytest_asyncio.fixture
 async def db_session_factory():
     """Isolated in-memory SQLite DB for each test (no real Postgres).
@@ -164,17 +205,18 @@ async def db_session_factory():
     testable at all under this fixture — follow that pattern for any new
     "edit to a duplicate unique value" test.
     """
+    path = _fresh_database_file()
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
+        f"sqlite+aiosqlite:///{path}",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    event.listen(engine.sync_engine, "connect", _fast_sqlite)
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     yield factory
     await engine.dispose()
+    path.unlink(missing_ok=True)
 
 
 async def _create_user_with_permissions(

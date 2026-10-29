@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.app_settings import get_or_create_app_settings
+
 
 async def test_audit_log_empty_state(client):
     response = await client.get("/audit")
@@ -368,3 +370,9 @@ async def test_audit_export_respects_target_filter(client, db_session_factory):
     assert response.status_code == 200
     assert "export-target" in response.text
     assert "export-other" not in response.text
+
+
+async def test_audit_retention_defaults_to_90_days(db_session_factory):
+    async with db_session_factory() as db:
+        app_settings = await get_or_create_app_settings(db)
+        assert app_settings.audit_log_retention_days == 90

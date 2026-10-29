@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
+from app.core import yaml_safety
 from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.machine import Machine
@@ -261,14 +262,8 @@ def _parse_condition_rows(
 
 
 def _load_yaml(text: str) -> Any:
-    """`yaml.safe_load` minus anchors/aliases — a rule export never uses
-    them, and refusing them rules out a "billion laughs" document whose
-    shared references blow up once the import walks them. The event scan
-    only tokenizes (no object is ever built), so it's cheap and safe."""
-    for event in yaml.parse(text, Loader=yaml.SafeLoader):
-        if isinstance(event, yaml.AliasEvent):
-            raise yaml.YAMLError("YAML aliases (*name) aren't supported here.")
-    return yaml.safe_load(text)
+    """A rule export never uses anchors/aliases, so they are refused."""
+    return yaml_safety.load(text, allow_aliases=False)
 
 
 def _parse_conditions_yaml_block(text: str) -> list[dict[str, Any]]:
