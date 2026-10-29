@@ -100,7 +100,7 @@ python3 scripts/setup.py
 ```
 
 The wizard generates every secret, asks a few questions (time zone,
-language, the bundled Caddy for HTTPS, the admin password, the port),
+language, the database, the bundled Caddy for HTTPS, the admin password, the port),
 starts the stack and creates the first administrator. Then open
 `http://<host>:8080` and add your first machine.
 
@@ -121,10 +121,25 @@ docker compose up -d --build
 docker compose exec web python scripts/create_admin.py --username admin
 ```
 
+What runs is chosen with `COMPOSE_PROFILES` in `.env` (the app and Redis
+always run):
+
+| `COMPOSE_PROFILES` | Database | Reverse proxy |
+|---|---|---|
+| `postgres` (default) | bundled PostgreSQL | none / your own |
+| `timescaledb` | bundled TimescaleDB (PostgreSQL + TimescaleDB) | none / your own |
+| *(empty)* | your own PostgreSQL, set `POSTGRES_HOST` etc. in `.env` | none / your own |
+| add `,caddy` | | bundled Caddy with Let's Encrypt |
+
 With the bundled Caddy: set `DOMAIN` and `ACME_EMAIL` in `.env`, point
 the domain's DNS at this host, open ports 80/tcp, 443/tcp and 443/udp,
-then
-`docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build`.
+use e.g. `COMPOSE_PROFILES=postgres,caddy`, then `docker compose up -d --build`.
+
+Switching between PostgreSQL and TimescaleDB later moves the data by
+itself: `./scripts/switch_db.sh timescaledb` (or back with `postgres`).
+Both are tuned for about 100 machines;
+[Host requirements](https://github.com/sparkycz1/debcontrol/wiki/Host-Requirements#database-tuning)
+says what to raise for bigger fleets.
 
 Every variable is explained in
 [Installation](https://github.com/sparkycz1/debcontrol/wiki/Installation).

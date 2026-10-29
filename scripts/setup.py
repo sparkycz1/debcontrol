@@ -9,7 +9,8 @@ What it does, in order: copies `.env.example` to `.env`, fills in every
 secret (`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`,
 `REDIS_PASSWORD`, `INFORM_TOKEN`) with freshly generated random values,
 asks a handful of questions (timezone, the default UI language for
-accounts that haven't picked one for themselves, whether to use the
+accounts that haven't picked one for themselves, which database — the
+bundled PostgreSQL or TimescaleDB, or your own — whether to use the
 bundled Caddy reverse proxy and its domain/email if so, whether the app's
 own port should only accept local connections, the two background-check
 intervals, the Administrator account's password — typed twice, masked,
@@ -243,19 +244,15 @@ def _sync_and_start(docker_path: str) -> None:
     (re-)created — this assumes a working deployment already exists and
     the operator just re-ran this script."""
     print("==> Checking .env against .env.example for anything new...")
+    _ensure_profiles(ENV_PATH)
     added = sync_env(ENV_PATH, ENV_EXAMPLE_PATH)
     if added:
         print(f"    Added: {', '.join(added)} (review the values before relying on this deploy).")
     else:
         print("    Nothing to add — .env already has every .env.example variable.")
 
-    use_caddy = _read_env_value(ENV_PATH, "DOMAIN") is not None
     port = _read_env_value(ENV_PATH, "APP_PORT") or "8080"
-    compose_files = ["-f", "docker-compose.yml"]
-    if use_caddy:
-        compose_files += ["-f", "docker-compose.caddy.yml"]
-
-    _compose_up(docker_path, compose_files)
+    _compose_up(docker_path, ["-f", "docker-compose.yml"])
 
     print("==> Waiting for the app to become healthy...")
     if not _wait_until_healthy(port):
@@ -266,6 +263,81 @@ def _sync_and_start(docker_path: str) -> None:
         )
     else:
         print("\ndebcontrol is running — .env was kept as-is (plus anything just added above).")
+
+
+def profiles_value(database: str, *, use_caddy: bool) -> str:
+    """COMPOSE_PROFILES for a database choice ("postgres", "timescaledb" or
+    "own") and whether the bundled Caddy runs (docker-compose.yml)."""
+    profiles = [] if database == "own" else [database]
+    if use_caddy:
+        profiles.append("caddy")
+    return ",".join(profiles)
+
+
+def _ensure_profiles(path: Path) -> None:
+    """An `.env` from before 0.128.0 has no COMPOSE_PROFILES: give it what
+    the stack ran so far (the bundled PostgreSQL unless POSTGRES_HOST/
+    DATABASE_URL point elsewhere, Caddy when DOMAIN is set). Runs before
+    `sync_env`, which would otherwise append the plain example value."""
+    text = path.read_text(encoding="utf-8")
+    if re.search(r"^\s*#?\s*COMPOSE_PROFILES=", text, re.MULTILINE):
+        return
+    host = _read_env_value(path, "POSTGRES_HOST")
+    url = _read_env_value(path, "DATABASE_URL")
+    bundled = ("@db:" in url or "@db/" in url) if url else host in (None, "", "db")
+    value = profiles_value(
+        "postgres" if bundled else "own", use_caddy=bool(_read_env_value(path, "DOMAIN"))
+    )
+    with path.open("a", encoding="utf-8") as f:
+        f.write(
+            "\n# Which bundled services run (Compose profiles) - added by "
+            f"scripts/setup.py in 0.128.0.\nCOMPOSE_PROFILES={value}\n"
+        )
+    print(f"    Set COMPOSE_PROFILES={value} (what this stack ran so far).")
+
+
+def _prompt_database(lines: list[str]) -> tuple[list[str], str]:
+    """Which database: the bundled PostgreSQL, the bundled TimescaleDB, or
+    an existing PostgreSQL of your own (its connection details go to .env)."""
+    print()
+    print("Database:")
+    print("  1) bundled PostgreSQL (recommended)")
+    print("  2) bundled TimescaleDB (PostgreSQL + TimescaleDB, for big fleets)")
+    print("  3) your own PostgreSQL (16 or newer), already running elsewhere")
+    while True:
+        choice = _prompt("Choose 1, 2 or 3", default="1")
+        if choice in ("1", "2", "3"):
+            break
+        print("  (please enter 1, 2 or 3)")
+    if choice == "1":
+        return lines, "postgres"
+    if choice == "2":
+        return lines, "timescaledb"
+    lines = _set_env_line(lines, "POSTGRES_HOST", _prompt_required("Database host"))
+    lines = _set_env_line(lines, "POSTGRES_PORT", _prompt("Database port", default="5432"))
+    lines = _set_env_line(lines, "POSTGRES_DB", _prompt("Database name", default="debcontrol"))
+    lines = _set_env_line(lines, "POSTGRES_USER", _prompt("Database user", default="debcontrol"))
+    # The password is the one generated above (POSTGRES_PASSWORD in .env),
+    # never typed in here: it only ever lives in .env.
+    print("  The user's password is generated (POSTGRES_PASSWORD in .env); you'll")
+    print("  create the user with it, or put your existing user's password in .env,")
+    print("  once .env is written.")
+    return lines, "own"
+
+
+def _wait_for_own_database(lines: list[str]) -> None:
+    """With an own database: the user and database must exist before the
+    stack starts. Shows how to create them; the password stays in .env."""
+    values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+    user = values.get("POSTGRES_USER", "debcontrol")
+    database = values.get("POSTGRES_DB", "debcontrol")
+    print()
+    print("Your own database: create the user and an empty database on it, with the")
+    print(f"password from {ENV_PATH} (grep POSTGRES_PASSWORD .env), for example:")
+    print(f"  CREATE ROLE {user} LOGIN PASSWORD '<POSTGRES_PASSWORD from .env>';")
+    print(f"  CREATE DATABASE {database} OWNER {user};")
+    print("Or, for a user that already exists, put its password into .env instead.")
+    input("Press Enter when the database is ready... ")
 
 
 def _wait_until_healthy(port: str) -> bool:
@@ -326,6 +398,9 @@ def main() -> None:
         default_locale = "en"
     lines = _set_env_line(lines, "DEFAULT_LANGUAGE", default_locale)
 
+    lines, database = _prompt_database(lines)
+
+    print()
     use_caddy = _prompt_yes_no(
         "Use the bundled Caddy reverse proxy for automatic HTTPS?", default=False
     )
@@ -370,12 +445,15 @@ def main() -> None:
     port = _prompt("Host port to publish the app on", default="8080")
     lines = _set_env_line(lines, "APP_PORT", port)
 
+    lines = _set_env_line(
+        lines, "COMPOSE_PROFILES", profiles_value(database, use_caddy=use_caddy)
+    )
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n==> Wrote {ENV_PATH}")
+    if database == "own":
+        _wait_for_own_database(lines)
 
     compose_files = ["-f", "docker-compose.yml"]
-    if use_caddy:
-        compose_files += ["-f", "docker-compose.caddy.yml"]
 
     # We just generated a fresh POSTGRES_PASSWORD/REDIS_PASSWORD above, but
     # Postgres only ever applies POSTGRES_PASSWORD while initializing an
@@ -395,7 +473,7 @@ def main() -> None:
     print("==> Removing any previous containers/volumes so the new secrets "
           "start from a clean database...")
     subprocess.run(  # noqa: S603 - fixed args, no user input
-        [docker_path, "compose", *compose_files, "down", "-v"],
+        [docker_path, "compose", *compose_files, "--profile", "*", "down", "-v"],
         cwd=REPO_ROOT,
         check=False,
     )

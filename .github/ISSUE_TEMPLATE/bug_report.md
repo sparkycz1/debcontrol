@@ -37,7 +37,7 @@ that's affected.
 ## Environment
 
 - **debcontrol version**: the `vX.Y.Z` shown in the Settings page footer (or `git rev-parse HEAD` if running from a checkout)
-- **Deployment**: Docker Compose — plain, or with `docker-compose.caddy.yml`?
+- **Deployment**: Docker Compose — your `COMPOSE_PROFILES` (e.g. `postgres,caddy`, `timescaledb`, empty = own database)?
 - **Browser**: [e.g. Chrome 128, Firefox, Safari] — desktop or mobile?
 - **Auth method involved, if relevant**: local / LDAP / OIDC
 - **Machine OS, if this is about a specific machine**: [see [Machine Requirements](https://github.com/sparkycz1/debcontrol/wiki/Machine-Requirements#os)]

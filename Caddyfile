@@ -1,5 +1,5 @@
 # Caddy config for debcontrol — TLS 1.3 only, HTTP/3, hardened defaults.
-# See docker-compose.caddy.yml and the wiki page "Reverse Proxy - Caddy"
+# Runs with the Compose profile `caddy` (COMPOSE_PROFILES=...,caddy in .env). See the wiki page "Reverse Proxy - Caddy"
 # for how this is wired up.
 
 {
