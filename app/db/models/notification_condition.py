@@ -43,7 +43,7 @@ class NotificationCondition(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     rule_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("notification_rules.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("notification_rules.id", ondelete="CASCADE"), nullable=False, index=True
     )
     field: Mapped[str] = mapped_column(String(64), nullable=False)
     operator: Mapped[str] = mapped_column(String(16), nullable=False)

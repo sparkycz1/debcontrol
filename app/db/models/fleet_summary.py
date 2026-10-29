@@ -47,7 +47,9 @@ class FleetSummary(Base):
     provider_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     model_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False, index=True
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"FleetSummary(id={self.id!r}, frequency={self.frequency!r})"

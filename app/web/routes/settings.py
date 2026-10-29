@@ -39,6 +39,7 @@ from app.core.config import get_settings
 from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.core.security import encrypt_secret
 from app.core.version import APP_VERSION
+from app.db import timescale
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
 from app.db.models.app_settings import (
@@ -146,6 +147,7 @@ async def _render_settings(
         "identity": identity,
         "settings": get_settings(),
         "app_settings": app_settings,
+        "timescaledb": await timescale.describe(db),
         "geoip_database": geoip_database,
         "csrf_token": csrf_token,
         "errors": errors,
@@ -280,6 +282,8 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
     for field, value in changed.items():
         setattr(app_settings, field, value)
     await db.commit()
+    if "monitoring_downsample_after_days" in changed:
+        await timescale.apply_policies(db, app_settings.monitoring_downsample_after_days)
 
     by_action: dict[str, dict[str, int | None]] = {}
     for field, value in changed.items():
@@ -805,6 +809,7 @@ async def update_monitoring_downsampling(
     app_settings.monitoring_downsample_after_days = new_after_days
     app_settings.monitoring_downsample_interval_minutes = new_interval
     await db.commit()
+    await timescale.apply_policies(db, new_after_days)
 
     await log_event(
         db,

@@ -876,6 +876,7 @@
     "settings.checks.keep_monitoring_days": "Uchovávat historii monitoringu po (dnů)",
     "settings.checks.keep_monitoring_hint": "Prázdné = napořád. Výchozí 90 dní.",
     "settings.checks.monitoring_downsampling": "Prořídění",
+    "settings.checks.timescaledb_note": "Databáze: TimescaleDB {version}. Historie je uložená po dnech: vzorky monitoringu se komprimují po {monitoring} dnech (při zapnutém prořídění den po něm), dostupnost a výsledky kontrol po {other} dnech a celé dny starší než retence všech zařízení se mažou najednou.",
     "settings.checks.monitoring_downsampling_hint": "Staré vzorky prořídí místo mazání — grafy už staré vzorky při zobrazení shlukují, takže tohle šetří místo bez ztráty tvaru trendu.",
     "settings.checks.downsample_after_days": "Prořídit po (dny)",
     "settings.checks.downsample_disabled": "vypnuto",

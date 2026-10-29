@@ -62,7 +62,8 @@ class MachineReachabilitySample(Base):
     )
     machine: Mapped[Machine] = relationship(viewonly=True)
 
-    checked_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Part of the primary key for TimescaleDB (see MachineMonitoringSample).
+    checked_at: Mapped[datetime] = mapped_column(primary_key=True, nullable=False)
     reachable: Mapped[bool] = mapped_column(Boolean, nullable=False)
     # How long the TCP connect attempt took, in milliseconds — None for a
     # failed attempt (there's no meaningful "connect time" for a timeout

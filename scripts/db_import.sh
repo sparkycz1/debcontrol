@@ -134,6 +134,16 @@ scalar_source "SELECT format('SELECT setval(%L, %s, %s);', format('%I.%I', schem
       [ -n "$statement" ] && scalar_target "$statement" >/dev/null
     done
 
+# TimescaleDB: its daily aggregates (app/db/timescale.py) were created
+# empty by `migrate`; fill them from the history just copied.
+if [ "$(scalar_target "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'")" = "1" ]; then
+  for view in $(scalar_target "SELECT string_agg(format('%I.%I', view_schema, view_name), ' ')
+      FROM timescaledb_information.continuous_aggregates"); do
+    log "refreshing $view..."
+    scalar_target "CALL refresh_continuous_aggregate('$view', NULL, NULL)" >/dev/null
+  done
+fi
+
 moved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "moved to $TARGET_HOST at $moved_at" >"$MARKER"
 rm -f "$TARGET_MARKER"

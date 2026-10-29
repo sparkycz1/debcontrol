@@ -44,7 +44,9 @@ class MachineMonitoringSample(Base):
     )
     machine: Mapped[Machine] = relationship(viewonly=True)
 
-    sampled_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Part of the primary key: a TimescaleDB hypertable (app.db.timescale)
+    # needs its time column in every unique index. Harmless on PostgreSQL.
+    sampled_at: Mapped[datetime] = mapped_column(primary_key=True, nullable=False)
 
     # 0-100, None if it couldn't be computed (e.g. /proc/stat unreadable).
     cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
