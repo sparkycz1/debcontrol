@@ -59,7 +59,7 @@ class NotificationDeliveryStatus(enum.StrEnum):
 class NotificationLog(Base):
     __tablename__ = "notification_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     # Nullable + a denormalized `rule_name` copy: a deleted rule's history
     # should stay readable ("what did this rule used to send") rather than
     # vanish or block the delete, so the FK is SET NULL rather than CASCADE.

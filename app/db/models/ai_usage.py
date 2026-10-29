@@ -26,7 +26,7 @@ from app.db.pg_enum import pg_enum
 class AiUsageRecord(Base):
     __tablename__ = "ai_usage_records"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

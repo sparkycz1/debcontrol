@@ -2001,6 +2001,38 @@ def evaluate_notification_conditions() -> None:
 
 _MONITORING_SAMPLE_PURGE_ACTOR = "retention policy (automatic)"
 
+# Retention deletes run in batches of this many rows, each its own
+# transaction: one huge DELETE would hold its locks (and grow the WAL) for
+# as long as it takes to remove months of samples, and an `IN (...)` list
+# longer than ~32k ids exceeds asyncpg's bind-parameter limit.
+_DELETE_BATCH_SIZE = 5_000
+
+
+async def _delete_in_batches(
+    session: AsyncSession, model: Any, conditions: tuple[Any, ...]
+) -> int:
+    """Delete every `model` row matching `conditions`, `_DELETE_BATCH_SIZE`
+    at a time, committing after each batch. Returns how many went."""
+    deleted = 0
+    while True:
+        ids = (
+            await session.execute(select(model.id).where(*conditions).limit(_DELETE_BATCH_SIZE))
+        ).scalars().all()
+        if not ids:
+            return deleted
+        await session.execute(delete(model).where(model.id.in_(ids)))
+        await session.commit()
+        deleted += len(ids)
+
+
+async def _delete_ids_in_batches(session: AsyncSession, model: Any, ids: list[uuid.UUID]) -> int:
+    """Delete the given `model` rows, `_DELETE_BATCH_SIZE` per transaction."""
+    for start in range(0, len(ids), _DELETE_BATCH_SIZE):
+        batch = ids[start : start + _DELETE_BATCH_SIZE]
+        await session.execute(delete(model).where(model.id.in_(batch)))
+        await session.commit()
+    return len(ids)
+
 
 async def _purge_old_monitoring_samples() -> None:
     """Delete `MachineMonitoringSample`, `MachineReachabilitySample` **and**
@@ -2010,11 +2042,11 @@ async def _purge_old_monitoring_samples() -> None:
     `AppSettings.monitoring_history_retention_days` (`None` on both = keep
     that machine's samples forever). One retention setting covers every
     history table — they're the same "how long does this fleet's own history
-    stick around" question, not two knobs to configure. One `DELETE` per
-    machine per table rather than a single global cutoff (unlike
+    stick around" question, not two knobs to configure. Per machine per
+    table rather than a single global cutoff (unlike
     `_purge_old_machine_update_runs`) since retention can differ per
-    machine — acceptable for a once-a-day job; see
-    wiki/Host-Requirements if this ever needs to scale further."""
+    machine, and in batches (`_delete_in_batches`) so no single
+    transaction removes months of samples at once."""
     async with db_session.AsyncSessionLocal() as session:
         app_settings = await get_or_create_app_settings(session)
         default_retention_days = app_settings.monitoring_history_retention_days
@@ -2032,66 +2064,43 @@ async def _purge_old_monitoring_samples() -> None:
                 continue
             cutoff = now - timedelta(days=retention_days)
 
-            monitoring_filter = (
-                MachineMonitoringSample.machine_id == machine_id,
-                MachineMonitoringSample.sampled_at < cutoff,
+            total_deleted += await _delete_in_batches(
+                session,
+                MachineMonitoringSample,
+                (
+                    MachineMonitoringSample.machine_id == machine_id,
+                    MachineMonitoringSample.sampled_at < cutoff,
+                ),
             )
-            count_result = await session.execute(
-                select(func.count()).select_from(MachineMonitoringSample).where(*monitoring_filter)
+            total_deleted += await _delete_in_batches(
+                session,
+                MachineReachabilitySample,
+                (
+                    MachineReachabilitySample.machine_id == machine_id,
+                    MachineReachabilitySample.checked_at < cutoff,
+                ),
             )
-            machine_deleted = count_result.scalar_one()
-            if machine_deleted:
-                await session.execute(delete(MachineMonitoringSample).where(*monitoring_filter))
-                total_deleted += machine_deleted
-
-            reachability_filter = (
-                MachineReachabilitySample.machine_id == machine_id,
-                MachineReachabilitySample.checked_at < cutoff,
-            )
-            count_result = await session.execute(
-                select(func.count())
-                .select_from(MachineReachabilitySample)
-                .where(*reachability_filter)
-            )
-            reachability_deleted = count_result.scalar_one()
-            if reachability_deleted:
-                await session.execute(
-                    delete(MachineReachabilitySample).where(*reachability_filter)
-                )
-                total_deleted += reachability_deleted
 
         # Endpoint check history follows the fleet-wide default only (a check
         # belongs to no machine, so there's no per-machine override to apply).
         if default_retention_days:
-            check_filter = EndpointCheckResult.checked_at < now - timedelta(
-                days=default_retention_days
+            total_deleted += await _delete_in_batches(
+                session,
+                EndpointCheckResult,
+                (EndpointCheckResult.checked_at < now - timedelta(days=default_retention_days),),
             )
-            count_result = await session.execute(
-                select(func.count()).select_from(EndpointCheckResult).where(check_filter)
-            )
-            checks_deleted = count_result.scalar_one()
-            if checks_deleted:
-                await session.execute(delete(EndpointCheckResult).where(check_filter))
-                total_deleted += checks_deleted
 
         # Detected configuration changes (the History tab) — a fixed year,
         # independent of the sample retention above: they're rare, small,
         # and "when did this port start listening" is worth keeping longer.
-        change_filter = MachineChange.detected_at < now - timedelta(
-            days=MACHINE_CHANGE_RETENTION_DAYS
+        total_deleted += await _delete_in_batches(
+            session,
+            MachineChange,
+            (MachineChange.detected_at < now - timedelta(days=MACHINE_CHANGE_RETENTION_DAYS),),
         )
-        count_result = await session.execute(
-            select(func.count()).select_from(MachineChange).where(change_filter)
-        )
-        changes_deleted = count_result.scalar_one()
-        if changes_deleted:
-            await session.execute(delete(MachineChange).where(change_filter))
-            total_deleted += changes_deleted
 
         if not total_deleted:
             return
-
-        await session.commit()
 
         await log_event(
             session,
@@ -2164,16 +2173,12 @@ async def _downsample_old_monitoring_samples() -> None:
                 else:
                     to_delete.append(sample_id)
 
-            if to_delete:
-                await session.execute(
-                    delete(MachineMonitoringSample).where(MachineMonitoringSample.id.in_(to_delete))
-                )
-                total_deleted += len(to_delete)
+            total_deleted += await _delete_ids_in_batches(
+                session, MachineMonitoringSample, to_delete
+            )
 
         if not total_deleted:
             return
-
-        await session.commit()
 
         await log_event(
             session,
@@ -3605,17 +3610,11 @@ async def _purge_old_audit_log_entries() -> None:
             return
 
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        count_result = await session.execute(
-            select(func.count())
-            .select_from(AuditLogEntry)
-            .where(AuditLogEntry.created_at < cutoff)
+        deleted_count = await _delete_in_batches(
+            session, AuditLogEntry, (AuditLogEntry.created_at < cutoff,)
         )
-        deleted_count = count_result.scalar_one()
         if not deleted_count:
             return
-
-        await session.execute(delete(AuditLogEntry).where(AuditLogEntry.created_at < cutoff))
-        await session.commit()
 
         await log_event(
             session,
@@ -3696,19 +3695,11 @@ async def _purge_old_fleet_snapshots() -> None:
             return
 
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).date()
-        count_result = await session.execute(
-            select(func.count())
-            .select_from(FleetSnapshot)
-            .where(FleetSnapshot.snapshot_date < cutoff)
+        deleted_count = await _delete_in_batches(
+            session, FleetSnapshot, (FleetSnapshot.snapshot_date < cutoff,)
         )
-        deleted_count = count_result.scalar_one()
         if not deleted_count:
             return
-
-        await session.execute(
-            delete(FleetSnapshot).where(FleetSnapshot.snapshot_date < cutoff)
-        )
-        await session.commit()
 
         await log_event(
             session,
@@ -3745,19 +3736,11 @@ async def _purge_old_machine_update_runs() -> None:
             return
 
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        count_result = await session.execute(
-            select(func.count())
-            .select_from(MachineUpdateRun)
-            .where(MachineUpdateRun.created_at < cutoff)
+        deleted_count = await _delete_in_batches(
+            session, MachineUpdateRun, (MachineUpdateRun.created_at < cutoff,)
         )
-        deleted_count = count_result.scalar_one()
         if not deleted_count:
             return
-
-        await session.execute(
-            delete(MachineUpdateRun).where(MachineUpdateRun.created_at < cutoff)
-        )
-        await session.commit()
 
         await log_event(
             session,
@@ -3791,19 +3774,11 @@ async def _purge_old_terminal_recordings() -> None:
         if not retention_days:
             return
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        deleted_count = (
-            await session.execute(
-                select(func.count())
-                .select_from(TerminalRecording)
-                .where(TerminalRecording.started_at < cutoff)
-            )
-        ).scalar_one()
+        deleted_count = await _delete_in_batches(
+            session, TerminalRecording, (TerminalRecording.started_at < cutoff,)
+        )
         if not deleted_count:
             return
-        await session.execute(
-            delete(TerminalRecording).where(TerminalRecording.started_at < cutoff)
-        )
-        await session.commit()
         await log_event(
             session,
             actor=_TERMINAL_RECORDING_PURGE_ACTOR,
@@ -3838,19 +3813,11 @@ async def _purge_old_notification_logs() -> None:
             return
 
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        count_result = await session.execute(
-            select(func.count())
-            .select_from(NotificationLog)
-            .where(NotificationLog.sent_at < cutoff)
+        deleted_count = await _delete_in_batches(
+            session, NotificationLog, (NotificationLog.sent_at < cutoff,)
         )
-        deleted_count = count_result.scalar_one()
         if not deleted_count:
             return
-
-        await session.execute(
-            delete(NotificationLog).where(NotificationLog.sent_at < cutoff)
-        )
-        await session.commit()
 
         await log_event(
             session,

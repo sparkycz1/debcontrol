@@ -28,10 +28,16 @@ class EndpointCheckResult(Base):
         # Every read is "one check's results within a time window, oldest
         # first" (detail page, API) and the purge is a time cutoff.
         Index("ix_endpoint_check_results_check_id_checked_at", "check_id", "checked_at"),
-        Index("ix_endpoint_check_results_checked_at", "checked_at"),
+        # The retention purge's fleet-wide cutoff: BRIN, since rows arrive in
+        # time order (a few pages instead of a full B-tree).
+        Index(
+            "ix_endpoint_check_results_checked_at_brin",
+            "checked_at",
+            postgresql_using="brin",
+        ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     check_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("endpoint_checks.id", ondelete="CASCADE"), nullable=False
     )

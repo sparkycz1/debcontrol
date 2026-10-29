@@ -48,9 +48,14 @@ class MachineReachabilitySample(Base):
             "machine_id",
             "checked_at",
         ),
+        Index(
+            "ix_machine_reachability_samples_checked_at_brin",
+            "checked_at",
+            postgresql_using="brin",
+        ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
 
     machine_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True
