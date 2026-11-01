@@ -42,6 +42,12 @@ SIGN_IN_POLICY_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+# On/off switches (true/false).
+BOOLEAN_FIELDS: tuple[str, ...] = (
+    # Endpoint checks for container web links (app.services.docker_endpoint_checks).
+    "docker_endpoint_checks",
+)
+
 # A whole number of days >= 0, or `None` for "keep forever"/"disabled".
 RETENTION_FIELDS: tuple[str, ...] = (
     "audit_log_retention_days",
@@ -71,6 +77,7 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "reachability_check_concurrency": "settings.background_checks.update",
     "notification_condition_check_interval_seconds": "settings.background_checks.update",
     "docker_image_check_interval_hours": "settings.background_checks.update",
+    "docker_endpoint_checks": "settings.background_checks.update",
     "audit_log_retention_days": "settings.audit_retention.update",
     "dashboard_trends_retention_days": "settings.dashboard_trends_retention.update",
     "machine_update_run_retention_days": "settings.machine_update_run_retention.update",

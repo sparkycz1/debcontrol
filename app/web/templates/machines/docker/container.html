@@ -85,6 +85,39 @@
     </section>
   {% endif %}
 
+  {% if can_power and ready and not is_protected %}
+    <section class="panel" id="autoheal">
+      <h2>{{ t(request, "docker.autoheal.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.autoheal.hint") }}</p>
+      {% if not has_healthcheck %}
+        <p class="hint text-warn">{{ t(request, "docker.autoheal.no_healthcheck") }}</p>
+      {% endif %}
+      <form method="post" action="{{ base }}/autoheal" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>
+          <input type="checkbox" name="enabled" value="1" {% if setting and setting.autoheal %}checked{% endif %}>
+          {{ t(request, "docker.autoheal.label") }}
+        </label>
+        <label for="autoheal-max">{{ t(request, "docker.autoheal.max_label") }}</label>
+        <input type="number" id="autoheal-max" name="max_per_hour" min="1" max="10" step="1"
+               value="{{ setting.autoheal_max_per_hour if setting else 3 }}">
+        <p class="hint">{{ t(request, "docker.autoheal.max_hint") }}</p>
+        {% if setting and setting.autoheal and setting.autoheal_gave_up_at %}
+          <p class="hint text-warn">{{ t(request, "docker.autoheal.gave_up", when=(setting.autoheal_gave_up_at | local_time)) }}</p>
+        {% endif %}
+        {% if setting and setting.autoheal and setting.autoheal_restarts %}
+          <p class="hint">{{ t(request, "docker.autoheal.recent", count=(setting.autoheal_restarts | length)) }}</p>
+        {% endif %}
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    </section>
+  {% elif setting and setting.autoheal %}
+    <section class="panel" id="autoheal">
+      <h2>{{ t(request, "docker.autoheal.heading") }}</h2>
+      <p>{{ t(request, "docker.autoheal.on", count=setting.autoheal_max_per_hour) }}</p>
+    </section>
+  {% endif %}
+
   <section class="panel">
     <h2>{{ t(request, "docker.jobs.heading") }}</h2>
     {% if jobs %}

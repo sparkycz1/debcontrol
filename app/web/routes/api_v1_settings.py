@@ -85,6 +85,7 @@ from app.db.session import get_db
 from app.services import app_update
 from app.services.settings_limits import (
     AUDIT_ACTION_BY_FIELD,
+    BOOLEAN_FIELDS,
     BOUNDED_FIELDS,
     NEEDS_RESTART_FIELDS,
     RETENTION_FIELDS,
@@ -98,7 +99,7 @@ router = APIRouter(prefix="/api/v1/settings")
 _view = Depends(require_api_permission(Permission.SETTINGS_VIEW))
 _manage = Depends(require_api_permission(Permission.SETTINGS_MANAGE))
 
-_WRITABLE_FIELDS = (*BOUNDED_FIELDS, *RETENTION_FIELDS, *TOKEN_LIMIT_FIELDS)
+_WRITABLE_FIELDS = (*BOUNDED_FIELDS, *RETENTION_FIELDS, *TOKEN_LIMIT_FIELDS, *BOOLEAN_FIELDS)
 
 
 @router.get("", dependencies=[_view])
@@ -126,6 +127,10 @@ async def get_settings_api(db: AsyncSession = Depends(get_db)) -> dict[str, obje
 
 def _validate(field: str, value: object) -> tuple[int | None, str | None]:
     """`(value, error)` — the same rules the Settings page applies."""
+    if field in BOOLEAN_FIELDS:
+        if not isinstance(value, bool):
+            return None, f"{field}: must be true or false"
+        return value, None
     if isinstance(value, bool) or not (value is None or isinstance(value, int)):
         suffix = "" if field in BOUNDED_FIELDS else " or null"
         return None, f"{field}: must be a whole number{suffix}"

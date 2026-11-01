@@ -160,6 +160,9 @@ class NotificationEventType(enum.StrEnum):
     DOCKER_CONTAINER_RESTART_LOOP = "docker.container.restart_loop"
     DOCKER_CONTAINER_OOM = "docker.container.oom"
     DOCKER_CONTAINER_UNHEALTHY = "docker.container.unhealthy"
+    # Autoheal (`app.services.autoheal`) restarted an unhealthy container,
+    # or gave up after the restarts it allows an hour.
+    DOCKER_CONTAINER_AUTOHEAL = "docker.container.autoheal"
 
 
 notification_rule_users = Table(

@@ -70,9 +70,12 @@ from app.services import (
     acknowledgements,
     ai_cause,
     auto_backup,
+    autoheal,
     config_drift,
     container_events,
     disk_forecast,
+    docker_endpoint_checks,
+    docker_host_check,
     health_events,
     image_versions,
     security_audit,
@@ -106,6 +109,7 @@ from app.ssh import detached_updates
 from app.ssh.client import test_connection
 from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
+from app.ssh.docker_host import read_host as read_docker_host
 from app.ssh.exceptions import HostKeyMismatchError, SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import check_reboot_required, gather_facts
@@ -660,6 +664,13 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
         machine.docker_image_check = _image_check_record(
             error=None, reasons=reasons, images=list(statuses)
         )
+        # The Docker host check rides along (Docker → Host).
+        try:
+            host = await read_docker_host(machine, secret, app_settings.ssh_connect_timeout)
+            machine.docker_host_check = docker_host_check.evaluate(host, machine)
+        except Exception as exc:
+            logger.warning("Docker host check failed for %s: %s", machine.name, exc)
+            machine.docker_host_check = docker_host_check.failed(str(exc) or type(exc).__name__)
         await session.commit()
         return {"ok": True, "updates": sum(1 for s in statuses.values() if s == "update")}
 
@@ -1820,6 +1831,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         await session.commit()
         if incidents:
             await container_events.notify_incidents(session, machine, incidents)
+        if machine.docker_status == "ok":
+            await _after_docker_sample(session, machine, app_settings.docker_endpoint_checks)
         await health_events.notify_monitoring_changes(
             session,
             machine,
@@ -1831,6 +1844,23 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         )
 
         return {"ok": True}
+
+
+async def _after_docker_sample(
+    session: AsyncSession, machine: Machine, endpoint_checks_on: bool
+) -> None:
+    """Autoheal and the automatic endpoint checks, after a sample with
+    Docker in it. Neither may cost the sample itself."""
+    try:
+        await autoheal.apply(session, machine)
+    except Exception:
+        logger.warning("Autoheal failed for %s", machine.name, exc_info=True)
+        await session.rollback()
+    try:
+        await docker_endpoint_checks.sync(session, machine, enabled=endpoint_checks_on)
+    except Exception:
+        logger.warning("Container endpoint checks failed for %s", machine.name, exc_info=True)
+        await session.rollback()
 
 
 @celery_app.task(

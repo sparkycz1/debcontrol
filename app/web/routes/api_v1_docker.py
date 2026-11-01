@@ -53,6 +53,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.services import (
+    autoheal,
     docker_actions,
     docker_backups,
     docker_drift,
@@ -85,6 +86,7 @@ router = APIRouter(prefix="/api/v1/machines/{machine_id}/docker")
 _view = Depends(require_api_permission(Permission.MACHINE_VIEW))
 _updates = Depends(require_api_permission(Permission.ACTION_UPDATES))
 _terminal = Depends(require_api_permission(Permission.ACTION_TERMINAL))
+_power = Depends(require_api_permission(Permission.ACTION_POWER))
 
 _PROJECT_PERMISSION = {
     "start": Permission.ACTION_POWER,
@@ -345,6 +347,7 @@ async def docker_overview_api(
                 "auto_update": bool(setting and setting.auto_update),
                 "update_policy": setting.update_policy if setting else "any",
                 "vulnerability_gate": setting.vulnerability_gate if setting else "off",
+                "autoheal": bool(setting and setting.autoheal),
                 "vulnerabilities": (scan.counts or {}) if scan else None,
                 **docker_overview.describe(machine, container),
             }
@@ -394,10 +397,85 @@ async def docker_container_api(
         "auto_update": bool(setting and setting.auto_update),
         "update_policy": setting.update_policy if setting else "any",
         "vulnerability_gate": setting.vulnerability_gate if setting else "off",
+        "autoheal": _autoheal(setting),
         "rollback_image_id": docker_jobs.rollback_image(docker_jobs.last_update(jobs, name)),
         "scan": _scan(scan) if scan else None,
         "jobs": [_job(job) for job in jobs],
     }
+
+
+def _autoheal(setting: Any) -> dict[str, Any]:
+    return {
+        "enabled": bool(setting and setting.autoheal),
+        "max_per_hour": setting.autoheal_max_per_hour if setting else autoheal.DEFAULT_PER_HOUR,
+        "restarts_last_hour": list((setting.autoheal_restarts or []) if setting else []),
+        "gave_up_at": _iso(setting.autoheal_gave_up_at) if setting else None,
+    }
+
+
+class _Autoheal(BaseModel):
+    enabled: bool
+    max_per_hour: int = Field(
+        default=autoheal.DEFAULT_PER_HOUR, ge=autoheal.MIN_PER_HOUR, le=autoheal.MAX_PER_HOUR
+    )
+
+
+@router.put("/containers/{name}/autoheal", dependencies=[_power])
+async def docker_container_autoheal_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    body: _Autoheal,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Autoheal for one container: restart it when its health check
+    reports unhealthy, at most `max_per_hour` times an hour. Needs
+    `action.power`, like restarting it by hand."""
+    if not is_container_name_valid(name):
+        raise _bad("Invalid container name.")
+    machine = await _get_machine_or_404(machine_id, db, user)
+    try:
+        await docker_jobs.check_container(db, machine, name)
+    except docker_jobs.ProtectedError:
+        raise _protected() from None
+    setting = await autoheal.save(
+        db,
+        machine.id,
+        name,
+        enabled=body.enabled,
+        max_per_hour=body.max_per_hour,
+        actor=user.username,
+    )
+    await db.commit()
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.container.autoheal_settings",
+        f'Autoheal of container "{name}" on "{machine.name}": '
+        + (f"on (at most {setting.autoheal_max_per_hour} an hour)" if setting.autoheal else "off"),
+        {
+            "container": name,
+            "autoheal": setting.autoheal,
+            "max_per_hour": setting.autoheal_max_per_hour,
+        },
+    )
+    return {"ok": True, "autoheal": _autoheal(setting)}
+
+
+@router.get("/host", dependencies=[_view])
+async def docker_host_api(
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """The Docker host check (Docker → Host): {"at", "ok", "error",
+    "facts", "findings"}, refreshed with every image update check
+    (`POST /api/v1/machines/{id}/docker/check-images`); null before the
+    first one."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return {"host_check": machine.docker_host_check}
 
 
 class _ContainerSettings(BaseModel):

@@ -39,7 +39,16 @@ from app.web.templating import t, templates
 
 need_terminal = Depends(require_permission(Permission.ACTION_TERMINAL))
 
-SUB_PAGES = ("containers", "stacks", "images", "volumes", "networks", "backups", "jobs")
+SUB_PAGES = (
+    "containers",
+    "stacks",
+    "images",
+    "volumes",
+    "networks",
+    "backups",
+    "host",
+    "jobs",
+)
 
 
 def docker_base(machine: Machine) -> str:
@@ -55,6 +64,7 @@ def docker_subnav(request: Request, machine: Machine) -> list[tuple[str, str, st
         ("volumes", t(request, "docker.nav.volumes"), f"{base}/volumes"),
         ("networks", t(request, "docker.nav.networks"), f"{base}/networks"),
         ("backups", t(request, "docker.nav.backups"), f"{base}/backups"),
+        ("host", t(request, "docker.nav.host"), f"{base}/host"),
         ("jobs", t(request, "docker.nav.jobs"), f"{base}/jobs"),
     ]
 

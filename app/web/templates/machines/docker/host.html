@@ -1,0 +1,74 @@
+{% extends "machines/docker/_layout.html" %}
+
+{% block docker_title %}{{ t(request, "docker.host.title") }}{% endblock %}
+
+{% block docker_content %}
+  {% include "machines/docker/_action_flash.html" %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.host.title") }}</h2>
+      <p class="hint">
+        {{ t(request, "docker.host.hint") }}
+        {% if checked_at %}— {{ t(request, "docker.host.checked_at", when=(checked_at | local_time('%Y-%m-%d %H:%M'))) }}{% endif %}
+      </p>
+    </div>
+    {% if can_manage and machine.host_key_fingerprint %}
+      <form method="post" action="/machines/{{ machine.id }}/docker/check-images" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="back" value="host">
+        <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.host.check_now") }}</button>
+      </form>
+    {% endif %}
+  </div>
+
+  {% if not check %}
+    <p class="hint">{{ t(request, "docker.host.never") }}</p>
+  {% elif not check.ok %}
+    <div class="alert alert-warn"><p>
+      {% if check.error == 'no_access' %}{{ t(request, "docker.no_access") }}
+      {% elif check.error == 'no_info' %}{{ t(request, "docker.host.no_info") }}
+      {% else %}{{ t(request, "docker.host.failed", error=check.error) }}{% endif %}
+    </p></div>
+  {% else %}
+    {% set facts = check.facts or {} %}
+    <section class="panel">
+      <h3>{{ t(request, "docker.host.engine") }}</h3>
+      <dl class="detail-list">
+        <dt>{{ t(request, "docker.host.version") }}</dt><dd><code>{{ facts.version or "?" }}</code></dd>
+        <dt>{{ t(request, "docker.host.storage_driver") }}</dt><dd><code>{{ facts.storage_driver or "?" }}</code></dd>
+        <dt>{{ t(request, "docker.host.logging") }}</dt>
+        <dd><code>{{ facts.logging_driver or "?" }}</code>{% if facts.log_max_size %} · max-size <code>{{ facts.log_max_size }}</code>{% endif %}</dd>
+        <dt>{{ t(request, "docker.host.cgroup") }}</dt><dd>{{ facts.cgroup_version or "?" }}</dd>
+        <dt>{{ t(request, "docker.host.containers") }}</dt><dd>{{ t(request, "docker.host.containers_value", running=facts.running, total=facts.containers) }}</dd>
+        <dt>{{ t(request, "docker.host.live_restore") }}</dt><dd>{{ t(request, "docker.yes") if facts.live_restore else t(request, "docker.no") }}</dd>
+        <dt>{{ t(request, "docker.host.daemon_json") }}</dt><dd>{{ t(request, "docker.yes") if facts.daemon_json else t(request, "docker.no") }}</dd>
+      </dl>
+      {% if not facts.logs_readable %}<p class="hint">{{ t(request, "docker.host.logs_unreadable") }}</p>{% endif %}
+    </section>
+
+    <section class="panel">
+      <h3>{{ t(request, "docker.host.findings") }}</h3>
+      {% if check.findings %}
+        <ul class="host-findings">
+          {% for f in check.findings %}
+            <li class="host-finding host-finding-{{ f.level }}">
+              <p>
+                <span class="badge {{ 'badge-warn' if f.level == 'warn' else 'badge-tag' }}">{{ t(request, "docker.host.level." ~ f.level) }}</span>
+                <strong>{{ t(request, "docker.host.finding." ~ f.code ~ ".title") }}</strong>
+              </p>
+              <p class="hint">{{ t(request, "docker.host.finding." ~ f.code ~ ".hint") }}</p>
+              {% if f.code == 'log_rotation' and f.default %}<p class="hint">{{ t(request, "docker.host.finding.log_rotation.default") }}</p>{% endif %}
+              {% if f["items"] %}
+                <ul class="host-finding-items">
+                  {% for item in f["items"] %}<li><code>{{ item }}</code></li>{% endfor %}
+                </ul>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>{{ t(request, "docker.host.all_good") }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

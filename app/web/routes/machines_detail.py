@@ -1274,11 +1274,13 @@ async def delete_machine_note(
 async def check_image_updates_endpoint(
     request: Request,
     machine_id: uuid.UUID,
+    back: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     """"Check for image updates now" on the Docker tab — the same
-    registry-digest comparison the daily sweep runs, on demand."""
+    registry-digest comparison the daily sweep runs, on demand, with the
+    Docker host check. `back=host` returns to Docker → Host."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
     app_settings = await get_or_create_app_settings(db)
 
@@ -1286,7 +1288,7 @@ async def check_image_updates_endpoint(
     try:
         async_result = tasks.check_machine_image_updates.delay(str(machine.id))
         result = await asyncio.to_thread(
-            async_result.get, timeout=app_settings.ssh_connect_timeout + 150
+            async_result.get, timeout=app_settings.ssh_connect_timeout + 210
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
@@ -1309,8 +1311,9 @@ async def check_image_updates_endpoint(
     query = {"images_checked": "1"}
     if error is not None:
         query["images_error"] = sign_flash(error)
+    page = "/host" if back == "host" else ""
     return RedirectResponse(
-        url=f"/machines/{machine.id}/docker?{urlencode(query)}",
+        url=f"/machines/{machine.id}/docker{page}?{urlencode(query)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

@@ -71,6 +71,10 @@
           {% if image_check.hub_requests %}
             <p class="chart-card-subtitle">{{ t(request, "docker.image_check.hub_requests", count=image_check.hub_requests) }}</p>
           {% endif %}
+          {% set host_warnings = ((machine.docker_host_check or {}).findings or []) | selectattr("level", "equalto", "warn") | list | length %}
+          {% if host_warnings %}
+            <p class="chart-card-subtitle text-warn"><a href="{{ docker_base }}/host">{{ t(request, "docker.host.warnings_link", count=host_warnings) }}</a></p>
+          {% endif %}
         </div>
         <div class="page-header-actions">
           {% if can_manage and machine.host_key_fingerprint %}
