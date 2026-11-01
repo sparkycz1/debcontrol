@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -29,6 +29,9 @@ SERVER_ONLY_KINDS = ("smtp", "push")
 
 class EndpointCheck(Base):
     __tablename__ = "endpoint_checks"
+    __table_args__ = (
+        Index("uq_endpoint_checks_auto_key", "source_machine_id", "auto_key", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -113,6 +116,12 @@ class EndpointCheck(Base):
     acknowledged_until: Mapped[datetime | None] = mapped_column(nullable=True)
     acknowledged_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     acknowledged_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Made by debcontrol from a container's web links
+    # (`app.services.docker_endpoint_checks`): "<container>|<url>", unique
+    # per source machine. None = made by a person. Such a check is removed
+    # again when its container no longer runs or offers that link.
+    auto_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 

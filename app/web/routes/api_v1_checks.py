@@ -60,6 +60,8 @@ def _to_dict(check: EndpointCheck, *, with_push_path: bool = False) -> dict[str,
         "enabled": check.enabled,
         # null = probed from the debcontrol server.
         "source_machine_id": str(check.source_machine_id) if check.source_machine_id else None,
+        # Made from a container's web link ("<container>|<url>"), else null.
+        "auto_key": check.auto_key,
         "last_checked_at": iso(check.last_checked_at),
         "last_ok": check.last_ok,
         "last_error": check.last_error,

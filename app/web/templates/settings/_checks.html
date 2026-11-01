@@ -105,6 +105,13 @@
                min="1" max="168" step="1" value="{{ app_settings.docker_image_check_interval_hours }}">
         <p class="hint">{{ t(request, "settings.checks.docker_image_check_hint") }}</p>
 
+        <input type="hidden" name="docker_endpoint_checks_present" value="1">
+        <label>
+          <input type="checkbox" name="docker_endpoint_checks" value="1" {% if app_settings.docker_endpoint_checks %}checked{% endif %}>
+          {{ t(request, "settings.checks.docker_endpoint_checks") }}
+        </label>
+        <p class="hint">{{ t(request, "settings.checks.docker_endpoint_checks_hint") }}</p>
+
         <h3>{{ t(request, "settings.checks.update_run_history") }}</h3>
         <p class="hint">{{ t(request, "settings.checks.update_run_hint") }}</p>
         <label for="machine_update_run_retention_days">{{ t(request, "settings.checks.keep_update_run_days") }}</label>

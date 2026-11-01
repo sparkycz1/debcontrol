@@ -277,6 +277,9 @@ class Machine(Base):
     # another registry) refused for its rate limit, "hub_requests": the
     # Docker Hub requests one check makes}. None before 0.125.0.
     docker_image_check: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # The Docker host check (`app.services.docker_host_check`), refreshed
+    # with the image check: {"at", "ok", "error", "facts", "findings"}.
+    docker_host_check: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Where the next monitoring sample's `docker events` read starts: the
     # machine's own clock (Unix seconds) at the previous sample, so events
     # are neither missed nor reported twice (app.services.container_events).

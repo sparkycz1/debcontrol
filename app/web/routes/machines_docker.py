@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -30,6 +31,7 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
 from app.services import (
+    autoheal,
     docker_acceptances,
     docker_actions,
     docker_jobs,
@@ -55,6 +57,7 @@ from app.web.redirects import safe_local_path
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     machines_router,
+    need_power,
     need_updates,
 )
 from app.web.routes.machines_docker_common import (
@@ -216,8 +219,97 @@ async def docker_container_page(
             "rollback_image": docker_jobs.rollback_image(last),
             "is_protected": bool(protected)
             and docker_jobs.container_project(machine, name) == protected,
+            "has_healthcheck": _has_healthcheck(machine, name),
         },
     )
+
+
+def _has_healthcheck(machine: Machine, name: str) -> bool:
+    """Whether the latest sample shows a health state for the container
+    (only a container with a health check has one)."""
+    return any(
+        isinstance(c, dict) and c.get("name") == name and bool(c.get("health"))
+        for c in machine.docker_containers or []
+    )
+
+
+@router.post(
+    "/{machine_id}/docker/containers/{name}/autoheal",
+    dependencies=[need_power, Depends(verify_csrf)],
+)
+async def docker_container_autoheal(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    enabled: str = Form(""),
+    max_per_hour: int = Form(autoheal.DEFAULT_PER_HOUR),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Turn autoheal on or off for a container (`app.services.autoheal`)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_container_name_valid(name):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    try:
+        await docker_jobs.check_container(db, machine, name)
+    except docker_jobs.ProtectedError:
+        return redirect(
+            f"{docker_base(machine)}/containers/{name}", error=_protected_error(request)
+        )
+    setting = await autoheal.save(
+        db,
+        machine.id,
+        name,
+        enabled=enabled == "1",
+        max_per_hour=max_per_hour,
+        actor=actor(current_user),
+    )
+    await db.commit()
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.container.autoheal_settings",
+        f'Autoheal of container "{name}" on "{machine.name}": '
+        + (f"on (at most {setting.autoheal_max_per_hour} an hour)" if setting.autoheal else "off"),
+        details={
+            "container": name,
+            "autoheal": setting.autoheal,
+            "max_per_hour": setting.autoheal_max_per_hour,
+        },
+    )
+    return redirect(
+        f"{docker_base(machine)}/containers/{name}",
+        notice=LocalizedText(request, "docker.autoheal.saved"),
+    )
+
+
+@router.get("/{machine_id}/docker/host")
+async def docker_host_page(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Docker → Host: how the Engine is set up and what in it commonly
+    causes trouble (`app.services.docker_host_check`)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    check = machine.docker_host_check or {}
+    return render(
+        request,
+        "machines/docker/host.html",
+        machine,
+        current_user,
+        "host",
+        {"check": check, "checked_at": _parse_at(check.get("at"))},
+    )
+
+
+def _parse_at(value: Any) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value)) if value else None
+    except ValueError:
+        return None
 
 
 @router.get("/{machine_id}/docker/containers/{name}/panel")

@@ -266,6 +266,19 @@ class DockerContainerSetting(Base):
     update_policy: Mapped[str] = mapped_column(
         String(16), nullable=False, default=UpdatePolicy.ANY.value, server_default="any"
     )
+    # Autoheal (`app.services.autoheal`): restart the container when its
+    # health check reports unhealthy, at most `autoheal_max_per_hour`
+    # times an hour; then give up (`autoheal_gave_up_at`) and notify
+    # until it is healthy again. `autoheal_restarts` = ISO times of the
+    # restarts in the last hour.
+    autoheal: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    autoheal_max_per_hour: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=3, server_default="3"
+    )
+    autoheal_restarts: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    autoheal_gave_up_at: Mapped[datetime | None] = mapped_column(nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False

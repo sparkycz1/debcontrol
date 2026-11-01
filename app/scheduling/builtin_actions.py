@@ -179,6 +179,23 @@ async def _run_docker_prune(
     return ActionRunResult(attempted=attempted, skipped=skipped)
 
 
+async def _run_docker_power(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    names = docker_actions.parse_names(params.get("docker_names") or "")
+    if not names:
+        return ActionRunResult(attempted=0, skipped=len(machines))
+    attempted, skipped = await docker_actions.trigger_power(
+        db,
+        machines,
+        action=params.get("docker_power_action") or "restart",
+        kind=params.get("docker_power_kind") or "containers",
+        names=names,
+        started_by="schedule",
+    )
+    return ActionRunResult(attempted=attempted, skipped=skipped)
+
+
 def _docker_backup_runner(what: str) -> ActionRunFunc:
     async def run(
         db: AsyncSession, machines: list[Machine], params: dict[str, str]
@@ -442,6 +459,49 @@ def register_builtin_actions() -> None:
             ],
             run=_run_docker_prune,
             destructive=True,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="docker_power",
+            label="Start, stop or restart Docker containers",
+            description=(
+                "Starts, stops or restarts the named containers, or the named Compose "
+                "stacks, on each targeted machine that has them; machines without them "
+                "are skipped. debcontrol's own containers are only ever started."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="docker_power_action",
+                    label="Action",
+                    choices=[
+                        ("start", "Start"),
+                        ("stop", "Stop"),
+                        ("restart", "Restart"),
+                    ],
+                    default="restart",
+                ),
+                ScheduledActionParam(
+                    key="docker_power_kind",
+                    label="Names are",
+                    choices=[
+                        ("containers", "Container names"),
+                        ("stacks", "Compose stack (project) names"),
+                    ],
+                    default="containers",
+                ),
+                ScheduledActionParam(
+                    key="docker_names",
+                    label="Names",
+                    default="",
+                    param_type="text",
+                    placeholder="test-web, test-db",
+                ),
+            ],
+            run=_run_docker_power,
+            destructive=True,
+            # The same permission as the Start/Stop/Restart buttons.
+            extra_permission=Permission.ACTION_POWER,
         )
     )
     register_action(

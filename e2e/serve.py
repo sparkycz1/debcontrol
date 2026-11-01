@@ -122,6 +122,30 @@ async def seed() -> str:
                     "status": "Exited (0) 2 hours ago",
                 },
             ],
+            # Docker -> Host has findings to list.
+            docker_host_check={
+                "at": now.isoformat(),
+                "ok": True,
+                "error": None,
+                "facts": {
+                    "version": "27.3.1",
+                    "storage_driver": "overlay2",
+                    "logging_driver": "json-file",
+                    "log_max_size": "",
+                    "cgroup_version": "2",
+                    "containers": 2,
+                    "running": 1,
+                    "live_restore": False,
+                    "logs_readable": True,
+                    "daemon_json": False,
+                },
+                "findings": [
+                    {"code": "log_rotation", "level": "warn", "items": ["nginx"], "default": True},
+                    {"code": "big_logs", "level": "warn", "items": ["nginx: 1.2 GB"]},
+                    {"code": "no_memory_limit", "level": "info", "items": ["nginx"]},
+                    {"code": "live_restore", "level": "info", "items": []},
+                ],
+            },
         )
         db_host = Machine(
             name="db1",

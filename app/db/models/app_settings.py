@@ -335,6 +335,12 @@ class AppSettings(Base):
     docker_image_check_interval_hours: Mapped[int] = mapped_column(
         Integer, default=24, server_default="24", nullable=False
     )
+    # Make an endpoint check (run from the machine itself) for every web
+    # link of a running container (`app.services.docker_endpoint_checks`).
+    # Off by default.
+    docker_endpoint_checks: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     # --- Automatic full backups (app.services.auto_backup) ---
     # Off until an admin sets a passphrase and switches it on.

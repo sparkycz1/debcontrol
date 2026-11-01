@@ -28,6 +28,7 @@
   </div>
   {% if check.source_machine %}
     <p class="hint">{{ t(request, "checks.from_machine", machine=check.source_machine.name) }} · <a href="/machines/{{ check.source_machine_id }}">{{ t(request, "checks.open_source_machine") }}</a></p>
+    {% if check.auto_key %}<p class="hint">{{ t(request, "checks.auto_detail") }}</p>{% endif %}
   {% endif %}
   <p class="hint"><span class="badge">{{ check.kind | upper }}</span> {% if check.target %}<code>{{ check.target }}</code>{% endif %}
     {% if check.expected_body %} · {{ t(request, "checks.expected_body") }}: <code>{{ check.expected_body }}</code>{% endif %}

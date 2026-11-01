@@ -564,6 +564,78 @@ async def trigger_container_updates(
     return attempted, skipped
 
 
+POWER_ACTIONS = ("start", "stop", "restart")
+POWER_KINDS = ("containers", "stacks")
+MAX_POWER_NAMES = 50
+
+
+def parse_names(raw: str) -> list[str]:
+    """"web, db worker" → ["web", "db", "worker"]: the names a scheduled
+    start/stop/restart acts on, without duplicates."""
+    pieces = raw.replace(",", " ").split()
+    return list(dict.fromkeys(p for p in pieces if p))[:MAX_POWER_NAMES]
+
+
+async def trigger_power(
+    db: AsyncSession,
+    machines: list[Machine],
+    *,
+    action: str,
+    kind: str,
+    names: list[str],
+    started_by: str,
+) -> tuple[int, int]:
+    """Start, stop or restart the named containers or Compose stacks on
+    each machine that has them (a scheduled task). Names a machine doesn't
+    have are ignored there; debcontrol's own containers are only ever
+    started. Containers are acted on in one command per machine, queued
+    and not waited for; a stack becomes a Docker job. Returns (machines
+    acted on, machines skipped)."""
+    # Imported here: app.tasks.jobs imports the scheduler, which imports
+    # this module.
+    from app.tasks import jobs as tasks
+
+    if action not in POWER_ACTIONS or kind not in POWER_KINDS:
+        return 0, len(machines)
+    attempted = skipped = 0
+    wanted = set(names)
+    for machine in machines:
+        if not _eligible(machine):
+            skipped += 1
+            continue
+        present = [c for c in machine.docker_containers or [] if isinstance(c, dict)]
+        protected = await docker_jobs.protected_project(db, machine)
+        acted = False
+        if kind == "containers":
+            chosen = [
+                str(c["name"])
+                for c in present
+                if c.get("name") in wanted
+                and is_container_name_valid(str(c["name"]))
+                and (action == "start" or not protected or c.get("compose_project") != protected)
+            ][:MAX_BULK_CONTAINERS]
+            if chosen:
+                tasks.run_container_action_task.delay(
+                    str(machine.id), action=action, containers=chosen
+                )
+                acted = True
+        else:
+            projects = sorted(
+                {str(c.get("compose_project") or "") for c in present} & wanted - {""}
+            )
+            for project in projects:
+                try:
+                    if await stack_action(db, machine, project, action, started_by=started_by):
+                        acted = True
+                except (DockerCommandError, docker_jobs.ProtectedError):
+                    continue
+        if acted:
+            attempted += 1
+        else:
+            skipped += 1
+    return attempted, skipped
+
+
 async def trigger_scans(
     db: AsyncSession, machines: list[Machine], *, scope: str, started_by: str
 ) -> tuple[int, int]:

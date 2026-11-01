@@ -38,7 +38,8 @@ add another):
 - `app.tasks.jobs._take_monitoring_sample` (via
   `app.services.container_events`) — DOCKER_CONTAINER_CRASHED /
   _RESTART_LOOP / _OOM / _UNHEALTHY, for the container events since the
-  previous sample.
+  previous sample, and (via `app.services.autoheal`) DOCKER_CONTAINER_AUTOHEAL
+  when autoheal restarted an unhealthy container or gave up.
 """
 
 from __future__ import annotations
@@ -245,6 +246,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "On {machine_name} ({machine_ip}), the health check of these containers "
             "turned unhealthy (seen at {timestamp}):\n\n{details}",
         ),
+        NotificationEventType.DOCKER_CONTAINER_AUTOHEAL: (
+            "debcontrol: autoheal acted on {containers} on {machine_name}",
+            "On {machine_name} ({machine_ip}), autoheal found these containers "
+            "unhealthy at {timestamp}:\n\n{details}",
+        ),
     },
     "cs": {
         NotificationEventType.MACHINE_UNREACHABLE: (
@@ -400,6 +406,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: Docker kontejner {containers} na {machine_name} je unhealthy",
             "Na {machine_name} ({machine_ip}) kontrola stavu těchto kontejnerů hlásí "
             "unhealthy (zjištěno v {timestamp}):\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_CONTAINER_AUTOHEAL: (
+            "debcontrol: autoheal zasáhl u {containers} na {machine_name}",
+            "Na {machine_name} ({machine_ip}) autoheal v {timestamp} našel tyto "
+            "kontejnery unhealthy:\n\n{details}",
         ),
     },
 }

@@ -65,6 +65,7 @@ from app.services import app_update
 from app.services.notifications import send_smtp_message
 from app.services.settings_limits import (
     AUDIT_ACTION_BY_FIELD,
+    BOOLEAN_FIELDS,
     BOUNDED_FIELDS,
     SIGN_IN_POLICY_FIELDS,
 )
@@ -253,7 +254,7 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
     form = await request.form()
     app_settings = await get_or_create_app_settings(db)
     errors: list[str] = []
-    values: dict[str, int | None] = {}
+    values: dict[str, int | bool | None] = {}
     for name, label_key in _CHECKS_TAB_BOUNDED:
         raw = form.get(name)
         if raw is None:
@@ -277,6 +278,11 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
             values[name] = value
     if errors:
         return await _render_settings(request, db, errors, tab="checks")
+    # A checkbox sends nothing when unticked: the hidden marker says the
+    # form had it at all.
+    for name in BOOLEAN_FIELDS:
+        if form.get(f"{name}_present") is not None:
+            values[name] = form.get(name) == "1"
 
     changed = {f: v for f, v in values.items() if getattr(app_settings, f) != v}
     for field, value in changed.items():
@@ -285,7 +291,7 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
     if "monitoring_downsample_after_days" in changed:
         await timescale.apply_policies(db, app_settings.monitoring_downsample_after_days)
 
-    by_action: dict[str, dict[str, int | None]] = {}
+    by_action: dict[str, dict[str, int | bool | None]] = {}
     for field, value in changed.items():
         by_action.setdefault(AUDIT_ACTION_BY_FIELD[field], {})[field] = value
     for action, details in by_action.items():
