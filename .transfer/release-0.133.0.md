@@ -1,4 +1,6 @@
-Docker: packages inside images (SBOM) and moving or cloning a stack to another machine (0.133.0)
+## Changes
+
+### Docker: packages inside images (SBOM) and moving or cloning a stack to another machine (0.133.0) (#144)
 
 New features
 - Packages inside images (SBOM): every image scan also keeps the
@@ -57,3 +59,5 @@ Upgrade notes
   by scans from now on). Nothing else changes until you use the new
   features.
 
+
+**Full diff:** https://github.com/sparkycz1/debcontrol/compare/v0.132.0...v0.133.0
