@@ -12,6 +12,7 @@ containers page reads the latest monitoring sample, like before. See
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -42,10 +43,12 @@ from app.ssh.docker_cli import (
     DockerCommandError,
     is_container_name_valid,
     is_image_id_valid,
+    is_image_ref_valid,
     is_image_valid,
     is_network_name_valid,
 )
 from app.ssh.docker_prune import PruneOptions
+from app.ssh.docker_resources import RESTART_POLICIES, ResourceChange
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
 from app.web.redirects import safe_local_path
@@ -249,6 +252,7 @@ async def docker_container_panel(
     sampled = next(
         (c for c in docker_overview.containers_of(machine) if c.get("name") == name), None
     )
+    protected = await docker_jobs.protected_project(db, machine)
     return render_partial(
         request,
         "machines/docker/_container_panel.html",
@@ -259,6 +263,10 @@ async def docker_container_panel(
             "image": image,
             "scan": scan,
             "overview": docker_overview.describe(machine, sampled) if sampled else None,
+            "sampled": sampled,
+            "restart_policies": RESTART_POLICIES,
+            "is_protected": bool(protected)
+            and docker_jobs.container_project(machine, name) == protected,
             "error": error,
             "can_power": current_user.has_permission(Permission.ACTION_POWER),
             "can_updates": current_user.has_permission(Permission.ACTION_UPDATES),
@@ -349,6 +357,108 @@ async def docker_container_settings(
         f"{docker_base(machine)}/containers/{name}",
         notice=LocalizedText(request, "docker.container.settings_saved"),
     )
+
+
+@router.post(
+    "/{machine_id}/docker/containers/{name}/resources",
+    dependencies=[need_updates, Depends(verify_csrf)],
+)
+async def docker_container_resources(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    memory: str = Form(""),
+    cpus: str = Form(""),
+    restart_policy: str = Form(""),
+    max_retries: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Change a running container's memory, CPU limit and restart policy
+    in place (`docker update`); empty fields keep their value."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_container_name_valid(name):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    back = f"{docker_base(machine)}/containers/{name}"
+    outcome = await change_container_resources(
+        request, db, machine, current_user, name,
+        memory=memory, cpus=cpus, restart_policy=restart_policy, max_retries=max_retries,
+    )
+    if outcome.error is not None:
+        return redirect(back, error=outcome.error)
+    return redirect(back, notice=LocalizedText(request, "docker.resources.saved"))
+
+
+@dataclass
+class ResourcesOutcome:
+    change: ResourceChange | None = None
+    error: str | None = None
+    status_code: int = 200
+
+
+async def change_container_resources(
+    request: Request,
+    db: AsyncSession,
+    machine: Machine,
+    user: User,
+    name: str,
+    *,
+    memory: str = "",
+    cpus: str = "",
+    restart_policy: str = "",
+    max_retries: str = "",
+) -> ResourcesOutcome:
+    """The one path behind the web form and the REST API: validate, refuse
+    debcontrol's own containers, run `docker update`, audit."""
+    try:
+        change = ResourceChange.parse(
+            memory=memory, cpus=cpus, restart_policy=restart_policy, max_retries=max_retries
+        )
+    except DockerCommandError:
+        return ResourcesOutcome(
+            error=LocalizedText(request, "docker.resources.invalid"), status_code=400
+        )
+    if change.empty:
+        return ResourcesOutcome(
+            error=LocalizedText(request, "docker.resources.nothing"), status_code=400
+        )
+    protected = await docker_jobs.protected_project(db, machine)
+    if protected and docker_jobs.container_project(machine, name) == protected:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.container.resources",
+            f'Refused to change the limits of container "{name}" on "{machine.name}": '
+            "debcontrol runs in it",
+            denied=True,
+            details={"container": name},
+        )
+        return ResourcesOutcome(error=_protected_error(request), status_code=409)
+    if not machine.host_key_fingerprint:
+        return ResourcesOutcome(
+            error=LocalizedText(request, "docker_fleet.no_host_key"), status_code=409
+        )
+    app_settings = await get_or_create_app_settings(db)
+    _result, error = await wait_task(
+        request,
+        docker_tasks.docker_container_resources.delay(str(machine.id), name, change.as_dict()),
+        app_settings.ssh_connect_timeout + _INVENTORY_WAIT_EXTRA,
+    )
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.container.resources",
+        f'Changed the limits of container "{name}" on "{machine.name}"'
+        if error is None
+        else f'Could not change the limits of container "{name}" on "{machine.name}"',
+        ok=error is None,
+        details={"container": name, **change.as_dict()},
+    )
+    if error is not None:
+        return ResourcesOutcome(change=change, error=error, status_code=502)
+    return ResourcesOutcome(change=change)
 
 
 async def _queue_updates(
@@ -456,39 +566,31 @@ _BULK_PERMISSION = {
 }
 
 
-@router.post("/{machine_id}/docker/containers/bulk", dependencies=[Depends(verify_csrf)])
-async def docker_containers_bulk(
+@dataclass
+class BulkOutcome:
+    """What one machine's part of a bulk action did: how many containers
+    it acted on (or jobs it queued), the error to show, and the one scan
+    job a "scan" started."""
+
+    done: int = 0
+    error: str | None = None
+    scan_job: DockerJob | None = None
+
+
+async def bulk_on_machine(
     request: Request,
-    machine_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Response:
-    """The buttons under the containers table, for the selected rows:
-    start, stop, restart, remove (stopped ones), scan their images, or
-    update them. Each needs the same permission as doing it to one."""
-    machine = await _get_machine_or_404(machine_id, db, current_user)
-    form = await request.form()
-    action = str(form.get("action") or "")
-    permission = _BULK_PERMISSION.get(action)
-    if permission is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
-    if not current_user.has_permission(permission):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
-    names = [str(v) for v in form.getlist("container") if is_container_name_valid(str(v))]
-    if not names:
-        return redirect(
-            docker_base(machine), error=LocalizedText(request, "docker.bulk.none_selected")
-        )
+    db: AsyncSession,
+    machine: Machine,
+    user: User,
+    action: str,
+    names: list[str],
+) -> BulkOutcome:
+    """Start, stop, restart, remove, scan or update `names` on one machine,
+    audited — shared by the machine's containers table and the fleet-wide
+    one (`docker_fleet` routes). The caller checked the permission."""
     if action == "update":
-        queued, update_error = await _queue_updates(
-            request, db, machine, current_user, names, ""
-        )
-        update_notice = (
-            LocalizedText(request, "docker.update.queued", count=len(queued.jobs))
-            if queued.jobs
-            else None
-        )
-        return redirect(f"{docker_base(machine)}/jobs", notice=update_notice, error=update_error)
+        queued, update_error = await _queue_updates(request, db, machine, user, names, "")
+        return BulkOutcome(done=len(queued.jobs), error=update_error)
     if action == "scan":
         images = {
             str(c.get("image"))
@@ -497,16 +599,12 @@ async def docker_containers_bulk(
         }
         try:
             job = await docker_actions.scan_images(
-                db, machine, started_by=actor(current_user), refs=sorted(images)
+                db, machine, started_by=actor(user), refs=sorted(images)
             )
         except DockerCommandError:
-            return redirect(
-                docker_base(machine), error=LocalizedText(request, "docker.bulk.none_selected")
-            )
+            return BulkOutcome(error=LocalizedText(request, "docker.bulk.none_selected"))
         if job is None:
-            return redirect(
-                docker_base(machine), error=LocalizedText(request, "docker.job.already_queued")
-            )
+            return BulkOutcome(error=LocalizedText(request, "docker.job.already_queued"))
         await _audit(
             db,
             request,
@@ -515,7 +613,7 @@ async def docker_containers_bulk(
             f'Started a vulnerability scan ({job.target}) on "{machine.name}"',
             details={"target": job.target},
         )
-        return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+        return BulkOutcome(done=1, scan_job=job)
 
     app_settings = await get_or_create_app_settings(db)
     result = await docker_actions.run_bulk_action(
@@ -546,14 +644,54 @@ async def docker_containers_bulk(
     error: str | None = result.error
     if error is None and "protected" in result.skipped.values():
         error = _protected_error(request)
-    notice = (
-        LocalizedText(
-            request, f"docker.bulk.done_{action}", count=len(result.names)
+    return BulkOutcome(done=len(result.names) if result.error is None else 0, error=error)
+
+
+def bulk_permission(action: str) -> Permission | None:
+    return _BULK_PERMISSION.get(action)
+
+
+@router.post("/{machine_id}/docker/containers/bulk", dependencies=[Depends(verify_csrf)])
+async def docker_containers_bulk(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The buttons under the containers table, for the selected rows:
+    start, stop, restart, remove (stopped ones), scan their images, or
+    update them. Each needs the same permission as doing it to one."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    form = await request.form()
+    action = str(form.get("action") or "")
+    permission = _BULK_PERMISSION.get(action)
+    if permission is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    if not current_user.has_permission(permission):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
+    names = [str(v) for v in form.getlist("container") if is_container_name_valid(str(v))]
+    if not names:
+        return redirect(
+            docker_base(machine), error=LocalizedText(request, "docker.bulk.none_selected")
         )
-        if result.names and result.error is None
+    outcome = await bulk_on_machine(request, db, machine, current_user, action, names)
+    if action == "update":
+        notice = (
+            LocalizedText(request, "docker.update.queued", count=outcome.done)
+            if outcome.done
+            else None
+        )
+        return redirect(f"{docker_base(machine)}/jobs", notice=notice, error=outcome.error)
+    if action == "scan":
+        if outcome.scan_job is None:
+            return redirect(docker_base(machine), error=outcome.error)
+        return redirect(f"{docker_base(machine)}/jobs/{outcome.scan_job.id}")
+    notice = (
+        LocalizedText(request, f"docker.bulk.done_{action}", count=outcome.done)
+        if outcome.done
         else None
     )
-    return redirect(docker_base(machine), notice=notice, error=error)
+    return redirect(docker_base(machine), notice=notice, error=outcome.error)
 
 
 @router.post(
@@ -705,6 +843,197 @@ async def docker_images_scan(
         details={"target": job.target},
     )
     return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+def _images_back(machine: Machine, back: str) -> str:
+    """`back` when it is one of this machine's Docker pages, else Images."""
+    default_back = f"{docker_base(machine)}/images"
+    target = safe_local_path(back, default_back)
+    return target if target.startswith(f"{docker_base(machine)}/") else default_back
+
+
+async def _image_op(
+    request: Request, db: AsyncSession, machine: Machine, op: str, image: str, target: str = ""
+) -> tuple[dict[str, Any] | None, str | None]:
+    app_settings = await get_or_create_app_settings(db)
+    return await wait_task(
+        request,
+        docker_tasks.docker_image_op.delay(str(machine.id), op, image, target),
+        app_settings.ssh_connect_timeout + _INVENTORY_WAIT_EXTRA,
+    )
+
+
+@router.post("/{machine_id}/docker/images/pull", dependencies=[need_updates, Depends(verify_csrf)])
+async def docker_images_pull(
+    request: Request,
+    machine_id: uuid.UUID,
+    ref: str = Form(""),
+    back: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Pull one image reference as a job (`DockerJobKind.IMAGE_PULL`)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    target_back = _images_back(machine, back)
+    try:
+        job = await docker_actions.pull_image(
+            db, machine, ref, started_by=actor(current_user)
+        )
+    except DockerCommandError:
+        return redirect(target_back, error=LocalizedText(request, "docker.image.invalid_ref"))
+    if job is None:
+        return redirect(target_back, error=LocalizedText(request, "docker.job.already_queued"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.image.pull",
+        f'Started pulling {job.target} on "{machine.name}"',
+        details={"image": job.target},
+    )
+    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+@router.post(
+    "/{machine_id}/docker/images/remove", dependencies=[need_updates, Depends(verify_csrf)]
+)
+async def docker_images_remove(
+    request: Request,
+    machine_id: uuid.UUID,
+    image: str = Form(""),
+    back: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """`docker image rm` of one tag or image id, never forced: Docker
+    refuses an image a container still uses."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    target_back = _images_back(machine, back)
+    if back.startswith(f"{docker_base(machine)}/images/sha256:"):
+        target_back = f"{docker_base(machine)}/images"  # its page is gone with it
+    if not is_image_valid(image):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image.")
+    _result, error = await _image_op(request, db, machine, "remove", image)
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.image.remove",
+        f'Removed image {image} on "{machine.name}"'
+        if error is None
+        else f'Could not remove image {image} on "{machine.name}"',
+        ok=error is None,
+        details={"image": image, **({"error": str(error)[:300]} if error else {})},
+    )
+    if error is not None:
+        return redirect(_images_back(machine, back), error=error)
+    return redirect(target_back, notice=LocalizedText(request, "docker.image.removed", image=image))
+
+
+@router.post("/{machine_id}/docker/images/tag", dependencies=[need_updates, Depends(verify_csrf)])
+async def docker_images_tag(
+    request: Request,
+    machine_id: uuid.UUID,
+    image: str = Form(""),
+    new_tag: str = Form(""),
+    back: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """`docker tag` of an image under a new name."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    target_back = _images_back(machine, back)
+    new_tag = new_tag.strip()
+    if not is_image_valid(image):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image.")
+    if (
+        not new_tag
+        or not is_image_ref_valid(new_tag)
+        or is_image_id_valid(new_tag)
+        or "@" in new_tag
+    ):
+        return redirect(target_back, error=LocalizedText(request, "docker.image.invalid_tag"))
+    _result, error = await _image_op(request, db, machine, "tag", image, new_tag)
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.image.tag",
+        f'Tagged {image} as {new_tag} on "{machine.name}"'
+        if error is None
+        else f'Could not tag {image} as {new_tag} on "{machine.name}"',
+        ok=error is None,
+        details={"image": image, "tag": new_tag},
+    )
+    if error is not None:
+        return redirect(target_back, error=error)
+    return redirect(
+        target_back, notice=LocalizedText(request, "docker.image.tagged", tag=new_tag)
+    )
+
+
+@router.get("/{machine_id}/docker/images/{image_id}")
+async def docker_image_page(
+    request: Request,
+    machine_id: uuid.UUID,
+    image_id: str,
+    ref: str = "",
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """One image: its details and layers (loaded from the machine) and its
+    stored scan, with Pull again, Tag and Remove."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_image_id_valid(image_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such image.")
+    scan = await docker_scans.get_scan(db, machine.id, image_id)
+    return render(
+        request,
+        "machines/docker/image.html",
+        machine,
+        current_user,
+        "images",
+        {
+            "image_id": image_id,
+            "scan": scan,
+            # The list links here with the tag it showed, for the heading only.
+            "label": ref if is_image_valid(ref) else "",
+        },
+    )
+
+
+@router.get("/{machine_id}/docker/images/{image_id}/panel")
+async def docker_image_panel(
+    request: Request,
+    machine_id: uuid.UUID,
+    image_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_image_id_valid(image_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such image.")
+    result, error = await _image_op(request, db, machine, "details", image_id)
+    details = (result or {}).get("details") if error is None else None
+    used_by = [
+        c
+        for c in docker_overview.containers_of(machine)
+        if details and str(c.get("image") or "") in (details.get("tags") or [])
+    ]
+    return render_partial(
+        request,
+        "machines/docker/_image_panel.html",
+        {
+            "machine": machine,
+            "docker_base": docker_base(machine),
+            "image_id": image_id,
+            "details": details,
+            "used_by": used_by,
+            "error": error,
+            "can_updates": current_user.has_permission(Permission.ACTION_UPDATES),
+            "csrf_token": request.state.csrf_token,
+        },
+    )
 
 
 @router.get("/{machine_id}/docker/images/{image_id}/vulnerabilities")

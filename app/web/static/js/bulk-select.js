@@ -41,10 +41,12 @@ document.addEventListener("change", (event) => {
 // A bulk-action bar marked `data-bulk-bar="<checkbox name>"` gets the
 // `has-selection` class while at least one such checkbox in its form is
 // ticked (style.css shows its actions only then), and its
-// `[data-bulk-count]` element the number ticked.
+// `[data-bulk-count]` element the number ticked. A bar outside its form
+// names it with `data-bulk-form="<form id>"`.
 function refreshBulkBars() {
   for (const bar of document.querySelectorAll("[data-bulk-bar]")) {
-    const form = bar.closest("form");
+    const formId = bar.getAttribute("data-bulk-form");
+    const form = formId ? document.getElementById(formId) : bar.closest("form");
     const name = bar.getAttribute("data-bulk-bar");
     if (!form || !name) continue;
     const ticked = [...document.querySelectorAll(`input[name="${name}"]`)].filter(

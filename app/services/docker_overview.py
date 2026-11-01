@@ -41,10 +41,15 @@ def containers_of(machine: Machine) -> list[dict[str, Any]]:
     return [c for c in machine.docker_containers or [] if isinstance(c, dict)]
 
 
+def links_of(container: dict[str, Any], address: str) -> list[dict[str, Any]]:
+    """The container's web links (`web_links`) as plain dicts."""
+    return [asdict(link) for link in web_links(container, address)]
+
+
 def describe(machine: Machine, container: dict[str, Any]) -> dict[str, Any]:
     """`row_state`, `web_links` and `image_links` for one container."""
     return {
         "row_state": row_state(container),
-        "web_links": [asdict(link) for link in web_links(container, machine.ip_address)],
+        "web_links": links_of(container, machine.ip_address),
         "image_links": asdict(image_links(str(container.get("image") or ""), container)),
     }

@@ -67,7 +67,7 @@ from app.services.image_versions import parse_image
 from app.services.live_updates import KIND_DOCKER, publish_machine_event
 from app.services.notifications import notify
 from app.services.update_policy import bump_target, normalize_policy, parse_version, within
-from app.ssh import detached_jobs, docker_files
+from app.ssh import detached_jobs, docker_files, docker_images
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.docker_cli import (
     DOCKER_ACCESS_PROBE,
@@ -102,6 +102,8 @@ from app.ssh.docker_prune import (
     parse_reclaimed_bytes,
     parse_removed_counts,
 )
+from app.ssh.docker_resources import ResourceChange
+from app.ssh.docker_resources import build_update_command as build_resources_command
 from app.ssh.docker_scan import MAX_IMAGES as MAX_SCAN_IMAGES
 from app.ssh.docker_scan import build_scan_script, parse_scan_output
 from app.ssh.docker_update import (
@@ -153,6 +155,7 @@ _TIMEOUTS: dict[str, int] = {
     DockerJobKind.STACK_DEPLOY: 45 * 60,
     DockerJobKind.STACK_CHECK: 15 * 60,
     DockerJobKind.IMAGE_SCAN: 2 * 60 * 60,
+    DockerJobKind.IMAGE_PULL: 60 * 60,
     DockerJobKind.PRUNE: 60 * 60,
     DockerJobKind.BACKUP_RUN: 12 * 60 * 60,
     DockerJobKind.BACKUP_CHECK: 6 * 60 * 60,
@@ -368,6 +371,7 @@ async def _after_close(ctx: _Context, status: DockerJobStatus) -> None:
         DockerJobKind.STACK_DEPLOY,
         DockerJobKind.PRUNE,
         DockerJobKind.BACKUP_RESTORE,
+        DockerJobKind.IMAGE_PULL,
     ):
         # What runs changed: refresh the container list and image checks.
         from app.tasks import jobs as machine_jobs
@@ -1053,6 +1057,22 @@ async def _job_image_scan(ctx: _Context) -> None:
     await _close(ctx, DockerJobStatus.SUCCEEDED)
 
 
+async def _job_image_pull(ctx: _Context) -> None:
+    ref = ctx.job.target
+
+    async def build() -> str:
+        return docker_images.build_pull_script(ref)
+
+    status, output = await _run_phase(ctx, "run", build)
+    image_id = docker_images.parse_pulled_id(output)
+    if status == 0 and image_id:
+        ctx.result["image_id"] = image_id
+        await _close(ctx, DockerJobStatus.SUCCEEDED)
+    else:
+        tail = " ".join(output.strip().splitlines()[-3:])[-300:]
+        await _close(ctx, DockerJobStatus.FAILED, f"docker pull failed: {tail}" if tail else None)
+
+
 async def _job_prune(ctx: _Context) -> None:
     options = PruneOptions.from_dict(ctx.params)
 
@@ -1243,6 +1263,7 @@ _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.STACK_ACTION: _job_stack_action,
     DockerJobKind.IMAGE_SCAN: _job_image_scan,
     DockerJobKind.PRUNE: _job_prune,
+    DockerJobKind.IMAGE_PULL: _job_image_pull,
     DockerJobKind.BACKUP_RUN: _job_backup_run,
     DockerJobKind.BACKUP_CHECK: _job_backup_check,
     DockerJobKind.BACKUP_FORGET: _job_backup_forget,
@@ -1534,6 +1555,73 @@ def docker_write_compose_file(
     return asyncio.run(
         _docker_write_compose_file(machine_id, project, path, content, working_dir, files)
     )
+
+
+async def _docker_image_op(
+    machine_id: str, op: str, image: str, target: str = ""
+) -> dict[str, Any]:
+    """One quick image operation (`app.ssh.docker_images`): `details`
+    (layers and inspect), `remove` (never forced) or `tag`."""
+    async with db_session.AsyncSessionLocal() as session:
+        try:
+            if op == "details":
+                command = docker_images.build_details_command(image)
+            elif op == "remove":
+                command = docker_images.build_remove_command(image)
+            elif op == "tag":
+                command = docker_images.build_tag_command(image, target)
+            else:
+                return {"ok": False, "error": f"Unknown operation {op!r}."}
+            machine, secret, timeout = await _machine_and_secret(session, machine_id)
+            output = await run_script(machine, secret, timeout, command)
+        except _READ_ERRORS as exc:
+            return _error(exc)
+    if output.exit_status != 0:
+        return {"ok": False, "error": output.output.strip()[-400:] or "The command failed."}
+    if op == "details":
+        details = docker_images.parse_details(output.output)
+        if details is None:
+            return {"ok": False, "error": "The image could not be read."}
+        return {"ok": True, "details": details.as_dict()}
+    if op == "remove":
+        from app.tasks import jobs as machine_jobs
+
+        machine_jobs.sample_machine_monitoring.delay(machine_id)
+    return {"ok": True, "output": output.output.strip()[-1000:]}
+
+
+@celery_app.task(name="app.tasks.docker_jobs.docker_image_op", time_limit=_SHORT_TASK_TIME_LIMIT)
+def docker_image_op(machine_id: str, op: str, image: str, target: str = "") -> dict[str, Any]:
+    return asyncio.run(_docker_image_op(machine_id, op, image, target))
+
+
+async def _docker_container_resources(
+    machine_id: str, container: str, change: dict[str, Any]
+) -> dict[str, Any]:
+    """`docker update` of one container's memory, CPU and restart policy
+    (`app.ssh.docker_resources`), then a fresh monitoring sample."""
+    async with db_session.AsyncSessionLocal() as session:
+        try:
+            command = build_resources_command(container, ResourceChange.from_dict(change))
+            machine, secret, timeout = await _machine_and_secret(session, machine_id)
+            output = await run_script(machine, secret, timeout, command)
+        except _READ_ERRORS as exc:
+            return _error(exc)
+    if output.exit_status != 0:
+        return {"ok": False, "error": output.output.strip()[-400:] or "docker update failed."}
+    from app.tasks import jobs as machine_jobs
+
+    machine_jobs.sample_machine_monitoring.delay(machine_id)
+    return {"ok": True}
+
+
+@celery_app.task(
+    name="app.tasks.docker_jobs.docker_container_resources", time_limit=_SHORT_TASK_TIME_LIMIT
+)
+def docker_container_resources(
+    machine_id: str, container: str, change: dict[str, Any]
+) -> dict[str, Any]:
+    return asyncio.run(_docker_container_resources(machine_id, container, change))
 
 
 async def _docker_backup_snapshots(backup_id: str) -> dict[str, Any]:

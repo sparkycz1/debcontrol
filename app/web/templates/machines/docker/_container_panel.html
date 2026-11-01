@@ -57,6 +57,53 @@
     </dl>
   </section>
 
+  <section class="panel" id="resources">
+    <h2>{{ t(request, "docker.resources.heading") }}</h2>
+    <dl class="detail-list">
+      <dt>{{ t(request, "docker.resources.memory") }}</dt>
+      <dd>
+        {{ c.memory_bytes | bytes if c.memory_bytes else t(request, "docker.resources.no_limit") }}
+        {% if sampled and sampled.mem_bytes is number %}<span class="table-summary">{{ t(request, "docker.resources.using", value=(sampled.mem_bytes | bytes)) }}</span>{% endif %}
+      </dd>
+      <dt>{{ t(request, "docker.resources.cpus") }}</dt>
+      <dd>
+        {{ '%g' | format(c.nano_cpus / 1000000000) if c.nano_cpus else t(request, "docker.resources.no_limit") }}
+        {% if sampled and sampled.cpu_percent is number %}<span class="table-summary">{{ t(request, "docker.resources.using_cpu", value=('%.1f' | format(sampled.cpu_percent))) }}</span>{% endif %}
+      </dd>
+    </dl>
+    {% if can_updates and ready %}
+      {% if is_protected %}
+        <p class="hint">{{ t(request, "docker.protected") }}</p>
+      {% else %}
+        <details>
+          <summary>{{ t(request, "docker.resources.change") }}</summary>
+          <form method="post" action="{{ docker_base }}/containers/{{ c.name | urlencode }}/resources" class="form resources-form" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="resources-grid">
+              <label>{{ t(request, "docker.resources.memory") }}
+                <input type="text" name="memory" spellcheck="false" maxlength="16" placeholder="512m, 2g" inputmode="text">
+              </label>
+              <label>{{ t(request, "docker.resources.cpus") }}
+                <input type="text" name="cpus" spellcheck="false" maxlength="8" placeholder="1.5" inputmode="decimal">
+              </label>
+              <label>{{ t(request, "docker.container.restart_policy") }}
+                <select name="restart_policy">
+                  <option value="">{{ t(request, "docker.resources.keep", value=(c.restart_policy or 'no')) }}</option>
+                  {% for p in restart_policies %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                </select>
+              </label>
+              <label>{{ t(request, "docker.resources.max_retries") }}
+                <input type="number" name="max_retries" min="0" max="1000" step="1" placeholder="{{ c.restart_max_retries or '' }}">
+              </label>
+            </div>
+            <p class="hint">{{ t(request, "docker.resources.hint") }}{% if c.compose_project %} {{ t(request, "docker.resources.compose_hint") }}{% endif %}</p>
+            <button type="submit" class="button log-small-button">{{ t(request, "docker.resources.apply") }}</button>
+          </form>
+        </details>
+      {% endif %}
+    {% endif %}
+  </section>
+
   {% if c.mounts %}
     <section class="panel">
       <h2>{{ t(request, "docker.container.mounts") }}</h2>

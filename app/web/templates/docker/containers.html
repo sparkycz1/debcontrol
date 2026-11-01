@@ -1,0 +1,184 @@
+{#- Docker → Containers: every container of the visible fleet
+    (app.web.routes.docker_fleet, app.services.docker_fleet). Filters and
+    paging are server-side (a GET form), so the page scales with the fleet
+    and a filtered view can be bookmarked. -#}
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+{% from "machines/docker/_macros.html" import severity_compact, container_state, web_links %}
+
+{% block title %}{{ t(request, "docker_fleet.tab.containers") }} — Docker — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>Docker</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+
+  {% set flash_notice = flash(request, 'notice') %}
+  {% set flash_error = flash(request, 'error') %}
+  {% if flash_notice %}<div class="alert alert-ok" role="status"><p>{{ flash_notice }}</p></div>{% endif %}
+  {% if flash_error %}<div class="alert alert-error" role="alert"><p>{{ flash_error }}</p></div>{% endif %}
+  {% if page.truncated %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker_fleet.truncated") }}</p></div>
+  {% endif %}
+
+  <p class="hint">{{ t(request, "docker_fleet.intro") }}</p>
+
+  <form method="get" action="/docker/containers" class="search-form fleet-docker-filters" role="search">
+    <input type="search" name="q" value="{{ flt.q }}" placeholder="{{ t(request, 'docker_fleet.search') }}"
+           aria-label="{{ t(request, 'docker_fleet.search') }}">
+    {% if groups %}
+      <select name="group" aria-label="{{ t(request, 'docker_fleet.group') }}" class="inline-select">
+        <option value="">{{ t(request, "docker_fleet.all_groups") }}</option>
+        {% for g in groups %}<option value="{{ g.id }}" {% if flt.group_id == g.id %}selected{% endif %}>{{ g.name }}</option>{% endfor %}
+      </select>
+    {% endif %}
+    <select name="vulns" aria-label="{{ t(request, 'docker.vulnerabilities') }}" class="inline-select">
+      <option value="">{{ t(request, "docker_fleet.vulns_any") }}</option>
+      <option value="critical" {% if flt.vulns == 'critical' %}selected{% endif %}>{{ t(request, "docker_fleet.vulns_critical") }}</option>
+      <option value="high" {% if flt.vulns == 'high' %}selected{% endif %}>{{ t(request, "docker_fleet.vulns_high") }}</option>
+    </select>
+    <label class="inline-check"><input type="checkbox" name="update" value="1" {% if flt.update %}checked{% endif %}> {{ t(request, "docker_fleet.with_update") }}</label>
+    {% if flt.state %}<input type="hidden" name="state" value="{{ flt.state }}">{% endif %}
+    {% if flt.stack %}<input type="hidden" name="stack" value="{{ flt.stack }}">{% endif %}
+    <button type="submit" class="button">{{ t(request, "docker_fleet.apply") }}</button>
+    {% if flt.q or flt.group_id or flt.vulns or flt.update or flt.state or flt.stack %}
+      <a href="/docker/containers" class="button button-secondary">{{ t(request, "docker_fleet.clear") }}</a>
+    {% endif %}
+  </form>
+
+  <div class="state-tiles" role="group" aria-label="{{ t(request, 'docker.tiles.label') }}">
+    {% set all_count = page.state_counts.values() | sum %}
+    <a class="state-tile" href="{{ url_with(state='', page=none) }}" {% if not flt.state %}aria-current="true"{% endif %}>
+      <span class="state-tile-count">{{ all_count }}</span>
+      <span class="state-tile-label">{{ t(request, "docker.tiles.all") }}</span>
+    </a>
+    {% for group in state_groups %}
+      {% if page.state_counts.get(group) %}
+        <a class="state-tile state-tile-{{ group }}" href="{{ url_with(state=group, page=none) }}" {% if flt.state == group %}aria-current="true"{% endif %}>
+          <span class="state-tile-count">{{ page.state_counts[group] }}</span>
+          <span class="state-tile-label">{{ t(request, "docker.tiles." ~ group) }}</span>
+        </a>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {% if flt.stack %}
+    <p class="hint">{{ t(request, "docker_fleet.stack_filter", name=flt.stack) }} <a href="{{ url_with(stack='', page=none) }}">{{ t(request, "docker_fleet.clear") }}</a></p>
+  {% endif %}
+
+  {% if page.rows %}
+    <p class="hint">{{ t(request, "docker_fleet.summary", count=page.total, machines=page.machines, updates=page.with_update) }}</p>
+    {% set can_select = can_power or can_updates %}
+    {% if can_select %}
+      <form method="post" action="/docker/containers/bulk" id="fleet-containers-bulk" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="back" value="{{ back }}">
+      </form>
+    {% endif %}
+
+    {% macro sort_head(key, label, cls='') -%}
+      {%- set active = flt.sort == key -%}
+      <th class="{{ cls }}" {% if active %}aria-sort="{{ 'descending' if flt.desc else 'ascending' }}"{% endif %}>
+        <a class="sort-link" href="{{ url_with(sort=key, desc=('' if active and flt.desc else ('1' if active else '')), page=none) }}">{{ label }}{% if active %} {{ '↓' if flt.desc else '↑' }}{% endif %}</a>
+      </th>
+    {%- endmacro %}
+
+    <div class="table-cards-wrap fleet-docker-table-wrap">
+      <table class="data-table containers-table table-cards" id="fleet-containers-table">
+        <thead>
+          <tr>
+            {% if can_select %}
+              <th class="cell-select"><input type="checkbox" data-select-all="container" form="fleet-containers-bulk" aria-label="{{ t(request, 'docker.select_all') }}"></th>
+            {% endif %}
+            {{ sort_head('machine', t(request, "docker_fleet.machine")) }}
+            {{ sort_head('name', t(request, "monitoring.containers.name")) }}
+            <th>{{ t(request, "docker.links.ports_heading") }}</th>
+            {{ sort_head('image', t(request, "monitoring.containers.image")) }}
+            {{ sort_head('vulns', t(request, "docker.vulnerabilities"), 'col-vulns') }}
+            {{ sort_head('state', t(request, "monitoring.containers.status")) }}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in page.rows %}
+            {% set c = r.container %}
+            {% set repeat_machine = flt.sort == 'machine' and loop.index0 > 0 and page.rows[loop.index0 - 1].machine_id == r.machine_id %}
+            {% set base = "/machines/" ~ r.machine_id ~ "/docker" %}
+            <tr>
+              {% if can_select %}
+                <td class="cell-select">
+                  {% if r.machine_ready %}
+                    <input type="checkbox" name="container" value="{{ r.key }}" form="fleet-containers-bulk"
+                           aria-label="{{ t(request, 'docker_fleet.select', name=r.name, machine=r.machine_name) }}">
+                  {% endif %}
+                </td>
+              {% endif %}
+              <td data-label="{{ t(request, 'docker_fleet.machine') }}" {% if repeat_machine %}class="cell-repeat"{% endif %}>
+                <a href="{{ base }}">{{ r.machine_name }}</a>
+                {% if r.group_name %}<div class="table-summary">{{ r.group_name }}</div>{% endif %}
+              </td>
+              <td class="cell-name" data-label="{{ t(request, 'monitoring.containers.name') }}">
+                <a href="{{ base }}/containers/{{ r.name | urlencode }}"><strong>{{ r.name }}</strong></a>
+                <div class="cell-badges">
+                  {% if c.compose_project %}<a class="table-summary" href="{{ url_with(stack=c.compose_project, page=none) }}" title="{{ t(request, 'docker_fleet.stack_filter_title') }}">{{ t(request, "docker.stack_label", name=c.compose_project) }}</a>{% endif %}
+                  {% if r.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}</span>{% endif %}
+                </div>
+              </td>
+              <td class="cell-links" data-label="{{ t(request, 'docker.links.ports_heading') }}">
+                {{ web_links(request, r.web_links) }}
+                {% if not r.web_links %}<span class="table-muted cell-truncate" title="{{ c.ports }}">{{ c.ports or '—' }}</span>{% endif %}
+              </td>
+              <td class="cell-image" data-label="{{ t(request, 'monitoring.containers.image') }}">
+                <div class="cell-image-ref">
+                  {% if r.image_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
+                  <span class="cell-truncate" title="{{ c.image }}">{{ c.image }}</span>
+                </div>
+                {% if r.counts is not none %}<div class="vulns-inline">{{ severity_compact(request, r.counts, base ~ "/images/" ~ r.image_id ~ "/vulnerabilities") }}</div>{% endif %}
+              </td>
+              <td class="cell-nowrap col-vulns" data-label="{{ t(request, 'docker.vulnerabilities') }}">
+                {% if r.counts is not none %}
+                  {{ severity_compact(request, r.counts, base ~ "/images/" ~ r.image_id ~ "/vulnerabilities") }}
+                {% else %}
+                  <span class="table-muted">{{ t(request, "docker.scan.not_scanned") }}</span>
+                {% endif %}
+              </td>
+              <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}">{{ container_state(request, c) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if can_select %}
+      <div class="bulk-bar" data-bulk-bar="container" data-bulk-form="fleet-containers-bulk">
+        <p class="hint bulk-when-empty">{{ t(request, "docker.bulk.select_hint") }}</p>
+        <div class="bulk-when-selected">
+          <span class="hint">{{ t(request, "machines.bulk.with_selected") }} <strong data-bulk-count>0</strong></span>
+          {% if can_power %}
+            <button type="submit" form="fleet-containers-bulk" name="action" value="start" class="button button-secondary log-small-button">{{ t(request, "monitoring.containers.action_start") }}</button>
+            <button type="submit" form="fleet-containers-bulk" name="action" value="restart" class="button button-secondary log-small-button"
+                    data-confirm="{{ t(request, 'docker.bulk.confirm_restart') }}">{{ t(request, "monitoring.containers.action_restart") }}</button>
+            <button type="submit" form="fleet-containers-bulk" name="action" value="stop" class="button button-secondary log-small-button"
+                    data-confirm="{{ t(request, 'docker.bulk.confirm_stop') }}">{{ t(request, "monitoring.containers.action_stop") }}</button>
+          {% endif %}
+          {% if can_updates %}
+            <button type="submit" form="fleet-containers-bulk" name="action" value="update" class="button button-secondary log-small-button"
+                    data-confirm="{{ t(request, 'docker.update.selected_confirm') }}" title="{{ t(request, 'docker.update.selected_hint') }}">{{ t(request, "docker.update.selected") }}</button>
+            <button type="submit" form="fleet-containers-bulk" name="action" value="scan" class="button button-secondary log-small-button">{{ t(request, "docker.bulk.scan") }}</button>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if page.pages > 1 %}
+      <nav class="page-header-actions pagination" aria-label="{{ t(request, 'docker_fleet.pages') }}">
+        {% if page.page > 1 %}<a class="button button-secondary" href="{{ url_with(page=page.page - 1) }}">{{ t(request, "machines.pagination.previous") }}</a>{% endif %}
+        <span class="hint">{{ t(request, "docker_fleet.page_of", page=page.page, pages=page.pages) }}</span>
+        {% if page.page < page.pages %}<a class="button button-secondary" href="{{ url_with(page=page.page + 1) }}">{{ t(request, "machines.pagination.next") }}</a>{% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <p class="hint">{{ t(request, "docker_fleet.none") }}</p>
+  {% endif %}
+{% endblock %}
