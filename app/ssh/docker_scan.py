@@ -49,8 +49,9 @@ MAX_FINDINGS = 2000
 MAX_IMAGES = 200
 
 # One line per finding: V, id, package, installed, fixed, severity, url, title.
+# Trivy runs a template on the report's list of results, not on the report.
 _TRIVY_TEMPLATE = (
-    "{{- range .Results }}{{- range .Vulnerabilities }}"
+    "{{- range . }}{{- range .Vulnerabilities }}"
     "V\t{{ .VulnerabilityID }}\t{{ .PkgName }}\t{{ .InstalledVersion }}\t"
     "{{ .FixedVersion }}\t{{ .Severity }}\t{{ .PrimaryURL }}\t{{ .Title }}\n"
     "{{ end }}{{ end }}"

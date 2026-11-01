@@ -192,6 +192,10 @@ async def test_check_and_upgrade_buttons_request_and_audit(
     assert partial.status_code == 200
     assert 'hx-trigger="every 3s"' in partial.text
     assert "Update requested" in partial.text
+    # run-output.js keeps the log scrolled to its end across the polls.
+    assert "data-run-status" in partial.text
+    page = await client.get("/settings?tab=update")
+    assert "js/run-output.js" in page.text
 
 
 async def test_upgrade_needs_csrf_and_manage(

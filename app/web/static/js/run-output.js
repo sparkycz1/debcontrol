@@ -1,4 +1,5 @@
-// Update run and Docker job pages: the output is a fixed-height scroll box.
+// Update run, Docker job and Settings -> Update pages: the output is a
+// fixed-height scroll box.
 // While the run is live, the whole status panel is re-fetched every 3 s
 // (partials/update_run_status.html, machines/docker/_job_status.html, both
 // marked `data-run-status`), which would reset the box to the
