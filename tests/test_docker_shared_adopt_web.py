@@ -92,7 +92,7 @@ async def test_adding_a_registry_stores_the_password_encrypted_and_logs_machines
     [entry] = await audit_entries(db_session_factory, "docker.registry.create")
     assert PASSWORD not in str(entry.details) and PASSWORD not in entry.summary
     page = await follow(client, response.headers["location"])
-    assert "ghcr.io" in page and PASSWORD not in page
+    assert "<code>ghcr.io</code>" in page and PASSWORD not in page
     edit = await client.get(f"/docker/registries/{registry.id}")
     assert edit.status_code == 200 and PASSWORD not in edit.text
 
@@ -193,7 +193,7 @@ async def test_a_group_limited_account_manages_only_its_groups_entries(
     )
 
     assert page.status_code == 200
-    assert "ghcr.io" in page.text and "quay.io" not in page.text
+    assert "<code>ghcr.io</code>" in page.text and "<code>quay.io</code>" not in page.text
     assert f"/docker/registries/{fleet.id}" not in page.text  # read-only for this account
     assert edit_fleet.status_code == 403
     assert edit_hidden.status_code == 404

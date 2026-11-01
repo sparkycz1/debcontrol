@@ -237,7 +237,7 @@ def logins(monkeypatch: pytest.MonkeyPatch, db_session_factory: Any) -> list[tup
         _machine: Any, _secret: Any, _timeout: int, script: str, **kwargs: Any
     ) -> CommandOutput:
         calls.append((script, kwargs.get("stdin")))
-        if "bad.example.com" in script:
+        if script.endswith(" bad.example.com"):
             return CommandOutput(1, "Error response from daemon: unauthorized")
         return CommandOutput(0, "WARNING! Password stored unencrypted\nLogin Succeeded")
 
