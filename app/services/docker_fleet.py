@@ -311,23 +311,23 @@ def parse_keys(values: list[str]) -> dict[uuid.UUID, list[str]]:
 # Whether the header shows the Docker entry: some machine reported Docker.
 # Read on every page render, so cached in process for a minute.
 _PRESENCE_TTL_SECONDS = 60.0
-_presence_cache: tuple[float, bool] | None = None
+# {"value": (checked at, present)} — a dict, so it is changed in place.
+_presence_cache: dict[str, tuple[float, bool]] = {}
 
 
 async def fleet_has_docker(db: AsyncSession) -> bool:
-    global _presence_cache
     now = time.monotonic()
-    if _presence_cache is not None and now - _presence_cache[0] < _PRESENCE_TTL_SECONDS:
-        return _presence_cache[1]
+    cached = _presence_cache.get("value")
+    if cached is not None and now - cached[0] < _PRESENCE_TTL_SECONDS:
+        return cached[1]
     present = bool(
         (
             await db.execute(select(exists().where(Machine.docker_status.is_not(None))))
         ).scalar()
     )
-    _presence_cache = (now, present)
+    _presence_cache["value"] = (now, present)
     return present
 
 
 def reset_presence_cache() -> None:
-    global _presence_cache
-    _presence_cache = None
+    _presence_cache.clear()

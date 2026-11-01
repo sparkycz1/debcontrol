@@ -13,6 +13,7 @@ stack is recreated (`docker compose up`); the page says so.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 
@@ -21,15 +22,17 @@ from app.ssh.docker_cli import DockerCommandError, is_container_name_valid, q
 RESTART_POLICIES = ("no", "on-failure", "always", "unless-stopped")
 MIN_MEMORY_BYTES = 6 * 1024 * 1024  # Docker refuses less than 6 MiB.
 MAX_CPUS = 1024.0
-_MEMORY_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?\s*$", re.IGNORECASE)
+# Matched against the stripped value, so no part of it can match spaces twice.
+_MEMORY_RE = re.compile(r"^(\d{1,12}(?:\.\d{1,6})?) ?([kmgt]?)i?b?$", re.IGNORECASE)
 _UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
 
 
 def parse_memory(value: str) -> int | None:
     """"512m", "1.5 GiB", "2g" → bytes; "" → None (unchanged)."""
-    if not value.strip():
+    value = value.strip()
+    if not value:
         return None
-    match = _MEMORY_RE.match(value)
+    match = _MEMORY_RE.match(value) if len(value) <= 32 else None
     if not match:
         raise DockerCommandError("Memory must be a number with an optional unit (512m, 2g).")
     amount = int(float(match.group(1)) * _UNITS[match.group(2).lower()])
@@ -46,7 +49,7 @@ def parse_cpus(value: str) -> float | None:
         cpus = float(value.strip().replace(",", "."))
     except ValueError:
         raise DockerCommandError("CPUs must be a number, e.g. 0.5 or 2.") from None
-    if cpus < 0 or cpus > MAX_CPUS or cpus != cpus:
+    if math.isnan(cpus) or cpus < 0 or cpus > MAX_CPUS:
         raise DockerCommandError("CPUs must be between 0 and 1024.")
     return round(cpus, 3)
 
