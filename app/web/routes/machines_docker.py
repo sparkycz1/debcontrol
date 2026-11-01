@@ -11,6 +11,7 @@ containers page reads the latest monitoring sample, like before. See
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,6 +37,7 @@ from app.services import (
     docker_actions,
     docker_jobs,
     docker_overview,
+    docker_sbom,
     docker_scans,
     monitoring_history,
 )
@@ -1079,6 +1081,7 @@ async def docker_image_page(
     if not is_image_id_valid(image_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such image.")
     scan = await docker_scans.get_scan(db, machine.id, image_id)
+    package_types = await docker_sbom.type_counts(db, scan) if scan else {}
     return render(
         request,
         "machines/docker/image.html",
@@ -1088,8 +1091,34 @@ async def docker_image_page(
         {
             "image_id": image_id,
             "scan": scan,
+            "package_types": package_types,
+            "package_total": sum(package_types.values()),
             # The list links here with the tag it showed, for the heading only.
             "label": ref if is_image_valid(ref) else "",
+        },
+    )
+
+
+@router.get("/{machine_id}/docker/images/{image_id}/sbom")
+async def docker_image_sbom(
+    machine_id: uuid.UUID,
+    image_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """The image's packages from its latest scan, as a CycloneDX file."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if not is_image_id_valid(image_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such image.")
+    scan = await docker_scans.get_scan(db, machine.id, image_id)
+    if scan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No scan of this image.")
+    document = docker_sbom.cyclonedx(machine, scan, await docker_sbom.packages_of(db, scan))
+    return Response(
+        json.dumps(document, indent=2),
+        media_type="application/vnd.cyclonedx+json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{docker_sbom.filename(scan)}"'
         },
     )
 

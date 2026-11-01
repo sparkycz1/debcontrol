@@ -21,11 +21,12 @@
       <option value="apt" {% if pkg_source == 'apt' %}selected{% endif %}>apt</option>
       <option value="flatpak" {% if pkg_source == 'flatpak' %}selected{% endif %}>flatpak</option>
       <option value="snap" {% if pkg_source == 'snap' %}selected{% endif %}>snap</option>
+      <option value="docker" {% if pkg_source == 'docker' %}selected{% endif %}>{{ t(request, "security.packages.images_source") }}</option>
     </select>
     <button type="submit" class="button">{{ t(request, "machines.search.submit") }}</button>
   </form>
 
-  {% if q %}
+  {% if q and pkg_source != 'docker' %}
     {% if truncated %}
       <div class="alert alert-warn">
         <p>
@@ -60,5 +61,43 @@
     {% else %}
       <p class="hint">{{ t(request, "machine.package_search.no_match", query=(q | e)) | safe }}</p>
     {% endif %}
+  {% endif %}
+
+  {% if q and pkg_source in ('', 'docker') %}
+    <section class="panel">
+      <h2>{{ t(request, "security.packages.images_heading") }}</h2>
+      <p class="hint">{{ t(request, "security.packages.images_hint") }}</p>
+      {% if q | trim | length < min_image_query %}
+        <p class="hint">{{ t(request, "security.packages.images_too_short", count=min_image_query) }}</p>
+      {% elif image_hits %}
+        {% if images_truncated %}
+          <div class="alert alert-warn"><p>{{ t(request, "security.packages.images_truncated", count=(image_hits | length)) }}</p></div>
+        {% endif %}
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t(request, "machine.package_search.machine_col") }}</th>
+              <th>{{ t(request, "security.packages.image_col") }}</th>
+              <th>{{ t(request, "machine.packages.package") }}</th>
+              <th>{{ t(request, "machine.packages.version") }}</th>
+              <th>{{ t(request, "security.packages.type_col") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for hit in image_hits %}
+              <tr>
+                <td><a href="/machines/{{ hit.machine.id }}">{{ hit.machine.name }}</a></td>
+                <td><a href="/machines/{{ hit.machine.id }}/docker/images/{{ hit.image_id }}"><code>{{ hit.image_ref or hit.image_id[:19] }}</code></a></td>
+                <td>{{ hit.name }}</td>
+                <td>{{ hit.version }}</td>
+                <td class="table-muted">{{ hit.type }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint">{{ t(request, "security.packages.images_none") }}</p>
+      {% endif %}
+    </section>
   {% endif %}
 {% endblock %}

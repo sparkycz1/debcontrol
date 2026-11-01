@@ -340,6 +340,33 @@
       {% if jobs %}{% include "machines/docker/_jobs_table.html" %}{% else %}<p class="hint">{{ t(request, "docker.jobs.none") }}</p>{% endif %}
     </section>
 
+    {% if can_terminal and can_updates %}
+      <section class="panel" id="transfer">
+        <h2>{{ t(request, "docker.transfer.heading") }}</h2>
+        <p class="hint">{{ t(request, "docker.transfer.hint") }}</p>
+        {% if transfer_targets %}
+          <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/transfer" class="form" autocomplete="off"
+                data-confirm="{{ t(request, 'docker.transfer.confirm', name=stack.name) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="transfer-target">{{ t(request, "docker.transfer.target") }}</label>
+            <select id="transfer-target" name="target_machine_id" required>
+              {% for m in transfer_targets %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+            </select>
+            <fieldset>
+              <legend>{{ t(request, "docker.transfer.mode") }}</legend>
+              <label><input type="radio" name="mode" value="copy" checked> {{ t(request, "docker.transfer.mode_copy") }}</label>
+              <label><input type="radio" name="mode" value="move"> {{ t(request, "docker.transfer.mode_move") }}</label>
+            </fieldset>
+            <label><input type="checkbox" name="data" value="1" checked> {{ t(request, "docker.transfer.data") }}</label>
+            <p class="hint">{{ t(request, "docker.transfer.data_hint") }}</p>
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.transfer.submit") }}</button>
+          </form>
+        {% else %}
+          <p class="hint">{{ t(request, "docker.transfer.no_targets") }}</p>
+        {% endif %}
+      </section>
+    {% endif %}
+
     {% if can_terminal %}
       <section class="panel panel-danger">
         <h2>{{ t(request, "docker.stack.delete") }}</h2>

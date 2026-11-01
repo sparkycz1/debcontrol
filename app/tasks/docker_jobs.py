@@ -69,6 +69,7 @@ from app.services.live_updates import KIND_DOCKER, publish_machine_event
 from app.services.notifications import notify
 from app.services.update_policy import bump_target, normalize_policy, parse_version, within
 from app.ssh import detached_jobs, docker_files, docker_images
+from app.ssh import docker_transfer as docker_transfer_ssh
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.docker_cli import (
     DOCKER_ACCESS_PROBE,
@@ -163,6 +164,7 @@ _TIMEOUTS: dict[str, int] = {
     DockerJobKind.BACKUP_FORGET: 3 * 60 * 60,
     DockerJobKind.BACKUP_RESTORE: 12 * 60 * 60,
     DockerJobKind.BACKUP_VERIFY: 12 * 60 * 60,
+    DockerJobKind.STACK_TRANSFER: 12 * 60 * 60,
 }
 # Celery's kill switch, above the longest job.
 _JOB_TASK_TIME_LIMIT = 12 * 60 * 60 + 30 * 60
@@ -243,9 +245,12 @@ def remote_id(job_id: uuid.UUID, phase: str) -> str:
 
 
 def _visible_output(text: str) -> str:
-    """The job's output as stored and shown: the scanners' finding lines
-    (thousands of them) are kept with the scan, not in the log."""
-    return "\n".join(line for line in text.splitlines() if not line.startswith("V\t"))
+    """The job's output as stored and shown: the scanners' finding and
+    package lines (thousands of them) are kept with the scan, not in the
+    log."""
+    return "\n".join(
+        line for line in text.splitlines() if not line.startswith(("V\t", "P\t"))
+    )
 
 
 # --- Claiming, heartbeat, closing -------------------------------------------
@@ -347,7 +352,11 @@ async def _after_close(ctx: _Context, status: DockerJobStatus) -> None:
                 machine=machine,
                 context={"container": job.target, "details": details},
             )
-    elif job.kind in (DockerJobKind.STACK_DEPLOY, DockerJobKind.STACK_ACTION):
+    elif job.kind in (
+        DockerJobKind.STACK_DEPLOY,
+        DockerJobKind.STACK_ACTION,
+        DockerJobKind.STACK_TRANSFER,
+    ):
         if status in (DockerJobStatus.FAILED, DockerJobStatus.BLOCKED):
             await notify(
                 session,
@@ -1263,6 +1272,206 @@ async def _job_backup_verify(ctx: _Context) -> None:
         await _close(ctx, DockerJobStatus.FAILED, message)
 
 
+# --- Moving or cloning a stack to this machine --------------------------------
+
+TRANSFER_INTERRUPTED = (
+    "Interrupted when debcontrol restarted. Nothing is copied again on its own: check the "
+    "source stack (start it again if it stays stopped), remove what arrived here, and start "
+    "the move again."
+)
+
+
+async def _log(ctx: _Context, text: str) -> None:
+    ctx.job.output = docker_jobs.truncate_output(f"{ctx.job.output or ''}{text}\n")
+    await ctx.session.commit()
+
+
+def _size(value: int) -> str:
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+async def _checked(endpoint: docker_transfer_ssh.Endpoint, ctx: _Context, script: str) -> str:
+    output = await run_script(
+        endpoint.machine, endpoint.secret, ctx.connect_timeout, script, run_timeout_seconds=300
+    )
+    if output.exit_status != 0:
+        raise DockerCommandError(
+            f"On {endpoint.machine.name}: {output.output.strip()[-500:] or 'the command failed.'}"
+        )
+    return output.output
+
+
+async def _source_after_transfer(
+    ctx: _Context, source: docker_transfer_ssh.Endpoint, name: str, action: str
+) -> None:
+    where = source.machine.name
+    try:
+        await _checked(source, ctx, build_stack_action_script(name, action))
+    except (DockerCommandError, DockerAccessError, SSHConnectionError) as exc:
+        await _log(ctx, f"Could not {'start' if action == 'start' else 'take down'} {name} "
+                   f"on {where}: {exc}")
+        return
+    if action == "start":
+        await _log(ctx, f"Started {name} on {where} again.")
+    else:
+        await _log(
+            ctx,
+            f"Took {name} down on {where} (its volumes and files stay; "
+            "delete the stack there once it runs here).",
+        )
+
+
+async def _job_stack_transfer(ctx: _Context) -> None:
+    """Copy a stack from another machine: its volumes and the files it
+    bind-mounts from its directory, then deploy it here. The source is
+    stopped while its data is copied; a clone (or a failed move) starts it
+    again, a move takes its containers down - its stack, volumes and files
+    are never removed."""
+    if ctx.result.get("phase"):
+        raise _JobFailedError(TRANSFER_INTERRUPTED)
+    ctx.result["phase"] = "prepare"
+    await ctx.save()
+    params = ctx.params
+    mode = str(params.get("mode") or "copy")
+    copy_data = bool(params.get("data", True))
+    stack = await _stack(ctx)
+    try:
+        source_id = uuid.UUID(str(params["source_machine_id"]))
+        source_stack_id = uuid.UUID(str(params["source_stack_id"]))
+    except (KeyError, ValueError) as exc:
+        raise _JobFailedError("The source stack is not known.") from exc
+    source_machine = await ctx.session.get(Machine, source_id)
+    source_stack = await ctx.session.get(DockerStack, source_stack_id)
+    if source_machine is None or source_stack is None or not source_machine.host_key_fingerprint:
+        raise _JobFailedError("The source machine or stack is gone.")
+    if await docker_jobs.protected_project(ctx.session, source_machine) == stack.name:
+        raise docker_jobs.ProtectedError
+    source = docker_transfer_ssh.Endpoint(
+        source_machine, await resolve_machine_credential(source_machine, ctx.session)
+    )
+    target = docker_transfer_ssh.Endpoint(ctx.machine, ctx.secret)
+    name = stack.name
+    git = stack.source == StackSource.GIT
+
+    await _log(ctx, f"Reading {name} on {source_machine.name} ...")
+    inventory = docker_transfer_ssh.parse_inventory(
+        await _checked(source, ctx, docker_transfer_ssh.build_inventory_script(name)), name
+    )
+    source_dir = (
+        await _checked(
+            source, ctx, docker_transfer_ssh.source_dir_script(name, source_stack.directory or "")
+        )
+    ).strip()
+    paths, outside = docker_transfer_ssh.bind_paths(inventory, source_dir, git=git)
+    volumes = inventory.volumes if copy_data else []
+    paths = paths if copy_data else []
+    state = docker_transfer_ssh.parse_target_state(
+        await _checked(
+            target,
+            ctx,
+            docker_transfer_ssh.target_prepare_script(
+                name, stack.directory or "", [v["name"] for v in volumes]
+            ),
+        )
+    )
+    ctx.result.update(
+        {
+            "mode": mode,
+            "source_machine": source_machine.name,
+            "volumes": [v["name"] for v in volumes],
+            "paths": paths,
+            "not_copied": outside[:50],
+            "skipped_volumes": inventory.skipped_volumes,
+        }
+    )
+    await ctx.save()
+    if state.existing_volumes:
+        raise _JobFailedError(
+            "These volumes already exist on this machine; remove them or pick another machine: "
+            + ", ".join(state.existing_volumes)
+        )
+    if state.dir_not_empty:
+        raise _JobFailedError("The stack's directory on this machine already holds other files.")
+    if paths and not state.directory:
+        raise _JobFailedError("The stack's directory could not be created on this machine.")
+    for path in outside:
+        await _log(ctx, f"Not copied (outside the stack's directory): {path}")
+    for skipped in inventory.skipped_volumes:
+        await _log(ctx, f"Not copied (volume with driver options): {skipped['name']}")
+
+    stopped = False
+    failed = True
+    try:
+        if inventory.running and (volumes or paths or mode == "move"):
+            await _log(ctx, f"Stopping {name} on {source_machine.name} ...")
+            await _checked(source, ctx, build_stack_action_script(name, "stop"))
+            stopped = True
+        ctx.result["phase"] = "copy"
+        await ctx.save()
+        total = 0
+        jobs: list[tuple[str, str, str]] = []
+        for volume in volumes:
+            create = docker_transfer_ssh.build_volume_create(volume["name"], volume["labels"])
+            await _checked(target, ctx, create)
+            jobs.append(
+                (
+                    f"volume {volume['name']}",
+                    docker_transfer_ssh.source_volume_command(volume["name"]),
+                    docker_transfer_ssh.target_volume_command(volume["name"]),
+                )
+            )
+        if paths:
+            jobs.append(
+                (
+                    "files from the stack's directory",
+                    docker_transfer_ssh.source_paths_command(source_dir, paths),
+                    docker_transfer_ssh.target_paths_command(state.directory),
+                )
+            )
+        for label, src_command, dst_command in jobs:
+            await _log(ctx, f"Copying {label} ...")
+
+            async def progress(copied: int, label: str = label) -> None:
+                ctx.result["copying"] = {"what": label, "bytes": copied}
+                await ctx.save()
+
+            try:
+                copied = await docker_transfer_ssh.stream(
+                    source,
+                    target,
+                    ctx.connect_timeout,
+                    src_command,
+                    dst_command,
+                    progress=progress,
+                    stop_requested=lambda: _cancel_requested(ctx),
+                )
+            except docker_transfer_ssh.TransferStoppedError as exc:
+                raise _JobCancelledError from exc
+            total += copied
+            await _log(ctx, f"  {_size(copied)}")
+        ctx.result["bytes"] = total
+        ctx.result.pop("copying", None)
+        failed = False
+    finally:
+        if stopped:
+            # A clone, or a move that failed, runs on the source again. A
+            # move takes its containers down: `docker compose stop` alone
+            # would let a `restart: always` one come back with the next
+            # reboot. Its volumes and files stay either way.
+            await _source_after_transfer(
+                ctx, source, name, "start" if failed or mode == "copy" else "down"
+            )
+    deploy = await queue_stack_deploy(ctx.session, stack, started_by=ctx.job.started_by or "")
+    ctx.result["deploy_job_id"] = str(deploy.id) if deploy else None
+    await _log(ctx, "Deploying the stack here (its own job).")
+    await _close(ctx, DockerJobStatus.SUCCEEDED)
+
+
 _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.CONTAINER_UPDATE: _job_container_update,
     DockerJobKind.CONTAINER_ROLLBACK: _job_container_rollback,
@@ -1277,6 +1486,7 @@ _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.BACKUP_FORGET: _job_backup_forget,
     DockerJobKind.BACKUP_RESTORE: _job_backup_restore,
     DockerJobKind.BACKUP_VERIFY: _job_backup_verify,
+    DockerJobKind.STACK_TRANSFER: _job_stack_transfer,
 }
 
 

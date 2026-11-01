@@ -286,6 +286,7 @@ CANCELLABLE_RUNNING_KINDS = frozenset(
         DockerJobKind.IMAGE_PULL.value,
         DockerJobKind.PRUNE.value,
         DockerJobKind.STACK_CHECK.value,
+        DockerJobKind.STACK_TRANSFER.value,
         DockerJobKind.BACKUP_RUN.value,
         DockerJobKind.BACKUP_CHECK.value,
         DockerJobKind.BACKUP_FORGET.value,
@@ -304,6 +305,7 @@ def cancel_permission(kind: str) -> Permission:
     if kind in (
         DockerJobKind.STACK_CHECK,
         DockerJobKind.STACK_DEPLOY,
+        DockerJobKind.STACK_TRANSFER,
         DockerJobKind.BACKUP_RESTORE,
     ):
         return Permission.ACTION_TERMINAL

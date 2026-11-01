@@ -32,6 +32,7 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,8 +60,10 @@ from app.services import (
     docker_drift,
     docker_jobs,
     docker_overview,
+    docker_sbom,
     docker_scans,
     docker_stacks,
+    docker_transfer,
     docker_variables,
 )
 from app.services.docker_gate import GATES
@@ -995,7 +998,27 @@ async def docker_image_api(
     return {
         **(result.get("details") or {}),
         "vulnerabilities": (scan.counts or {}) if scan else None,
+        "packages": await docker_sbom.type_counts(db, scan) if scan else None,
     }
+
+
+@router.get("/images/{image_id}/sbom", dependencies=[_view])
+async def docker_image_sbom_api(
+    machine_id: uuid.UUID,
+    image_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> JSONResponse:
+    """The image's packages from its latest scan as CycloneDX 1.6 JSON
+    (404 before the first scan)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not is_image_id_valid(image_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such image.")
+    scan = await docker_scans.get_scan(db, machine.id, image_id)
+    if scan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No scan of this image.")
+    document = docker_sbom.cyclonedx(machine, scan, await docker_sbom.packages_of(db, scan))
+    return JSONResponse(document, media_type="application/vnd.cyclonedx+json")
 
 
 class _PruneRequest(BaseModel):
@@ -1461,6 +1484,82 @@ async def docker_stack_check_api(
         {"stack": stack.name},
     )
     return answer
+
+
+class _TransferRequest(BaseModel):
+    target_machine_id: uuid.UUID
+    mode: str = Field(default="copy", pattern="^(copy|move)$")
+    data: bool = True
+
+
+@router.post(
+    "/stacks/{stack_id}/transfer",
+    dependencies=[_terminal, _updates],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def docker_stack_transfer_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    body: _TransferRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Move or clone the stack to another machine, with its data
+    (`app.services.docker_transfer`). Answers the copy job (on the target
+    machine) and the new stack; 404 for a target the token can't use, 409
+    when the target already has a stack of that name or the stack is busy."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    _ready(machine)
+    details: dict[str, Any] = {
+        "stack": stack.name,
+        "target_machine_id": str(body.target_machine_id),
+        "mode": body.mode,
+        "data": body.data,
+    }
+    try:
+        job, copy = await docker_transfer.start(
+            db,
+            user=user,
+            source=machine,
+            stack=stack,
+            target_id=body.target_machine_id,
+            mode=body.mode,
+            data=body.data,
+            actor=user.username,
+        )
+    except docker_jobs.ProtectedError as exc:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.stack.transfer",
+            f'Refused to move Docker stack "{stack.name}" from "{machine.name}": '
+            "debcontrol's own",
+            details,
+            denied=True,
+        )
+        raise _protected() from exc
+    except docker_transfer.TransferError as exc:
+        code = {
+            "docker.transfer.error.target": status.HTTP_404_NOT_FOUND,
+            "docker.transfer.error.exists": status.HTTP_409_CONFLICT,
+            "docker.transfer.error.busy": status.HTTP_409_CONFLICT,
+        }.get(exc.key, status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(status_code=code, detail=exc.key) from exc
+    target = await db.get(Machine, job.machine_id)
+    details["target"] = target.name if target else ""
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.transfer",
+        f'Started to {"move" if body.mode == "move" else "clone"} Docker stack "{stack.name}" '
+        f'from "{machine.name}" to "{details["target"]}"',
+        details,
+    )
+    return {"job": _job(job), "stack_id": str(copy.id), "machine_id": str(job.machine_id)}
 
 
 def _version(

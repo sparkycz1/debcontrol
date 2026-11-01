@@ -31,6 +31,7 @@ from app.services import (
     docker_drift,
     docker_jobs,
     docker_stacks,
+    docker_transfer,
     docker_variables,
 )
 from app.services.docker_gate import GATES
@@ -391,6 +392,7 @@ async def _stack_page(
 ) -> Response:
     can_terminal = user.has_permission(Permission.ACTION_TERMINAL)
     shared = await docker_variables.resolve(db, stack)
+    can_transfer = can_terminal and user.has_permission(Permission.ACTION_UPDATES)
     return render(
         request,
         "machines/docker/stack_form.html",
@@ -411,6 +413,9 @@ async def _stack_page(
                 await docker_stacks.list_versions(db, stack.id) if stack.keep_history else []
             ),
             "gates": GATES,
+            "transfer_targets": (
+                await docker_transfer.targets(db, user, machine) if can_transfer else []
+            ),
             **(await form_extras(db, machine, stack)),
         },
         status_code=status_code,
@@ -515,6 +520,70 @@ async def _check(
         details={"stack": stack.name},
     )
     return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+@router.post(
+    "/{machine_id}/docker/stacks/{stack_id}/transfer",
+    dependencies=[need_terminal, need_updates, Depends(verify_csrf)],
+)
+async def docker_stack_transfer(
+    request: Request,
+    machine_id: uuid.UUID,
+    stack_id: uuid.UUID,
+    target_machine_id: str = Form(""),
+    mode: str = Form("copy"),
+    data: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Move or clone the stack to another machine, with its data
+    (`app.services.docker_transfer`)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    stack = await _stack_or_404(db, machine, stack_id)
+    back = f"{docker_base(machine)}/stacks/{stack.id}"
+    details: dict[str, Any] = {
+        "stack": stack.name,
+        "target_machine_id": target_machine_id[:64],
+        "mode": mode[:16],
+        "data": data == "1",
+    }
+    try:
+        job, _copy = await docker_transfer.start(
+            db,
+            user=current_user,
+            source=machine,
+            stack=stack,
+            target_id=target_machine_id,
+            mode=mode,
+            data=data == "1",
+            actor=actor(current_user),
+        )
+    except docker_jobs.ProtectedError:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.stack.transfer",
+            f'Refused to move Docker stack "{stack.name}" from "{machine.name}": '
+            "debcontrol's own",
+            denied=True,
+            details=details,
+        )
+        return redirect(back, error=LocalizedText(request, "docker.protected"))
+    except docker_transfer.TransferError as exc:
+        return redirect(back, error=LocalizedText(request, exc.key))
+    target = await db.get(Machine, job.machine_id)
+    details["target"] = target.name if target else ""
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.stack.transfer",
+        f'Started to {"move" if mode == "move" else "clone"} Docker stack "{stack.name}" '
+        f'from "{machine.name}" to "{details["target"]}"',
+        details=details,
+    )
+    return redirect(f"/machines/{job.machine_id}/docker/jobs/{job.id}")
 
 
 @router.post(

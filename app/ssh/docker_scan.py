@@ -18,6 +18,12 @@ is kept with the scan.
 line per finding through a Go template: Trivy's inline, Grype's from a
 temporary file, since Grype only reads templates from files.
 
+**The image's packages (SBOM).** Trivy also lists every package it found
+in the image (`--list-all-pkgs`), one line each: name, version, type
+(debian, alpine, python-pkg, gobinary, ...) and package URL. They are
+kept with the scan (`DockerImagePackage`) for the fleet-wide package
+search and the image's CycloneDX download (`app.services.docker_sbom`).
+
 The scanners see the images through the Docker socket, read-only; they
 get no other access to the machine.
 """
@@ -47,13 +53,18 @@ _RANK = {name: rank for rank, name in enumerate(SEVERITIES)}
 MAX_FINDINGS = 2000
 # Images one scan job takes on.
 MAX_IMAGES = 200
+# Packages kept per image (the SBOM), in Trivy's order.
+MAX_PACKAGES = 10000
 
 # One line per finding: V, id, package, installed, fixed, severity, url, title.
 # Trivy runs a template on the report's list of results, not on the report.
+# Then one line per package: P, name, version, type, package URL.
 _TRIVY_TEMPLATE = (
     "{{- range . }}{{- range .Vulnerabilities }}"
     "V\t{{ .VulnerabilityID }}\t{{ .PkgName }}\t{{ .InstalledVersion }}\t"
     "{{ .FixedVersion }}\t{{ .Severity }}\t{{ .PrimaryURL }}\t{{ .Title }}\n"
+    "{{ end }}{{ $type := .Type }}{{- range .Packages }}"
+    "P\t{{ .Name }}\t{{ .Version }}\t{{ $type }}\t{{ .Identifier.PURL }}\n"
     "{{ end }}{{ end }}"
 )
 _GRYPE_TEMPLATE = (
@@ -80,7 +91,7 @@ def build_scan_script(images: list[str]) -> str:
     socket = f"-v {DOCKER_SOCKET}:{DOCKER_SOCKET}:ro"
     trivy = (
         f"{_RUN}{socket} -v {TRIVY_CACHE_VOLUME}:/cache {TRIVY_IMAGE} image "
-        "--cache-dir /cache --quiet --scanners vuln --timeout 20m "
+        "--cache-dir /cache --quiet --scanners vuln --list-all-pkgs --timeout 20m "
         f"--format template --template {q(_TRIVY_TEMPLATE)}"
     )
     grype = (
@@ -122,6 +133,8 @@ class ImageScanResult:
     errors: dict[str, str] = field(default_factory=dict)
     vulnerabilities: list[dict[str, Any]] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
+    # [{"name", "version", "type", "purl"}] from Trivy, deduplicated.
+    packages: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -156,6 +169,26 @@ def _finding(line: str, scanner: str) -> dict[str, Any] | None:
         "url": url[:512] if url.startswith(("https://", "http://")) else "",
         "title": (parts[7].strip() if len(parts) > 7 else "")[:300],
         "scanners": [scanner],
+    }
+
+
+_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}\Z")
+
+
+def _package(line: str) -> dict[str, str] | None:
+    parts = line.split("\t")
+    if len(parts) < 4 or parts[0] != "P":
+        return None
+    name = parts[1].strip()
+    if not name or len(name) > 255:
+        return None
+    kind = parts[3].strip().lower()
+    purl = parts[4].strip() if len(parts) > 4 else ""
+    return {
+        "name": name,
+        "version": parts[2].strip()[:128],
+        "type": kind if _TYPE_RE.match(kind) else "",
+        "purl": purl[:512] if purl.startswith("pkg:") else "",
     }
 
 
@@ -199,6 +232,7 @@ class _ScanParser:
         self.current: ImageScanResult | None = None
         self.scanner: str | None = None
         self.found: dict[str, list[dict[str, Any]]] = {}
+        self.packages: dict[tuple[str, str, str], dict[str, str]] = {}
 
     def finish(self) -> None:
         if self.current is None:
@@ -206,6 +240,8 @@ class _ScanParser:
         merged = merge([f for findings in self.found.values() for f in findings])
         self.current.counts = count_by_severity(merged)
         self.current.vulnerabilities = merged[:MAX_FINDINGS]
+        if "trivy" in self.current.scanners:
+            self.current.packages = list(self.packages.values())
         self.results.append(self.current)
         self.current = None
 
@@ -235,6 +271,7 @@ class _ScanParser:
             self.finish()
             self.current = ImageScanResult(image=line[len("@@DC_IMAGE ") :].strip()[:512])
             self.found = {}
+            self.packages = {}
             self.scanner = None
         elif self.current is None:
             return
@@ -244,6 +281,11 @@ class _ScanParser:
             finding = _finding(line, self.scanner)
             if finding is not None:
                 self.found[self.scanner].append(finding)
+        elif self.scanner == "trivy" and line.startswith("P\t"):
+            package = _package(line)
+            if package is not None and len(self.packages) < MAX_PACKAGES:
+                key = (package["name"], package["version"], package["type"])
+                self.packages.setdefault(key, package)
 
 
 def parse_scan_output(raw: str) -> list[ImageScanResult]:

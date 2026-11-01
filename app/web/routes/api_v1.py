@@ -98,6 +98,7 @@ from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
 from app.services import (
     acknowledgements,
+    docker_sbom,
     hardware_inventory,
     machine_compare,
     machine_timeline,
@@ -652,11 +653,25 @@ async def package_search_api(
     pkg_source: str = "",
 ) -> dict[str, object]:
     """Fleet-wide package search — the API equivalent of `GET
-    /machines/package-search`. See that route for the reasoning behind the
-    500-row cap."""
+    /security/packages`. See that route for the reasoning behind the
+    500-row cap. `images` lists the packages inside scanned Docker images
+    (name prefix, at least 2 characters); `pkg_source=docker` returns
+    only those."""
     if not q.strip():
-        return {"results": [], "truncated": False}
+        return {"results": [], "truncated": False, "images": [], "images_truncated": False}
     visible_ids = (await machines_visible_to(db, user)).with_only_columns(Machine.id)
+    hits: list[docker_sbom.Hit] = []
+    images_truncated = False
+    if pkg_source in ("", "docker"):
+        hits, images_truncated = await docker_sbom.search(db, visible_ids, q)
+    images = [docker_sbom.hit_as_dict(hit) for hit in hits]
+    if pkg_source == "docker":
+        return {
+            "results": [],
+            "truncated": False,
+            "images": images,
+            "images_truncated": images_truncated,
+        }
     query = (
         select(MachinePackage)
         .options(selectinload(MachinePackage.machine))
@@ -675,6 +690,8 @@ async def package_search_api(
     return {
         "results": [_package_to_dict(p, include_machine=True) for p in results],
         "truncated": truncated,
+        "images": images,
+        "images_truncated": images_truncated,
     }
 
 

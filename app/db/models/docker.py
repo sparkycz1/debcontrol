@@ -85,6 +85,9 @@ class DockerJobKind(enum.StrEnum):
     BACKUP_RESTORE = "backup_restore"
     # Restore the newest snapshot into a temporary volume, verify it, remove it.
     BACKUP_VERIFY = "backup_verify"
+    # Copy a stack (and its data) from another machine onto this one, run
+    # by the worker itself (`app.services.docker_transfer`).
+    STACK_TRANSFER = "stack_transfer"
 
 
 class DockerJobStatus(enum.StrEnum):
@@ -197,6 +200,38 @@ class DockerImageFinding(Base):
     pkg: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     installed: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     fixed: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+
+class DockerImagePackage(Base):
+    """One package of a stored scan's image (its SBOM, from Trivy's
+    `--list-all-pkgs`); replaced with the scan. `name_key` is the name in
+    lower case, searched by prefix through its index (`app.services.
+    docker_sbom.search`), so the fleet-wide search stays fast with
+    millions of rows."""
+
+    __tablename__ = "docker_image_packages"
+    __table_args__ = (
+        Index(
+            "ix_docker_image_packages_name_key",
+            "name_key",
+            postgresql_ops={"name_key": "text_pattern_ops"},
+        ),
+        Index("ix_docker_image_packages_scan", "scan_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    scan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("docker_image_scans.id", ondelete="CASCADE"), nullable=False
+    )
+    machine_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # Trivy's result type: debian, alpine, python-pkg, gobinary, node-pkg, ...
+    type: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    purl: Mapped[str] = mapped_column(String(512), nullable=False, default="")
 
 
 class DockerVulnerabilityAcceptance(Base):
