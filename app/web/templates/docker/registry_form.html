@@ -1,0 +1,49 @@
+{#- Add or change a private registry login (app.web.routes.docker_shared). -#}
+{% extends "base.html" %}
+{% from "docker/_shared_macros.html" import page_top, scope_select %}
+
+{% block title %}{{ t(request, "docker_fleet.tab.registries") }} — Docker — debcontrol{% endblock %}
+
+{% block content %}
+  {{ page_top(request, tabs, active_tab) }}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.registry.edit_heading", server=registry.server) if registry else t(request, "docker.registry.add") }}</h2>
+    <a class="button button-secondary log-small-button" href="/docker/registries">{{ t(request, "docker.registry.back") }}</a>
+  </div>
+  {% if errors %}
+    <div class="alert alert-error" role="alert">{% for e in errors %}<p>{{ t(request, e) }}</p>{% endfor %}</div>
+  {% endif %}
+  <section class="panel">
+    <form method="post" action="/docker/registries{% if registry %}/{{ registry.id }}{% endif %}" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="server">{{ t(request, "docker.registry.server") }}</label>
+      <input id="server" name="server" required maxlength="300" spellcheck="false" autocapitalize="off"
+             value="{{ form.server if form else (registry.server if registry else '') }}" placeholder="ghcr.io">
+      <p class="hint">{{ t(request, "docker.registry.server_hint") }}</p>
+      <label for="username">{{ t(request, "docker.registry.username") }}</label>
+      <input id="username" name="username" required maxlength="255" spellcheck="false" autocapitalize="off" autocomplete="off"
+             value="{{ form.username if form else (registry.username if registry else '') }}">
+      <label for="password">{{ t(request, "docker.registry.password") }}</label>
+      <input id="password" name="password" type="password" maxlength="4096" autocomplete="new-password" {% if not registry %}required{% endif %}>
+      <p class="hint">{{ t(request, "docker.registry.password_keep_hint" if registry else "docker.registry.password_hint") }}</p>
+      <label for="description">{{ t(request, "docker.registry.description") }}</label>
+      <input id="description" name="description" maxlength="255" value="{{ form.description if form else (registry.description if registry else '') }}">
+      {{ scope_select(request, scope_value, allow_all, groups, machines) }}
+      <div class="page-header-actions">
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </div>
+      <p class="hint">{{ t(request, "docker.registry.save_hint") }}</p>
+    </form>
+  </section>
+  {% if registry %}
+    <section class="panel panel-danger">
+      <h2>{{ t(request, "docker.registry.delete") }}</h2>
+      <p class="hint">{{ t(request, "docker.registry.delete_hint") }}</p>
+      <form method="post" action="/docker/registries/{{ registry.id }}/delete" class="inline-form"
+            data-confirm="{{ t(request, 'docker.registry.delete_confirm', server=registry.server) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-danger">{{ t(request, "docker.registry.delete") }}</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

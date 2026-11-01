@@ -59,6 +59,7 @@ from app.ssh.docker_cli import (
     GIT_IMAGE,
     HELPER_LABEL,
     DockerCommandError,
+    is_container_name_valid,
     is_image_id_valid,
     is_image_ref_valid,
     is_project_name_valid,
@@ -273,6 +274,16 @@ def build_write_file_script(
 
 
 # --- Stacks debcontrol manages --------------------------------------------
+
+
+def env_line(name: str, value: str) -> str:
+    """One `.env` line Compose reads back as exactly `value`: in single
+    quotes (taken literally) when it has none, else in double quotes
+    with `\\`, `"` and `$` escaped."""
+    if "'" not in value:
+        return f"{name}='{value}'"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return f'{name}="{escaped}"'
 
 
 def _heredoc(marker: str, content: str) -> str:
@@ -521,6 +532,10 @@ class StackFiles:
     env: str = ""
     git: GitSource | None = None
     directory: str = ""
+    # A container started with `docker run` that this stack takes over:
+    # stopped and set aside before `up`, put back when `up` fails, removed
+    # once the stack runs.
+    replace_container: str = ""
 
     def check(self) -> list[str]:
         """Validates everything; returns the compose files' paths inside
@@ -531,6 +546,8 @@ class StackFiles:
             raise DockerCommandError("A stack needs a compose file or a Git repository.")
         _check_size(self.env, ".env file")
         stack_dir_shell(self.name, self.directory)
+        if self.replace_container and not is_container_name_valid(self.replace_container):
+            raise DockerCommandError("Invalid container name.")
         if self.compose is not None:
             _check_size(self.compose, "compose file")
             return ["compose.yaml"]
@@ -687,18 +704,58 @@ def build_stack_script(
     return "\n".join(lines) + "\n"
 
 
+# Appended to the container a stack takes over while the stack starts.
+REPLACED_SUFFIX = "-pre-debcontrol"
+
+
+def _replace_lines(name: str) -> tuple[list[str], list[str], list[str]]:
+    """(before `up`, undo after a failed `up`, after a good one) for the
+    `docker run` container a stack takes over. Only a container that no
+    Compose project owns is touched; the set-aside copy keeps its volumes."""
+    old, aside = q(name), q(name + REPLACED_SUFFIX)
+    project = "{{index .Config.Labels \"com.docker.compose.project\"}}"
+    before = [
+        "replaced=''",
+        f"if $D container inspect {old} >/dev/null 2>&1 && "
+        f"[ -z \"$($D container inspect --format '{project}' {old} 2>/dev/null)\" ]; then",
+        "echo '@@DC_STEP replace'",
+        f"if $D container inspect {aside} >/dev/null 2>&1; then "
+        f"echo 'A container named {name}{REPLACED_SUFFIX} is in the way.'; "
+        "echo '@@DC_FAILED replace'; exit 1; fi",
+        f"$D stop {old} >/dev/null && $D rename {old} {aside} || "
+        "{ echo '@@DC_FAILED replace'; exit 1; }",
+        "replaced=1; fi",
+    ]
+    undo = [
+        'if [ -n "$replaced" ]; then dc down --remove-orphans >/dev/null 2>&1 || true; '
+        f"$D rename {aside} {old} && $D start {old} >/dev/null && "
+        "echo '@@DC_REPLACE_UNDONE'; fi"
+    ]
+    after = [
+        f'if [ -n "$replaced" ]; then $D rm {aside} >/dev/null || '
+        f"echo 'The old container {name}{REPLACED_SUFFIX} could not be removed.'; fi"
+    ]
+    return before, undo, after
+
+
 def _up_lines(files: StackFiles, *, health: bool, previous: StackFiles | None) -> list[str]:
-    on_failure = ["echo '@@DC_FAILED up'"]
+    before: list[str] = []
+    undo: list[str] = []
+    after: list[str] = []
+    if files.replace_container:
+        before, undo, after = _replace_lines(files.replace_container)
+    on_failure = [*undo, "echo '@@DC_FAILED up'"]
     if health and previous is not None:
         on_failure = [*_restore_lines(previous, up=True), "echo '@@DC_FAILED up'"]
     lines = [
+        *before,
         "echo '@@DC_STEP up'",
         f"if ! {_up_command(files)}; then",
         *on_failure,
         "exit 1; fi",
     ]
     if health:
-        unhealthy = ["echo '@@DC_FAILED health'"]
+        unhealthy = [*undo, "echo '@@DC_FAILED health'"]
         if previous is not None:
             unhealthy = [*_restore_lines(previous, up=True), "echo '@@DC_FAILED health'"]
         lines += [
@@ -708,6 +765,7 @@ def _up_lines(files: StackFiles, *, health: bool, previous: StackFiles | None) -
             *unhealthy,
             "exit 1; fi",
         ]
+    lines += after
     lines.append("echo '@@DC_DONE'")
     return lines
 

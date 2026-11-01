@@ -620,6 +620,17 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
 
         secret = await resolve_machine_credential(machine, session)
 
+        # Private registry logins first (only where one is missing or
+        # changed), so images from them can be checked too.
+        from app.tasks.docker_extras import reconcile_logins
+
+        try:
+            await reconcile_logins(session, machine, secret, app_settings.ssh_connect_timeout)
+        except Exception:
+            logger.warning("Registry logins failed for %s", machine.name, exc_info=True)
+            await session.rollback()
+            await session.refresh(machine)
+
         try:
             statuses, declared, reasons = await check_images(
                 machine, secret, app_settings.ssh_connect_timeout

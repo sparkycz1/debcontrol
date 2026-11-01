@@ -14,8 +14,9 @@ The routes themselves live in one module per area, each with its own
 - `machines_security` — the Security tab: Lynis security audits.
 - `machines_logs` — the Logs tab, saved log views, the file browser, and
   the Terminal page.
-- `machines_docker`, `machines_docker_stacks`, `machines_docker_backups`,
-  `machines_docker_files` — the Docker tab (see `machines_docker_common`).
+- `machines_docker`, `machines_docker_adopt`, `machines_docker_stacks`,
+  `machines_docker_backups`, `machines_docker_files` — the Docker tab (see
+  `machines_docker_common`).
 
 `machines_common` holds what they share."""
 
@@ -26,6 +27,7 @@ from fastapi import APIRouter
 from app.web.routes import (
     machines_detail,
     machines_docker,
+    machines_docker_adopt,
     machines_docker_backups,
     machines_docker_files,
     machines_docker_stacks,
@@ -48,6 +50,8 @@ router.include_router(machines_monitoring.router)
 router.include_router(machines_security.router)
 router.include_router(machines_logs.router)
 router.include_router(machines_docker.router)
+# Before the stacks router: its `projects/{project}/{action}` matches `adopt`.
+router.include_router(machines_docker_adopt.router)
 router.include_router(machines_docker_stacks.router)
 router.include_router(machines_docker_backups.router)
 # Last: its `/docker/{kind}/{name}/files` would match the paths above.

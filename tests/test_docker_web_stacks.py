@@ -194,7 +194,7 @@ async def test_a_new_stack_can_go_into_a_directory_of_ones_choosing(
     assert created.status_code == 303
     stack = await _stack_by_name(db_session_factory, "blog")
     assert stack.directory == "/opt/blog"
-    assert "dir=/opt/blog\n" in docker_stacks.deploy_script(stack)
+    assert "dir=/opt/blog\n" in docker_stacks.deploy_script(stack, shared={})
     [audit] = await audit_entries(db_session_factory, "machine.docker.stack.create")
     assert audit.details is not None and audit.details["directory"] == "/opt/blog"
     page = await client.get(f"{url}/{stack.id}")

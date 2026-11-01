@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import yaml
@@ -35,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import yaml_safety
 from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models.docker import DockerStack, DockerStackVersion, StackSource
+from app.services import docker_variables
 from app.services.docker_gate import GATES, normalize_gate
 from app.ssh.docker_cli import DockerCommandError, is_project_name_valid
 from app.ssh.docker_compose import (
@@ -44,6 +46,7 @@ from app.ssh.docker_compose import (
     StackFiles,
     build_stack_check_script,
     build_stack_script,
+    env_line,
     is_branch_valid,
     is_repository_url_valid,
     is_ssh_git_url_valid,
@@ -58,6 +61,8 @@ DEFAULT_COMPOSE_PATH = "compose.yaml"
 # Deployed versions kept per stack (when it keeps a history).
 HISTORY_LIMIT = 20
 _MAX_KEY_BYTES = 16 * 1024
+# The line before the shared variables appended to a stack's `.env`.
+SHARED_ENV_MARKER = "# Shared variables (debcontrol)"
 
 
 def generate_ssh_key(comment: str) -> tuple[str, str]:
@@ -212,6 +217,10 @@ class StackForm:
     keep_history: bool = False
     auto_rollback: bool = False
     vulnerability_gate: str = "off"
+    # Shared variables picked by name; None = keep what is stored.
+    shared_variables: list[str] | None = None
+    # Check for drift every hour; None = keep what is stored.
+    drift_check: bool | None = None
     # Set by `validate` when the key was made or pasted: (private, public).
     new_ssh_key: tuple[str, str] | None = None
     errors: list[str] = field(default_factory=list)
@@ -260,6 +269,12 @@ class StackForm:
             errors += self._validate_ssh(stored)
         if self.vulnerability_gate not in GATES:
             errors.append("docker.stack.error.gate")
+        if self.shared_variables is not None:
+            names = docker_variables.parse_names(self.shared_variables)
+            if names is None:
+                errors.append("docker.stack.error.shared_variables")
+            else:
+                self.shared_variables = names
         self.errors = errors
         return errors
 
@@ -294,6 +309,10 @@ class StackForm:
         stack.keep_history = self.keep_history
         stack.auto_rollback = self.auto_rollback
         stack.vulnerability_gate = normalize_gate(self.vulnerability_gate)
+        if self.shared_variables is not None:
+            stack.shared_variables = list(self.shared_variables) or None
+        if self.drift_check is not None:
+            stack.drift_check = self.drift_check
         if self.directory is not None:
             stack.directory = self.directory or None
         if self.env is not None:
@@ -328,7 +347,27 @@ class StackForm:
 
 
 def env_text(stack: DockerStack) -> str:
+    """The stack's own `.env`, as entered."""
     return decrypt_secret(stack.env_encrypted) if stack.env_encrypted else ""
+
+
+def effective_env(stack: DockerStack, shared: Mapping[str, str]) -> str:
+    """The `.env` written to the machine: the stack's own, plus each shared
+    variable it picked (`docker_variables.resolve`) that it doesn't set
+    itself — the stack's own value wins."""
+    own = env_text(stack)
+    if not shared:
+        return own
+    defined = _env_keys(own).keys()
+    extra = [
+        env_line(name, value)
+        for name, value in shared.items()
+        if name not in defined
+    ]
+    if not extra:
+        return own
+    head = own if not own or own.endswith("\n") else own + "\n"
+    return head + SHARED_ENV_MARKER + "\n" + "\n".join(extra) + "\n"
 
 
 def git_source(stack: DockerStack, *, commit: str = "") -> GitSource:
@@ -353,16 +392,22 @@ def git_source(stack: DockerStack, *, commit: str = "") -> GitSource:
     )
 
 
-def stack_files(stack: DockerStack, *, commit: str = "") -> StackFiles:
-    """The stack as stored (a Git stack at `commit` when given)."""
+def stack_files(
+    stack: DockerStack, *, shared: Mapping[str, str], commit: str = ""
+) -> StackFiles:
+    """The stack as stored (a Git stack at `commit` when given), with the
+    shared variables it picked."""
     directory = stack.directory or ""
+    env = effective_env(stack, shared)
+    replace = stack.replace_container or ""
     if stack.source == StackSource.GIT:
         return StackFiles(
-            stack.name, env=env_text(stack), git=git_source(stack, commit=commit),
-            directory=directory,
+            stack.name, env=env, git=git_source(stack, commit=commit),
+            directory=directory, replace_container=replace,
         )
     return StackFiles(
-        stack.name, compose=stack.compose_content or "", env=env_text(stack), directory=directory
+        stack.name, compose=stack.compose_content or "", env=env, directory=directory,
+        replace_container=replace,
     )
 
 
@@ -389,7 +434,7 @@ def previous_files(stack: DockerStack) -> StackFiles | None:
     return StackFiles(stack.name, compose=stack.deployed_compose, env=env, directory=directory)
 
 
-def content_hash(stack: DockerStack) -> str:
+def content_hash(stack: DockerStack, shared: Mapping[str, str]) -> str:
     """What "deployed as stored" is checked against: the compose file (for
     a Git stack, its source settings) plus the `.env`."""
     digest = hashlib.sha256()
@@ -402,13 +447,16 @@ def content_hash(stack: DockerStack) -> str:
             source += "\n" + "\n".join(stack.git_compose_overrides)
         digest.update(source.encode())
     digest.update(b"\0")
-    digest.update(env_text(stack).encode())
+    # With no shared variables this is the stack's own `.env`, so stacks
+    # from before shared variables keep their hash.
+    digest.update(effective_env(stack, shared).encode())
     return digest.hexdigest()
 
 
 def deploy_script(
     stack: DockerStack,
     *,
+    shared: Mapping[str, str],
     pull: bool = True,
     commit: str = "",
     up: bool = True,
@@ -419,7 +467,7 @@ def deploy_script(
     auto-rollback on, it waits for the containers after `up` and puts the
     previous version back when they don't come up."""
     return build_stack_script(
-        stack_files(stack, commit=commit),
+        stack_files(stack, shared=shared, commit=commit),
         pull=pull,
         up=up,
         report_images=report_images,
@@ -428,12 +476,12 @@ def deploy_script(
     )
 
 
-def check_script(stack: DockerStack) -> str:
+def check_script(stack: DockerStack, shared: Mapping[str, str]) -> str:
     """The check before a deploy (`build_stack_check_script`)."""
-    files = stack_files(stack)
+    files = stack_files(stack, shared=shared)
     if stack.source == StackSource.GIT:
         return build_stack_check_script(files, deployed_commit=stack.deployed_commit or "")
-    return build_stack_check_script(files, diff=compose_diff(stack))
+    return build_stack_check_script(files, diff=compose_diff(stack, shared))
 
 
 def _env_keys(text: str) -> dict[str, str]:
@@ -457,7 +505,7 @@ def env_changes(old: str, new: str) -> list[str]:
     return lines
 
 
-def compose_diff(stack: DockerStack) -> str:
+def compose_diff(stack: DockerStack, shared: Mapping[str, str]) -> str:
     """For a stack written in debcontrol: the compose file as stored against
     the one deployed, and the `.env` variables that changed (names only)."""
     if stack.deployed_hash is None:
@@ -476,24 +524,39 @@ def compose_diff(stack: DockerStack) -> str:
             lineterm="",
         )
     )
-    env = env_changes(deployed_env, env_text(stack))
+    env = env_changes(deployed_env, effective_env(stack, shared))
     if env:
         diff += ["", ".env (names only):", *env]
     return "\n".join(diff) or "No changes against the deployed version."
 
 
 async def record_deployed(
-    db: AsyncSession, stack: DockerStack, *, commit: str | None, deployed_by: str | None
+    db: AsyncSession,
+    stack: DockerStack,
+    *,
+    shared: Mapping[str, str],
+    commit: str | None,
+    deployed_by: str | None,
 ) -> None:
     """After a successful deploy: what is on the machine now and, when the
     stack keeps a history, a new version (the oldest beyond
-    `HISTORY_LIMIT` go). Does not commit."""
+    `HISTORY_LIMIT` go). The deployed `.env` is the one written, shared
+    variables included; a version keeps the stack's own. Does not commit."""
     stack.deployed_commit = commit or (
         stack.deployed_commit if stack.source == StackSource.GIT else None
     )
-    stack.deployed_hash = content_hash(stack)
+    stack.deployed_hash = content_hash(stack, shared)
     stack.deployed_compose = stack.compose_content if stack.source == StackSource.EDITOR else None
-    stack.deployed_env_encrypted = stack.env_encrypted
+    written = effective_env(stack, shared)
+    stack.deployed_env_encrypted = (
+        stack.env_encrypted
+        if written == env_text(stack)
+        else encrypt_secret(written)
+        if written.strip()
+        else None
+    )
+    # The container a `docker run` stack replaced is gone now.
+    stack.replace_container = None
     if not stack.keep_history:
         return
     db.add(
@@ -582,6 +645,7 @@ def version_diff(stack: DockerStack, version: DockerStackVersion) -> str:
     return "\n".join(lines)
 
 
-def is_changed(stack: DockerStack) -> bool:
-    """Stored settings differ from what was deployed last."""
-    return stack.deployed_hash is not None and stack.deployed_hash != content_hash(stack)
+def is_changed(stack: DockerStack, shared: Mapping[str, str]) -> bool:
+    """Stored settings (with the shared variables' current values) differ
+    from what was deployed last."""
+    return stack.deployed_hash is not None and stack.deployed_hash != content_hash(stack, shared)

@@ -60,6 +60,7 @@ from app.services import (
     docker_jobs,
     docker_scans,
     docker_stacks,
+    docker_variables,
 )
 from app.services.docker_gate import evaluate as evaluate_gate
 from app.services.docker_gate import normalize_gate
@@ -736,6 +737,7 @@ async def _job_stack_deploy(ctx: _Context) -> None:
     back and the job ends blocked."""
     stack = await _stack(ctx)
     await docker_jobs.check_project(ctx.session, ctx.machine, stack.name)
+    shared = await docker_variables.resolve(ctx.session, stack)
     pull = bool(ctx.params.get("pull", True))
     commit = str(ctx.params.get("commit") or "")
     # Decided when the job starts, so a resumed job keeps to it.
@@ -744,23 +746,23 @@ async def _job_stack_deploy(ctx: _Context) -> None:
     if gate == "off" or phase == "run":
 
         async def build_run() -> str:
-            return docker_stacks.deploy_script(stack, pull=pull, commit=commit)
+            return docker_stacks.deploy_script(stack, shared=shared, pull=pull, commit=commit)
 
         status, output = await _run_phase(ctx, "run", build_run)
-        await _finish_stack_deploy(ctx, stack, status, output, parse_commit(output))
+        await _finish_stack_deploy(ctx, stack, status, output, parse_commit(output), shared)
         return
 
     if phase in (None, "prepare"):
 
         async def build_prepare() -> str:
             return docker_stacks.deploy_script(
-                stack, pull=pull, commit=commit, up=False, report_images=True
+                stack, shared=shared, pull=pull, commit=commit, up=False, report_images=True
             )
 
         status, output = await _run_phase(ctx, "prepare", build_prepare)
         _keep_host_keys(stack, output)
         if status != 0 or "@@DC_PREPARED" not in output:
-            await _finish_stack_deploy(ctx, stack, status, output, None)
+            await _finish_stack_deploy(ctx, stack, status, output, None, shared)
             return
         old, new = parse_stack_images(output)
         running = set(old.values())
@@ -788,13 +790,13 @@ async def _job_stack_deploy(ctx: _Context) -> None:
 
     async def build_up() -> str:
         return build_stack_up_script(
-            docker_stacks.stack_files(stack, commit=commit),
+            docker_stacks.stack_files(stack, shared=shared, commit=commit),
             health=stack.auto_rollback,
             previous=docker_stacks.previous_files(stack) if stack.auto_rollback else None,
         )
 
     status, output = await _run_phase(ctx, "up", build_up)
-    await _finish_stack_deploy(ctx, stack, status, output, ctx.result.get("commit"))
+    await _finish_stack_deploy(ctx, stack, status, output, ctx.result.get("commit"), shared)
 
 
 async def _stack_gate(
@@ -859,7 +861,12 @@ async def _restore_blocked_stack(
 
 
 async def _finish_stack_deploy(
-    ctx: _Context, stack: DockerStack, status: int | None, output: str, commit: str | None
+    ctx: _Context,
+    stack: DockerStack,
+    status: int | None,
+    output: str,
+    commit: str | None,
+    shared: dict[str, str],
 ) -> None:
     _keep_host_keys(stack, output)
     if commit:
@@ -867,7 +874,7 @@ async def _finish_stack_deploy(
     stack.last_checked_at = datetime.now(UTC)
     if status == 0 and "@@DC_DONE" in output:
         await docker_stacks.record_deployed(
-            ctx.session, stack, commit=commit, deployed_by=ctx.job.started_by
+            ctx.session, stack, shared=shared, commit=commit, deployed_by=ctx.job.started_by
         )
         stack.deployed_at = datetime.now(UTC)
         stack.last_status = "ok"
@@ -900,9 +907,10 @@ async def _finish_stack_deploy(
 async def _job_stack_check(ctx: _Context) -> None:
     """The check before a deploy: changes nothing on the machine."""
     stack = await _stack(ctx)
+    shared = await docker_variables.resolve(ctx.session, stack)
 
     async def build() -> str:
-        return docker_stacks.check_script(stack)
+        return docker_stacks.check_script(stack, shared)
 
     status, output = await _run_phase(ctx, "run", build)
     _keep_host_keys(stack, output)
@@ -1935,7 +1943,8 @@ async def _sync_git_stack(stack_id: str, *, started_by: str) -> dict[str, Any]:
         await session.commit()
         if head is None:
             return {"ok": False, "error": output.output.strip()[-300:] or "No such branch."}
-        if head == stack.deployed_commit and not docker_stacks.is_changed(stack):
+        shared = await docker_variables.resolve(session, stack)
+        if head == stack.deployed_commit and not docker_stacks.is_changed(stack, shared):
             return {"ok": True, "deployed": False, "commit": head}
         if await _last_deploy_stopped_at(session, stack, head):
             # Failed, rolled back or stopped by the gate at this very commit:

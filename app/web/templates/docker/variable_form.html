@@ -1,0 +1,60 @@
+{#- Add or change a shared variable (app.web.routes.docker_shared). A
+    secret's value is never sent back to the browser. -#}
+{% extends "base.html" %}
+{% from "docker/_shared_macros.html" import page_top, scope_select %}
+
+{% block title %}{{ t(request, "docker_fleet.tab.variables") }} — Docker — debcontrol{% endblock %}
+
+{% block content %}
+  {{ page_top(request, tabs, active_tab) }}
+  {% set v_secret = form.secret if form else (variable.secret if variable else false) %}
+  <div class="panel-header">
+    <h2>{{ t(request, "docker.variable.edit_heading", name=variable.name) if variable else t(request, "docker.variable.add") }}</h2>
+    <a class="button button-secondary log-small-button" href="/docker/variables">{{ t(request, "docker.variable.back") }}</a>
+  </div>
+  {% if errors %}
+    <div class="alert alert-error" role="alert">{% for e in errors %}<p>{{ t(request, e) }}</p>{% endfor %}</div>
+  {% endif %}
+  <section class="panel">
+    <form method="post" action="/docker/variables{% if variable %}/{{ variable.id }}{% endif %}" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="name">{{ t(request, "docker.variable.name") }}</label>
+      <input id="name" name="name" required maxlength="128" pattern="[A-Za-z_][A-Za-z0-9_]*" spellcheck="false" autocapitalize="off"
+             value="{{ form.name if form else (variable.name if variable else '') }}" placeholder="SMTP_PASSWORD">
+      <p class="hint">{{ t(request, "docker.variable.name_hint") }}</p>
+      <label for="value">{{ t(request, "docker.variable.value") }}</label>
+      {% if variable and variable.secret %}
+        <select name="value_action" aria-label="{{ t(request, 'docker.variable.value') }}">
+          <option value="keep" selected>{{ t(request, "docker.variable.keep_secret") }}</option>
+          <option value="set">{{ t(request, "docker.variable.set_secret") }}</option>
+        </select>
+        <input id="value" name="value" type="password" autocomplete="new-password">
+      {% else %}
+        <input type="hidden" name="value_action" value="set">
+        <input id="value" name="value" spellcheck="false" autocomplete="off"
+               value="{{ ((form.value or '') if not form.secret else '') if form else (value or '') }}">
+      {% endif %}
+      <p class="hint">{{ t(request, "docker.variable.value_hint") }}</p>
+      <label><input type="checkbox" name="secret" value="1" {% if v_secret %}checked{% endif %}> {{ t(request, "docker.variable.secret") }}</label>
+      <p class="hint">{{ t(request, "docker.variable.secret_hint") }}</p>
+      <label for="description">{{ t(request, "docker.variable.description") }}</label>
+      <input id="description" name="description" maxlength="255" value="{{ form.description if form else (variable.description if variable else '') }}">
+      {{ scope_select(request, scope_value, allow_all, groups, machines) }}
+      <div class="page-header-actions">
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </div>
+      <p class="hint">{{ t(request, "docker.variable.save_hint") }}</p>
+    </form>
+  </section>
+  {% if variable %}
+    <section class="panel panel-danger">
+      <h2>{{ t(request, "docker.variable.delete") }}</h2>
+      <p class="hint">{{ t(request, "docker.variable.delete_hint") }}</p>
+      <form method="post" action="/docker/variables/{{ variable.id }}/delete" class="inline-form"
+            data-confirm="{{ t(request, 'docker.variable.delete_confirm', name=variable.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-danger">{{ t(request, "docker.variable.delete") }}</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

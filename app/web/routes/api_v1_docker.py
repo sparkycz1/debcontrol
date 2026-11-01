@@ -55,10 +55,12 @@ from app.db.session import get_db
 from app.services import (
     docker_actions,
     docker_backups,
+    docker_drift,
     docker_jobs,
     docker_overview,
     docker_scans,
     docker_stacks,
+    docker_variables,
 )
 from app.services.docker_gate import GATES
 from app.ssh import docker_files
@@ -138,7 +140,9 @@ def _scan(scan: DockerImageScan, *, findings: bool = False) -> dict[str, Any]:
     return data
 
 
-def _stack(stack: DockerStack, *, secrets: bool) -> dict[str, Any]:
+def _stack(stack: DockerStack, *, secrets: bool, shared: dict[str, str]) -> dict[str, Any]:
+    """A stack as the API shows it; `shared`: the shared variables it
+    picked, resolved for its machine (`docker_variables.resolve`)."""
     data: dict[str, Any] = {
         "id": str(stack.id),
         "name": stack.name,
@@ -161,7 +165,17 @@ def _stack(stack: DockerStack, *, secrets: bool) -> dict[str, Any]:
         "webhook_last_at": _iso(stack.webhook_last_at),
         "deployed_commit": stack.deployed_commit,
         "deployed_at": _iso(stack.deployed_at),
-        "changed_since_deploy": docker_stacks.is_changed(stack),
+        "changed_since_deploy": docker_stacks.is_changed(stack, shared),
+        "shared_variables": list(stack.shared_variables or []),
+        # Picked, but defined nowhere for this machine.
+        "shared_variables_missing": docker_variables.missing(stack, shared),
+        # A `docker run` container the first deploy takes over.
+        "replace_container": stack.replace_container,
+        "drift_check": stack.drift_check,
+        "drift_status": stack.drift_status,
+        "drift_details": stack.drift_details,
+        "drift_summary": docker_drift.summary(stack.drift_details),
+        "drift_checked_at": _iso(stack.drift_checked_at),
         "last_status": stack.last_status,
         "last_error": stack.last_error,
         "last_checked_at": _iso(stack.last_checked_at),
@@ -1080,10 +1094,9 @@ async def docker_stacks_api(
 ) -> list[dict[str, Any]]:
     machine = await _get_machine_or_404(machine_id, db, user)
     secrets = user.has_permission(Permission.ACTION_TERMINAL)
-    return [
-        _stack(stack, secrets=secrets)
-        for stack in await docker_stacks.list_stacks(db, machine.id)
-    ]
+    stacks = await docker_stacks.list_stacks(db, machine.id)
+    shared = await docker_variables.resolve_many(db, stacks)
+    return [_stack(stack, secrets=secrets, shared=shared[stack.id]) for stack in stacks]
 
 
 class _StackSave(BaseModel):
@@ -1113,6 +1126,13 @@ class _StackSave(BaseModel):
     keep_history: bool | None = None
     auto_rollback: bool | None = None
     vulnerability_gate: Literal["off", "critical", "high", "worse"] | None = None
+    # Shared variables taken into the .env, by name; None keeps them.
+    shared_variables: list[str] | None = Field(default=None, max_length=100)
+    # Check for drift every hour; None keeps what is set (off for a new stack).
+    drift_check: bool | None = None
+    # Create only: a `docker run` container (by name) the first deploy
+    # takes over (stops, sets aside, removes once the stack runs).
+    replace_container: str | None = Field(default=None, max_length=255)
     deploy: bool = False
 
 
@@ -1142,6 +1162,8 @@ def _stack_form(body: _StackSave, stack: DockerStack | None = None) -> docker_st
         vulnerability_gate=keep(
             body.vulnerability_gate, stack.vulnerability_gate if stack else "off"
         ),
+        shared_variables=body.shared_variables,
+        drift_check=body.drift_check,
     )
 
 
@@ -1154,6 +1176,8 @@ def _settings_details(stack: DockerStack) -> dict[str, Any]:
         "auto_rollback": stack.auto_rollback,
         "vulnerability_gate": stack.vulnerability_gate,
         "has_deploy_key": stack.git_ssh_key_encrypted is not None,
+        "shared_variables": list(stack.shared_variables or []),
+        "drift_check": stack.drift_check,
     }
 
 
@@ -1207,7 +1231,10 @@ async def docker_stack_create_api(
     _check_deploy(body, user, machine)
     form = _stack_form(body)
     form.directory = form.directory or ""
+    replace = (body.replace_container or "").strip()
     errors = form.validate()
+    if replace and not is_container_name_valid(replace):
+        errors.append("docker.convert.error.container")
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
         errors.append("docker.stack.error.name_taken")
     if not errors and await docker_stacks.directory_taken(db, machine.id, form.directory or ""):
@@ -1215,12 +1242,15 @@ async def docker_stack_create_api(
     if not errors:
         try:
             await docker_jobs.check_project(db, machine, form.name)
+            if replace:
+                await docker_jobs.check_container(db, machine, replace)
         except docker_jobs.ProtectedError:
             errors.append("docker.stack.error.protected")
     if errors:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=errors)
     stack = DockerStack(machine_id=machine.id, created_by=user.username)
     form.apply(stack)
+    stack.replace_container = replace or None
     db.add(stack)
     await db.commit()
     await _audit(
@@ -1228,10 +1258,16 @@ async def docker_stack_create_api(
         request,
         machine,
         "machine.docker.stack.create",
-        f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        {**_settings_details(stack), "directory": stack.directory},
+        f'Created Docker stack "{stack.name}" on "{machine.name}"'
+        + (f' to take over the container "{replace}"' if replace else ""),
+        {
+            **_settings_details(stack),
+            "directory": stack.directory,
+            "replace_container": replace or None,
+        },
     )
-    answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
+    shared = await docker_variables.resolve(db, stack)
+    answer: dict[str, Any] = {"stack": _stack(stack, secrets=True, shared=shared)}
     if body.deploy:
         answer.update(await _deploy(request, db, machine, user, stack, True))
     return answer
@@ -1247,8 +1283,11 @@ async def docker_stack_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     stack = await _stack_or_404(db, machine, stack_id)
     jobs = await docker_jobs.list_jobs(db, machine.id, limit=20, ref_id=stack.id)
+    shared = await docker_variables.resolve(db, stack)
     return {
-        **_stack(stack, secrets=user.has_permission(Permission.ACTION_TERMINAL)),
+        **_stack(
+            stack, secrets=user.has_permission(Permission.ACTION_TERMINAL), shared=shared
+        ),
         "jobs": [_job(job) for job in jobs],
     }
 
@@ -1289,7 +1328,8 @@ async def docker_stack_save_api(
         f'Edited Docker stack "{stack.name}" on "{machine.name}"',
         _settings_details(stack),
     )
-    answer: dict[str, Any] = {"stack": _stack(stack, secrets=True)}
+    shared = await docker_variables.resolve(db, stack)
+    answer: dict[str, Any] = {"stack": _stack(stack, secrets=True, shared=shared)}
     if body.deploy:
         answer.update(await _deploy(request, db, machine, user, stack, True))
     return answer
