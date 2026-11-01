@@ -214,6 +214,12 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "Deploying or changing the Docker stack {stack} on {machine_name} "
             "({machine_ip}) failed at {timestamp}.\n\n{details}",
         ),
+        NotificationEventType.DOCKER_STACK_DRIFT: (
+            "debcontrol: Docker stack {stack} changed on {machine_name}",
+            "The Docker stack {stack} on {machine_name} ({machine_ip}) no longer matches "
+            "what debcontrol deployed (found at {timestamp}). Deploy it again to put it "
+            "back, or take the changes over on the stack's page.\n\n{details}",
+        ),
         NotificationEventType.DOCKER_BACKUP_FAILED: (
             "debcontrol: Docker backup {backup} failed on {machine_name}",
             "The restic backup {backup} on {machine_name} ({machine_ip}) failed at "
@@ -363,6 +369,12 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: Docker stack {stack} na {machine_name} selhal",
             "Nasazení nebo změna Docker stacku {stack} na {machine_name} ({machine_ip}) "
             "v {timestamp} selhala.\n\n{details}",
+        ),
+        NotificationEventType.DOCKER_STACK_DRIFT: (
+            "debcontrol: Docker stack {stack} na {machine_name} byl změněn",
+            "Docker stack {stack} na {machine_name} ({machine_ip}) už neodpovídá tomu, "
+            "co debcontrol nasadil (zjištěno v {timestamp}). Nasaďte ho znovu, nebo "
+            "změny převezměte na stránce stacku.\n\n{details}",
         ),
         NotificationEventType.DOCKER_BACKUP_FAILED: (
             "debcontrol: Docker záloha {backup} na {machine_name} selhala",

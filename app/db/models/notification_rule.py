@@ -147,6 +147,9 @@ class NotificationEventType(enum.StrEnum):
     DOCKER_UPDATE_BLOCKED = "docker.update.blocked"
     # deploying or acting on a Compose stack failed,
     DOCKER_STACK_FAILED = "docker.stack.failed"
+    # a managed stack changed on its machine outside debcontrol (drift,
+    # `app.tasks.docker_extras._check_stack_drift`),
+    DOCKER_STACK_DRIFT = "docker.stack.drift"
     # a restic backup of Docker volumes / host paths failed.
     DOCKER_BACKUP_FAILED = "docker.backup.failed"
     # Container events read with each monitoring sample

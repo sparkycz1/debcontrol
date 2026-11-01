@@ -43,6 +43,7 @@
                 {% if s.last_status == 'failed' %}<span class="badge badge-error" title="{{ s.last_error or '' }}">{{ t(request, "docker.job.status.failed") }}</span>
                 {% elif s.last_status == 'ok' %}<span class="badge badge-ok">{{ t(request, "docker.stacks.state_ok") }}</span>{% endif %}
                 {% if changed.get(s.id) %}<span class="badge badge-warn">{{ t(request, "docker.stacks.changed") }}</span>{% endif %}
+                {% if s.drift_status == "drift" %}<span class="badge badge-error" title="{{ t(request, 'docker.drift.label') }}">{{ t(request, "docker.drift.status.drift") }}</span>{% endif %}
               </td>
             </tr>
           {% endfor %}

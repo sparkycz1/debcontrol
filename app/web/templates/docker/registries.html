@@ -1,0 +1,80 @@
+{#- Docker → Registries: private registry logins and whether `docker
+    login` worked on each machine (app.web.routes.docker_shared). -#}
+{% extends "base.html" %}
+{% from "docker/_shared_macros.html" import page_top %}
+
+{% block title %}{{ t(request, "docker_fleet.tab.registries") }} — Docker — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  {{ page_top(request, tabs, active_tab) }}
+
+  <div class="panel-header">
+    <p class="hint">{{ t(request, "docker.registry.intro") }}</p>
+    <a class="button" href="/docker/registries/new">{{ t(request, "docker.registry.add") }}</a>
+  </div>
+
+  {% if registries %}
+    <div class="table-cards-wrap">
+      <table class="data-table table-cards">
+        <thead><tr>
+          <th>{{ t(request, "docker.registry.server") }}</th>
+          <th>{{ t(request, "docker.registry.username") }}</th>
+          <th>{{ t(request, "docker.scope.label") }}</th>
+          <th>{{ t(request, "docker.registry.logins") }}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for r in registries %}
+          {% set rows = logins[r.id] %}
+          {% set failed = rows | selectattr('0.status', 'equalto', 'failed') | list %}
+          <tr>
+            <td class="cell-name" data-label="{{ t(request, 'docker.registry.server') }}">
+              <strong><code>{{ r.server }}</code></strong>
+              {% if r.description %}<div class="table-summary">{{ r.description }}</div>{% endif %}
+            </td>
+            <td data-label="{{ t(request, 'docker.registry.username') }}"><code>{{ r.username }}</code></td>
+            <td data-label="{{ t(request, 'docker.scope.label') }}">{{ labels[r.id] }}</td>
+            <td data-label="{{ t(request, 'docker.registry.logins') }}">
+              {% if not rows %}
+                <span class="table-muted">{{ t(request, "docker.registry.no_logins") }}</span>
+              {% else %}
+                <span class="badge badge-ok">{{ t(request, "docker.registry.ok_count", count=(rows | length) - (failed | length)) }}</span>
+                {% if failed %}<span class="badge badge-error">{{ t(request, "docker.registry.failed_count", count=failed | length) }}</span>{% endif %}
+                <details class="registry-logins">
+                  <summary>{{ t(request, "docker.registry.show_logins") }}</summary>
+                  <ul class="plain-list">
+                    {% for login, machine_name in rows %}
+                      <li>
+                        <span class="badge {{ 'badge-ok' if login.status == 'ok' else 'badge-error' }}">{{ t(request, "docker.registry.status." ~ login.status) }}</span>
+                        <a href="/machines/{{ login.machine_id }}/docker">{{ machine_name }}</a>
+                        <span class="table-summary">{{ login.checked_at | local_time }}{% if login.status != 'ok' and login.message %} · {{ login.message }}{% endif %}</span>
+                      </li>
+                    {% endfor %}
+                  </ul>
+                </details>
+              {% endif %}
+            </td>
+            <td data-label="">
+              {% if r.id in manageable %}
+                <div class="cell-actions">
+                  <a class="button button-secondary log-small-button" href="/docker/registries/{{ r.id }}">{{ t(request, "common.edit") }}</a>
+                  <form method="post" action="/docker/registries/{{ r.id }}/login" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.registry.login_again") }}</button>
+                  </form>
+                </div>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <p>{{ t(request, "docker.registry.empty") }}</p>
+    </div>
+  {% endif %}
+  <p class="hint">{{ t(request, "docker.registry.storage_hint") }}</p>
+{% endblock %}

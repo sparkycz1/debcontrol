@@ -26,9 +26,15 @@ from app.db.models.machine import Machine
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import docker_actions, docker_jobs, docker_stacks
+from app.services import (
+    docker_actions,
+    docker_drift,
+    docker_jobs,
+    docker_stacks,
+    docker_variables,
+)
 from app.services.docker_gate import GATES
-from app.ssh.docker_cli import DockerCommandError, is_project_name_valid
+from app.ssh.docker_cli import DockerCommandError, is_container_name_valid, is_project_name_valid
 from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
@@ -112,6 +118,7 @@ async def docker_stacks_page(
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
     stacks = await docker_stacks.list_stacks(db, machine.id)
+    shared = await docker_variables.resolve_many(db, stacks)
     return render(
         request,
         "machines/docker/stacks.html",
@@ -120,7 +127,7 @@ async def docker_stacks_page(
         "stacks",
         {
             "stacks": stacks,
-            "changed": {s.id: docker_stacks.is_changed(s) for s in stacks},
+            "changed": {s.id: docker_stacks.is_changed(s, shared[s.id]) for s in stacks},
             "protected_project": await docker_jobs.protected_project(db, machine),
         },
     )
@@ -232,6 +239,14 @@ def _form_from_request(form: Any) -> docker_stacks.StackForm:
         keep_history=form.get("keep_history") == "1",
         auto_rollback=form.get("auto_rollback") == "1",
         vulnerability_gate=str(form.get("vulnerability_gate") or "off"),
+        # The picker sends a marker, so "none picked" is told from "not on
+        # this form".
+        shared_variables=(
+            [str(name) for name in form.getlist("shared_variables")]
+            if "shared_variables_shown" in form
+            else None
+        ),
+        drift_check=form.get("drift_check") == "1" if "drift_check_shown" in form else None,
     )
 
 
@@ -245,6 +260,24 @@ def _settings_details(stack: DockerStack) -> dict[str, Any]:
         "auto_rollback": stack.auto_rollback,
         "vulnerability_gate": stack.vulnerability_gate,
         "has_deploy_key": stack.git_ssh_key_encrypted is not None,
+        "shared_variables": list(stack.shared_variables or []),
+        "drift_check": stack.drift_check,
+    }
+
+
+async def form_extras(
+    db: AsyncSession, machine: Machine, stack: DockerStack | None
+) -> dict[str, Any]:
+    """The shared variables the stack form offers for this machine, and
+    the picked ones that are defined nowhere for it."""
+    available = await docker_variables.for_machine(db, machine)
+    picked = list(stack.shared_variables or []) if stack is not None else []
+    return {
+        "available_variables": sorted(available.values(), key=lambda v: v.name),
+        "variable_scopes": {
+            v.name: docker_variables.scope_of(v).kind for v in available.values()
+        },
+        "missing_variables": [name for name in picked if name not in available],
     }
 
 
@@ -262,7 +295,7 @@ async def docker_stack_new(
         machine,
         current_user,
         "stacks",
-        {"stack": None, "form": None, "errors": []},
+        {"stack": None, "form": None, "errors": [], **(await form_extras(db, machine, None))},
     )
 
 
@@ -277,7 +310,10 @@ async def docker_stack_create(
     raw = await request.form()
     form = _form_from_request(raw)
     form.directory = form.directory or ""
+    replace = str(raw.get("replace_container") or "").strip()
     errors = form.validate()
+    if replace and not is_container_name_valid(replace):
+        errors.append("docker.convert.error.container")
     if not errors and await docker_stacks.name_taken(db, machine.id, form.name):
         errors.append("docker.stack.error.name_taken")
     if not errors and await docker_stacks.directory_taken(db, machine.id, form.directory or ""):
@@ -285,6 +321,8 @@ async def docker_stack_create(
     if not errors:
         try:
             await docker_jobs.check_project(db, machine, form.name)
+            if replace:
+                await docker_jobs.check_container(db, machine, replace)
         except docker_jobs.ProtectedError:
             errors.append("docker.stack.error.protected")
     if errors:
@@ -294,11 +332,18 @@ async def docker_stack_create(
             machine,
             current_user,
             "stacks",
-            {"stack": None, "form": form, "errors": errors},
+            {
+                "stack": None,
+                "form": form,
+                "errors": errors,
+                "replace_container": replace,
+                **(await form_extras(db, machine, None)),
+            },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     stack = DockerStack(machine_id=machine.id, created_by=actor(current_user))
     form.apply(stack)
+    stack.replace_container = replace or None
     db.add(stack)
     await db.commit()
     await _audit(
@@ -306,8 +351,13 @@ async def docker_stack_create(
         request,
         machine,
         "machine.docker.stack.create",
-        f'Created Docker stack "{stack.name}" on "{machine.name}"',
-        details={**_settings_details(stack), "directory": stack.directory},
+        f'Created Docker stack "{stack.name}" on "{machine.name}"'
+        + (f' to take over the container "{replace}"' if replace else ""),
+        details={
+            **_settings_details(stack),
+            "directory": stack.directory,
+            "replace_container": replace or None,
+        },
     )
     if raw.get("deploy") == "1" and current_user.has_permission(Permission.ACTION_UPDATES):
         return await _deploy(request, db, machine, current_user, stack, pull=True)
@@ -340,6 +390,7 @@ async def _stack_page(
     status_code: int = 200,
 ) -> Response:
     can_terminal = user.has_permission(Permission.ACTION_TERMINAL)
+    shared = await docker_variables.resolve(db, stack)
     return render(
         request,
         "machines/docker/stack_form.html",
@@ -353,12 +404,14 @@ async def _stack_page(
             # The compose file and .env are for those who may edit them.
             "env_text": docker_stacks.env_text(stack) if can_terminal else "",
             "jobs": await docker_jobs.list_jobs(db, machine.id, limit=20, ref_id=stack.id),
-            "changed": docker_stacks.is_changed(stack),
+            "changed": docker_stacks.is_changed(stack, shared),
+            "drift_summary": docker_drift.summary(stack.drift_details),
             "webhook_url": webhook_url,
             "versions": (
                 await docker_stacks.list_versions(db, stack.id) if stack.keep_history else []
             ),
             "gates": GATES,
+            **(await form_extras(db, machine, stack)),
         },
         status_code=status_code,
     )

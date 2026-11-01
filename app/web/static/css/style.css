@@ -2826,3 +2826,17 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .image-tag-form input:focus-visible { border-color: var(--color-accent); }
 .images-pull-form { margin-top: var(--space-3); }
 .layers-table code { background: none; padding: 0; }
+
+/* Docker → Registries / Variables, and the shared-variable picker on a stack. */
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.check-grid label { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
+.check-grid .table-summary { flex-basis: 100%; padding-left: 1.6rem; }
+.registry-logins { margin-top: var(--space-1); }
+.registry-logins summary { cursor: pointer; color: var(--color-muted); font-size: 0.88rem; }
+.registry-logins ul { margin-top: var(--space-2); }
+.registry-logins li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }

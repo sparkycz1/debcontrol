@@ -33,7 +33,9 @@ from app.web.routes import (
     api_v1_checks,
     api_v1_dashboard,
     api_v1_docker,
+    api_v1_docker_adopt,
     api_v1_docker_fleet,
+    api_v1_docker_shared,
     api_v1_docker_vulnerabilities,
     api_v1_metrics,
     api_v1_notifications,
@@ -52,6 +54,7 @@ from app.web.routes import (
     dashboard,
     docker_fleet,
     docker_hooks,
+    docker_shared,
     fleet,
     impersonation,
     inform,
@@ -284,6 +287,7 @@ def create_app() -> FastAPI:
     app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(docker_fleet.router)
+    app.include_router(docker_shared.router)
     app.include_router(machine_groups.router)
     app.include_router(security.router)
     app.include_router(search.router)
@@ -313,9 +317,12 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_notifications.router)
     app.include_router(api_v1_search.router)
     app.include_router(api_v1_metrics.router)
+    # Before api_v1_docker: its `projects/{project}/{action}` matches `adopt`.
+    app.include_router(api_v1_docker_adopt.router)
     app.include_router(api_v1_docker.router)
     app.include_router(api_v1_docker_vulnerabilities.router)
     app.include_router(api_v1_docker_fleet.router)
+    app.include_router(api_v1_docker_shared.router)
     app.include_router(users.router)
     app.include_router(impersonation.router)
     app.include_router(roles.router)

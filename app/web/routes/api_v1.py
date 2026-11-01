@@ -24,8 +24,10 @@ lock-out/blast-radius risk that's meant to be handled deliberately, by a
 human, not scriptable. (Notifications, endpoint checks, and the
 operational part of Settings have their own routers —
 `api_v1_notifications.py`, `api_v1_checks.py`, `api_v1_settings.py`; the
-machine's Docker tab has `api_v1_docker.py`, Docker across the fleet
-`api_v1_docker_fleet.py` and `api_v1_docker_vulnerabilities.py`.)
+machine's Docker tab has `api_v1_docker.py` (adopting projects, a
+container to a stack and drift in `api_v1_docker_adopt.py`), Docker across
+the fleet `api_v1_docker_fleet.py`, `api_v1_docker_vulnerabilities.py` and
+`api_v1_docker_shared.py` (registry logins, shared variables).)
 The interactive SSH terminal (and the Docker tab's shell inside a
 container, which runs over the same WebSocket terminal)
 (`app/web/routes/terminal_ws.py`, and likewise the Logs tab's live-follow

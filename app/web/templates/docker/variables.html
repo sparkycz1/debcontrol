@@ -1,0 +1,52 @@
+{#- Docker → Variables: shared variables and secrets stacks pick by name
+    (app.web.routes.docker_shared). -#}
+{% extends "base.html" %}
+{% from "docker/_shared_macros.html" import page_top %}
+
+{% block title %}{{ t(request, "docker_fleet.tab.variables") }} — Docker — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  {{ page_top(request, tabs, active_tab) }}
+
+  <div class="panel-header">
+    <p class="hint">{{ t(request, "docker.variable.intro") }}</p>
+    <a class="button" href="/docker/variables/new">{{ t(request, "docker.variable.add") }}</a>
+  </div>
+
+  {% if variables %}
+    <div class="table-cards-wrap">
+      <table class="data-table table-cards">
+        <thead><tr>
+          <th>{{ t(request, "docker.variable.name") }}</th>
+          <th>{{ t(request, "docker.variable.value") }}</th>
+          <th>{{ t(request, "docker.scope.label") }}</th>
+          <th>{{ t(request, "docker.variable.used_by") }}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+        {% for v in variables %}
+          <tr>
+            <td class="cell-name" data-label="{{ t(request, 'docker.variable.name') }}">
+              <strong><code>{{ v.name }}</code></strong>
+              {% if v.description %}<div class="table-summary">{{ v.description }}</div>{% endif %}
+            </td>
+            <td data-label="{{ t(request, 'docker.variable.value') }}">
+              {% if v.secret %}<span class="badge badge-tag">{{ t(request, "docker.variable.secret_badge") }}</span>
+              {% else %}<code class="cell-truncate" title="{{ shown[v.id] }}">{{ shown[v.id] }}</code>{% endif %}
+            </td>
+            <td data-label="{{ t(request, 'docker.scope.label') }}">{{ labels[v.id] }}</td>
+            <td data-label="{{ t(request, 'docker.variable.used_by') }}">{{ t(request, "docker.variable.used_by_count", count=using.get(v.name, 0)) }}</td>
+            <td data-label="">
+              {% if v.id in manageable %}<a class="button button-secondary log-small-button" href="/docker/variables/{{ v.id }}">{{ t(request, "common.edit") }}</a>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "docker.variable.empty") }}</p></div>
+  {% endif %}
+  <p class="hint">{{ t(request, "docker.variable.precedence_hint") }}</p>
+{% endblock %}

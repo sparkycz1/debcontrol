@@ -447,11 +447,11 @@ def test_the_content_hash_of_a_stack_without_overrides_is_unchanged() -> None:
         name="shop", source=StackSource.GIT, git_url="https://g.example/x.git",
         git_branch="main", git_compose_path="compose.yaml",
     )
-    before = docker_stacks.content_hash(stack)
+    before = docker_stacks.content_hash(stack, {})
     stack.git_compose_overrides = []
-    assert docker_stacks.content_hash(stack) == before
+    assert docker_stacks.content_hash(stack, {}) == before
     stack.git_compose_overrides = ["prod.yaml"]
-    assert docker_stacks.content_hash(stack) != before
+    assert docker_stacks.content_hash(stack, {}) != before
 
 
 def test_env_changes_name_variables_never_values() -> None:
@@ -467,12 +467,12 @@ def test_the_compose_diff_compares_with_what_was_deployed() -> None:
         name="shop", source=StackSource.EDITOR, compose_content=COMPOSE_V2,
         env_encrypted=encrypt_secret("TOKEN=new"),
     )
-    assert docker_stacks.compose_diff(stack).startswith("Not deployed yet")
+    assert docker_stacks.compose_diff(stack, {}).startswith("Not deployed yet")
     stack.deployed_hash = "x"
-    assert "not known" in docker_stacks.compose_diff(stack)
+    assert "not known" in docker_stacks.compose_diff(stack, {})
     stack.deployed_compose = COMPOSE
     stack.deployed_env_encrypted = encrypt_secret("TOKEN=old")
-    diff = docker_stacks.compose_diff(stack)
+    diff = docker_stacks.compose_diff(stack, {})
     assert "-    image: nginx:1.27" in diff and "+    image: nginx:1.28" in diff
     assert "~ TOKEN" in diff and "old" not in diff.replace("(deployed)", "")
 
@@ -505,7 +505,9 @@ async def test_history_keeps_the_last_versions_only(db_session_factory: Factory)
         row = await db.get(DockerStack, stack.id)
         assert row is not None
         for _ in range(docker_stacks.HISTORY_LIMIT + 3):
-            await docker_stacks.record_deployed(db, row, commit=None, deployed_by="admin")
+            await docker_stacks.record_deployed(
+                db, row, shared={}, commit=None, deployed_by="admin"
+            )
             await db.commit()
         versions = await docker_stacks.list_versions(db, stack.id)
         total = (await db.execute(select(DockerStackVersion))).scalars().all()
@@ -522,7 +524,7 @@ async def test_without_history_nothing_is_kept(db_session_factory: Factory) -> N
     async with db_session_factory() as db:
         row = await db.get(DockerStack, stack.id)
         assert row is not None
-        await docker_stacks.record_deployed(db, row, commit=None, deployed_by="admin")
+        await docker_stacks.record_deployed(db, row, shared={}, commit=None, deployed_by="admin")
         await db.commit()
         assert row.deployed_compose == COMPOSE
         assert await docker_stacks.list_versions(db, stack.id) == []
@@ -705,7 +707,7 @@ async def test_auto_sync_does_not_retry_a_commit_that_failed(
         git_url="https://git.example.com/me/shop.git", git_branch="main",
         git_compose_path="compose.yaml", deployed_commit=COMMIT, auto_sync=True,
     )
-    stack.deployed_hash = docker_stacks.content_hash(stack)
+    stack.deployed_hash = docker_stacks.content_hash(stack, {})
     failed = _job(
         machine, DockerJobKind.STACK_DEPLOY, "shop", ref_id=stack.id,
         status=DockerJobStatus.FAILED, result={"commit": NEW_COMMIT, "rolled_back": True},

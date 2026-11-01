@@ -27,6 +27,12 @@ about it. See wiki/Docker for the whole feature.
   deployed (when the stack keeps a history), to roll back to.
 - `DockerBackup` — a restic backup of Docker volumes and host paths,
   run in restic's own container on the machine.
+- `DockerRegistry` — a private registry's login (fleet-wide, for a
+  machine group or one machine), and `DockerRegistryLogin` — whether
+  `docker login` to it worked on each machine.
+- `DockerVariable` — a shared variable or secret (fleet-wide, for a
+  machine group or one machine) that stacks pick by name into their
+  `.env`.
 
 Secrets (Git tokens, `.env` files, restic passwords and repository
 credentials) are stored with `app.core.security.encrypt_secret` and never
@@ -349,6 +355,23 @@ class DockerStack(Base):
     last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # Shared variables (`DockerVariable`) this stack takes into its `.env`,
+    # by name; its own `.env` wins over them. None = none.
+    shared_variables: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # Made from a container started with `docker run`: that container (by
+    # name) is stopped and set aside by the first deploy, and removed once
+    # the stack runs (`docker_compose.build_stack_script`).
+    replace_container: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Drift: what runs on the machine against what was deployed
+    # (`app.services.docker_drift`). Checked hourly only when switched on.
+    drift_check: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # "ok" / "drift" / "error"; None = never checked.
+    drift_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    drift_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    drift_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -437,6 +460,102 @@ class DockerBackup(Base):
     last_verify_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+def scope_key(group_id: uuid.UUID | None, machine_id: uuid.UUID | None) -> str:
+    """One string per scope, so "one name per scope" is a plain unique
+    constraint on any PostgreSQL version: "" = the whole fleet,
+    "g:<id>" = a machine group, "m:<id>" = one machine."""
+    if machine_id is not None:
+        return f"m:{machine_id}"
+    if group_id is not None:
+        return f"g:{group_id}"
+    return ""
+
+
+class DockerRegistry(Base):
+    """A private registry debcontrol logs the machines in to (`docker
+    login`), so pulls and image update checks work for its images. One
+    login per registry server and scope; for a machine the most specific
+    one applies (its own, then its group's, then the fleet-wide one)."""
+
+    __tablename__ = "docker_registries"
+    __table_args__ = (
+        UniqueConstraint("server", "scope_key", name="uq_docker_registries_server_scope"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    # host[:port], as `docker login` takes it (`docker.io` = Docker Hub).
+    server: Mapped[str] = mapped_column(String(255), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machine_groups.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    machine_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    scope_key: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class DockerRegistryLogin(Base):
+    """Whether `docker login` to a registry server worked on a machine
+    (the most recent attempt). Kept per server: a machine holds one login
+    per server, whichever `DockerRegistry` it came from."""
+
+    __tablename__ = "docker_registry_logins"
+    __table_args__ = (
+        UniqueConstraint("machine_id", "server", name="uq_docker_registry_logins_machine_server"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    machine_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=False
+    )
+    server: Mapped[str] = mapped_column(String(255), nullable=False)
+    registry_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("docker_registries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # "ok" / "failed".
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    checked_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class DockerVariable(Base):
+    """A variable shared by stacks (`DockerStack.shared_variables`): the
+    value is always stored encrypted; a secret one is never shown again.
+    For a machine the most specific definition of a name applies."""
+
+    __tablename__ = "docker_variables"
+    __table_args__ = (
+        UniqueConstraint("name", "scope_key", name="uq_docker_variables_name_scope"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    value_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machine_groups.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    machine_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    scope_key: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False

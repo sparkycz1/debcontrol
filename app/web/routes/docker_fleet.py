@@ -35,11 +35,19 @@ router = APIRouter(
 )
 
 
-def tabs(request: Request) -> list[tuple[str, str, str]]:
-    return [
-        ("containers", t(request, "docker_fleet.tab.containers"), "/docker/containers"),
-        ("vulnerabilities", t(request, "security.containers.tab"), "/security/containers"),
-    ]
+def tabs(request: Request, user: User) -> list[tuple[str, str, str]]:
+    """Docker's own tabs; registries and shared variables (their logins
+    and secrets reach the machines' Docker) only with `action.terminal`."""
+    items = [("containers", t(request, "docker_fleet.tab.containers"), "/docker/containers")]
+    if user.has_permission(Permission.ACTION_TERMINAL):
+        items += [
+            ("registries", t(request, "docker_fleet.tab.registries"), "/docker/registries"),
+            ("variables", t(request, "docker_fleet.tab.variables"), "/docker/variables"),
+        ]
+    items.append(
+        ("vulnerabilities", t(request, "security.containers.tab"), "/security/containers")
+    )
+    return items
 
 
 @router.get("")
@@ -105,7 +113,7 @@ async def fleet_containers(
             "state_groups": docker_overview.STATE_GROUPS,
             "url_with": url_with,
             "csrf_token": csrf_token,
-            "tabs": tabs(request),
+            "tabs": tabs(request, current_user),
             "active_tab": "containers",
             "can_power": current_user.has_permission(Permission.ACTION_POWER),
             "can_updates": current_user.has_permission(Permission.ACTION_UPDATES),

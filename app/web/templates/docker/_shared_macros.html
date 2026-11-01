@@ -1,0 +1,34 @@
+{#- Pieces the Registries and Variables pages share
+    (app.web.routes.docker_shared). -#}
+
+{% macro page_top(request, tabs, active_tab) -%}
+  <div class="page-header">
+    <h1>Docker</h1>
+  </div>
+  {% from "partials/_tabnav.html" import render as render_tabs %}
+  {{ render_tabs(tabs, active_tab) }}
+  {% set flash_notice = flash(request, 'notice') %}
+  {% set flash_error = flash(request, 'error') %}
+  {% if flash_notice %}<div class="alert alert-ok" role="status"><p>{{ flash_notice }}</p></div>{% endif %}
+  {% if flash_error %}<div class="alert alert-error" role="alert"><p>{{ flash_error }}</p></div>{% endif %}
+{%- endmacro %}
+
+{#- Where an entry applies: the whole fleet (unrestricted accounts only),
+    a machine group, or one machine. -#}
+{% macro scope_select(request, current, allow_all, groups, machines) -%}
+  <label for="scope">{{ t(request, "docker.scope.label") }}</label>
+  <select id="scope" name="scope" required>
+    {% if allow_all %}<option value="all" {% if current in ('', 'all') %}selected{% endif %}>{{ t(request, "docker.scope.all") }}</option>{% endif %}
+    {% if groups %}
+      <optgroup label="{{ t(request, 'docker.scope.groups') }}">
+        {% for g in groups %}{% set v = 'group:' ~ g.id %}<option value="{{ v }}" {% if current == v %}selected{% endif %}>{{ g.name }}</option>{% endfor %}
+      </optgroup>
+    {% endif %}
+    {% if machines %}
+      <optgroup label="{{ t(request, 'docker.scope.machines') }}">
+        {% for m in machines %}{% set v = 'machine:' ~ m.id %}<option value="{{ v }}" {% if current == v %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+      </optgroup>
+    {% endif %}
+  </select>
+  <p class="hint">{{ t(request, "docker.scope.hint") }}</p>
+{%- endmacro %}

@@ -34,6 +34,11 @@
       {% if c.compose_project %}
         <dt>{{ t(request, "docker.container.stack") }}</dt>
         <dd><a href="{{ docker_base }}/stacks">{{ c.compose_project }}</a>{% if c.compose_service %} · {{ t(request, "docker.container.service", name=c.compose_service) }}{% endif %}</dd>
+      {% elif can_terminal and not is_protected and machine.host_key_fingerprint %}
+        <dt>{{ t(request, "docker.container.stack") }}</dt>
+        <dd>{{ t(request, "docker.convert.none") }}
+          <a class="button button-secondary log-small-button" href="{{ docker_base }}/containers/{{ c.name | urlencode }}/to-stack">{{ t(request, "docker.convert.button") }}</a>
+          <div class="table-summary">{{ t(request, "docker.convert.button_hint") }}</div></dd>
       {% endif %}
       <dt>{{ t(request, "docker.container.created") }}</dt><dd>{{ c.created[:19] | replace('T', ' ') or '—' }}</dd>
       {% if c.running %}

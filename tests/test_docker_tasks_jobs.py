@@ -684,8 +684,8 @@ async def test_a_deployed_stack_remembers_what_was_deployed(
     stored = await _get(db_session_factory, DockerStack, stack.id)
     assert (await _get(db_session_factory, DockerJob, job.id)).status == DockerJobStatus.SUCCEEDED
     assert stored.last_status == "ok" and stored.deployed_at is not None
-    assert stored.deployed_hash == docker_stacks.content_hash(stored)
-    assert not docker_stacks.is_changed(stored)
+    assert stored.deployed_hash == docker_stacks.content_hash(stored, {})
+    assert not docker_stacks.is_changed(stored, {})
 
 
 async def test_a_failed_deployment_is_recorded_and_notified(
@@ -760,7 +760,7 @@ async def test_git_sync_deploys_only_a_new_commit_and_never_twice(
         git_compose_path="compose.yaml",
         deployed_commit=COMMIT,
     )
-    stack.deployed_hash = docker_stacks.content_hash(stack)
+    stack.deployed_hash = docker_stacks.content_hash(stack, {})
     await _add(db_session_factory, machine, stack)
 
     machine_shell.answer("ls-remote", f"@@DC_COMMIT {COMMIT}\n")

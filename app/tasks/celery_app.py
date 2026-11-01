@@ -236,6 +236,7 @@ celery_app = Celery(
         "app.tasks.jobs",
         "app.tasks.ai_jobs",
         "app.tasks.docker_jobs",
+        "app.tasks.docker_extras",
         "app.scheduling.jobs",
     ],
 )
@@ -385,6 +386,11 @@ celery_app.conf.beat_schedule = {
     "poll-git-stacks": {
         "task": "app.tasks.docker_jobs.poll_git_stacks",
         "schedule": timedelta(minutes=5),
+    },
+    # Stacks with the hourly drift check on (app.tasks.docker_extras).
+    "check-stack-drift": {
+        "task": "app.tasks.docker_extras.check_all_stack_drift",
+        "schedule": crontab(minute=50),
     },
     "purge-old-docker-jobs": {
         "task": "app.tasks.docker_jobs.purge_old_docker_jobs",

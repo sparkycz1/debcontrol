@@ -142,14 +142,14 @@ def test_content_hash_tracks_compose_and_env_changes() -> None:
     form = StackForm(name="web", source=StackSource.EDITOR.value, compose=COMPOSE, env=ENV)
     form.validate()
     form.apply(stack)
-    assert not docker_stacks.is_changed(stack)  # never deployed: nothing to differ from
+    assert not docker_stacks.is_changed(stack, {})  # never deployed: nothing to differ from
 
-    stack.deployed_hash = docker_stacks.content_hash(stack)
-    assert not docker_stacks.is_changed(stack)
+    stack.deployed_hash = docker_stacks.content_hash(stack, {})
+    assert not docker_stacks.is_changed(stack, {})
 
     form.env = "DB_PASSWORD=rotated\n"
     form.apply(stack)
-    assert docker_stacks.is_changed(stack)
+    assert docker_stacks.is_changed(stack, {})
 
 
 async def test_webhook_token_is_stored_only_as_its_hash(db_session_factory: Any) -> None:

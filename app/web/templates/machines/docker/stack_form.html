@@ -16,6 +16,8 @@
   {% set v_keep_history = form.keep_history if form else (stack.keep_history if stack else false) %}
   {% set v_auto_rollback = form.auto_rollback if form else (stack.auto_rollback if stack else false) %}
   {% set v_gate = form.vulnerability_gate if form else (stack.vulnerability_gate if stack else 'off') %}
+  {% set v_shared = (form.shared_variables if form and form.shared_variables is not none else (stack.shared_variables or [] if stack else [])) %}
+  {% set v_drift = (form.drift_check if form and form.drift_check is not none else (stack.drift_check if stack else false)) %}
 
   <div class="panel-header">
     <h2>{{ t(request, "docker.stack.heading", name=stack.name) if stack else t(request, "docker.stacks.new") }}</h2>
@@ -24,6 +26,22 @@
 
   {% if errors %}
     <div class="alert alert-error">{% for e in errors %}<p>{{ t(request, e) }}</p>{% endfor %}</div>
+  {% endif %}
+
+  {% if replace_container %}
+    <div class="alert alert-warn">
+      <p>{{ t(request, "docker.convert.notice", name=replace_container) }}</p>
+      {% for w in convert_warnings or [] %}<p>{{ w }}</p>{% endfor %}
+    </div>
+  {% endif %}
+  {% if stack and stack.replace_container and not stack.deployed_at %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.convert.pending", name=stack.replace_container) }}</p></div>
+  {% endif %}
+  {% if stack and not stack.deployed_hash and stack.directory and not stack.replace_container %}
+    <p class="hint">{{ t(request, "docker.stack.not_deployed_hint") }}</p>
+  {% endif %}
+  {% if stack and missing_variables %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker.stack.shared_missing", names=(missing_variables | join(', '))) }}</p></div>
   {% endif %}
 
   {% if webhook_url %}
@@ -53,6 +71,21 @@
         <dt>{{ t(request, "docker.stacks.deployed") }}</dt>
         <dd>{% if stack.deployed_at %}{{ stack.deployed_at | local_time }}{% if stack.deployed_commit %} · <code>{{ stack.deployed_commit[:12] }}</code>{% endif %}{% else %}{{ t(request, "docker.stacks.never_deployed") }}{% endif %}
           {% if changed %} <span class="badge badge-warn">{{ t(request, "docker.stacks.changed") }}</span>{% endif %}</dd>
+        {% if stack.deployed_hash %}
+          <dt>{{ t(request, "docker.drift.label") }}</dt>
+          <dd>
+            {% if stack.drift_status == 'drift' %}<span class="badge badge-error">{{ t(request, "docker.drift.status.drift") }}</span>
+            {% elif stack.drift_status == 'ok' %}<span class="badge badge-ok">{{ t(request, "docker.drift.status.ok") }}</span>
+            {% elif stack.drift_status == 'error' %}<span class="badge badge-warn">{{ t(request, "docker.drift.status.error") }}</span>
+            {% else %}<span class="table-muted">{{ t(request, "docker.drift.status.never") }}</span>{% endif %}
+            {% if stack.drift_checked_at %}<span class="table-summary">{{ stack.drift_checked_at | local_time }}</span>{% endif %}
+            {% if stack.drift_check %}<span class="badge badge-tag">{{ t(request, "docker.drift.hourly_badge") }}</span>{% endif %}
+          </dd>
+        {% endif %}
+        {% if stack.shared_variables %}
+          <dt>{{ t(request, "docker.stack.shared_variables") }}</dt>
+          <dd>{% for n in stack.shared_variables %}<code>{{ n }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+        {% endif %}
         {% if stack.source == 'git' %}
           <dt>{{ t(request, "docker.stack.last_checked") }}</dt><dd>{{ stack.last_checked_at | local_time }}</dd>
           <dt>{{ t(request, "docker.stack.auto_sync") }}</dt><dd>{{ t(request, "docker.yes") if stack.auto_sync else t(request, "docker.no") }}</dd>
@@ -62,6 +95,20 @@
       </dl>
       {% if stack.last_status == 'failed' and stack.last_error %}
         <div class="alert alert-error"><p>{{ stack.last_error }}</p></div>
+      {% endif %}
+      {% if stack.drift_status in ('drift', 'error') and drift_summary %}
+        <div class="alert {{ 'alert-error' if stack.drift_status == 'drift' else 'alert-warn' }}">
+          <p><strong>{{ t(request, "docker.drift.found_heading") }}</strong></p>
+          <ul class="plain-list">{% for line in drift_summary.split('\n') %}<li>{{ line }}</li>{% endfor %}</ul>
+          {% if stack.drift_status == 'drift' %}<p class="hint">{{ t(request, "docker.drift.fix_hint" if stack.source == 'editor' else "docker.drift.fix_hint_git") }}</p>{% endif %}
+          {% if can_terminal and ready and stack.source == 'editor' and stack.drift_status == 'drift' %}
+            <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/import" class="inline-form"
+                  data-confirm="{{ t(request, 'docker.drift.import_confirm', name=stack.name) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.drift.import") }}</button>
+            </form>
+          {% endif %}
+        </div>
       {% endif %}
       {% if can_updates and ready %}
         <div class="page-header-actions">
@@ -81,6 +128,12 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="button button-secondary">{{ t(request, "docker.stack.check") }}</button>
           </form>
+          {% if stack.deployed_hash %}
+            <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/drift" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-secondary">{{ t(request, "docker.drift.check") }}</button>
+            </form>
+          {% endif %}
           {% if stack.source == 'git' %}
             <form method="post" action="{{ docker_base }}/stacks/{{ stack.id }}/sync" class="inline-form">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -97,6 +150,7 @@
       <h2>{{ t(request, "docker.stack.settings") }}</h2>
       <form method="post" action="{{ docker_base }}/stacks{% if stack %}/{{ stack.id }}{% endif %}" class="form form-wide" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if not stack and replace_container %}<input type="hidden" name="replace_container" value="{{ replace_container }}">{% endif %}
         {% if not stack %}
           <label for="stack-name">{{ t(request, "docker.stacks.name") }}</label>
           <input id="stack-name" name="name" required maxlength="64" pattern="[a-z0-9][a-z0-9_\-]*" value="{{ form.name if form else '' }}" spellcheck="false">
@@ -166,6 +220,27 @@
         <p class="hint">{{ t(request, "docker.stack.env_hint") }}</p>
 
         <fieldset class="docker-fieldset">
+          <legend>{{ t(request, "docker.stack.shared_variables") }}</legend>
+          <input type="hidden" name="shared_variables_shown" value="1">
+          {% if available_variables or missing_variables %}
+            <div class="check-grid">
+              {% for v in available_variables %}
+                <label><input type="checkbox" name="shared_variables" value="{{ v.name }}" {% if v.name in v_shared %}checked{% endif %}>
+                  <code>{{ v.name }}</code>
+                  <span class="table-summary">{{ t(request, "docker.scope.kind." ~ variable_scopes[v.name]) }}{% if v.secret %} · {{ t(request, "docker.variable.secret_badge") }}{% endif %}</span></label>
+              {% endfor %}
+              {% for name in missing_variables %}
+                <label><input type="checkbox" name="shared_variables" value="{{ name }}" checked>
+                  <code>{{ name }}</code> <span class="badge badge-warn">{{ t(request, "docker.stack.shared_undefined") }}</span></label>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="table-muted">{{ t(request, "docker.stack.shared_none") }}</p>
+          {% endif %}
+          <p class="hint">{{ t(request, "docker.stack.shared_hint") }} <a href="/docker/variables">{{ t(request, "docker.stack.shared_manage") }}</a></p>
+        </fieldset>
+
+        <fieldset class="docker-fieldset">
           <legend>{{ t(request, "docker.stack.safety") }}</legend>
           <label><input type="checkbox" name="keep_history" value="1" {% if v_keep_history %}checked{% endif %}> {{ t(request, "docker.stack.keep_history") }}</label>
           <p class="hint">{{ t(request, "docker.stack.keep_history_hint") }}</p>
@@ -176,6 +251,9 @@
             {% for g in gates %}<option value="{{ g }}" {% if v_gate == g %}selected{% endif %}>{{ t(request, "docker.gate." ~ g) }}</option>{% endfor %}
           </select>
           <p class="hint">{{ t(request, "docker.stack.gate_hint") }}</p>
+          <input type="hidden" name="drift_check_shown" value="1">
+          <label><input type="checkbox" name="drift_check" value="1" {% if v_drift %}checked{% endif %}> {{ t(request, "docker.stack.drift_check") }}</label>
+          <p class="hint">{{ t(request, "docker.stack.drift_check_hint") }}</p>
         </fieldset>
 
         {% if not stack and can_updates %}
