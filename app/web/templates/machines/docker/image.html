@@ -22,4 +22,25 @@
     {% endif %}
   </p>
   {{ lazy_panel(request, docker_base ~ "/images/" ~ image_id ~ "/panel", "image-panel") }}
+
+  {% if scan %}
+    <section class="panel" id="sbom">
+      <div class="panel-header">
+        <div>
+          <h2>{{ t(request, "docker.sbom.heading") }}</h2>
+          <p class="hint">{{ t(request, "docker.sbom.hint") }}</p>
+        </div>
+        {% if package_total %}
+          <a class="button button-secondary log-small-button" href="{{ docker_base }}/images/{{ image_id }}/sbom" download>{{ t(request, "docker.sbom.download") }}</a>
+        {% endif %}
+      </div>
+      {% if package_total %}
+        <p>{{ t(request, "docker.sbom.total", count=package_total) }}
+          {% for kind, count in package_types.items() %}<span class="badge badge-tag">{{ kind }} {{ count }}</span> {% endfor %}</p>
+        <p class="hint">{{ t(request, "docker.sbom.search_hint") }} <a href="/security/packages?pkg_source=docker">{{ t(request, "machines.actions.package_search") }}</a></p>
+      {% else %}
+        <p class="hint">{{ t(request, "docker.sbom.none") }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
 {% endblock %}

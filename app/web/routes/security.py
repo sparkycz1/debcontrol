@@ -34,7 +34,7 @@ from app.db.models.role import Permission
 from app.db.models.security_audit import SecurityAudit
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import docker_acceptances, security_audit
+from app.services import docker_acceptances, docker_sbom, security_audit
 from app.services.access_scope import is_restricted, machines_visible_to
 from app.services.machine_actions import trigger_security_audits
 from app.services.security_updates import load_security_overview_with_gaps
@@ -93,10 +93,17 @@ async def package_search(
     """Fleet-wide "who has package X installed, and what version" — the
     other direction from the per-machine Installed packages panel. Useful
     after a CVE announcement: search the name, see every machine and
-    version at once instead of checking machines one by one."""
+    version at once instead of checking machines one by one. Also the
+    packages inside the machines' scanned Docker images (`docker_sbom`),
+    by name prefix; `pkg_source=docker` shows only those."""
     results: list[MachinePackage] = []
     truncated = False
-    if q.strip():
+    image_hits: list[docker_sbom.Hit] = []
+    images_truncated = False
+    if q.strip() and pkg_source in ("", "docker"):
+        visible = (await machines_visible_to(db, current_user)).with_only_columns(Machine.id)
+        image_hits, images_truncated = await docker_sbom.search(db, visible, q)
+    if q.strip() and pkg_source != "docker":
         # Scoped by joining the machine each row belongs to — a restricted
         # user searching fleet-wide must not learn which packages sit on a
         # machine they can't otherwise see.
@@ -127,6 +134,9 @@ async def package_search(
             "pkg_source": pkg_source,
             "results": results,
             "truncated": truncated,
+            "image_hits": image_hits,
+            "images_truncated": images_truncated,
+            "min_image_query": docker_sbom.MIN_QUERY,
             "tabs": _tabs(request),
             "active_tab": "packages",
         },

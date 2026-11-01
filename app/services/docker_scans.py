@@ -6,8 +6,10 @@ A scan is stored per image id, so the same image is not scanned again
 until it changes; scans of images that are gone from the machine are
 dropped whenever the machine's images are read after a scan. Its counts
 leave out accepted vulnerabilities (`app.services.docker_acceptances`),
-and its critical and high findings are also kept one per row
-(`DockerImageFinding`) for the fleet-wide view.
+its critical and high findings are also kept one per row
+(`DockerImageFinding`) for the fleet-wide view, and the image's packages
+(`DockerImagePackage`, `app.services.docker_sbom`) for the package search
+and the SBOM download.
 """
 
 from __future__ import annotations
@@ -53,12 +55,12 @@ async def store(
     name a result was scanned as to that id). Returns the severity counts
     per image id — None for an image neither scanner could scan. Does not
     commit."""
-    from app.services import docker_acceptances
+    from app.services import docker_acceptances, docker_sbom
 
     counts: dict[str, dict[str, int] | None] = {}
     existing = await scans_by_image(db, machine_id)
     acceptances = await docker_acceptances.active(db)
-    stored: list[DockerImageScan] = []
+    stored: list[tuple[DockerImageScan, ImageScanResult]] = []
     now = datetime.now(UTC)
     for result in results:
         image_id = image_ids.get(result.image) or (
@@ -83,10 +85,12 @@ async def store(
         row.scanned_at = now
         docker_acceptances.apply(row, acceptances)
         counts[image_id] = dict(row.counts or {})
-        stored.append(row)
+        stored.append((row, result))
     await db.flush()
-    for row in stored:
+    for row, result in stored:
         await docker_acceptances.replace_findings(db, row)
+        if "trivy" in result.scanners:
+            await docker_sbom.replace_packages(db, row, result.packages)
     await db.flush()
     return counts
 
