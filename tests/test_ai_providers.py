@@ -308,6 +308,8 @@ async def test_openrouter_list_models():
                         },
                         "links": {"details": "https://openrouter.ai/openai/gpt-5"},
                         "default_parameters": None,
+                        # Required by the SDK since 1.3.10x (the API's own shape).
+                        "endpoints": ["/api/v1/chat/completions"],
                         "per_request_limits": None,
                         "pricing": {"prompt": "0", "completion": "0"},
                         "supported_parameters": [],
