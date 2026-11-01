@@ -1,0 +1,342 @@
+From af6aa67f10f70f13c471efd08032114d1116947c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 1 Nov 2026 14:45:40 +0000
+Subject: [PATCH] Docker: private registries, shared variables, adopting
+ projects and containers, drift (0.131.0)
+
+---
+ Architecture.md  |   4 +-
+ Docker.md        | 190 ++++++++++++++++++++++++++++++++++++++++++++++-
+ Home.md          |   2 +-
+ Notifications.md |   1 +
+ REST-API.md      |   9 +++
+ 5 files changed, 201 insertions(+), 5 deletions(-)
+
+diff --git a/Architecture.md b/Architecture.md
+index 83b8806..50801fa 100644
+--- a/Architecture.md
++++ b/Architecture.md
+@@ -168,7 +168,9 @@ container being replaced may be one debcontrol's own host needs.
+   `encrypt_secret`ed, never shown back, and reach git/restic through a
+   mode-600 env file; a stack's webhook token is stored only as its
+   SHA-256 and `/hooks/docker/<token>` can do nothing but deploy that
+-  stack from its configured source. On debcontrol's own host, updates,
++  stack from its configured source. Registry passwords reach
++  `docker login` on SSH standard input only; shared variables reach only
++  the stacks that pick them, through the `.env` debcontrol writes. On debcontrol's own host, updates,
+   rollbacks, stack deployments, Compose actions other than *start* and
+   restores that touch debcontrol's own Compose project are refused.
+ 
+diff --git a/Docker.md b/Docker.md
+index 1c329f6..3de868e 100644
+--- a/Docker.md
++++ b/Docker.md
+@@ -27,6 +27,16 @@
+ - **Docker** in the header (`/docker`) lists **every container of every
+   machine** in one table, with filters and the same bulk actions
+   ([below](#every-container-of-the-fleet)).
++- **Private registries** (Docker → Registries, 0.131.0+): log the whole
++  fleet, a machine group or one machine in to GHCR, GitLab, Harbor or
++  your own registry ([below](#private-registries)).
++- **Shared variables and secrets** (Docker → Variables, 0.131.0+): define
++  `TZ` or `SMTP_PASSWORD` once and let stacks pick them
++  ([below](#shared-variables-and-secrets)).
++- **Take over what already runs** (0.131.0+): adopt a Compose project
++  started by hand, or turn a `docker run` container into a stack
++  ([below](#taking-over-what-already-runs)); **drift** tells when a
++  managed stack was changed on the machine ([below](#drift)).
+ 
+ ![A machine's Docker tab: containers, their images, vulnerabilities and status](images/docker.png)
+ 
+@@ -648,6 +658,152 @@ A Git stack is kept up to date in two ways:
+   queuing another. Audited as `machine.docker.stack.webhook_deploy` by
+   "Git webhook (automatic)".
+ 
++### Shared variables and secrets
++
++**Docker → Variables** (0.131.0+, `action.terminal`, table
++`docker_variables`) holds variables several stacks share - `TZ`,
++`SMTP_HOST`, a mail password. Each has a name (`[A-Za-z_][A-Za-z0-9_]*`,
++up to 128 characters), a value (one line, up to 16 KiB), an optional
++description and a **scope**: all machines, one machine group or one
++machine. For a stack's machine the most specific definition of a name
++wins - the machine's own, then its group's, then the one for all
++machines.
++
++- Every value is stored encrypted (`encrypt_secret`). A variable marked
++  **secret** is never shown again, on the page or in the API; editing it
++  keeps the value unless *Set a new value* is chosen, and it stays secret
++  until it gets a new value.
++- A stack **picks** variables by name (*Shared variables* on the stack
++  form, up to 100). Nothing reaches a stack that didn't pick it.
++- On every deploy and check the picked values for the stack's machine are
++  appended to the `.env` debcontrol writes, after a
++  `# Shared variables (debcontrol)` line, quoted so Compose takes them
++  literally. A variable the stack's own `.env` already sets keeps the
++  stack's value. A picked name defined nowhere for that machine is left
++  out, and the stack page says so.
++- The stack's content hash includes the shared values, so changing a
++  variable shows the stacks using it as *changed since deploy*; deploy
++  them to apply it. Stacks that pick no variable keep exactly the hash
++  they had before 0.131.0.
++- An account limited to some machine groups manages only its groups' and
++  machines' variables and sees the ones for all machines read-only (it
++  can still pick them: they apply to every machine by definition).
++
++Audited as `docker.variable.create` / `.edit` / `.delete` (never the
++value).
++
++### Taking over what already runs
++
++**Adopting a Compose project** (0.131.0+, *Adopt* on a project under
++*Compose projects on the machine*, `action.terminal`). The project's
++compose file and `.env` are read from the machine (with several compose
++files, `docker compose config --no-interpolate` merges them into one
++without filling in variables, so nothing from the environment leaks
++into it) and stored as a stack written in debcontrol with the same
++name - the Compose project name - and **the same directory**. The only
++change on the machine is the `.debcontrol-stack` mark in that directory;
++nothing restarts. The first deploy writes `compose.yaml` and `.env` next
++to the project's own files and recreates only what differs. Refused
++(nothing stored) when debcontrol already manages that name or directory,
++the directory is gone, isn't writable by debcontrol's account or is
++already marked for another stack, the directory is one debcontrol never
++deploys into (see *Directory* above), `docker compose config` fails, or
++the project is debcontrol's own. Audited as
++`machine.docker.project.adopt` (also a refusal, with its reason).
++
++**A `docker run` container to a stack** (0.131.0+, *Make a stack from it*
++on a container not started by Compose, `action.terminal`). debcontrol
++reads `docker container inspect` and the image's own settings and fills
++in the new-stack form:
++
++- image, `container_name`, restart policy, command / entrypoint / user /
++  working directory where they differ from the image, ports, bind mounts,
++  tmpfs, capabilities, devices, DNS, extra hosts, sysctls, memory / CPU
++  limits, shared memory, logging, labels (not the image's own) and a
++  health check the image doesn't already define;
++- environment variables the image doesn't set go into the stack's `.env`
++  (stored encrypted) and reach the container through `env_file: .env`,
++  never into the compose file;
++- named volumes and networks other than the default bridge become
++  `external`, so the data stays where it is; a container on the default
++  bridge keeps `network_mode: bridge`;
++- every `$` is doubled, so Compose doesn't interpolate a label holding a
++  password hash;
++- what has no equivalent (`--link`, `--volumes-from`, GPU requests) is
++  listed as a warning above the form.
++
++Review the file and save. The stack remembers the container
++(`replace_container`); its **first deploy** stops it and renames it to
++`<name>-pre-debcontrol`, runs `up`, and removes the old container once the
++stack runs (and is healthy, with automatic rollback on). If `up` or the
++health wait fails, the stack is taken down and the old container renamed
++back and started. A container that belongs to a Compose project, or
++debcontrol's own, is never touched.
++
++### Drift
++
++**Drift** (0.131.0+) is a managed stack changed on the machine outside
++debcontrol. *Check drift* on the stack page (`action.updates`; it only
++reads) compares the machine with what debcontrol deployed last:
++
++- the SHA-256 of `compose.yaml` (written in debcontrol) and `.env` in the
++  stack's directory against the deployed ones (changed or missing);
++- for a Git stack, the commit checked out in `repo/` (read from
++  `.git/HEAD`) against the deployed commit;
++- each container's `com.docker.compose.config-hash` label against
++  `docker compose config --hash` of the files there now: a container
++  created from other settings (edited files, `docker compose up` or
++  `docker run` by hand), a service without a container, or a container
++  of the project without a service.
++
++The result, its time and the findings are kept on the stack and shown
++on its page and, as a badge, in the stacks list. *Check for drift every
++hour* (off by default) adds the stack to an hourly sweep (Beat
++`check-stack-drift`, one task per stack); turning to drift sends the
++`docker.stack.drift` notification once. A stack that was never deployed
++by debcontrol (just adopted, say) isn't checked - there is nothing to
++compare with yet.
++
++To put it right, **deploy** (back to what is stored), or - for a stack
++written in debcontrol - **Take the machine's files over**
++(`action.terminal`): its `compose.yaml` and `.env` are read back and
++stored, without the shared variables debcontrol appended (they stay
++shared). Nothing is deployed. Audited as `machine.docker.stack.import`.
++
++## Private registries
++
++**Docker → Registries** (0.131.0+, `action.terminal`, table
++`docker_registries`) holds logins to private registries: a server
++(`ghcr.io`, `registry.gitlab.com`, `registry.example.com:5000`; entered
++with or without `https://`, stored as host[:port]), a user name, a
++password or token (stored encrypted, never shown again) and a scope - all
++machines, one group or one machine; for a machine the most specific
++login per server applies.
++
++- Saving one queues a login on every active machine in its scope that
++  has Docker and a pinned host key (one task per machine). The machine
++  runs `docker login --password-stdin`: the password travels on SSH
++  standard input only, never on a command line. Docker keeps the login in
++  the configuration of the account debcontrol connects as
++  (`~/.docker/config.json`, or a credential helper set up there), so
++  pulls, stack deploys and image update checks all use it.
++- Each machine's **image update check** logs in first wherever a login
++  is missing, failed, or older than the last change of its entry, so a
++  machine added to a group later picks its logins up by itself. Servers
++  no entry applies to any more are logged out.
++- The page shows per registry how many machines are logged in and which
++  failed, with docker's message. *Log in again* forces a new login
++  everywhere in scope (after rotating a token). Removing an entry logs
++  the machines out (or over to a broader entry for the same server).
++- An account limited to some machine groups manages only its groups' and
++  machines' logins and sees the ones for all machines read-only, with the
++  login results of its own machines only.
++- Changing an entry's server needs the password again: a password is never
++  sent to another server than it was given for.
++
++Audited as `docker.registry.create` / `.edit` / `.login` / `.delete`
++(never the password).
++
+ ## Backups (restic)
+ 
+ A **backup** (`docker_backups`) backs up Docker volumes and host paths with
+@@ -832,7 +988,7 @@ without a confirmed host key or without Docker access are skipped:
+ 
+ ## Notifications
+ 
+-Nine events ([Notifications](Notifications#events)) and three condition
++Ten events ([Notifications](Notifications#events)) and three condition
+ fields:
+ 
+ | Event | Fires when | Placeholders |
+@@ -842,6 +998,7 @@ fields:
+ | `docker.update.blocked` | the vulnerability gate stopped an update | `{container}`, `{details}` |
+ | `docker.stack.failed` | deploying a stack failed, was rolled back or was stopped by its vulnerability gate, or an action on a Compose project failed | `{stack}`, `{details}` |
+ | `docker.backup.failed` | a restic backup run or a test restore failed | `{backup}`, `{details}` |
++| `docker.stack.drift` | a stack turned to [drift](#drift): changed on the machine outside debcontrol | `{stack}`, `{details}`: one line per finding |
+ | `docker.container.crashed` | a container exited with an error (any code but 0, 130, 137, 143) | `{containers}`, `{details}` |
+ | `docker.container.restart_loop` | a container exited 3 or more times since the previous monitoring sample | `{containers}`, `{details}` |
+ | `docker.container.oom` | the kernel killed a process in a container for running out of memory | `{containers}`, `{details}` |
+@@ -873,8 +1030,8 @@ the same on the web pages and in the REST API
+ |---|---|
+ | `machine.view` | every page: containers, charts, images and scans, volumes, networks, stacks, backups and their snapshots, jobs |
+ | `action.power` | start / stop / restart a container (one or the selected ones, also across the fleet); start / stop / restart / down a Compose project |
+-| `action.updates` | remove the selected (stopped) containers, update and roll back containers (also selected across the fleet), change a container's memory / CPU limits and restart policy, pull / tag / remove an image, auto-update, update-policy and vulnerability-gate settings, accepting a container vulnerability (Security → Container vulnerabilities; not for an account limited to some machine groups), image scans, clean-up, deploy a stack, roll a stack back to a kept version (with `action.terminal`), up / pull & recreate a Compose project, *Check Git now*, back up now, check and prune backups, test restore, cancelling the jobs these start |
+-| `action.terminal` | the container shell, the file browser, a stack's compose file, `.env` and directory (create, edit, delete a stack), Git sources, deploy keys and the webhook, *Check changes* and its output, a kept version's compose file, viewing and editing a project's compose files, backup settings (including the commands around a backup), their export and import, and restores; the file browser's folder upload and download |
++| `action.updates` | remove the selected (stopped) containers, update and roll back containers (also selected across the fleet), change a container's memory / CPU limits and restart policy, pull / tag / remove an image, auto-update, update-policy and vulnerability-gate settings, accepting a container vulnerability (Security → Container vulnerabilities; not for an account limited to some machine groups), image scans, clean-up, deploy a stack, roll a stack back to a kept version (with `action.terminal`), up / pull & recreate a Compose project, *Check Git now*, *Check drift*, back up now, check and prune backups, test restore, cancelling the jobs these start |
++| `action.terminal` | the container shell, the file browser, a stack's compose file, `.env` and directory (create, edit, delete a stack), Git sources, deploy keys and the webhook, *Check changes* and its output, a kept version's compose file, viewing and editing a project's compose files, backup settings (including the commands around a backup), their export and import, and restores; the file browser's folder upload and download; adopting a Compose project, making a stack from a `docker run` container, taking a stack's files over from the machine; Docker → Registries and Docker → Variables (an account limited to some groups: only its groups' and machines' entries) |
+ | `machine.manage` | *Check image updates* (as before) |
+ | `scheduling.manage` | the scheduled Docker tasks |
+ 
+@@ -912,6 +1069,11 @@ host path into a container, and a restore overwrites data.
+   again, and a deploy key goes into a mode-700 temporary directory mounted
+   into the git helper. A pinned repository host key makes ssh refuse a
+   different one (`StrictHostKeyChecking=yes`).
++- **Registry logins and shared secrets** (0.131.0+): a registry password
++  reaches `docker login` on standard input only; a shared secret reaches
++  only the stacks that pick it, and only through the `.env` debcontrol
++  writes (readable by debcontrol's account on that machine). Both need
++  `action.terminal`, which already lets one read a stack's `.env`.
+ - **Typed confirmations**: removing unused named volumes and restoring a
+   backup need the machine's name; deleting a stack with its volumes needs
+   the stack's name. A wrong name is audited as a refusal.
+@@ -945,6 +1107,10 @@ host path into a container, and a restore overwrites data.
+ | `machine.docker.backup.run` / `.check` / `.forget` / `.verify` | back up, check, prune, test restore started |
+ | `machine.docker.backup.restore` | a restore, in place or into a volume or directory, started (or refused) |
+ | `machine.docker.file.download` / `.write` / `.mkdir` / `.delete` | the file browser (a folder download carries `archive`, a refused save `conflict`, a multi-file upload `files` and the first 50 names) |
++| `machine.docker.project.adopt` | a Compose project adopted as a stack (or refused, with `reason`) |
++| `machine.docker.stack.import` | a stack's files taken over from the machine |
++| `docker.registry.create` / `.edit` / `.login` / `.delete` | a registry login added, changed, logged in again everywhere, removed |
++| `docker.variable.create` / `.edit` / `.delete` | a shared variable added, changed, removed |
+ | `machine.docker.job.cancel` | a job cancelled (`was`: `cancelled` for a waiting one, `requested` for a running one) |
+ 
+ A scheduled run is recorded by the scheduler, like every other scheduled
+@@ -971,6 +1137,24 @@ The full list is on [REST API](REST-API#docker).
+ - `POST .../containers/{name}/resources` (0.130.0+) `{memory, cpus,
+   restart_policy, max_retries}` (each optional; memory as `512m` or
+   bytes) answers what changed; 409 for debcontrol's own container.
++- Registries and variables (0.131.0+): `GET|POST /api/v1/docker/registries`,
++  `GET|PUT|DELETE /api/v1/docker/registries/{id}`,
++  `POST /api/v1/docker/registries/{id}/login`; `GET|POST
++  /api/v1/docker/variables`, `GET|PUT|DELETE /api/v1/docker/variables/{id}`.
++  `scope` is `all`, `group:<id>` or `machine:<id>`; a password or secret
++  value omitted on `PUT` is kept and never returned (a secret's `value`
++  is `null`). Registry answers carry `logins` per machine and
++  `machines_queued`.
++- Taking over (0.131.0+): `POST .../projects/{project}/adopt` (201, the
++  stack; 422 with the reasons as i18n keys), `GET
++  .../containers/{name}/compose` (`compose`, `env`, `warnings`,
++  `replace_container` - create the stack with these on `POST
++  .../stacks`), `POST .../stacks/{id}/drift` (`status`, `details`,
++  `summary`; 400 before the first deploy), `POST .../stacks/{id}/import`.
++- Stack fields (0.131.0+): `shared_variables` (names), `drift_check`,
++  `replace_container` (on create); reads add `shared_variables_missing`,
++  `drift_status`, `drift_details`, `drift_summary` and
++  `drift_checked_at`.
+ - Long operations answer **202** with `{"job": {...}}`; follow it with
+   `GET .../docker/jobs/{job_id}` (which includes the output). **409**
+   when the same job is already waiting or running, or the target is
+diff --git a/Home.md b/Home.md
+index 2d80e10..0cd7701 100644
+--- a/Home.md
++++ b/Home.md
+@@ -113,7 +113,7 @@ Prefer it light? The theme toggle sits in the header.
+ | 📊 **Dashboard** | Fleet tiles linking to filtered lists, trend charts, upcoming schedules, recent activity, an optional AI fleet summary, and every machine as a card colored by its worst reading |
+ | 🖥️ **Machines** | Facts, packages, services, monitoring (CPU/RAM/disk/network, bare-metal sensors, GPUs, S.M.A.R.T.), a Docker tab, updates with preview, retry, rollback, a Proxmox snapshot first, holds, changelogs and CVEs, a browser terminal, logs (level filter, whole Compose stacks, download), History time line, watched files, hardware and warranties, Wake-on-LAN, tags, filters, saved views, bulk actions, export/import |
+ | 🐳 **Docker** | Every container of every machine in one table (filter by state, group, stack, vulnerabilities or newer image; start/stop/restart/update/scan across machines), plus each machine's Docker tab below |
+-| 🐳 **Docker tab** | Containers with their charts (CPU, memory, network, disk I/O) and newer image versions, state tiles, links to each container's web interface (Traefik/Caddy labels, published ports, `debcontrol.url`) and to its image's registry and release notes, start/stop/restart/update/scan/remove several containers at once, memory and CPU limits and restart policy changed on a running container, a page per image with its layers and pull / tag / remove, tables that remember their filter and sort and turn into cards on a phone, updates that put the old container back if the new one doesn't stay up, automatic updates on a schedule limited to minor or patch versions if you like (moving a version tag forward), image checks at an interval of your choice that say why an image couldn't be checked (Docker Hub's rate limit included), notifications when a container crashes, keeps restarting, runs out of memory or turns unhealthy, Trivy + Grype vulnerability scans and a gate that stops a worse image, Compose stacks from the editor or Git over HTTPS or SSH with a deploy key (more compose files, builds, auto-sync, webhook) in a directory of your choice, with a check before deploying, a history to roll back to, automatic rollback when the new version doesn't come up and a vulnerability gate, editing the compose files of any project on the machine, a page per network, a shell and a file browser inside containers and volumes, clean-up, restic backups with a command before and after (a database dump), test restores that prove a backup comes back, restore into any volume or directory, attaching an existing repository and export/import of backup settings, cancelling a waiting or running job, a file editor that shows changes before saving and never overwrites a newer version, folder upload and download |
++| 🐳 **Docker tab** | Containers with their charts (CPU, memory, network, disk I/O) and newer image versions, state tiles, links to each container's web interface (Traefik/Caddy labels, published ports, `debcontrol.url`) and to its image's registry and release notes, start/stop/restart/update/scan/remove several containers at once, memory and CPU limits and restart policy changed on a running container, a page per image with its layers and pull / tag / remove, tables that remember their filter and sort and turn into cards on a phone, updates that put the old container back if the new one doesn't stay up, automatic updates on a schedule limited to minor or patch versions if you like (moving a version tag forward), image checks at an interval of your choice that say why an image couldn't be checked (Docker Hub's rate limit included), notifications when a container crashes, keeps restarting, runs out of memory or turns unhealthy, Trivy + Grype vulnerability scans and a gate that stops a worse image, Compose stacks from the editor or Git over HTTPS or SSH with a deploy key (more compose files, builds, auto-sync, webhook) in a directory of your choice, with a check before deploying, a history to roll back to, automatic rollback when the new version doesn't come up and a vulnerability gate, editing the compose files of any project on the machine, a page per network, a shell and a file browser inside containers and volumes, clean-up, restic backups with a command before and after (a database dump), test restores that prove a backup comes back, restore into any volume or directory, attaching an existing repository and export/import of backup settings, cancelling a waiting or running job, a file editor that shows changes before saving and never overwrites a newer version, folder upload and download, private registry logins and shared variables/secrets per fleet, group or machine, adopting Compose projects and `docker run` containers as stacks, and drift detection |
+ | 🟧 **Proxmox tab** | Proxmox VE (guests with start/stop, cluster quorum, ZFS, storage, backups and when each guest was last backed up, failed tasks, snapshots taken before updates, guests linked to their managed machines), Backup Server (datastores, jobs, backup groups) and Mail Gateway (mail stats, queue, ClamAV) |
+ | 🛡️ **Security** | Pending security updates fleet-wide with their CVEs; package search across the fleet; a security audit of every machine (Lynis and checks from vps-audit) with its hardening index, findings grouped by area, how to fix each, and findings marked OK per machine; the critical and high vulnerabilities of every machine's Docker images in one list (which machines and images have a CVE), and accepting one until a date |
+ | 🔐 **Checks** | A public status page for chosen checks and machines; HTTP, TLS, ping, TCP, DNS, SMTP and SSH checks from the server or a machine, push (heartbeat) checks for cron jobs and backups, with history, notifications and a monthly SLA report; the status page can show response times, a daily history and a notice |
+diff --git a/Notifications.md b/Notifications.md
+index 3e815a3..fbb3b44 100644
+--- a/Notifications.md
++++ b/Notifications.md
+@@ -79,6 +79,7 @@ also `{machine_name}` and `{machine_ip}`.
+ | `docker.update.blocked` | the vulnerability gate stopped a container update; nothing changed | `{container}`; `{details}`: the gate's reason |
+ | `docker.stack.failed` | deploying a stack failed, was rolled back or was stopped by its vulnerability gate, or an action on a Compose project failed | `{stack}`; `{details}`: the job's error |
+ | `docker.backup.failed` | a restic backup run or a test restore on the Docker tab failed | `{backup}`; `{details}`: the job's error |
++| `docker.stack.drift` | a managed stack turned to [drift](Docker#drift) (files, commit or containers changed on the machine outside debcontrol) | `{stack}`; `{details}`: one line per finding |
+ | `docker.container.crashed` | a Docker container exited with an error since the previous monitoring sample ([Docker](Docker#notifications)) | `{containers}`; `{details}`: each container's exit code |
+ | `docker.container.restart_loop` | a Docker container exited 3 or more times since the previous sample | `{containers}`; `{details}`: how many times |
+ | `docker.container.oom` | the kernel killed a process in a Docker container for running out of memory | `{containers}`; `{details}`: the containers |
+diff --git a/REST-API.md b/REST-API.md
+index 660fa7c..c3d7bc6 100644
+--- a/REST-API.md
++++ b/REST-API.md
+@@ -217,8 +217,14 @@ own instance for parameters, bodies and responses.
+ | `GET` | `/api/v1/docker/vulnerabilities/{vuln_id}` | Fleet vulnerability (where it is, its acceptances) |
+ | `GET` `POST` | `/api/v1/docker/vulnerability-acceptances` | Acceptances · Accept (`{vuln_id, image, reason, days}`) |
+ | `DELETE` | `/api/v1/docker/vulnerability-acceptances/{acceptance_id}` | Revoke |
++| `GET` `POST` | `/api/v1/docker/registries` | Registry logins · Add one (`{server, username, password, description, scope}`) |
++| `GET` `PUT` `DELETE` | `/api/v1/docker/registries/{registry_id}` | Registry login · Change (password omitted keeps it) · Remove |
++| `POST` | `/api/v1/docker/registries/{registry_id}/login` | Log every machine in scope in again |
++| `GET` `POST` | `/api/v1/docker/variables` | Shared variables · Add one (`{name, value, secret, description, scope}`) |
++| `GET` `PUT` `DELETE` | `/api/v1/docker/variables/{variable_id}` | Shared variable · Change (value omitted keeps it) · Remove |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/containers/bulk` | Docker containers bulk (start / stop / restart / remove the selected) |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/containers/{name}` | Docker container |
++| `GET` | `/api/v1/machines/{machine_id}/docker/containers/{name}/compose` | A `docker run` container as a compose file and `.env` (to create a stack that takes it over) |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/containers/{name}/resources` | Docker container resources (memory, CPUs, restart policy via `docker update`) |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/containers/{name}/rollback` | Docker container rollback |
+ | `PUT` | `/api/v1/machines/{machine_id}/docker/containers/{name}/settings` | Docker container settings |
+@@ -237,12 +243,15 @@ own instance for parameters, bodies and responses.
+ | `GET` | `/api/v1/machines/{machine_id}/docker/networks/{name}` | Docker network |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/projects` | Docker projects |
+ | `GET` `PUT` | `/api/v1/machines/{machine_id}/docker/projects/{project}/compose` | Docker project compose · Docker project compose save |
++| `POST` | `/api/v1/machines/{machine_id}/docker/projects/{project}/adopt` | Adopt a Compose project as a stack |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/projects/{project}/{action}` | Docker project action |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/prune` | Docker prune |
+ | `GET` `POST` | `/api/v1/machines/{machine_id}/docker/stacks` | Docker stacks · Docker stack create |
+ | `GET` `PUT` `DELETE` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}` | Docker stack · Docker stack save · Docker stack delete |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/deploy` | Docker stack deploy |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/check` | Docker stack check |
++| `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/drift` | Docker stack drift check |
++| `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/import` | Take a stack's files over from the machine |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/versions` | Docker stack versions |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/versions/{version_id}` | Docker stack version |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/versions/{version_id}/rollback` | Docker stack rollback |
+-- 
+2.43.0
+
