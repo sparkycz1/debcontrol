@@ -65,8 +65,10 @@ INVENTORY = "\n".join(
         _volume("shop_nfs", Driver="nfs"),
         _volume("shop_bind", Options={"type": "none", "o": "bind"}),
         _volume("other_x", project="other"),
-        '@@VOL {"Name": "-evil", "Driver": "local", "Labels": '
-        '{"com.docker.compose.project": "shop"}}',
+        "@@VOL "
+        + json.dumps(
+            {"Name": "-evil", "Driver": "local", "Labels": {"com.docker.compose.project": "shop"}}
+        ),
         _container(
             True,
             [
