@@ -567,6 +567,8 @@ def test_a_scan_script_scans_each_image_with_both_scanners() -> None:
     # The scanners only ever see the Docker socket read-only.
     assert "-v /var/run/docker.sock:/var/run/docker.sock:ro" in script
     assert "/var/run/docker.sock:/var/run/docker.sock " not in script
+    # Trivy runs the template on the list of results, not on the report.
+    assert "--template '{{- range . }}{{- range .Vulnerabilities }}" in script
 
 
 def test_a_scan_refuses_bad_or_too_many_images() -> None:

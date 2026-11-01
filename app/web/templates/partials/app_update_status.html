@@ -5,6 +5,7 @@
 {% set can_manage = request.state.user and request.state.user.has_permission('settings.manage') %}
 <div
   id="app-update-status"
+  data-run-status
   {% if u.busy %}
   hx-get="/settings/update/status"
   hx-trigger="every 3s"
@@ -107,7 +108,7 @@
       {% if u.log_tail %}
         <details {% if run.state != 'succeeded' %}open{% endif %}>
           <summary>{{ t(request, "settings.update.log") }}</summary>
-          <pre class="run-output" tabindex="0">{{ u.log_tail }}</pre>
+          <pre class="run-output" tabindex="0" data-run-output>{{ u.log_tail }}</pre>
         </details>
       {% endif %}
     {% endif %}

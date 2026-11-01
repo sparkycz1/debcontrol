@@ -3,3 +3,5 @@
     <p class="hint">{{ t(request, "settings.update.hint") }}</p>
     {% include "partials/app_update_status.html" %}
   </section>
+  {#- Follows the end of the upgrade log while it grows. #}
+  <script src="{{ static_url('js/run-output.js') }}" defer></script>
