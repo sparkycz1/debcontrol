@@ -37,6 +37,7 @@ from app.ssh.docker_cli import (
     DockerCommandError,
     is_container_name_valid,
     is_image_id_valid,
+    is_image_ref_valid,
     is_image_valid,
     is_project_name_valid,
     is_volume_name_valid,
@@ -308,6 +309,16 @@ async def scan_images(
     return await queue_job(
         db, machine, DockerJobKind.IMAGE_SCAN, target, started_by=started_by, params=params
     )
+
+
+async def pull_image(
+    db: AsyncSession, machine: Machine, ref: str, *, started_by: str | None
+) -> DockerJob | None:
+    """Pull one image reference (`nginx:1.27`, `ghcr.io/o/app@sha256:...`)."""
+    ref = ref.strip()
+    if not is_image_ref_valid(ref) or is_image_id_valid(ref):
+        raise DockerCommandError("Invalid image reference.")
+    return await queue_job(db, machine, DockerJobKind.IMAGE_PULL, ref, started_by=started_by)
 
 
 async def prune(

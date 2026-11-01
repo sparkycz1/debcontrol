@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.129.1"
+version = "0.130.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -31,7 +31,7 @@ dependencies = [
     "celery[redis]>=5.6.3",
     "asyncssh>=2.24.0",
     "jinja2>=3.1.6",
-    "python-multipart>=0.0.32",
+    "python-multipart>=0.0.33",
     "cryptography>=50.0.2",
     "itsdangerous>=2.2.0",
     # Standard 5-field cron expression parsing/next-run computation for
@@ -89,7 +89,7 @@ dependencies = [
     # required. See `OpenAICompatibleClient`. NOT used for OpenRouter
     # (below) even though OpenRouter's API is also OpenAI-compatible — it
     # has its own dedicated SDK, which is what this app uses for it instead.
-    "openai>=3.24.0",
+    "openai>=3.42.0",
     # OpenRouter's own SDK — see `OpenRouterClient`. 1.x (declared "stable
     # as of v1.0") changed `models.list_async`'s response shape
     # (`response.result.data` instead of `response.data`, and it can
@@ -97,7 +97,7 @@ dependencies = [
     # models endpoint — both handled in `OpenRouterClient.list_models`.
     # `chat.send_async`'s shape (`.choices`/`.usage`/tool-call parsing) is
     # unchanged from 0.x.
-    "openrouter>=1.3.21",
+    "openrouter>=1.3.106",
     # Google's SDK for Gemini — see `GeminiClient`.
     "google-genai>=2.28.0",
     # Renders a machine's runbook (Overview tab) from Markdown to HTML —
@@ -132,7 +132,7 @@ dev = [
     "types-croniter>=6.0.0",
     "types-ldap3>=2.9.13.20260827",
     "types-qrcode>=8.2.0.20260518",
-    "types-pyyaml>=6.0.12.20260826",
+    "types-pyyaml>=6.0.12.20261030",
     "pytest-xdist>=3.8.0",
 ]
 # Coverage-guided fuzzing (`python -m fuzz.run`, `.github/workflows/fuzz.yml`).

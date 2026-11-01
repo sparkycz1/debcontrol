@@ -42,7 +42,7 @@
 {#- A loading placeholder for an htmx panel that asks the machine. -#}
 {% macro lazy_panel(request, url, id) -%}
   <div id="{{ id }}" hx-get="{{ url }}" hx-trigger="load, live-docker from:body" hx-swap="innerHTML">
-    <p class="hint">{{ t(request, "docker.loading") }}</p>
+    <p class="hint loading-hint" role="status">{{ t(request, "docker.loading") }}</p>
   </div>
 {%- endmacro %}
 

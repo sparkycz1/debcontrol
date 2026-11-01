@@ -1,0 +1,25 @@
+{#- One image (machines_docker.docker_image_page): details and layers read
+    from the machine (lazy panel), and the stored scan. -#}
+{% extends "machines/docker/_layout.html" %}
+{% from "machines/docker/_macros.html" import lazy_panel, severity_counts %}
+
+{% block docker_title %}{{ t(request, "docker.image.title", id=(label or (scan.image_ref if scan else '') or image_id[7:19])) }}{% endblock %}
+
+{% block docker_content %}
+  {% set heading = label or (scan.image_ref if scan else '') or image_id[7:19] %}
+  <div class="panel-header">
+    <div>
+      <h2>{{ t(request, "docker.image.title", id=heading) }}</h2>
+      <p class="hint"><code>{{ image_id }}</code></p>
+    </div>
+    <a class="button button-secondary log-small-button" href="{{ docker_base }}/images">{{ t(request, "docker.back_to_images") }}</a>
+  </div>
+  <p>
+    {% if scan %}
+      {{ t(request, "docker.vulnerabilities") }}: {{ severity_counts(request, scan.counts, docker_base ~ "/images/" ~ image_id ~ "/vulnerabilities") }}
+    {% else %}
+      <span class="table-muted">{{ t(request, "docker.scan.not_scanned") }}</span>
+    {% endif %}
+  </p>
+  {{ lazy_panel(request, docker_base ~ "/images/" ~ image_id ~ "/panel", "image-panel") }}
+{% endblock %}

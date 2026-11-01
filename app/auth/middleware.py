@@ -51,6 +51,7 @@ from app.db.models.role import Permission
 from app.db.models.user import AuthProvider, User
 from app.db.models.webauthn_credential import WebAuthnCredential
 from app.i18n import get_locale
+from app.services.docker_fleet import fleet_has_docker
 
 # Reachable with no session at all. Exact paths, plus two prefixes below.
 _PUBLIC_PATHS = frozenset(
@@ -249,6 +250,13 @@ async def require_auth(
                     session is not None
                     and session.user.has_permission(Permission.AI_ACCESS)
                     and await ai_chat_available(db)
+                )
+                # Whether base.html shows the Docker nav entry (cached, see
+                # app.services.docker_fleet.fleet_has_docker).
+                request.state.docker_available = (
+                    session is not None
+                    and session.user.has_permission(Permission.MACHINE_VIEW)
+                    and await fleet_has_docker(db)
                 )
 
         if session is None:

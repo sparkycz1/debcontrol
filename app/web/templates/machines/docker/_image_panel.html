@@ -1,0 +1,105 @@
+{#- One image as the machine reports it now (machines_docker.docker_image_panel):
+    its tags, configuration and layers, with Pull again, Tag and Remove.
+    Environment variables are left out on purpose (they can hold secrets). -#}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif details %}
+  {% set ready = machine.host_key_fingerprint %}
+  {% set back = docker_base ~ "/images/" ~ image_id %}
+  {% if can_updates and ready %}
+    <section class="panel image-actions">
+      <h3>{{ t(request, "docker.image.actions") }}</h3>
+      <div class="image-action-row">
+        {% for tag in details.tags %}
+          <form method="post" action="{{ docker_base }}/images/pull" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="ref" value="{{ tag }}">
+            <input type="hidden" name="back" value="{{ back }}">
+            <button type="submit" class="button button-secondary log-small-button" title="{{ t(request, 'docker.image.pull_again_hint') }}">{{ t(request, "docker.image.pull_again", ref=tag) }}</button>
+          </form>
+        {% endfor %}
+      </div>
+      <form method="post" action="{{ docker_base }}/images/tag" class="inline-form image-tag-form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="image" value="{{ image_id }}">
+        <input type="hidden" name="back" value="{{ back }}">
+        <label for="image-new-tag">{{ t(request, "docker.image.new_tag") }}</label>
+        <input id="image-new-tag" type="text" name="new_tag" required spellcheck="false" maxlength="255"
+               placeholder="registry.example.com/app:1.2.3">
+        <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.image.tag_button") }}</button>
+      </form>
+      {% if not used_by %}
+        <div class="image-action-row image-remove-row">
+          {% for ref in (details.tags or [image_id]) %}
+            <form method="post" action="{{ docker_base }}/images/remove" class="inline-form"
+                  data-confirm="{{ t(request, 'docker.image.remove_confirm', image=ref) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="image" value="{{ ref }}">
+              <input type="hidden" name="back" value="{{ back }}">
+              <button type="submit" class="button button-danger log-small-button">{{ t(request, "docker.image.remove_ref" if ref != image_id else "docker.image.remove", image=ref) }}</button>
+            </form>
+          {% endfor %}
+        </div>
+        <p class="hint">{{ t(request, "docker.image.remove_hint") }}</p>
+      {% else %}
+        <p class="hint">{{ t(request, "docker.image.in_use_by", names=(used_by | map(attribute='name') | join(', '))) }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <h3>{{ t(request, "docker.image.details") }}</h3>
+    <dl class="detail-list">
+      <dt>{{ t(request, "docker.image.tags") }}</dt>
+      <dd>{% for tag in details.tags %}<code>{{ tag }}</code>{% if not loop.last %}, {% endif %}{% else %}<span class="table-muted">{{ t(request, "docker.images.dangling") }}</span>{% endfor %}</dd>
+      {% if details.digests %}
+        <dt>{{ t(request, "docker.image.digests") }}</dt>
+        <dd>{% for d in details.digests %}<div class="cell-truncate" title="{{ d }}"><code>{{ d }}</code></div>{% endfor %}</dd>
+      {% endif %}
+      <dt>{{ t(request, "docker.images.created") }}</dt><dd>{{ details.created[:19] | replace('T', ' ') }}</dd>
+      <dt>{{ t(request, "docker.images.size") }}</dt><dd>{{ details.size_bytes | bytes if details.size_bytes is number else '—' }}</dd>
+      <dt>{{ t(request, "docker.image.platform") }}</dt><dd>{{ details.os }}/{{ details.architecture }}</dd>
+      {% if details.entrypoint %}<dt>Entrypoint</dt><dd><code>{{ details.entrypoint }}</code></dd>{% endif %}
+      {% if details.command %}<dt>{{ t(request, "docker.image.command") }}</dt><dd><code>{{ details.command }}</code></dd>{% endif %}
+      {% if details.user %}<dt>{{ t(request, "docker.image.user") }}</dt><dd><code>{{ details.user }}</code></dd>{% endif %}
+      {% if details.workdir %}<dt>{{ t(request, "docker.image.workdir") }}</dt><dd><code>{{ details.workdir }}</code></dd>{% endif %}
+      {% if details.exposed_ports %}<dt>{{ t(request, "docker.image.ports") }}</dt><dd>{{ details.exposed_ports | join(', ') }}</dd>{% endif %}
+      {% if used_by %}<dt>{{ t(request, "docker.images.used") }}</dt><dd>{% for c in used_by %}<a href="{{ docker_base }}/containers/{{ c.name | urlencode }}">{{ c.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
+    </dl>
+    {% if details.labels %}
+      <details>
+        <summary>{{ t(request, "docker.image.labels", count=(details.labels | length)) }}</summary>
+        <dl class="detail-list">
+          {% for k, v in details.labels.items() %}<dt><code>{{ k }}</code></dt><dd class="cell-break">{{ v }}</dd>{% endfor %}
+        </dl>
+      </details>
+    {% endif %}
+  </section>
+
+  <section class="chart-card chart-card-wide monitoring-section">
+    <header class="chart-card-header">
+      <div><h3 class="chart-card-title">{{ t(request, "docker.image.layers", count=(details.layers | length)) }}</h3></div>
+    </header>
+    {% if details.layers %}
+      <div class="monitoring-table-wrap table-cards-wrap">
+        <table class="data-table table-cards layers-table">
+          <thead><tr>
+            <th>{{ t(request, "docker.image.layer_step") }}</th>
+            <th class="cell-nowrap">{{ t(request, "docker.images.size") }}</th>
+            <th class="cell-nowrap">{{ t(request, "docker.images.created") }}</th>
+          </tr></thead>
+          <tbody>
+            {% for layer in details.layers | reverse %}
+              <tr>
+                <td class="cell-break" data-label="{{ t(request, 'docker.image.layer_step') }}"><code>{{ layer.created_by | replace('/bin/sh -c #(nop) ', '') }}</code></td>
+                <td class="cell-nowrap" data-label="{{ t(request, 'docker.images.size') }}">{% if layer.size_bytes %}{{ layer.size_bytes | bytes }}{% else %}<span class="table-muted">0</span>{% endif %}</td>
+                <td class="cell-nowrap" data-label="{{ t(request, 'docker.images.created') }}">{{ layer.created[:16] | replace('T', ' ') }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">{{ t(request, "docker.image.layers_hint") }}</p>
+    {% endif %}
+  </section>
+{% endif %}

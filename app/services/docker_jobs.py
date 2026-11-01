@@ -283,6 +283,7 @@ async def purge_old(db: AsyncSession) -> int:
 CANCELLABLE_RUNNING_KINDS = frozenset(
     {
         DockerJobKind.IMAGE_SCAN.value,
+        DockerJobKind.IMAGE_PULL.value,
         DockerJobKind.PRUNE.value,
         DockerJobKind.STACK_CHECK.value,
         DockerJobKind.BACKUP_RUN.value,

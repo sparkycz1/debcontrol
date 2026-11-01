@@ -22,6 +22,14 @@
       </div>
     {% endif %}
   </div>
+  {% if can_updates and machine.host_key_fingerprint %}
+    <form method="post" action="{{ docker_base }}/images/pull" class="images-pull-form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="images-pull-ref">{{ t(request, "docker.image.pull_label") }}</label>
+      <input id="images-pull-ref" type="text" name="ref" required spellcheck="false" maxlength="255" placeholder="nginx:1.27">
+      <button type="submit" class="button log-small-button">{{ t(request, "docker.image.pull") }}</button>
+    </form>
+  {% endif %}
   {% if summary.scanned_at %}
     <p class="hint">{{ t(request, "docker.scan.summary", images=(summary.images or 0), unscanned=(summary.unscanned or 0)) }}</p>
   {% endif %}

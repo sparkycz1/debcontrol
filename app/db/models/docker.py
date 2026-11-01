@@ -70,6 +70,8 @@ class DockerJobKind(enum.StrEnum):
     # Check a stack before deploying it: the differences and `docker compose config`.
     STACK_CHECK = "stack_check"
     IMAGE_SCAN = "image_scan"
+    # Pull one image reference (Docker tab -> Images -> Pull).
+    IMAGE_PULL = "image_pull"
     PRUNE = "prune"
     BACKUP_RUN = "backup_run"
     BACKUP_CHECK = "backup_check"

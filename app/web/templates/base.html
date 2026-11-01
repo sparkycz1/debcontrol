@@ -29,6 +29,7 @@
     {% set main_links = [
       ('/dashboard', 'nav.dashboard', none, '/dashboard'),
       ('/machines', 'nav.machines', 'machine.view', '/machines'),
+      ('/docker', 'nav.docker', 'machine.view', '/docker'),
       ('/security/updates', 'nav.security', 'machine.view', '/security'),
       ('/machine-groups', 'nav.machine_groups', 'group.view', '/machine-groups'),
       ('/checks', 'nav.checks', 'machine.view', '/checks'),
@@ -51,8 +52,10 @@
     {% endmacro %}
     <nav>
       {# AI only once a model is enabled (request.state.ai_available) —
-         before that the page could only say "configure it in Settings". #}
-      {% for href, key, perm, prefix in main_links if (perm is none or current_user.has_permission(perm)) and (href != '/ai' or request.state.ai_available or current_path.startswith('/ai')) %}
+         before that the page could only say "configure it in Settings".
+         Docker only once some machine reported Docker
+         (request.state.docker_available). #}
+      {% for href, key, perm, prefix in main_links if (perm is none or current_user.has_permission(perm)) and (href != '/ai' or request.state.ai_available or current_path.startswith('/ai')) and (href != '/docker' or request.state.docker_available or current_path.startswith('/docker')) %}
         {{ nav_link(href, key, prefix) }}
       {% endfor %}
       {% set visible_admin = [] %}

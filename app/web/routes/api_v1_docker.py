@@ -66,6 +66,7 @@ from app.ssh.docker_cli import (
     DockerCommandError,
     is_container_name_valid,
     is_image_id_valid,
+    is_image_ref_valid,
     is_image_valid,
     is_network_name_valid,
     is_project_name_valid,
@@ -75,6 +76,7 @@ from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.ssh.docker_prune import PruneOptions
 from app.tasks import docker_jobs as docker_tasks
 from app.web.routes.api_v1 import _get_machine_or_404
+from app.web.routes.machines_docker import change_container_resources
 from app.web.routes.machines_docker_common import wait_task
 
 router = APIRouter(prefix="/api/v1/machines/{machine_id}/docker")
@@ -585,6 +587,46 @@ async def docker_containers_bulk_api(
     }
 
 
+class _ResourcesRequest(BaseModel):
+    # Each one optional; what's left out keeps its value. Memory as "512m"
+    # / "2g" or bytes; cpus 0 lifts the CPU limit.
+    memory: str | int | None = None
+    cpus: float | str | None = None
+    restart_policy: Literal["no", "on-failure", "always", "unless-stopped"] | None = None
+    max_retries: int | None = Field(default=None, ge=0, le=1000)
+
+
+@router.post("/containers/{name}/resources", dependencies=[_updates])
+async def docker_container_resources_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    name: str,
+    body: _ResourcesRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Change a container's memory limit, CPU limit and restart policy in
+    place (`docker update`), like the Resources form on its page."""
+    if not is_container_name_valid(name):
+        raise _bad("Invalid container name.")
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    outcome = await change_container_resources(
+        request,
+        db,
+        machine,
+        user,
+        name,
+        memory="" if body.memory is None else str(body.memory),
+        cpus="" if body.cpus is None else str(body.cpus),
+        restart_policy=body.restart_policy or "",
+        max_retries="" if body.max_retries is None else str(body.max_retries),
+    )
+    if outcome.error is not None:
+        raise HTTPException(status_code=outcome.status_code, detail=str(outcome.error))
+    return {"ok": True, "changed": outcome.change.as_dict() if outcome.change else {}}
+
+
 @router.post(
     "/containers/{name}/rollback", dependencies=[_updates], status_code=status.HTTP_202_ACCEPTED
 )
@@ -724,6 +766,144 @@ async def docker_image_vulnerabilities_api(
     if scan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No scan of this image.")
     return _scan(scan, findings=True)
+
+
+class _PullRequest(BaseModel):
+    ref: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/images/pull", dependencies=[_updates], status_code=status.HTTP_202_ACCEPTED)
+async def docker_images_pull_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    body: _PullRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Pull one image reference as a job; its result has the pulled `image_id`."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    try:
+        job = await docker_actions.pull_image(db, machine, body.ref, started_by=user.username)
+    except DockerCommandError as exc:
+        raise _bad(str(exc)) from exc
+    answer = _queued(job)
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.image.pull",
+        f'Started pulling {answer["job"]["target"]} on "{machine.name}"',
+        {"image": answer["job"]["target"]},
+    )
+    return answer
+
+
+class _ImageRequest(BaseModel):
+    # A tag (`nginx:1.27`) or an image id (`sha256:...`).
+    image: str = Field(min_length=1, max_length=512)
+
+
+@router.post("/images/remove", dependencies=[_updates])
+async def docker_images_remove_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    body: _ImageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """`docker image rm`, never forced: a tag is untagged, an image a
+    container uses is refused (502 with Docker's message)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    if not is_image_valid(body.image):
+        raise _bad("Invalid image.")
+    app_settings = await get_or_create_app_settings(db)
+    result, error = await wait_task(
+        request,
+        docker_tasks.docker_image_op.delay(str(machine.id), "remove", body.image, ""),
+        app_settings.ssh_connect_timeout + 90,
+    )
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.image.remove",
+        f'Removed image {body.image} on "{machine.name}"'
+        if error is None
+        else f'Could not remove image {body.image} on "{machine.name}"',
+        {"image": body.image, **({"error": str(error)[:300]} if error else {})},
+        ok=error is None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
+    return {"ok": True, "output": (result or {}).get("output", "")}
+
+
+class _TagRequest(BaseModel):
+    image: str = Field(min_length=1, max_length=512)
+    tag: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/images/tag", dependencies=[_updates])
+async def docker_images_tag_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    body: _TagRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """`docker tag` an image (tag or id) under a new name."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    _ready(machine)
+    if not is_image_valid(body.image):
+        raise _bad("Invalid image.")
+    if not is_image_ref_valid(body.tag) or is_image_id_valid(body.tag) or "@" in body.tag:
+        raise _bad("Invalid new tag.")
+    app_settings = await get_or_create_app_settings(db)
+    _result, error = await wait_task(
+        request,
+        docker_tasks.docker_image_op.delay(str(machine.id), "tag", body.image, body.tag),
+        app_settings.ssh_connect_timeout + 90,
+    )
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.image.tag",
+        f'Tagged {body.image} as {body.tag} on "{machine.name}"'
+        if error is None
+        else f'Could not tag {body.image} as {body.tag} on "{machine.name}"',
+        {"image": body.image, "tag": body.tag},
+        ok=error is None,
+    )
+    if error is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
+    return {"ok": True}
+
+
+@router.get("/images/{image_id}", dependencies=[_view])
+async def docker_image_api(
+    request: Request,
+    machine_id: uuid.UUID,
+    image_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """One image as the machine reports it now: tags, digests, platform,
+    configuration (environment variables left out), labels and layers,
+    plus the stored scan's counts."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    if not is_image_id_valid(image_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such image.")
+    result = await _wait(
+        request, db, docker_tasks.docker_image_op.delay(str(machine.id), "details", image_id), 90
+    )
+    scan = await docker_scans.get_scan(db, machine.id, image_id)
+    return {
+        **(result.get("details") or {}),
+        "vulnerabilities": (scan.counts or {}) if scan else None,
+    }
 
 
 class _PruneRequest(BaseModel):

@@ -188,6 +188,15 @@ def parse_container(row: dict[str, Any]) -> dict[str, Any] | None:
         "exit_code": state.get("ExitCode") if isinstance(state.get("ExitCode"), int) else None,
         "health": _s(health.get("Status"), 16),
         "restart_policy": _s(restart.get("Name"), 32),
+        "restart_max_retries": restart.get("MaximumRetryCount")
+        if isinstance(restart.get("MaximumRetryCount"), int)
+        else None,
+        # Limits `docker update` can change (0 = none).
+        "memory_bytes": host.get("Memory") if isinstance(host.get("Memory"), int) else None,
+        "memory_swap_bytes": host.get("MemorySwap")
+        if isinstance(host.get("MemorySwap"), int)
+        else None,
+        "nano_cpus": host.get("NanoCpus") if isinstance(host.get("NanoCpus"), int) else None,
         "restart_count": row.get("RestartCount")
         if isinstance(row.get("RestartCount"), int)
         else None,

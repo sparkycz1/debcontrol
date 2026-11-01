@@ -233,22 +233,27 @@
           </table>
         </div>
         {% if can_select %}
-          <div class="bulk-bar">
-            <span class="hint">{{ t(request, "docker.bulk.with_selected") }}</span>
-            {% if can_act %}
-              <button type="submit" form="containers-bulk" name="action" value="start" class="button button-secondary log-small-button">{{ t(request, "monitoring.containers.action_start") }}</button>
-              <button type="submit" form="containers-bulk" name="action" value="restart" class="button button-secondary log-small-button"
-                      data-confirm="{{ t(request, 'docker.bulk.confirm_restart') }}">{{ t(request, "monitoring.containers.action_restart") }}</button>
-              <button type="submit" form="containers-bulk" name="action" value="stop" class="button button-secondary log-small-button"
-                      data-confirm="{{ t(request, 'docker.bulk.confirm_stop') }}">{{ t(request, "monitoring.containers.action_stop") }}</button>
-            {% endif %}
-            {% if can_update %}
-              <button type="submit" form="containers-bulk" name="action" value="update" class="button button-secondary log-small-button"
-                      data-confirm="{{ t(request, 'docker.update.selected_confirm') }}" title="{{ t(request, 'docker.update.selected_hint') }}">{{ t(request, "docker.update.selected") }}</button>
-              <button type="submit" form="containers-bulk" name="action" value="scan" class="button button-secondary log-small-button">{{ t(request, "docker.bulk.scan") }}</button>
-              <button type="submit" form="containers-bulk" name="action" value="remove" class="button button-danger log-small-button"
-                      data-confirm="{{ t(request, 'docker.bulk.confirm_remove') }}" title="{{ t(request, 'docker.bulk.remove_hint') }}">{{ t(request, "docker.bulk.remove") }}</button>
-            {% endif %}
+          <div class="bulk-bar" data-bulk-bar="container" data-bulk-form="containers-bulk">
+            <p class="hint bulk-when-empty">{{ t(request, "docker.bulk.select_hint") }}</p>
+            <div class="bulk-when-selected">
+              <span class="hint">{{ t(request, "machines.bulk.with_selected") }} <strong data-bulk-count>0</strong></span>
+              {% if can_act %}
+                <button type="submit" form="containers-bulk" name="action" value="start" class="button button-secondary log-small-button">{{ t(request, "monitoring.containers.action_start") }}</button>
+                <button type="submit" form="containers-bulk" name="action" value="restart" class="button button-secondary log-small-button"
+                        data-confirm="{{ t(request, 'docker.bulk.confirm_restart') }}">{{ t(request, "monitoring.containers.action_restart") }}</button>
+                <button type="submit" form="containers-bulk" name="action" value="stop" class="button button-secondary log-small-button"
+                        data-confirm="{{ t(request, 'docker.bulk.confirm_stop') }}">{{ t(request, "monitoring.containers.action_stop") }}</button>
+              {% endif %}
+              {% if can_update %}
+                <button type="submit" form="containers-bulk" name="action" value="update" class="button button-secondary log-small-button"
+                        data-confirm="{{ t(request, 'docker.update.selected_confirm') }}" title="{{ t(request, 'docker.update.selected_hint') }}">{{ t(request, "docker.update.selected") }}</button>
+                <button type="submit" form="containers-bulk" name="action" value="scan" class="button button-secondary log-small-button">{{ t(request, "docker.bulk.scan") }}</button>
+                <span class="bulk-danger-zone">
+                  <button type="submit" form="containers-bulk" name="action" value="remove" class="button button-danger log-small-button"
+                          data-confirm="{{ t(request, 'docker.bulk.confirm_remove') }}" title="{{ t(request, 'docker.bulk.remove_hint') }}">{{ t(request, "docker.bulk.remove") }}</button>
+                </span>
+              {% endif %}
+            </div>
           </div>
         {% endif %}
       {% else %}
