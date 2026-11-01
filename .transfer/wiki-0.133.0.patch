@@ -1,0 +1,216 @@
+From 5dac03967d8203b62c1bbcac2a0498fb0bd79cad Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 1 Nov 2026 20:08:23 +0000
+Subject: [PATCH] Docker: image packages (SBOM) and moving or cloning a stack
+ to another machine (0.133.0)
+
+---
+ Docker.md    | 88 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Home.md      |  4 +--
+ Inventory.md |  3 +-
+ REST-API.md  |  4 ++-
+ 4 files changed, 95 insertions(+), 4 deletions(-)
+
+diff --git a/Docker.md b/Docker.md
+index e9ea9a7..f14bafe 100644
+--- a/Docker.md
++++ b/Docker.md
+@@ -48,6 +48,13 @@
+ - **Start, stop or restart on a schedule** (0.132.0+): named containers
+   or stacks, for example a test environment only during working hours
+   ([below](#scheduled-tasks)).
++- **Packages inside images (SBOM)** (0.133.0+): every scan keeps the
++  image's package list - download it as CycloneDX, or find which images
++  on which machines carry a package
++  ([below](#packages-inside-an-image-sbom)).
++- **Move or clone a stack to another machine** (0.133.0+), with its
++  volumes and files, streamed through debcontrol
++  ([below](#moving-or-cloning-a-stack-to-another-machine)).
+ 
+ ![A machine's Docker tab: containers, their images, vulnerabilities and status](images/docker.png)
+ 
+@@ -429,6 +436,28 @@ machine (`Machine.docker_vulnerabilities`) and feed the notification
+ conditions `docker.critical_vulnerabilities` and
+ `docker.high_vulnerabilities`.
+ 
++### Packages inside an image (SBOM)
++
++Every scan also keeps the image's packages: Trivy lists each package it
++finds (`--list-all-pkgs`) - system packages and language libraries -
++with its version, type (`debian`, `alpine`, `python-pkg`, `gobinary`,
++`node-pkg`, ...) and package URL, at most 10,000 per image
++([`app/services/docker_sbom.py`](https://github.com/sparkycz1/debcontrol/blob/main/app/services/docker_sbom.py)).
++They are replaced with each scan Trivy answered; images scanned before
++0.133.0 get theirs with their next scan.
++
++- **An image's page** shows how many packages of which type, and
++  **Download CycloneDX** (`machine.view`) gives them as a CycloneDX 1.6
++  JSON file for tools that take an SBOM.
++- **Security → Package search** (`/security/packages`) also lists the
++  packages inside the machines' scanned images (*In Docker images*:
++  machine, image, package, version, type; the source filter *Docker
++  images* shows only those) - which images carry `openssl 3.0.x`, also
++  for a vulnerability without a CVE yet. Images are matched by the
++  **start** of the package name (at least 2 characters, case-insensitive,
++  up to 500 rows), through an index, so the search stays fast with
++  millions of rows; scoped to the machines the account can see.
++
+ ### Across the fleet, and accepting a vulnerability
+ 
+ **Security → Container vulnerabilities** (`/security/containers`,
+@@ -865,6 +894,48 @@ written in debcontrol - **Take the machine's files over**
+ stored, without the shared variables debcontrol appended (they stay
+ shared). Nothing is deployed. Audited as `machine.docker.stack.import`.
+ 
++### Moving or cloning a stack to another machine
++
++A stack's page has **Move or clone to another machine** (`action.terminal`
++and `action.updates`; the target must be visible to the account, have a
++confirmed host key and Docker access)
++([`app/services/docker_transfer.py`](https://github.com/sparkycz1/debcontrol/blob/main/app/services/docker_transfer.py)).
++It adds the stack to the target - same compose file or Git source,
++`.env`, deploy key and settings; no webhook (make a new one) and no
++history - and starts a **Stack move / clone** job there:
++
++1. It reads the stack on the source: the named volumes Compose created
++   for the project and the host paths its containers bind-mount.
++2. It refuses before changing anything when the target already has a
++   volume of one of those names, or the stack's directory there holds
++   other files.
++3. It **stops the source** (only when its data is copied, or for a move).
++4. It copies the data **through debcontrol**: `tar` in a busybox
++   container on the source writes to SSH, debcontrol hands each chunk to
++   `tar` in a busybox container on the target. No storage both machines
++   can reach and no SSH key between them is needed; ownership,
++   permissions and timestamps are kept. The job's output lists what was
++   copied and how much; the job can be cancelled while it copies.
++5. **Clone**: the source is started again (both run afterwards - mind
++   published ports and host names). **Move**: the source is taken
++   *down* (`docker compose down`, so a `restart: always` container doesn't
++   come back with a reboot); its stack, volumes and files stay until you
++   delete them there, after checking the copy. A failed copy always
++   starts the source again.
++6. It queues an ordinary deploy on the target.
++
++What is copied: named volumes of the project with the `local` driver
++and no options (a volume on NFS or a bind-type volume lives elsewhere),
++and bind-mounted paths inside the stack's directory (`./data`,
++`./nginx.conf`); a Git stack's `repo/` comes from the repository. Other
++host paths (`/srv/media`) and skipped volumes are listed in the job's
++output, never copied. Without *Copy its data* only the stack is set up.
++debcontrol's own stack is refused. If debcontrol restarts during a copy,
++the job ends as failed and is not repeated on its own.
++
++Audited as `machine.docker.stack.transfer` on the source machine
++(`target`, `mode`, `data`).
++
+ ## Private registries
+ 
+ **Docker → Registries** (0.131.0+, `action.terminal`, table
+@@ -1132,6 +1203,7 @@ the same on the web pages and in the REST API
+ | `machine.view` | every page: containers, charts, images and scans, volumes, networks, stacks, backups and their snapshots, the host check, jobs |
+ | `action.power` | start / stop / restart a container (one or the selected ones, also across the fleet); start / stop / restart / down a Compose project; a container's autoheal setting; the scheduled *Start / stop / restart Docker containers* (with `scheduling.manage`) |
+ | `action.updates` | remove the selected (stopped) containers, update and roll back containers (also selected across the fleet), change a container's memory / CPU limits and restart policy, pull / tag / remove an image, auto-update, update-policy and vulnerability-gate settings, accepting a container vulnerability (Security → Container vulnerabilities; not for an account limited to some machine groups), image scans, clean-up, deploy a stack, roll a stack back to a kept version (with `action.terminal`), up / pull & recreate a Compose project, *Check Git now*, *Check drift*, back up now, check and prune backups, test restore, cancelling the jobs these start |
++| `action.terminal` + `action.updates` | moving or cloning a stack to another machine (and cancelling that job) |
+ | `action.terminal` | the container shell, the file browser, a stack's compose file, `.env` and directory (create, edit, delete a stack), Git sources, deploy keys and the webhook, *Check changes* and its output, a kept version's compose file, viewing and editing a project's compose files, backup settings (including the commands around a backup), their export and import, and restores; the file browser's folder upload and download; adopting a Compose project, making a stack from a `docker run` container, taking a stack's files over from the machine; Docker → Registries and Docker → Variables (an account limited to some groups: only its groups' and machines' entries) |
+ | `machine.manage` | *Check image updates* (as before), which also refreshes the host check |
+ | `scheduling.manage` | the scheduled Docker tasks |
+@@ -1183,6 +1255,11 @@ host path into a container, and a restore overwrites data.
+   request an address of its choosing.
+ - **Autoheal** only restarts (never recreates or removes), is capped per
+   hour and skips debcontrol's own containers.
++- **Moving a stack** (0.133.0+) streams the data through debcontrol, so
++  no machine gets a key to another. The names and paths taken from the
++  source are validated and quoted before they reach a command on either
++  machine, and the copy is unpacked inside a throwaway container that
++  only sees the target volume or the stack's directory.
+ - Every action is CSRF-protected and audited (below).
+ 
+ ## Audit log
+@@ -1217,6 +1294,7 @@ host path into a container, and a restore overwrites data.
+ | `machine.docker.file.download` / `.write` / `.mkdir` / `.delete` | the file browser (a folder download carries `archive`, a refused save `conflict`, a multi-file upload `files` and the first 50 names) |
+ | `machine.docker.project.adopt` | a Compose project adopted as a stack (or refused, with `reason`) |
+ | `machine.docker.stack.import` | a stack's files taken over from the machine |
++| `machine.docker.stack.transfer` | a stack's move or clone to another machine started (or refused for debcontrol's own) |
+ | `docker.registry.create` / `.edit` / `.login` / `.delete` | a registry login added, changed, logged in again everywhere, removed |
+ | `docker.variable.create` / `.edit` / `.delete` | a shared variable added, changed, removed |
+ | `machine.docker.job.cancel` | a job cancelled (`was`: `cancelled` for a waiting one, `requested` for a running one) |
+@@ -1263,6 +1341,16 @@ The full list is on [REST API](REST-API#docker).
+   value omitted on `PUT` is kept and never returned (a secret's `value`
+   is `null`). Registry answers carry `logins` per machine and
+   `machines_queued`.
++- SBOM (0.133.0+): `GET .../images/{image_id}/sbom` returns CycloneDX
++  1.6 JSON (404 before the first scan); `GET .../images/{image_id}` adds
++  `packages` (count per type). `GET /api/v1/machines/package-search`
++  adds `images` and `images_truncated`; `pkg_source=docker` returns only
++  those.
++- Move / clone (0.133.0+): `POST .../stacks/{id}/transfer`
++  `{target_machine_id, mode: copy|move, data}` (`action.terminal` +
++  `action.updates`) answers 202 with the job (on the target), `stack_id`
++  and `machine_id`; 404 for a target the token can't use, 409 when the
++  target already has a stack of that name or a job of the stack runs.
+ - Taking over (0.131.0+): `POST .../projects/{project}/adopt` (201, the
+   stack; 422 with the reasons as i18n keys), `GET
+   .../containers/{name}/compose` (`compose`, `env`, `warnings`,
+diff --git a/Home.md b/Home.md
+index ec26709..91973b2 100644
+--- a/Home.md
++++ b/Home.md
+@@ -113,9 +113,9 @@ Prefer it light? The theme toggle sits in the header.
+ | 📊 **Dashboard** | Fleet tiles linking to filtered lists, trend charts, upcoming schedules, recent activity, an optional AI fleet summary, and every machine as a card colored by its worst reading |
+ | 🖥️ **Machines** | Facts, packages, services, monitoring (CPU/RAM/disk/network, bare-metal sensors, GPUs, S.M.A.R.T.), a Docker tab, updates with preview, retry, rollback, a Proxmox snapshot first, holds, changelogs and CVEs, a browser terminal, logs (level filter, whole Compose stacks, download), History time line, watched files, hardware and warranties, Wake-on-LAN, tags, filters, saved views, bulk actions, export/import |
+ | 🐳 **Docker** | Every container of every machine in one table (filter by state, group, stack, vulnerabilities or newer image; start/stop/restart/update/scan across machines), plus each machine's Docker tab below |
+-| 🐳 **Docker tab** | Containers with their charts (CPU, memory, network, disk I/O) and newer image versions, state tiles, links to each container's web interface (Traefik/Caddy labels, published ports, `debcontrol.url`) and to its image's registry and release notes, start/stop/restart/update/scan/remove several containers at once, memory and CPU limits and restart policy changed on a running container, a page per image with its layers and pull / tag / remove, tables that remember their filter and sort and turn into cards on a phone, updates that put the old container back if the new one doesn't stay up, automatic updates on a schedule limited to minor or patch versions if you like (moving a version tag forward), image checks at an interval of your choice that say why an image couldn't be checked (Docker Hub's rate limit included), notifications when a container crashes, keeps restarting, runs out of memory or turns unhealthy, Trivy + Grype vulnerability scans and a gate that stops a worse image, Compose stacks from the editor or Git over HTTPS or SSH with a deploy key (more compose files, builds, auto-sync, webhook) in a directory of your choice, with a check before deploying, a history to roll back to, automatic rollback when the new version doesn't come up and a vulnerability gate, editing the compose files of any project on the machine, a page per network, a shell and a file browser inside containers and volumes, clean-up, restic backups with a command before and after (a database dump), test restores that prove a backup comes back, restore into any volume or directory, attaching an existing repository and export/import of backup settings, cancelling a waiting or running job, a file editor that shows changes before saving and never overwrites a newer version, folder upload and download, private registry logins and shared variables/secrets per fleet, group or machine, adopting Compose projects and `docker run` containers as stacks, drift detection, autoheal of unhealthy containers, endpoint checks made from containers' web links, a Docker host check (log rotation, engine updates, privileged containers, ...), and starting/stopping containers or stacks on a schedule |
++| 🐳 **Docker tab** | Containers with their charts (CPU, memory, network, disk I/O) and newer image versions, state tiles, links to each container's web interface (Traefik/Caddy labels, published ports, `debcontrol.url`) and to its image's registry and release notes, start/stop/restart/update/scan/remove several containers at once, memory and CPU limits and restart policy changed on a running container, a page per image with its layers and pull / tag / remove, tables that remember their filter and sort and turn into cards on a phone, updates that put the old container back if the new one doesn't stay up, automatic updates on a schedule limited to minor or patch versions if you like (moving a version tag forward), image checks at an interval of your choice that say why an image couldn't be checked (Docker Hub's rate limit included), notifications when a container crashes, keeps restarting, runs out of memory or turns unhealthy, Trivy + Grype vulnerability scans and a gate that stops a worse image, Compose stacks from the editor or Git over HTTPS or SSH with a deploy key (more compose files, builds, auto-sync, webhook) in a directory of your choice, with a check before deploying, a history to roll back to, automatic rollback when the new version doesn't come up and a vulnerability gate, editing the compose files of any project on the machine, a page per network, a shell and a file browser inside containers and volumes, clean-up, restic backups with a command before and after (a database dump), test restores that prove a backup comes back, restore into any volume or directory, attaching an existing repository and export/import of backup settings, cancelling a waiting or running job, a file editor that shows changes before saving and never overwrites a newer version, folder upload and download, private registry logins and shared variables/secrets per fleet, group or machine, adopting Compose projects and `docker run` containers as stacks, drift detection, autoheal of unhealthy containers, endpoint checks made from containers' web links, a Docker host check (log rotation, engine updates, privileged containers, ...), starting/stopping containers or stacks on a schedule, each image's packages (SBOM, CycloneDX download), and moving or cloning a stack with its data to another machine |
+ | 🟧 **Proxmox tab** | Proxmox VE (guests with start/stop, cluster quorum, ZFS, storage, backups and when each guest was last backed up, failed tasks, snapshots taken before updates, guests linked to their managed machines), Backup Server (datastores, jobs, backup groups) and Mail Gateway (mail stats, queue, ClamAV) |
+-| 🛡️ **Security** | Pending security updates fleet-wide with their CVEs; package search across the fleet; a security audit of every machine (Lynis and checks from vps-audit) with its hardening index, findings grouped by area, how to fix each, and findings marked OK per machine; the critical and high vulnerabilities of every machine's Docker images in one list (which machines and images have a CVE), and accepting one until a date |
++| 🛡️ **Security** | Pending security updates fleet-wide with their CVEs; package search across the fleet and inside Docker images; a security audit of every machine (Lynis and checks from vps-audit) with its hardening index, findings grouped by area, how to fix each, and findings marked OK per machine; the critical and high vulnerabilities of every machine's Docker images in one list (which machines and images have a CVE), and accepting one until a date |
+ | 🔐 **Checks** | A public status page for chosen checks and machines; HTTP, TLS, ping, TCP, DNS, SMTP and SSH checks from the server or a machine, push (heartbeat) checks for cron jobs and backups, with history, notifications and a monthly SLA report; the status page can show response times, a daily history and a notice |
+ | 🗂️ **Groups** | Groups for bulk updates and power actions, plus "All machines" |
+ | 📋 **Runbooks** | Saved command sequences with parameters, run on a machine or a group after a preview; written with the terminal permission, run with a narrower one |
+diff --git a/Inventory.md b/Inventory.md
+index 8da3b62..8e138ce 100644
+--- a/Inventory.md
++++ b/Inventory.md
+@@ -92,7 +92,8 @@ link on its Overview; `machine.manage` to edit the list).
+ - **Packages**: one `MachinePackage` row per package (dpkg, flatpak,
+   snap), replaced as a whole on each refresh and after every update run.
+   **Security → Package search** (`/security/packages`) finds a package
+-  across the fleet (up to 500 rows).
++  across the fleet (up to 500 rows), and inside the machines' scanned
++  Docker images ([Docker](Docker#packages-inside-an-image-sbom)).
+ - **systemd services**: one `MachineService` row per unit, on the same
+   cadence, shown on the Monitoring tab (running and failed by default)
+   and at `GET /api/v1/machines/{id}/services`. Running units also carry
+diff --git a/REST-API.md b/REST-API.md
+index 5af6e50..f9196b7 100644
+--- a/REST-API.md
++++ b/REST-API.md
+@@ -150,7 +150,7 @@ own instance for parameters, bodies and responses.
+ | `GET` | `/api/v1/machines/compare` | Compare machines |
+ | `GET` | `/api/v1/machines/config/export` | Export machine config |
+ | `POST` | `/api/v1/machines/config/import` | Import machine config |
+-| `GET` | `/api/v1/machines/package-search` | Package search |
++| `GET` | `/api/v1/machines/package-search` | Package search (machine packages, and `images`: packages inside scanned Docker images) |
+ | `GET` | `/api/v1/machines/pending` | List pending machines |
+ | `POST` | `/api/v1/machines/pending/{pending_id}/dismiss` | Dismiss pending machine |
+ | `GET` | `/api/v1/machines/security-updates` | Security updates |
+@@ -237,6 +237,7 @@ own instance for parameters, bodies and responses.
+ | `POST` | `/api/v1/machines/{machine_id}/docker/images/scan` | Docker images scan |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/images/tag` | Docker image tag |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/images/{image_id}` | Docker image (details and layers) |
++| `GET` | `/api/v1/machines/{machine_id}/docker/images/{image_id}/sbom` | The image's packages as CycloneDX 1.6 JSON |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/images/{image_id}/vulnerabilities` | Docker image vulnerabilities |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/jobs` | Docker jobs |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/jobs/{job_id}` | Docker job |
+@@ -253,6 +254,7 @@ own instance for parameters, bodies and responses.
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/deploy` | Docker stack deploy |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/check` | Docker stack check |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/drift` | Docker stack drift check |
++| `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/transfer` | Move or clone the stack to another machine, with its data (a job on the target) |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/import` | Take a stack's files over from the machine |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/versions` | Docker stack versions |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/stacks/{stack_id}/versions/{version_id}` | Docker stack version |
+-- 
+2.43.0
+
