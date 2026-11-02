@@ -88,7 +88,7 @@ def parse_container_action_output(raw: str) -> str:
     exit_code: int | None = None
     if lines and lines[-1].startswith(_EXIT_MARKER):
         code = lines[-1][len(_EXIT_MARKER) :].strip()
-        exit_code = int(code) if code.isdigit() else None
+        exit_code = int(code) if code.isdecimal() else None
         lines = lines[:-1]
     output = "\n".join(lines).strip()
     if exit_code != 0:

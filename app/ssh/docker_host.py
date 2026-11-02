@@ -98,7 +98,7 @@ def parse_host_output(raw: str) -> dict[str, Any]:
     for line in log_lines:
         size, _, filename = line.strip().partition(" ")
         container_id = filename.removesuffix("-json.log")
-        if size.isdigit() and container_id.isalnum():
+        if size.isdecimal() and container_id.isalnum():
             logs.append({"id": container_id[:64], "bytes": int(size)})
     return {
         "no_access": False,

@@ -241,7 +241,7 @@ def _parse_listening(section: str) -> list[str] | None:
     for line in section.splitlines():
         value = line.strip()
         address, sep, port = value.rpartition(":")
-        if not sep or not port.isdigit():
+        if not sep or not port.isdecimal():
             continue
         address = address.split("%", 1)[0] if not address.startswith("[") else address
         found.add(f"{address}:{port}")
@@ -271,21 +271,21 @@ def parse_facts_output(raw: str) -> MachineFacts:
     sections = _split_sections(raw)
 
     cpu_cores: int | None = None
-    if sections.get("CPU", "").isdigit():
+    if sections.get("CPU", "").isdecimal():
         cpu_cores = int(sections["CPU"])
 
     ram_bytes: int | None = None
-    if sections.get("RAM_KB", "").isdigit():
+    if sections.get("RAM_KB", "").isdecimal():
         ram_bytes = int(sections["RAM_KB"]) * 1024
 
     ram_speed_mhz: int | None = None
-    if sections.get("RAM_SPEED", "").isdigit():
+    if sections.get("RAM_SPEED", "").isdecimal():
         ram_speed_mhz = int(sections["RAM_SPEED"])
 
     disks: list[dict[str, Any]] = []
     for line in sections.get("DISKS", "").splitlines():
         fields = line.split()
-        if len(fields) == 2 and fields[1].isdigit():
+        if len(fields) == 2 and fields[1].isdecimal():
             disks.append({"name": fields[0], "size_bytes": int(fields[1])})
 
     kernel_version = sections.get("KERNEL") or None
@@ -301,11 +301,11 @@ def parse_facts_output(raw: str) -> MachineFacts:
         reboot_required = True
 
     uptime_seconds: int | None = None
-    if sections.get("UPTIME", "").isdigit():
+    if sections.get("UPTIME", "").isdecimal():
         uptime_seconds = int(sections["UPTIME"])
 
     process_count: int | None = None
-    if sections.get("PROCESSES", "").isdigit():
+    if sections.get("PROCESSES", "").isdecimal():
         process_count = int(sections["PROCESSES"])
 
     filesystems: list[dict[str, Any]] = []
@@ -318,7 +318,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
             continue
         size, used, avail, pcent = fields[-4], fields[-3], fields[-2], fields[-1]
         target = " ".join(fields[:-4])
-        if not (size.isdigit() and used.isdigit() and avail.isdigit()):
+        if not (size.isdecimal() and used.isdecimal() and avail.isdecimal()):
             continue
         filesystems.append(
             {
@@ -326,7 +326,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
                 "size_bytes": int(size),
                 "used_bytes": int(used),
                 "avail_bytes": int(avail),
-                "use_percent": int(pcent.rstrip("%")) if pcent.rstrip("%").isdigit() else None,
+                "use_percent": int(pcent.rstrip("%")) if pcent.rstrip("%").isdecimal() else None,
             }
         )
 

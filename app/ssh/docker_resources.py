@@ -110,7 +110,7 @@ class ResourceChange:
             raise DockerCommandError("Unknown restart policy.")
         retries: int | None = None
         if policy == "on-failure" and max_retries.strip():
-            if not max_retries.strip().isdigit() or int(max_retries) > 1000:
+            if not max_retries.strip().isdecimal() or int(max_retries) > 1000:
                 raise DockerCommandError("Retries must be a whole number up to 1000.")
             retries = int(max_retries)
         return cls(

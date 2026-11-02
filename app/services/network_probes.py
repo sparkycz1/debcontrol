@@ -42,10 +42,10 @@ def split_host_port(target: str) -> tuple[str, int | None]:
     if value.startswith("["):
         host, _, rest = value[1:].partition("]")
         port = rest.lstrip(":")
-        return host, int(port) if port.isdigit() else None
+        return host, int(port) if port.isdecimal() else None
     if value.count(":") == 1:
         host, _, port = value.partition(":")
-        return host, int(port) if port.isdigit() else None
+        return host, int(port) if port.isdecimal() else None
     return value, None
 
 

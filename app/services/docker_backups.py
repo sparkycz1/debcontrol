@@ -80,7 +80,7 @@ def _keep(value: str) -> int | None:
     value = value.strip()
     if not value:
         return None
-    if not value.isdigit() or not 0 < int(value) <= MAX_KEEP:
+    if not value.isdecimal() or not 0 < int(value) <= MAX_KEEP:
         raise ValueError(value)
     return int(value)
 

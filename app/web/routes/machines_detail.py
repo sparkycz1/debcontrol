@@ -1116,7 +1116,7 @@ async def proxmox_backup_exempt(
     audited as `machine.proxmox.backup_exempt.add` / `.remove`."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
     marking = exempt not in ("0", "false", "")
-    vmids = None if vmid.strip() == "all" else [int(vmid)] if vmid.strip().isdigit() else []
+    vmids = None if vmid.strip() == "all" else [int(vmid)] if vmid.strip().isdecimal() else []
     try:
         await proxmox_backup_exempt_service.set_exempt(
             db, request, machine, vmids, exempt=marking

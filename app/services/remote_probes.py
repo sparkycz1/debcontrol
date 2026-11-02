@@ -168,7 +168,7 @@ def _last_line(text: str) -> str:
 def _parse_http(check: EndpointCheck, body: str) -> ProbeResult:
     content, marker, tail = body.rpartition(_HTTP_MARKER)
     code = tail.strip() if marker else ""
-    status = int(code) if code.isdigit() else 0
+    status = int(code) if code.isdecimal() else 0
     if status == 0:
         return ProbeResult(ok=False, error=_last_line(content or body) or "No response.")
     result = ProbeResult(ok=True, status_code=status)

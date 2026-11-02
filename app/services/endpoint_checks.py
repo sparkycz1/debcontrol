@@ -91,7 +91,7 @@ def parse_tls_target(target: str) -> tuple[str, int]:
         port = rest.lstrip(":")
         return host, int(port) if port else 443
     host, sep, port = value.rpartition(":")
-    if sep and port.isdigit() and host:
+    if sep and port.isdecimal() and host:
         return host, int(port)
     return value, 443
 
@@ -180,7 +180,7 @@ async def _smtp_reply(reader: asyncio.StreamReader) -> tuple[int, list[str]]:
         if not raw:
             raise ConnectionError("The server closed the connection.")
         line = raw.decode("utf-8", "replace").rstrip("\r\n")
-        if len(line) < 3 or not line[:3].isdigit():
+        if len(line) < 3 or not line[:3].isdecimal():
             raise ValueError(f"Not an SMTP reply: {line[:100]}")
         lines.append(line[4:])
         if len(line) == 3 or line[3] != "-":
@@ -372,7 +372,7 @@ def evaluate_json_path(body: str, path: str, expected: str | None) -> str | None
     for part in [p for p in clean.split(".") if p] if clean else []:
         if isinstance(value, dict) and part in value:
             value = value[part]
-        elif isinstance(value, list) and part.lstrip("-").isdigit() and (
+        elif isinstance(value, list) and part.lstrip("-").isdecimal() and (
             -len(value) <= int(part) < len(value)
         ):
             value = value[int(part)]

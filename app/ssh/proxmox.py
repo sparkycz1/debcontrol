@@ -177,7 +177,7 @@ def _int(value: Any) -> int | None:
         return value
     if isinstance(value, float):
         return int(value)
-    if isinstance(value, str) and value.isascii() and value.strip().lstrip("-").isdigit():
+    if isinstance(value, str) and value.isascii() and value.strip().lstrip("-").isdecimal():
         return int(value.strip())
     return None
 
@@ -224,8 +224,9 @@ def parse_guests(section: str) -> list[dict[str, Any]] | None:
 
 
 def _zfs_number(value: str) -> int | None:
-    # `isdigit()` alone also accepts characters `int()` rejects ("²", "④").
-    return int(value) if value.isascii() and value.isdigit() else None
+    # `isdecimal()` is exactly what `int()` accepts; `isdigit()` would also let
+    # "²" or "④" through and crash it. Kept ASCII-only here on purpose.
+    return int(value) if value.isascii() and value.isdecimal() else None
 
 
 def parse_zfs_pools(list_section: str, status_section: str) -> list[dict[str, Any]] | None:
@@ -402,7 +403,7 @@ def parse_guest_backups(section: str) -> dict[str, dict[str, int]] | None:
     found: dict[str, dict[str, int]] = {}
     for line in lines[1:]:
         parts = line.split()
-        if len(parts) != 3 or not all(part.isascii() and part.isdigit() for part in parts):
+        if len(parts) != 3 or not all(part.isascii() and part.isdecimal() for part in parts):
             continue
         vmid, last, count = (int(part) for part in parts)
         found[str(vmid)] = {"last": last, "count": count}

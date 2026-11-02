@@ -63,7 +63,7 @@ class ServiceEntry(TypedDict):
 
 
 def _counter(value: str | None) -> int | None:
-    if value is None or not value.isdigit():
+    if value is None or not value.isdecimal():
         return None
     number = int(value)
     return None if number >= _UNSET else number
