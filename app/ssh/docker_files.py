@@ -136,8 +136,8 @@ def parse_listing(raw: str) -> list[dict[str, object]] | None:
             {
                 "name": parts[6][:255],
                 "kind": kind,
-                "size": int(parts[1]) if parts[1].isdigit() else None,
-                "mtime": int(parts[2]) if parts[2].isdigit() else None,
+                "size": int(parts[1]) if parts[1].isdecimal() else None,
+                "mtime": int(parts[2]) if parts[2].isdecimal() else None,
                 "mode": parts[3][:10],
                 "owner": f"{parts[4][:32]}:{parts[5][:32]}",
             }

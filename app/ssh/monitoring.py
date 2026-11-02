@@ -340,9 +340,9 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     ram_total_bytes: int | None = None
     ram_cache_bytes: int | None = None
     arc_text = sections.get("ZFS_ARC", "").strip()
-    ram_arc_bytes = int(arc_text) if arc_text.isdigit() else None
+    ram_arc_bytes = int(arc_text) if arc_text.isdecimal() else None
     ram_fields = sections.get("RAM_KB", "").split()
-    if len(ram_fields) in (2, 3) and all(f.isdigit() for f in ram_fields):
+    if len(ram_fields) in (2, 3) and all(f.isdecimal() for f in ram_fields):
         total_kb, used_kb = int(ram_fields[0]), int(ram_fields[1])
         ram_total_bytes = total_kb * 1024
         ram_used_bytes = used_kb * 1024
@@ -356,7 +356,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     network_io: list[dict[str, Any]] = []
     for line in sections.get("NET", "").splitlines():
         fields = line.split()
-        if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
+        if len(fields) == 3 and fields[1].isdecimal() and fields[2].isdecimal():
             network_io.append(
                 {"iface": fields[0], "rx_bytes": int(fields[1]), "tx_bytes": int(fields[2])}
             )
@@ -364,7 +364,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     disk_io: list[dict[str, Any]] = []
     for line in sections.get("DISKIO", "").splitlines():
         fields = line.split()
-        if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
+        if len(fields) == 3 and fields[1].isdecimal() and fields[2].isdecimal():
             disk_io.append(
                 {"device": fields[0], "read_bytes": int(fields[1]), "write_bytes": int(fields[2])}
             )
@@ -378,7 +378,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
             continue
         size, used, avail, pcent = fields[-4], fields[-3], fields[-2], fields[-1]
         target = " ".join(fields[:-4])
-        if not (size.isdigit() and used.isdigit() and avail.isdigit()):
+        if not (size.isdecimal() and used.isdecimal() and avail.isdecimal()):
             continue
         filesystems.append(
             {
@@ -386,7 +386,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
                 "size_bytes": int(size),
                 "used_bytes": int(used),
                 "avail_bytes": int(avail),
-                "use_percent": int(pcent.rstrip("%")) if pcent.rstrip("%").isdigit() else None,
+                "use_percent": int(pcent.rstrip("%")) if pcent.rstrip("%").isdecimal() else None,
             }
         )
 
@@ -398,7 +398,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     if failed_lines and failed_lines[0] == "@@OK":
         failed_units = sorted(set(failed_lines[1:]))
         failed_services_count = len(failed_units)
-    elif len(failed_lines) == 1 and failed_lines[0].isdigit():
+    elif len(failed_lines) == 1 and failed_lines[0].isdecimal():
         # The older `wc -l` form.
         failed_services_count = int(failed_lines[0])
 
@@ -550,7 +550,7 @@ def _parse_cpu_energy(raw: str) -> int | None:
     first: int | None = None
     for line in raw.splitlines():
         fields = line.split()
-        if len(fields) != 2 or not fields[1].isdigit():
+        if len(fields) != 2 or not fields[1].isdecimal():
             continue
         value = int(fields[1])
         if first is None:
@@ -591,7 +591,7 @@ def _gpu_display_name(raw_name: str, vendor: str, card_id: str) -> str:
 
 def _int_or_none(value: str) -> int | None:
     value = value.strip()
-    return int(value) if value.isdigit() else None
+    return int(value) if value.isdecimal() else None
 
 
 def _parse_gpus(raw: str) -> list[dict[str, Any]]:
@@ -778,7 +778,7 @@ def _parse_docker(raw: str | None) -> tuple[str | None, list[dict[str, Any]]]:
     net_by_name: dict[str, tuple[int, int]] = {}
     for line in blocks["@@NET"]:
         fields = line.split()
-        if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
+        if len(fields) == 3 and fields[1].isdecimal() and fields[2].isdecimal():
             net_by_name[fields[0]] = (int(fields[1]), int(fields[2]))
 
     containers: list[dict[str, Any]] = []
@@ -843,7 +843,7 @@ def _parse_docker_events(raw: str | None) -> tuple[int | None, list[dict[str, An
     if raw is None or "@@EVENTS" not in raw:
         return None, []
     lines = [line.strip() for line in raw.split("@@EVENTS", 1)[1].splitlines() if line.strip()]
-    if not lines or not lines[0].isdigit():
+    if not lines or not lines[0].isdecimal():
         return None, []
     clock = int(lines[0])
     events: list[dict[str, Any]] = []
@@ -870,7 +870,7 @@ def _parse_docker_events(raw: str | None) -> tuple[int | None, list[dict[str, An
             {
                 "action": action.removeprefix("health_status: "),
                 "name": name,
-                "exit_code": int(exit_code) if exit_code.isdigit() else None,
+                "exit_code": int(exit_code) if exit_code.isdecimal() else None,
                 "image": str(attributes.get("image") or row.get("from") or "")[:512],
                 "time": int(when) if isinstance(when, int | float) else None,
             }

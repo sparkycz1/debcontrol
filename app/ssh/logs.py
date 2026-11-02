@@ -269,12 +269,12 @@ def parse_journal_json(raw: str) -> tuple[list[JournalEntry], str | None, str | 
         timestamp_text = texts.get("__REALTIME_TIMESTAMP", "")
         entries.append(
             JournalEntry(
-                timestamp_us=int(timestamp_text) if timestamp_text.isdigit() else None,
+                timestamp_us=int(timestamp_text) if timestamp_text.isdecimal() else None,
                 hostname=texts.get("_HOSTNAME", ""),
                 identifier=texts.get("SYSLOG_IDENTIFIER") or texts.get("_COMM", ""),
                 pid=texts.get("_PID", ""),
                 message=texts.get("MESSAGE", ""),
-                priority=int(priority_text) if priority_text.isdigit() else None,
+                priority=int(priority_text) if priority_text.isdecimal() else None,
                 fields=texts,
             )
         )

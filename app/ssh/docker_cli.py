@@ -162,7 +162,7 @@ def parse_wrapped(raw: str) -> CommandOutput:
     exit_status: int | None = None
     if lines and lines[-1].startswith(EXIT_MARKER):
         code = lines[-1][len(EXIT_MARKER) :].strip()
-        exit_status = int(code) if code.lstrip("-").isdigit() else None
+        exit_status = int(code) if code.lstrip("-").isdecimal() else None
         lines = lines[:-1]
     return CommandOutput(exit_status=exit_status, output="\n".join(lines))
 

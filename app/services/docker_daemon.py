@@ -169,7 +169,7 @@ def clean(raw: dict[str, Any]) -> dict[str, Any]:
         out["log_max_size"] = size
     files = str(raw.get("log_max_file") or "").strip()
     if files:
-        if not files.isdigit() or not 1 <= int(files) <= 100:
+        if not files.isdecimal() or not 1 <= int(files) <= 100:
             raise DaemonSettingsError("log_max_file", "docker.settings.error.files")
         out["log_max_file"] = int(files)
     if (size or files) and driver not in ("", *ROTATING_DRIVERS):
@@ -270,7 +270,7 @@ def managed_view(daemon: dict[str, Any] | None) -> dict[str, Any]:
     opts = _dict(daemon.get("log-opts"))
     if opts.get("max-size"):
         view["log_max_size"] = str(opts["max-size"]).lower()[:20]
-    if str(opts.get("max-file") or "").isdigit():
+    if str(opts.get("max-file") or "").isdecimal():
         view["log_max_file"] = int(str(opts["max-file"]))
     for key, name in (("live-restore", "live_restore"), ("no-new-privileges", "no_new_privileges")):
         if isinstance(daemon.get(key), bool):

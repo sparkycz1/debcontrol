@@ -124,7 +124,7 @@ def _url_host(address: str) -> str | None:
 def _https_ports(labels: dict[str, str]) -> set[int]:
     ports = set(_HTTPS_PORTS)
     for piece in labels.get("debcontrol.https", "").split(","):
-        if piece.strip().isdigit():
+        if piece.strip().isdecimal():
             ports.add(int(piece.strip()))
     return ports
 
@@ -192,7 +192,7 @@ def _caddy_links(labels: dict[str, str]) -> list[WebLink]:
     for key, value in labels.items():
         # `caddy`, `caddy_0`, `caddy_1` — the site address; not the
         # directives under it (`caddy.reverse_proxy`).
-        if key != "caddy" and not (key.startswith("caddy_") and key[6:].isdigit()):
+        if key != "caddy" and not (key.startswith("caddy_") and key[6:].isdecimal()):
             continue
         for address in re.split(r"[,\s]+", value):
             scheme = "https"

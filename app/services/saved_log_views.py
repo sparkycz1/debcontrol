@@ -40,7 +40,7 @@ def build_log_query_string(params: dict[str, str]) -> str:
             value = normalize_priority(value)
             if not value:
                 continue
-        if key == "lines" and not value.isdigit():
+        if key == "lines" and not value.isdecimal():
             continue
         if key == "unit":
             value = normalize_unit(value)

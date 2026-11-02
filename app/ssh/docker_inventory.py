@@ -265,7 +265,7 @@ def _parse_volumes(
                 links = row.get("Links")
                 sizes[_s(row.get("Name"), 255)] = (
                     _size(row.get("Size")),
-                    int(str(links)) if str(links).isdigit() else None,
+                    int(str(links)) if str(links).isdecimal() else None,
                 )
     used_by: dict[str, list[str]] = {}
     for container in containers:
@@ -425,7 +425,7 @@ def _parse_df(text: str) -> dict[str, dict[str, Any]]:
         reclaimable = _s(row.get("Reclaimable"), 64).split("(")[0].strip()
 
         def count(value: Any) -> int | None:
-            return int(value) if str(value).isdigit() else None
+            return int(value) if str(value).isdecimal() else None
 
         usage[key] = {
             "total": count(row.get("TotalCount")),

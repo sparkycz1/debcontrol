@@ -285,7 +285,7 @@ async def describe(session: AsyncSession) -> dict[str, Any] | None:
     compress_after = {}
     for name, value in rows.all():
         days = str(value or "").split(" ", 1)[0]
-        compress_after[name] = int(days) if days.isdigit() else None
+        compress_after[name] = int(days) if days.isdecimal() else None
     return {"version": version, "compress_after_days": compress_after}
 
 

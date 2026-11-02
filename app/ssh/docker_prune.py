@@ -126,7 +126,7 @@ def parse_removed_counts(raw: str) -> dict[str, int]:
         stripped = line.strip()
         if stripped.startswith("@@DC_IMAGES_REMOVED "):
             value = stripped.split(" ", 1)[1]
-            if value.isdigit():
+            if value.isdecimal():
                 images_removed = int(value)
             listing = False
         elif stripped.startswith("@@DC_PRUNE "):
