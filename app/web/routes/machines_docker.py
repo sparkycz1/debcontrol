@@ -73,7 +73,6 @@ from app.web.routes.machines_docker_common import (
     render_partial,
     wait_task,
 )
-from app.web.templating import t
 from app.web.time_window import window_from_query, window_query
 
 router = machines_router()
@@ -1609,7 +1608,3 @@ async def docker_job_cancel(
         details={"job": str(job.id), "kind": job.kind, "target": job.target, "was": outcome},
     )
     return redirect(back, notice=LocalizedText(request, f"docker.job.cancel_{outcome}"))
-
-
-def job_label(request: Request, job: DockerJob) -> str:
-    return t(request, f"docker.job.kind.{job.kind}")

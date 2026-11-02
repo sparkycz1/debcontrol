@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import shlex
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
 
 import asyncssh
 
@@ -258,13 +257,6 @@ def parse_output(check: EndpointCheck, output: str) -> ProbeResult:
         )
     result.latency_ms = elapsed
     return result
-
-
-def source_host(check: EndpointCheck) -> str:
-    """The host a check talks to — for messages."""
-    if check.kind == "http":
-        return urlsplit(check.target).hostname or check.target
-    return check.target
 
 
 async def probe_from_machine(

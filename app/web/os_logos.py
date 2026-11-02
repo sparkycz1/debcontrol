@@ -27,13 +27,17 @@ To add a distribution: drop `<slug>.svg` (a Simple Icons file, or any
 single-path 24x24 SVG) into `app/web/static/img/os/`, then add an entry
 to `_BADGES` below via `_badge(..., icon="<slug>.svg")`.
 
-Rendered by `partials/_os_badge.html` (an inline `<svg>`, matching this
-app's "no external icon fonts/images, CSP-safe" convention elsewhere —
-see `macros/charts.html`'s own docstring for the same reasoning). The
-`<g>` returned by `glyph` is placed inside a 20x20 viewBox circle already
-drawn by that macro — built here from files this module controls, never
-from anything a machine reports, so the macro's `| safe` on it carries no
-injection risk.
+Rendered by `partials/_os_badge.html`: a small inline `<svg>` with the
+colored circle, plus `<use href=".../os-badges.svg#<symbol>">` for the
+mark. The marks live once in the static sprite
+`app/web/static/img/os-badges.svg` (built by `sprite_svg()` below), so a
+page listing hundreds of machines doesn't repeat a ~3 KB path per machine
+and the browser caches the sprite like any other static file (same
+origin, so the strict CSP allows it). After adding or changing an icon,
+regenerate it with `uv run python -m app.web.os_logos`;
+`tests/test_os_logos.py` fails while the committed sprite is stale. Built
+only from files this module controls, never from anything a machine
+reports.
 """
 
 from __future__ import annotations
@@ -56,10 +60,13 @@ _ICON_OFFSET = (20 - 24 * _ICON_SCALE) / 2
 _PATH_D_RE = re.compile(r'<path[^>]*\sd="([^"]+)"')
 
 
+SPRITE_PATH = "img/os-badges.svg"  # relative to app/web/static/
+
+
 @lru_cache
 def _load_icon_glyph(filename: str) -> str:
     """Read one `<path>` out of `app/web/static/img/os/<filename>` and
-    return it as ready-to-inline `<g>` markup (see module docstring)."""
+    return it as `<g>` markup for the sprite (see module docstring)."""
     svg = (_ICON_DIR / filename).read_text(encoding="utf-8")
     match = _PATH_D_RE.search(svg)
     if match is None:
@@ -78,6 +85,7 @@ class OsBadge:
     initials: str = ""  # Shown when there's no `icon` artwork for this OS.
     glyph: str = ""  # Raw inner SVG markup (see module docstring); empty
     # means "fall back to `initials`" — set by `_badge` below.
+    symbol: str = ""  # Sprite symbol id (`os-<icon stem>`), empty with no glyph.
 
 
 def _badge(label: str, color: str, *, initials: str = "", icon: str = "") -> OsBadge:
@@ -86,6 +94,7 @@ def _badge(label: str, color: str, *, initials: str = "", icon: str = "") -> OsB
         color=color,
         initials=initials or label[:2],
         glyph=_load_icon_glyph(icon) if icon else "",
+        symbol=f"os-{Path(icon).stem}" if icon else "",
     )
 
 
@@ -129,3 +138,21 @@ def badge_for(os_id: str | None) -> OsBadge:
     if not os_id:
         return FALLBACK_BADGE
     return _BADGES.get(os_id.strip().lower(), FALLBACK_BADGE)
+
+
+def sprite_svg() -> str:
+    """The whole `app/web/static/img/os-badges.svg` sprite: one `<symbol>`
+    per distinct mark, in a stable order."""
+    symbols: dict[str, str] = {}
+    for badge in (*_BADGES.values(), FALLBACK_BADGE):
+        if badge.symbol:
+            symbols.setdefault(badge.symbol, badge.glyph)
+    body = "".join(
+        f'<symbol id="{symbol}" viewBox="0 0 20 20">{glyph}</symbol>\n'
+        for symbol, glyph in sorted(symbols.items())
+    )
+    return f'<svg xmlns="http://www.w3.org/2000/svg">\n{body}</svg>\n'
+
+
+if __name__ == "__main__":  # pragma: no cover - `python -m app.web.os_logos`
+    (_ICON_DIR.parent / "os-badges.svg").write_text(sprite_svg(), encoding="utf-8")

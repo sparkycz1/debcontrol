@@ -27,6 +27,7 @@ from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Any
 
+import asyncssh
 import pytest
 import pytest_asyncio
 from argon2 import PasswordHasher
@@ -103,6 +104,26 @@ def _fresh_sign_in_policy() -> Iterator[None]:
     yield
     session_policy.invalidate()
     invalidate_ai_availability()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ssh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test ever opens a real SSH connection: one that forgot to fake
+    the SSH side fails at once instead of waiting out the connect
+    timeout against a made-up address (loopback stays allowed for the
+    tests that start their own SSH server). A test that fakes
+    `asyncssh.connect` itself still wins (its patch comes later)."""
+
+    real_connect = asyncssh.connect
+
+    async def refuse(*args: Any, **kwargs: Any) -> Any:
+        host = args[0] if args else kwargs.get("host")
+        if host in ("127.0.0.1", "localhost", "::1"):
+            # test_ssh_client runs its own asyncssh server on loopback.
+            return await real_connect(*args, **kwargs)
+        raise OSError("tests never open a real SSH connection")
+
+    monkeypatch.setattr(asyncssh, "connect", refuse)
 
 
 @pytest.fixture(autouse=True)

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.main import app
 from app.web.routes import live_ws
 
@@ -106,6 +108,29 @@ def test_the_fleet_route_is_matched_before_the_per_machine_one():
 def test_the_machine_list_opts_into_live_fleet_updates():
     template = (_TEMPLATES_DIR / "machines" / "list.html").read_text(encoding="utf-8")
     assert "js/live-fleet.js" in template
-    assert 'id="machine-results" data-live-fleet' in template
-    assert '"machine-results"' in _LIVE_FLEET_JS
+    assert 'id="machine-results" data-live-fleet data-live-kinds="status,updates"' in template
     assert '"[data-live-fleet]"' in _LIVE_FLEET_JS
+
+
+@pytest.mark.parametrize(
+    ("path", "marker"),
+    [
+        (
+            "partials/fleet_grid.html",
+            'data-live-kinds="status,updates" data-live-url="/fleet/cards"',
+        ),
+        (
+            "docker/containers.html",
+            'id="fleet-containers-live" data-live-fleet data-live-kinds="docker"',
+        ),
+        ("docker/settings.html", 'id="machines" data-live-fleet data-live-kinds="docker"'),
+    ],
+)
+def test_fleet_pages_opt_into_live_fleet_updates(path: str, marker: str) -> None:
+    template = (_TEMPLATES_DIR / path).read_text(encoding="utf-8")
+    assert marker in template
+
+
+def test_live_fleet_refreshes_only_for_the_kinds_a_block_wants() -> None:
+    assert "data-live-kinds" in _LIVE_FLEET_JS
+    assert "data-live-url" in _LIVE_FLEET_JS

@@ -52,3 +52,33 @@ def test_distro_with_no_upstream_mark_falls_back_to_initials_only():
     devuan = badge_for("devuan")
     assert devuan.glyph == ""
     assert devuan.initials == "De"
+
+
+def test_committed_sprite_is_up_to_date():
+    """Regenerate with `uv run python -m app.web.os_logos`."""
+    from pathlib import Path
+
+    from app.web.os_logos import SPRITE_PATH, sprite_svg
+
+    committed = Path("app/web/static", SPRITE_PATH).read_text(encoding="utf-8")
+    assert committed == sprite_svg()
+
+
+def test_every_badge_with_a_mark_has_its_symbol_in_the_sprite():
+    from app.web.os_logos import _BADGES, sprite_svg
+
+    sprite = sprite_svg()
+    for badge in (*_BADGES.values(), FALLBACK_BADGE):
+        if badge.glyph:
+            assert f'<symbol id="{badge.symbol}"' in sprite
+
+
+async def test_machine_list_references_the_sprite_instead_of_inlining_paths(
+    client, db_session_factory
+):
+    from tests.test_onboarding import _make_machine
+
+    await _make_machine(db_session_factory)
+    response = await client.get("/machines")
+    assert "img/os-badges.svg?v=" in response.text
+    assert "<path d=" not in response.text.split('class="os-badge"', 1)[1][:600]

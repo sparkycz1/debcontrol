@@ -78,10 +78,12 @@ async def _publish(channel: str, kind: Kind) -> None:
 
 
 async def publish_machine_event(machine_id: str, kind: Kind) -> None:
-    """Rings one machine's channel — and, for a change the machine list
-    shows (update availability), the fleet channel too."""
+    """Rings one machine's channel — and, for a change a fleet page shows
+    (update availability on the machine list and dashboard, a finished
+    Docker job on Docker -> Containers and Settings), the fleet channel
+    too."""
     await _publish(channel_for(machine_id), kind)
-    if kind == KIND_UPDATES:
+    if kind in (KIND_UPDATES, KIND_DOCKER):
         await publish_fleet_event(kind)
 
 

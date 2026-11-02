@@ -94,7 +94,7 @@
       </th>
     {%- endmacro %}
 
-    <div class="table-cards-wrap fleet-docker-table-wrap">
+    <div class="table-cards-wrap fleet-docker-table-wrap" id="fleet-containers-live" data-live-fleet data-live-kinds="docker">
       <table class="data-table containers-table table-cards" id="fleet-containers-table">
         <thead>
           <tr>
@@ -205,4 +205,8 @@
   {% else %}
     <p class="hint">{{ t(request, "docker_fleet.none") }}</p>
   {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/live-fleet.js') }}" defer></script>
 {% endblock %}

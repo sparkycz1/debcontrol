@@ -118,7 +118,7 @@
     {% endif %}
   </form>
 
-  <section class="panel" id="machines">
+  <section class="panel" id="machines" data-live-fleet data-live-kinds="docker">
     <h2>{{ t(request, "docker.settings.machines") }}</h2>
     <p class="hint">{{ t(request, "docker.settings.machines_hint") }}</p>
     {% if (can_apply and configured and status_rows) or (can_restart and pending) %}
@@ -173,4 +173,8 @@
       </div>
     {% endif %}
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/live-fleet.js') }}" defer></script>
 {% endblock %}

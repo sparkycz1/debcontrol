@@ -1,5 +1,5 @@
 // Fleet page (fleet/index.html): the name filter box, re-applied after
-// the grid's own 60 s htmx refresh swaps in fresh cards.
+// the grid's own 60 s htmx refresh (or live-fleet.js) swaps in fresh cards.
 (function () {
   const box = document.querySelector("[data-fleet-filter]");
   if (!box) return;
@@ -13,4 +13,5 @@
 
   box.addEventListener("input", apply);
   document.addEventListener("htmx:afterSwap", apply);
+  document.addEventListener("live:swapped", apply); // live-fleet.js
 })();

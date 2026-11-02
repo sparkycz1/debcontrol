@@ -81,11 +81,6 @@ _EXTENSION_SQL = text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname =
 _enabled: bool | None = None
 
 
-def reset_cache() -> None:
-    global _enabled
-    _enabled = None
-
-
 async def enabled(session: AsyncSession) -> bool:
     """Whether this database has the TimescaleDB extension."""
     global _enabled

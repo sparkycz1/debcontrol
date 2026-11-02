@@ -9,9 +9,7 @@ from app.ssh import updates as updates_module
 from app.ssh.updates import (
     build_update_command,
     parse_apt_upgradable_packages,
-    parse_flatpak_upgradable_output,
     parse_flatpak_upgradable_packages,
-    parse_snap_upgradable_output,
     parse_snap_upgradable_packages,
     parse_upgradable_output,
     run_system_update,
@@ -115,7 +113,7 @@ def test_parse_upgradable_output_missing_marker():
     assert security == 0
 
 
-def test_parse_flatpak_upgradable_output_counts_and_dedupes():
+def test_parse_flatpak_upgradable_packages_counts_and_dedupes():
     raw = (
         "===APT_UPGRADABLE===\n"
         "===FLATPAK_UPGRADABLE===\n"
@@ -125,16 +123,16 @@ def test_parse_flatpak_upgradable_output_counts_and_dedupes():
         "===SNAP_UPGRADABLE===\n"
     )
 
-    assert parse_flatpak_upgradable_output(raw) == 2
+    assert len(parse_flatpak_upgradable_packages(raw)) == 2
 
 
-def test_parse_flatpak_upgradable_output_not_installed():
+def test_parse_flatpak_upgradable_packages_not_installed():
     raw = "===APT_UPGRADABLE===\n===FLATPAK_UPGRADABLE===\n===SNAP_UPGRADABLE===\n"
 
-    assert parse_flatpak_upgradable_output(raw) == 0
+    assert len(parse_flatpak_upgradable_packages(raw)) == 0
 
 
-def test_parse_snap_upgradable_output_counts():
+def test_parse_snap_upgradable_packages_counts():
     raw = (
         "===APT_UPGRADABLE===\n"
         "===FLATPAK_UPGRADABLE===\n"
@@ -143,13 +141,13 @@ def test_parse_snap_upgradable_output_counts():
         "lxd\n"
     )
 
-    assert parse_snap_upgradable_output(raw) == 2
+    assert len(parse_snap_upgradable_packages(raw)) == 2
 
 
-def test_parse_snap_upgradable_output_not_installed():
+def test_parse_snap_upgradable_packages_not_installed():
     raw = "===APT_UPGRADABLE===\n===FLATPAK_UPGRADABLE===\n===SNAP_UPGRADABLE===\n"
 
-    assert parse_snap_upgradable_output(raw) == 0
+    assert len(parse_snap_upgradable_packages(raw)) == 0
 
 
 def test_parse_apt_upgradable_packages_extracts_names_and_versions():
