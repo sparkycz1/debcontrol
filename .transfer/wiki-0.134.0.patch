@@ -1,0 +1,333 @@
+From 8dcf3444f4ab89acbe92b91105145bd7c7aaed71 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 17:01:31 +0000
+Subject: [PATCH] =?UTF-8?q?Docker:=20Docker=20=E2=86=92=20Settings=20(daem?=
+ =?UTF-8?q?on.json=20and=20defaults),=20row=20actions=20menu,=20pause/resu?=
+ =?UTF-8?q?me,=20fleet=20update=20all=20(0.134.0)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ Docker.md   | 173 ++++++++++++++++++++++++++++++++++++++++++++--------
+ Home.md     |   2 +-
+ REST-API.md |  13 +++-
+ 3 files changed, 158 insertions(+), 30 deletions(-)
+
+diff --git a/Docker.md b/Docker.md
+index f14bafe..d194a1e 100644
+--- a/Docker.md
++++ b/Docker.md
+@@ -55,6 +55,15 @@
+ - **Move or clone a stack to another machine** (0.133.0+), with its
+   volumes and files, streamed through debcontrol
+   ([below](#moving-or-cloning-a-stack-to-another-machine)).
++- **Docker → Settings** (0.134.0+): the `daemon.json` keys that should be
++  the same everywhere - log rotation, live restore, address pools,
++  mirrors, DNS, no-new-privileges, build cache - written to the machines
++  with a backup and checked by `dockerd`, Docker restarted only on a
++  button; plus defaults for new containers and stacks
++  ([below](#docker-settings-daemonjson-and-defaults)).
++- **Every row has an actions menu** (⋯, 0.134.0+): start, stop, restart,
++  pause, resume, update, remove, logs, shell - in the fleet table and on
++  a machine's Containers page.
+ 
+ ![A machine's Docker tab: containers, their images, vulnerabilities and status](images/docker.png)
+ 
+@@ -69,9 +78,16 @@ entry once some machine has reported Docker. Its second tab links to
+ 
+ - **Columns**: machine (and its group), container (with its stack and
+   auto-update badge), ports / links, image (with *newer image* when one
+-  exists), vulnerability counts of the stored scan, status. Every column
+-  but ports sorts with a click on its heading; sorted by machine, a
+-  machine's name repeats muted.
++  exists), vulnerability counts of the stored scan, status, CPU · memory
++  (0.134.0+, from the same sample; hidden on half a screen). Every column
++  but ports and CPU · memory sorts with a click on its heading; sorted by
++  machine, a machine's name repeats muted.
++- **The ⋯ menu** at the end of each row (0.134.0+) offers what fits the
++  container's state - *Start* for a stopped one, *Restart* / *Pause* /
++  *Stop* for a running one, *Resume* / *Stop* for a paused one, *Update*
++  when a newer image exists, *Remove* for a stopped one - and links to
++  its page, logs and shell. Each item runs the same code and permission
++  check as the bulk buttons below, for that one container.
+ - **Filters** (a plain GET form, so a filtered view can be bookmarked):
+   text (machine, container, image, stack, ports, group), machine group,
+   *critical* or *critical or high* vulnerabilities, *newer image
+@@ -81,12 +97,19 @@ entry once some machine has reported Docker. Its second tab links to
+ - **100 rows per page.** For very large fleets the list stops at 20,000
+   containers and says so.
+ - **Several containers at once**: tick rows on any machines and *Start* /
+-  *Restart* / *Stop* (`action.power`), *Update selected* or *Scan
+-  images* (`action.updates`). The action runs machine by machine through
+-  exactly the code of each machine's own bulk buttons (same checks,
+-  debcontrol's own containers left out, one audit entry per container).
+-  *Remove* stays on a machine's own page. A machine whose host key isn't
+-  confirmed has no checkboxes.
++  *Restart* / *Stop*, under *More* *Pause* / *Resume* / *Autoheal on* /
++  *Autoheal off* (`action.power`), *Update selected*, *Scan images* or
++  *Remove* (stopped ones only; `action.updates`) - the same buttons as on
++  a machine's page ([below](#several-containers-at-once)). The action
++  runs machine by machine through exactly the code of each machine's own
++  bulk buttons (same checks, debcontrol's own containers left out, one
++  audit entry per container). A machine whose host key isn't confirmed
++  has no checkboxes.
++- **Update all with a newer image (N)** (0.134.0+, `action.updates`) in
++  the page header queues an update job for every container on every
++  visible machine whose image has a newer version (from the last image
++  check), machine by machine - as if each machine's own *Update all*
++  button was pressed.
+ - Only machines whose Docker was readable at the last sample are listed.
+ 
+ ## Containers
+@@ -94,11 +117,11 @@ entry once some machine has reported Docker. Its second tab links to
+ The **Containers** page is the container list of the latest monitoring
+ sample (how it is collected: [Monitoring](Monitoring#docker-containers)):
+ name, ports and links, image (with the newer version if one exists),
+-vulnerability counts and status, plus each container's auto-update badge
+-and last update job. CPU, memory, network and disk I/O are not columns,
+-so the table fits the page: they are in the **Docker CPU, memory,
+-network and disk I/O charts** per container above it, with the same
+-time-range picker and drag-to-zoom as the Monitoring tab.
++vulnerability counts, status and CPU · memory of the last sample, plus
++each container's auto-update badge and last update job. Their history -
++CPU, memory, network and disk I/O - is in the **Docker charts** per
++container above the table, with the same time-range picker and
++drag-to-zoom as the Monitoring tab.
+ 
+ - **State tiles** above the table count the containers per state
+   (*Running*, *Unhealthy* - a failing health check wins over "running" -,
+@@ -115,9 +138,12 @@ time-range picker and drag-to-zoom as the Monitoring tab.
+   1000 px the counts move under the image instead of taking a column;
+   below about 700 px (a phone) every row of every Docker table turns into
+   a card with "column: value" lines.
+-- *Start*, *Stop*, *Restart* (`action.power`) under each container's name
+-  work as before (`POST /machines/{id}/containers/{name}/{action}`,
+-  audited as `machine.container.<action>`).
++- *Start*, *Stop*, *Restart*, *Pause* and *Resume* (`action.power`) are
++  in each row's ⋯ menu and on the container's page
++  (`POST /machines/{id}/containers/{name}/{action}`, audited as
++  `machine.container.<action>`). Pausing freezes the container's
++  processes (`docker pause`) without stopping it; debcontrol's own
++  containers can't be paused.
+ - *Check image updates* (`machine.manage`) runs the registry-digest
+   comparison described on [Monitoring](Monitoring#docker-containers) now;
+   on its own it runs every *Docker image update check* hours (Settings →
+@@ -137,15 +163,18 @@ one container:
+ | Button | What it does | Permission |
+ |---|---|---|
+ | *Start* / *Restart* / *Stop* | one `docker start/restart/stop` for all the selected containers | `action.power` |
++| *More → Pause* / *Resume* (0.134.0+) | `docker pause` / `docker unpause` | `action.power` |
++| *More → Autoheal on* / *off* (0.134.0+) | switches [autoheal](#autoheal) for each selected container, keeping its hourly limit | `action.power` |
+ | *Update selected* | one update job per container, as below | `action.updates` |
+ | *Scan images* | one scan job of the selected containers' images | `action.updates` |
+ | *Remove* | `docker rm` of the selected containers - **stopped ones only**: docker refuses a running one, so stop it first; volumes and images stay | `action.updates` |
+ 
+ debcontrol's own containers have no checkbox, and are left out of
+-everything but *Start* even when asked for over the API (audited as a
+-refusal). Start/stop/restart/remove wait for docker's answer and report
++everything but *Start* and *Resume* even when asked for over the API
++(audited as a refusal). Start/stop/restart/pause/resume/remove wait for docker's answer and report
+ it, like a single container's buttons; each container gets its own audit
+-entry (`machine.container.start` / `.stop` / `.restart` / `.remove`).
++entry (`machine.container.start` / `.stop` / `.restart` / `.pause` /
++`.unpause` / `.remove`).
+ 
+ ### Resource limits
+ 
+@@ -534,6 +563,77 @@ command
+ and stored on the machine (`Machine.docker_host_check`); the Containers
+ page links to it when it found warnings.
+ 
++When [Docker → Settings](#docker-settings-daemonjson-and-defaults) apply
++to the machine, the page also has a **Docker → Settings on this machine**
++panel: each managed key that differs (what the machine's `daemon.json`
++has, what the settings want), whether a Docker restart is waiting, and
++*Write daemon.json* / *Restart Docker* for this machine alone.
++
++## Docker settings (daemon.json and defaults)
++
++**Docker → Settings** (`/docker/settings`, 0.134.0+;
++[`app/services/docker_daemon.py`](https://github.com/sparkycz1/debcontrol/blob/main/app/services/docker_daemon.py))
++keeps the Docker Engine set up the same way on every machine - or only
++on the machine groups ticked under *Machines* - and sets the defaults
++for containers debcontrol sees for the first time.
++
++**The `daemon.json` keys.** Each field left on *Keep as it is* (or
++empty) is not managed: debcontrol changes only the keys set here and
++keeps everything else in `/etc/docker/daemon.json` as it is.
++
++| Setting | `daemon.json` | Notes |
++|---|---|---|
++| Log driver | `log-driver` | `json-file` (Docker's default), `local` (compressed, recommended), `journald` |
++| Maximum size of one file / Files kept | `log-opts.max-size` / `max-file` | e.g. `20m` and `5`: at most 100 MB per container; only for `json-file` and `local` |
++| Live restore | `live-restore` | containers keep running while the daemon restarts or is upgraded (not with Swarm) |
++| No new privileges | `no-new-privileges` | processes in containers can't gain rights (setuid, sudo) |
++| Build cache kept | `builder.gc.defaultKeepStorage` (and `enabled`) | e.g. `20GB` |
++| Address pools for new networks | `default-address-pools` | one per line, `10.210.0.0/16 24`: a private IPv4 range and network size (prefix to /29), at most 10 - keeps Docker off your LAN or VPN addresses |
++| DNS servers for containers | `dns` | up to 4 IP addresses |
++| Docker Hub mirrors | `registry-mirrors` | up to 5 `http(s)://` addresses without a user name or password |
++
++Docker reads most of these only when it restarts, and the log settings
++and address pools apply to containers and networks created afterwards.
++
++**Writing and restarting are two steps.** *Save* only stores the
++settings (`settings.manage`; not for an account limited to some machine
++groups, since they are for the whole fleet). Under *Where the machines
++stand* every machine in scope shows whether it matches (from its last
++[host check](#the-docker-host-check)), what differs, and whether a
++restart is waiting:
++
++- **Write to machines (N)** (`settings.manage` + `action.terminal`; also
++  *Write daemon.json* on one machine's Host page, `action.terminal`)
++  queues a *Write daemon.json* job per machine. It reads the current
++  file (an unreadable or invalid one is never written over), merges the
++  managed keys in, and - when something changes - checks the new file
++  with `dockerd --validate` (Docker 23+; older says it couldn't), copies
++  the old one to `daemon.json.debcontrol.bak` and installs the new one
++  as root (`sudo -n`; a no-op for root). The file goes over standard
++  input, never into a command line. Docker is not restarted; the machine
++  shows *Restart needed*.
++- **Restart Docker where waiting (N)** (`action.power`; also *Restart
++  Docker* on one machine's Host page) queues a *Docker restart* job per
++  such machine: `systemctl restart docker` (or `service`), then waits up
++  to 90 s for `docker info`. If Docker doesn't come back, the backup is
++  put back and Docker restarted again, and the job fails saying so.
++  Containers without live restore stop for a moment and start again per
++  their restart policy. **The machine debcontrol runs on is never
++  restarted this way** - restart Docker there yourself
++  (`sudo systemctl restart docker`) when convenient.
++
++**Defaults for new containers.** *Automatic updates* (off, or patch /
++minor / any), *Vulnerability gate* and *Autoheal for containers with a
++health check*. A container gets them the first time a monitoring sample
++sees it (never one that existed before, never debcontrol's own, and
++autoheal only when it has a health check); a container's own settings,
++once changed, always win. A new stack's form starts with the default
++gate.
++
++Audited as `docker.settings.update` (what changed), `docker.settings.apply`
++(how many machines) and per machine `machine.docker.daemon.apply` /
++`machine.docker.daemon.restart`.
++
+ ## Volumes and networks
+ 
+ **Volumes** lists every volume with its driver, which containers use it
+@@ -1201,11 +1301,12 @@ the same on the web pages and in the REST API
+ | Permission | On the Docker tab |
+ |---|---|
+ | `machine.view` | every page: containers, charts, images and scans, volumes, networks, stacks, backups and their snapshots, the host check, jobs |
+-| `action.power` | start / stop / restart a container (one or the selected ones, also across the fleet); start / stop / restart / down a Compose project; a container's autoheal setting; the scheduled *Start / stop / restart Docker containers* (with `scheduling.manage`) |
+-| `action.updates` | remove the selected (stopped) containers, update and roll back containers (also selected across the fleet), change a container's memory / CPU limits and restart policy, pull / tag / remove an image, auto-update, update-policy and vulnerability-gate settings, accepting a container vulnerability (Security → Container vulnerabilities; not for an account limited to some machine groups), image scans, clean-up, deploy a stack, roll a stack back to a kept version (with `action.terminal`), up / pull & recreate a Compose project, *Check Git now*, *Check drift*, back up now, check and prune backups, test restore, cancelling the jobs these start |
++| `action.power` | start / stop / restart / pause / resume a container (one or the selected ones, also across the fleet); autoheal on / off for the selected ones; restarting Docker after Docker → Settings; start / stop / restart / down a Compose project; a container's autoheal setting; the scheduled *Start / stop / restart Docker containers* (with `scheduling.manage`) |
++| `action.updates` | remove the selected (stopped) containers (also across the fleet), update and roll back containers (also selected across the fleet, and *Update all with a newer image* across the fleet), change a container's memory / CPU limits and restart policy, pull / tag / remove an image, auto-update, update-policy and vulnerability-gate settings, accepting a container vulnerability (Security → Container vulnerabilities; not for an account limited to some machine groups), image scans, clean-up, deploy a stack, roll a stack back to a kept version (with `action.terminal`), up / pull & recreate a Compose project, *Check Git now*, *Check drift*, back up now, check and prune backups, test restore, cancelling the jobs these start |
+ | `action.terminal` + `action.updates` | moving or cloning a stack to another machine (and cancelling that job) |
+ | `action.terminal` | the container shell, the file browser, a stack's compose file, `.env` and directory (create, edit, delete a stack), Git sources, deploy keys and the webhook, *Check changes* and its output, a kept version's compose file, viewing and editing a project's compose files, backup settings (including the commands around a backup), their export and import, and restores; the file browser's folder upload and download; adopting a Compose project, making a stack from a `docker run` container, taking a stack's files over from the machine; Docker → Registries and Docker → Variables (an account limited to some groups: only its groups' and machines' entries) |
+ | `machine.manage` | *Check image updates* (as before), which also refreshes the host check |
++| `settings.view` / `settings.manage` | seeing / saving Docker → Settings; with `action.terminal` writing its `daemon.json` keys to the machines (one machine's Host page: `action.terminal`) |
+ | `scheduling.manage` | the scheduled Docker tasks |
+ 
+ `action.terminal` is the line for anything that decides *what* runs or
+@@ -1266,7 +1367,10 @@ host path into a container, and a restore overwrites data.
+ 
+ | Code | When |
+ |---|---|
+-| `machine.container.start` / `.stop` / `.restart` / `.remove` | a container started, stopped, restarted, removed (one entry per container, also for the selected ones; refused for debcontrol's own) |
++| `machine.container.start` / `.stop` / `.restart` / `.pause` / `.unpause` / `.remove` | a container started, stopped, restarted, paused, resumed, removed (one entry per container, also for the selected ones; refused for debcontrol's own) |
++| `docker.settings.update` | Docker → Settings saved (`changed`: which settings) |
++| `docker.settings.apply` | *Write to machines* (`count`) |
++| `machine.docker.daemon.apply` / `.restart` | a *Write daemon.json* / *Docker restart* job queued for a machine |
+ | `machine.container.shell.open` / `.close` | a shell inside a container |
+ | `machine.container.resources` | a container's memory / CPU limits or restart policy changed (or refused for debcontrol's own) |
+ | `machine.docker.container.autoheal` | autoheal restarted an unhealthy container (`result: restarted`) or gave up for this hour (`gave_up`, outcome failure) |
+@@ -1314,8 +1418,23 @@ The full list is on [REST API](REST-API#docker).
+   filters (`q`, `state`, `group`, `update`, `vulns`, `stack`, `sort`,
+   `desc`, `page`) and answers the rows with a `key`
+   (`<machine id>/<container>`); `POST /api/v1/docker/containers/bulk`
+-  `{action: start|stop|restart|update|scan, containers: [key, ...]}`
+-  answers `done`, per-machine `errors` and the `scan_jobs` started.
++  `{action: start|stop|restart|pause|unpause|update|scan|remove|autoheal_on|autoheal_off,
++  containers: [key, ...]}` answers `done`, per-machine `errors` and the
++  `scan_jobs` started; `POST /api/v1/docker/containers/update-all`
++  (0.134.0+, `action.updates`) answers `{ok, queued, errors}`. A
++  machine's own `POST .../containers/bulk` takes the same actions.
++- Docker → Settings (0.134.0+,
++  [`api_v1_docker_settings.py`](https://github.com/sparkycz1/debcontrol/blob/main/app/web/routes/api_v1_docker_settings.py)):
++  `GET|PUT /api/v1/docker/settings` (`{daemon: {log_driver, log_max_size,
++  log_max_file, live_restore, address_pools, registry_mirrors, dns,
++  no_new_privileges, builder_keep_storage}, group_ids, defaults:
++  {update_policy, vulnerability_gate, autoheal}}`; a field left out stops
++  being managed; 422 `{field, error}` for a bad value),
++  `GET /api/v1/docker/settings/machines`, `POST /api/v1/docker/settings/apply`
++  and `/restart` (`{queued, jobs}`), and per machine
++  `POST /api/v1/machines/{id}/docker/daemon/apply` / `/restart` (`{job}`;
++  409 when not in scope, already queued, or - for a restart - the
++  machine debcontrol runs on).
+ - Images (0.130.0+): `GET .../images/{image_id}` (details and layers),
+   `POST .../images/pull` `{ref}` (202, a job), `POST .../images/tag`
+   `{image, tag}`, `POST .../images/remove` `{image}` (502 with Docker's
+@@ -1329,7 +1448,9 @@ The full list is on [REST API](REST-API#docker).
+   `max_per_hour`, `restarts_last_hour`, `gave_up_at`).
+ - `GET .../docker/host` (0.132.0+) answers `{"host_check": ...}` - the
+   stored check (`at`, `ok`, `error`, `facts`, `findings`), `null` before
+-  the first one.
++  the first one - and, since 0.134.0, `daemon_settings` (`in_scope`,
++  `configured`, `checked`, `differences`, `restart_pending`,
++  `applied_at`, `error`).
+ - Endpoint checks from labels (0.132.0+): the setting is
+   `docker_endpoint_checks` in `PATCH /api/v1/settings`; such checks carry
+   `auto_key` in `/api/v1/checks`.
+diff --git a/Home.md b/Home.md
+index 91973b2..59f1fd4 100644
+--- a/Home.md
++++ b/Home.md
+@@ -112,7 +112,7 @@ Prefer it light? The theme toggle sits in the header.
+ |---|---|
+ | 📊 **Dashboard** | Fleet tiles linking to filtered lists, trend charts, upcoming schedules, recent activity, an optional AI fleet summary, and every machine as a card colored by its worst reading |
+ | 🖥️ **Machines** | Facts, packages, services, monitoring (CPU/RAM/disk/network, bare-metal sensors, GPUs, S.M.A.R.T.), a Docker tab, updates with preview, retry, rollback, a Proxmox snapshot first, holds, changelogs and CVEs, a browser terminal, logs (level filter, whole Compose stacks, download), History time line, watched files, hardware and warranties, Wake-on-LAN, tags, filters, saved views, bulk actions, export/import |
+-| 🐳 **Docker** | Every container of every machine in one table (filter by state, group, stack, vulnerabilities or newer image; start/stop/restart/update/scan across machines), plus each machine's Docker tab below |
++| 🐳 **Docker** | Every container of every machine in one table (filter by state, group, stack, vulnerabilities or newer image; start/stop/restart/pause/update/scan/remove and autoheal across machines from a menu on each row, CPU and memory, update everything with a newer image at once), Docker → Settings (fleet-wide `daemon.json`: log rotation, live restore, address pools, mirrors, DNS, no-new-privileges, build cache - written with a backup and validated, Docker restarted on a button) and defaults for new containers, plus each machine's Docker tab below |
+ | 🐳 **Docker tab** | Containers with their charts (CPU, memory, network, disk I/O) and newer image versions, state tiles, links to each container's web interface (Traefik/Caddy labels, published ports, `debcontrol.url`) and to its image's registry and release notes, start/stop/restart/update/scan/remove several containers at once, memory and CPU limits and restart policy changed on a running container, a page per image with its layers and pull / tag / remove, tables that remember their filter and sort and turn into cards on a phone, updates that put the old container back if the new one doesn't stay up, automatic updates on a schedule limited to minor or patch versions if you like (moving a version tag forward), image checks at an interval of your choice that say why an image couldn't be checked (Docker Hub's rate limit included), notifications when a container crashes, keeps restarting, runs out of memory or turns unhealthy, Trivy + Grype vulnerability scans and a gate that stops a worse image, Compose stacks from the editor or Git over HTTPS or SSH with a deploy key (more compose files, builds, auto-sync, webhook) in a directory of your choice, with a check before deploying, a history to roll back to, automatic rollback when the new version doesn't come up and a vulnerability gate, editing the compose files of any project on the machine, a page per network, a shell and a file browser inside containers and volumes, clean-up, restic backups with a command before and after (a database dump), test restores that prove a backup comes back, restore into any volume or directory, attaching an existing repository and export/import of backup settings, cancelling a waiting or running job, a file editor that shows changes before saving and never overwrites a newer version, folder upload and download, private registry logins and shared variables/secrets per fleet, group or machine, adopting Compose projects and `docker run` containers as stacks, drift detection, autoheal of unhealthy containers, endpoint checks made from containers' web links, a Docker host check (log rotation, engine updates, privileged containers, ...), starting/stopping containers or stacks on a schedule, each image's packages (SBOM, CycloneDX download), and moving or cloning a stack with its data to another machine |
+ | 🟧 **Proxmox tab** | Proxmox VE (guests with start/stop, cluster quorum, ZFS, storage, backups and when each guest was last backed up, failed tasks, snapshots taken before updates, guests linked to their managed machines), Backup Server (datastores, jobs, backup groups) and Mail Gateway (mail stats, queue, ClamAV) |
+ | 🛡️ **Security** | Pending security updates fleet-wide with their CVEs; package search across the fleet and inside Docker images; a security audit of every machine (Lynis and checks from vps-audit) with its hardening index, findings grouped by area, how to fix each, and findings marked OK per machine; the critical and high vulnerabilities of every machine's Docker images in one list (which machines and images have a CVE), and accepting one until a date |
+diff --git a/REST-API.md b/REST-API.md
+index f9196b7..8406246 100644
+--- a/REST-API.md
++++ b/REST-API.md
+@@ -212,7 +212,12 @@ own instance for parameters, bodies and responses.
+ | `POST` | `/api/v1/machines/{machine_id}/docker/backups/{backup_id}/{what}` | Docker backup job |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/check-images` | Check image updates |
+ | `GET` | `/api/v1/docker/containers` | Every container of the visible fleet (filters `q`, `state`, `group`, `update`, `vulns`, `stack`, `sort`, `desc`, `page`) |
+-| `POST` | `/api/v1/docker/containers/bulk` | Start / stop / restart / update / scan containers on several machines (`{action, containers: ["<machine id>/<name>"]}`) |
++| `POST` | `/api/v1/docker/containers/bulk` | Start / stop / restart / pause / unpause / update / scan / remove / autoheal_on / autoheal_off containers on several machines (`{action, containers: ["<machine id>/<name>"]}`) |
++| `POST` | `/api/v1/docker/containers/update-all` | Update every visible container with a newer image (`{ok, queued, errors}`) |
++| `GET` `PUT` | `/api/v1/docker/settings` | Docker → Settings: managed `daemon.json` keys, machine groups, defaults for new containers · Replace them |
++| `GET` | `/api/v1/docker/settings/machines` | Each machine in scope: differences, restart waiting |
++| `POST` | `/api/v1/docker/settings/apply` | Write the `daemon.json` keys on every machine in scope (jobs; no restart) |
++| `POST` | `/api/v1/docker/settings/restart` | Restart Docker where a written `daemon.json` waits (not on debcontrol's own machine) |
+ | `GET` | `/api/v1/docker/vulnerabilities` | Fleet vulnerabilities (critical and high, across the visible machines; `?q=`) |
+ | `GET` | `/api/v1/docker/vulnerabilities/{vuln_id}` | Fleet vulnerability (where it is, its acceptances) |
+ | `GET` `POST` | `/api/v1/docker/vulnerability-acceptances` | Acceptances · Accept (`{vuln_id, image, reason, days}`) |
+@@ -222,7 +227,7 @@ own instance for parameters, bodies and responses.
+ | `POST` | `/api/v1/docker/registries/{registry_id}/login` | Log every machine in scope in again |
+ | `GET` `POST` | `/api/v1/docker/variables` | Shared variables · Add one (`{name, value, secret, description, scope}`) |
+ | `GET` `PUT` `DELETE` | `/api/v1/docker/variables/{variable_id}` | Shared variable · Change (value omitted keeps it) · Remove |
+-| `POST` | `/api/v1/machines/{machine_id}/docker/containers/bulk` | Docker containers bulk (start / stop / restart / remove the selected) |
++| `POST` | `/api/v1/machines/{machine_id}/docker/containers/bulk` | Docker containers bulk (start / stop / restart / pause / unpause / remove / update / scan / autoheal on or off the selected) |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/containers/{name}` | Docker container |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/containers/{name}/compose` | A `docker run` container as a compose file and `.env` (to create a stack that takes it over) |
+ | `PUT` | `/api/v1/machines/{machine_id}/docker/containers/{name}/autoheal` | Docker container autoheal (`{enabled, max_per_hour}`, `action.power`) |
+@@ -230,7 +235,9 @@ own instance for parameters, bodies and responses.
+ | `POST` | `/api/v1/machines/{machine_id}/docker/containers/{name}/rollback` | Docker container rollback |
+ | `PUT` | `/api/v1/machines/{machine_id}/docker/containers/{name}/settings` | Docker container settings |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/containers/{name}/update` | Docker container update |
+-| `GET` | `/api/v1/machines/{machine_id}/docker/host` | Docker host check (engine setup and findings) |
++| `GET` | `/api/v1/machines/{machine_id}/docker/host` | Docker host check (engine setup and findings) and where it stands against Docker → Settings |
++| `POST` | `/api/v1/machines/{machine_id}/docker/daemon/apply` | Write Docker → Settings into this machine's `daemon.json` (a job) |
++| `POST` | `/api/v1/machines/{machine_id}/docker/daemon/restart` | Restart Docker so it reads `daemon.json` (a job; 409 on debcontrol's own machine) |
+ | `GET` | `/api/v1/machines/{machine_id}/docker/images` | Docker images |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/images/pull` | Docker image pull (a job) |
+ | `POST` | `/api/v1/machines/{machine_id}/docker/images/remove` | Docker image remove (never forced) |
+-- 
+2.43.0
+
