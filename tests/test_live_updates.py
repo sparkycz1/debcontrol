@@ -165,12 +165,13 @@ async def test_ping_all_machines_publishes_a_status_event_per_checked_machine(
     assert [json.loads(m)["kind"] for _c, m in published] == ["status"]
 
 
-async def test_an_updates_event_also_rings_the_fleet_channel(published):
-    await live_updates.publish_machine_event("m1", live_updates.KIND_UPDATES)
+@pytest.mark.parametrize("kind", ["updates", "docker"])
+async def test_updates_and_docker_events_also_ring_the_fleet_channel(published, kind):
+    await live_updates.publish_machine_event("m1", kind)
 
     assert [(c, json.loads(m)) for c, m in published] == [
-        ("debcontrol:live:machine:m1", {"kind": "updates"}),
-        (live_updates.FLEET_CHANNEL, {"kind": "updates"}),
+        ("debcontrol:live:machine:m1", {"kind": kind}),
+        (live_updates.FLEET_CHANNEL, {"kind": kind}),
     ]
 
 

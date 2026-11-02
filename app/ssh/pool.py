@@ -101,10 +101,6 @@ def reset() -> None:
     _setting_cache.update(minutes=None, read_at=0.0)
 
 
-def open_connection_count() -> int:
-    return len(_entries)
-
-
 def _identity(machine: Machine, secret: str | None) -> str:
     secret_hash = hashlib.sha256((secret or "").encode()).hexdigest()
     return "|".join(

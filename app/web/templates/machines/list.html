@@ -195,7 +195,7 @@
 
       {# Redrawn in place by live-fleet.js when the fleet changes (a bulk
          update check finishing, a machine going up or down). #}
-      <div id="machine-results" data-live-fleet>
+      <div id="machine-results" data-live-fleet data-live-kinds="status,updates">
       {% if view_mode == 'list' %}
         <ul class="machine-compact-list">
           {% for machine in machines %}

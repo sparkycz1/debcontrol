@@ -804,7 +804,7 @@ p { margin: 0 0 var(--space-3); }
 .data-table th { white-space: nowrap; }
 .data-table td.cell-nowrap { white-space: nowrap; }
 /* A wide table that must never push the page itself sideways. */
-.table-scroll { overflow-x: auto; }
+.table-scroll { overflow-x: auto; position: relative; }
 .row-muted { opacity: 0.6; }
 .stat-value small { display: block; font-size: 0.75rem; font-weight: 400; color: var(--color-muted); }
 
@@ -1392,7 +1392,10 @@ code {
   background: var(--color-surface-raised);
   padding: 0.1em 0.4em;
   border-radius: 4px;
+  overflow-wrap: break-word; /* a long key fingerprint or URL wraps on a phone */
 }
+
+select { max-width: 100%; } /* long option labels never widen the page */
 
 pre {
   background: var(--color-surface-raised);
@@ -1845,6 +1848,7 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
 
 .terminal-shell {
   height: 60vh;
+  overflow-x: auto; /* a recording replays at its own width */
   background: #000;
   padding: 4px;
   border-radius: var(--radius-sm);
@@ -2263,7 +2267,7 @@ a.state-tile { text-decoration: none; }
 /* Tables that turn into cards when their box gets narrow (a phone, half
    a screen): each row a card, each cell "column name: value" with the
    name from data-label (static/js/docker-table.js fills it in). */
-.table-cards-wrap { container-type: inline-size; }
+.table-cards-wrap { container-type: inline-size; position: relative; } /* keeps visually-hidden labels inside the scroll box */
 /* Half a screen: the containers' vulnerability counts move under the
    image instead of taking a column of their own. */
 @container (44rem <= width < 66rem) {

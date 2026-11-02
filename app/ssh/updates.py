@@ -336,11 +336,6 @@ def parse_flatpak_upgradable_packages(raw: str) -> list[PendingPackage]:
     return list(seen.values())
 
 
-def parse_flatpak_upgradable_output(raw: str) -> int:
-    """Count pending flatpak updates — see `parse_flatpak_upgradable_packages`."""
-    return len(parse_flatpak_upgradable_packages(raw))
-
-
 def parse_snap_upgradable_packages(raw: str) -> list[PendingPackage]:
     """List pending snap refreshes, with the available version, from the
     `SNAP_UPGRADABLE` section — tab-separated `name\tversion` per line."""
@@ -357,11 +352,6 @@ def parse_snap_upgradable_packages(raw: str) -> list[PendingPackage]:
         new_version = fields[1].strip() if len(fields) > 1 and fields[1].strip() else None
         packages.append(PendingPackage(name=name, current_version=None, new_version=new_version))
     return packages
-
-
-def parse_snap_upgradable_output(raw: str) -> int:
-    """Count pending snap refreshes — see `parse_snap_upgradable_packages`."""
-    return len(parse_snap_upgradable_packages(raw))
 
 
 @dataclass
