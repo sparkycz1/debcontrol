@@ -280,6 +280,10 @@ class Machine(Base):
     # The Docker host check (`app.services.docker_host_check`), refreshed
     # with the image check: {"at", "ok", "error", "facts", "findings"}.
     docker_host_check: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # The last time Docker → Settings were written to this machine's
+    # daemon.json (`app.services.docker_daemon`): {"applied_at", "hash",
+    # "restart_pending", "error", "validated"}.
+    docker_daemon_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Where the next monitoring sample's `docker events` read starts: the
     # machine's own clock (Unix seconds) at the previous sample, so events
     # are neither missed nor reported twice (app.services.container_events).

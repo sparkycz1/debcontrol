@@ -37,6 +37,7 @@ from app.db.session import get_db
 from app.schemas.machine import MachineUpdate
 from app.services import (
     acknowledgements,
+    docker_jobs,
     hardware_inventory,
     machine_timeline,
     proxmox_guest_links,
@@ -75,6 +76,7 @@ from app.web.routes.machines_common import (
     need_manage,
     need_power,
 )
+from app.web.routes.machines_docker_common import redirect as flash_redirect
 from app.web.templating import t, templates
 
 router = machines_router()
@@ -1341,6 +1343,9 @@ async def container_action_endpoint(
 
     error: str | None = None
     try:
+        # Pausing debcontrol's own container would freeze this very page.
+        if action == "pause":
+            await docker_jobs.check_container(db, machine, container)
         async_result = tasks.run_container_action_task.delay(
             str(machine.id), action=action, container=container
         )
@@ -1349,6 +1354,8 @@ async def container_action_endpoint(
         )
         if isinstance(result, dict) and not result.get("ok"):
             error = str(result.get("error") or "Unknown error.")
+    except docker_jobs.ProtectedError:
+        error = LocalizedText(request, "docker.protected")
     except CeleryTimeoutError:
         error = LocalizedText(request, "common.error.command_timeout")
     except Exception as exc:
@@ -1370,9 +1377,20 @@ async def container_action_endpoint(
     if error is not None:
         query["container_error"] = sign_flash(error)
     back = f"/machines/{machine.id}/docker"
-    # Back to the container's own page when the button was there.
-    if request.query_params.get("from") == "container":
+    # Back to the container's own page, or the fleet table, when the
+    # button was there.
+    origin = request.query_params.get("from")
+    if origin == "container":
         back += f"/containers/{container}"
+    elif origin == "fleet":
+        notice_key = "docker.bulk.done_" + action
+        if error is None:
+            return flash_redirect(
+                "/docker/containers", notice=LocalizedText(request, notice_key, count=1)
+            )
+        return flash_redirect(
+            "/docker/containers", error=f"{machine.name}: {getattr(error, 'localized', error)}"
+        )
     return RedirectResponse(
         url=f"{back}?{urlencode(query)}",
         status_code=status.HTTP_303_SEE_OTHER,

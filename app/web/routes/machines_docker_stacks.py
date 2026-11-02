@@ -296,7 +296,15 @@ async def docker_stack_new(
         machine,
         current_user,
         "stacks",
-        {"stack": None, "form": None, "errors": [], **(await form_extras(db, machine, None))},
+        {
+            "stack": None,
+            "form": None,
+            "errors": [],
+            # Docker → Settings: the gate a new stack starts with.
+            "default_gate": (await get_or_create_app_settings(db)).docker_default_vulnerability_gate
+            or "off",
+            **(await form_extras(db, machine, None)),
+        },
     )
 
 

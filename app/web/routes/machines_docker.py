@@ -35,11 +35,13 @@ from app.services import (
     autoheal,
     docker_acceptances,
     docker_actions,
+    docker_daemon,
     docker_jobs,
     docker_overview,
     docker_sbom,
     docker_scans,
     monitoring_history,
+    self_host,
 )
 from app.services.docker_gate import GATES
 from app.services.update_policy import POLICIES
@@ -297,14 +299,79 @@ async def docker_host_page(
     causes trouble (`app.services.docker_host_check`)."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
     check = machine.docker_host_check or {}
+    app_settings = await get_or_create_app_settings(db)
     return render(
         request,
         "machines/docker/host.html",
         machine,
         current_user,
         "host",
-        {"check": check, "checked_at": _parse_at(check.get("at"))},
+        {
+            "check": check,
+            "checked_at": _parse_at(check.get("at")),
+            "daemon": docker_daemon.machine_status(machine, app_settings),
+            "is_self_host": machine.id in (await self_host.find(db)).hosts,
+        },
     )
+
+
+@router.post(
+    "/{machine_id}/docker/daemon/apply", dependencies=[need_terminal, Depends(verify_csrf)]
+)
+async def docker_daemon_apply(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Write Docker → Settings into this machine's daemon.json (a job; no
+    restart)."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    app_settings = await get_or_create_app_settings(db)
+    base = f"{docker_base(machine)}/host"
+    if not docker_daemon.machine_status(machine, app_settings)["in_scope"]:
+        return redirect(base, error=LocalizedText(request, "docker.settings.not_in_scope"))
+    job = await docker_daemon.queue_apply(db, machine, actor=actor(current_user))
+    if job is None:
+        return redirect(base, error=LocalizedText(request, "docker.job.already_queued"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.daemon.apply",
+        f'Docker settings: daemon.json queued for "{machine.name}"',
+        details={"job": str(job.id)},
+    )
+    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+
+
+@router.post(
+    "/{machine_id}/docker/daemon/restart", dependencies=[need_power, Depends(verify_csrf)]
+)
+async def docker_daemon_restart(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Restart the Docker daemon so it reads daemon.json (a job). Refused on
+    the machine debcontrol itself runs on."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    base = f"{docker_base(machine)}/host"
+    if machine.id in (await self_host.find(db)).hosts:
+        return redirect(base, error=LocalizedText(request, "docker.settings.restart_self"))
+    job = await docker_daemon.queue_restart(db, machine, actor=actor(current_user))
+    if job is None:
+        return redirect(base, error=LocalizedText(request, "docker.job.already_queued"))
+    await _audit(
+        db,
+        request,
+        machine,
+        "machine.docker.daemon.restart",
+        f'Docker daemon restart queued on "{machine.name}"',
+        details={"job": str(job.id)},
+    )
+    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
 
 
 def _parse_at(value: Any) -> datetime | None:
@@ -654,6 +721,11 @@ _BULK_PERMISSION = {
     "start": Permission.ACTION_POWER,
     "stop": Permission.ACTION_POWER,
     "restart": Permission.ACTION_POWER,
+    "pause": Permission.ACTION_POWER,
+    "unpause": Permission.ACTION_POWER,
+    # Autoheal restarts a container, like the panel on its page.
+    "autoheal_on": Permission.ACTION_POWER,
+    "autoheal_off": Permission.ACTION_POWER,
     "remove": Permission.ACTION_UPDATES,
     "scan": Permission.ACTION_UPDATES,
     "update": Permission.ACTION_UPDATES,
@@ -679,9 +751,12 @@ async def bulk_on_machine(
     action: str,
     names: list[str],
 ) -> BulkOutcome:
-    """Start, stop, restart, remove, scan or update `names` on one machine,
-    audited — shared by the machine's containers table and the fleet-wide
-    one (`docker_fleet` routes). The caller checked the permission."""
+    """Start, stop, restart, pause, unpause, remove, scan, update or switch
+    autoheal on/off for `names` on one machine, audited — shared by the
+    machine's containers table, the fleet-wide one (`docker_fleet` routes)
+    and their API twins. The caller checked the permission."""
+    if action in ("autoheal_on", "autoheal_off"):
+        return await _bulk_autoheal(request, db, machine, user, names, action == "autoheal_on")
     if action == "update":
         queued, update_error = await _queue_updates(request, db, machine, user, names, "")
         return BulkOutcome(done=len(queued.jobs), error=update_error)
@@ -739,6 +814,54 @@ async def bulk_on_machine(
     if error is None and "protected" in result.skipped.values():
         error = _protected_error(request)
     return BulkOutcome(done=len(result.names) if result.error is None else 0, error=error)
+
+
+async def _bulk_autoheal(
+    request: Request,
+    db: AsyncSession,
+    machine: Machine,
+    user: User,
+    names: list[str],
+    enabled: bool,
+) -> BulkOutcome:
+    """Autoheal on or off for each named container that exists on the
+    machine (debcontrol's own are skipped), keeping its hourly limit."""
+    present = {str(c.get("name")) for c in docker_overview.containers_of(machine)}
+    protected = await docker_jobs.protected_project(db, machine)
+    settings = await docker_jobs.container_settings(db, machine.id)
+    chosen: list[str] = []
+    skipped_own = False
+    for name in dict.fromkeys(names):
+        if name not in present or not is_container_name_valid(name):
+            continue
+        if protected and docker_jobs.container_project(machine, name) == protected:
+            skipped_own = True
+            continue
+        current = settings.get(name)
+        await autoheal.save(
+            db,
+            machine.id,
+            name,
+            enabled=enabled,
+            max_per_hour=(current.autoheal_max_per_hour if current else None)
+            or autoheal.DEFAULT_PER_HOUR,
+            actor=actor(user),
+        )
+        chosen.append(name)
+    await db.commit()
+    for name in chosen:
+        await _audit(
+            db,
+            request,
+            machine,
+            "machine.docker.container.autoheal_settings",
+            f'Autoheal of container "{name}" on "{machine.name}": '
+            + ("on" if enabled else "off"),
+            details={"container": name, "autoheal": enabled},
+        )
+    return BulkOutcome(
+        done=len(chosen), error=_protected_error(request) if skipped_own else None
+    )
 
 
 def bulk_permission(action: str) -> Permission | None:

@@ -30,6 +30,7 @@ from app.web.routes.machines_docker import bulk_on_machine, bulk_permission
 
 router = APIRouter(prefix="/api/v1/docker", tags=["docker"])
 _view = Depends(require_api_permission(Permission.MACHINE_VIEW))
+_updates = Depends(require_api_permission(Permission.ACTION_UPDATES))
 
 
 def _row(row: docker_fleet.FleetRow) -> dict[str, Any]:
@@ -104,7 +105,18 @@ async def docker_fleet_containers_api(
 
 
 class _FleetBulkRequest(BaseModel):
-    action: Literal["start", "stop", "restart", "update", "scan"]
+    action: Literal[
+        "start",
+        "stop",
+        "restart",
+        "pause",
+        "unpause",
+        "remove",
+        "update",
+        "scan",
+        "autoheal_on",
+        "autoheal_off",
+    ]
     # "<machine id>/<container name>", as `key` in the listing.
     containers: list[str] = Field(default_factory=list, max_length=MAX_BULK_CONTAINERS)
 
@@ -116,7 +128,8 @@ async def docker_fleet_containers_bulk_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
-    """Start, stop, restart, update or scan containers on several machines
+    """Start, stop, restart, pause, unpause, remove (stopped ones), update,
+    scan or switch autoheal on/off for containers on several machines
     at once — machine by machine, through the same code as each machine's
     own bulk action, each container audited. Machines the token can't see
     are left out; one without a confirmed host key is reported in
@@ -153,3 +166,24 @@ async def docker_fleet_containers_bulk_api(
     for machine_id in unknown:
         errors[str(machine_id)] = "Machine not found."
     return {"ok": not errors, "done": done, "errors": errors, "scan_jobs": jobs}
+
+
+@router.post("/containers/update-all", dependencies=[_updates])
+async def docker_fleet_update_all_api(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, Any]:
+    """Update every container with a newer image on every visible machine
+    (from the last image check) — the fleet page's "Update all with a
+    newer image". One job per container; `queued` counts them."""
+    targets = await docker_fleet.update_targets(db, user)
+    machines = await visible_machines_by_ids(db, user, list(targets))
+    queued = 0
+    errors: dict[str, str] = {}
+    for machine in sorted(machines, key=lambda m: m.name.lower()):
+        outcome = await bulk_on_machine(request, db, machine, user, "update", targets[machine.id])
+        queued += outcome.done
+        if outcome.error:
+            errors[str(machine.id)] = str(outcome.error)
+    return {"ok": not errors, "queued": queued, "errors": errors}

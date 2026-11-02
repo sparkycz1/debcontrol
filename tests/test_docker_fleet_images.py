@@ -163,7 +163,7 @@ async def test_fleet_bulk_runs_per_machine_and_audits_each(
     assert len(await audit_entries(db_session_factory, "machine.container.restart")) == 2
 
 
-async def test_fleet_bulk_refuses_remove_and_checks_permission(
+async def test_fleet_bulk_checks_csrf_and_permission(
     client: Any, login_as: Any, db_session_factory: Any, celery_calls: Any
 ) -> None:
     machine_id = await make_docker_machine(db_session_factory)
@@ -171,14 +171,14 @@ async def test_fleet_bulk_refuses_remove_and_checks_permission(
     csrf = client.cookies.get("csrftoken")
     data = {"csrf_token": csrf, "container": [f"{machine_id}/worker"]}
 
-    remove = await client.post("/docker/containers/bulk", data={**data, "action": "remove"})
+    unknown = await client.post("/docker/containers/bulk", data={**data, "action": "rm -rf"})
     no_csrf = await client.post(
         "/docker/containers/bulk", data={"action": "start", "container": data["container"]}
     )
     await login_as(client, permissions={Permission.MACHINE_VIEW, Permission.ACTION_POWER})
     update = await client.post("/docker/containers/bulk", data={**data, "action": "update"})
 
-    assert remove.status_code == 400
+    assert unknown.status_code == 400
     assert no_csrf.status_code == 403
     assert update.status_code == 403
     assert not [c for c in celery_calls if c[0] in (CONTAINER_ACTION_TASK, RUN_JOB_TASK)]

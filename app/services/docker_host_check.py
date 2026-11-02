@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.db.models.machine import Machine
+from app.services import docker_daemon
 
 ENGINE_PACKAGES = ("docker-ce", "docker.io", "moby-engine", "docker-engine")
 DEPRECATED_DRIVERS = frozenset({"devicemapper", "aufs", "overlay", "vfs"})
@@ -164,6 +165,8 @@ def evaluate(host: dict[str, Any], machine: Machine) -> dict[str, Any]:
         "live_restore": bool(info.get("LiveRestoreEnabled")),
         "logs_readable": bool(host.get("logs_readable")),
         "daemon_json": bool(daemon),
+        # The keys Docker → Settings manage, as this file has them.
+        "daemon_config": docker_daemon.managed_view(daemon),
     }
     return {"at": now, "ok": True, "error": None, "facts": facts, "findings": findings}
 

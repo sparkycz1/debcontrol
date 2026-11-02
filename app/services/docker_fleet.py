@@ -22,8 +22,9 @@ from app.db.models.docker import DockerContainerSetting, DockerImageScan
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.user import User
-from app.services import docker_overview
+from app.services import docker_jobs, docker_overview, self_host
 from app.services.access_scope import machines_visible_to
+from app.ssh.containers import MAX_BULK_CONTAINERS
 
 PAGE_SIZE = 100
 # A guard for very large fleets: the list stops here and says so.
@@ -88,6 +89,8 @@ class FleetRow:
     counts: dict[str, int] | None
     auto_update: bool
     web_links: list[dict[str, Any]]
+    # One of debcontrol's own containers (only start/unpause offered).
+    is_own: bool = False
 
     @property
     def name(self) -> str:
@@ -197,10 +200,12 @@ async def all_rows(db: AsyncSession, user: User) -> tuple[list[FleetRow], bool]:
     ids = [m.id for m in machines]
     scans = await _scans(db, ids)
     auto = await _auto_update(db, ids)
+    own = await self_host.find(db)
     rows: list[FleetRow] = []
     truncated = False
     for m in machines:
         updates = m.docker_image_updates or {}
+        protected = docker_jobs.own_project_of(m.id, m.docker_containers, own)
         for container in m.docker_containers or []:
             if not isinstance(container, dict) or not container.get("name"):
                 continue
@@ -222,11 +227,26 @@ async def all_rows(db: AsyncSession, user: User) -> tuple[list[FleetRow], bool]:
                     counts=scan[1] if scan else None,
                     auto_update=(m.id, str(container.get("name"))) in auto,
                     web_links=docker_overview.links_of(container, m.ip_address),
+                    is_own=bool(protected and container.get("compose_project") == protected),
                 )
             )
         if truncated:
             break
     return rows, truncated
+
+
+async def update_targets(db: AsyncSession, user: User) -> dict[uuid.UUID, list[str]]:
+    """For "Update all with a newer image" across the fleet: per visible
+    machine with a confirmed host key, the containers whose image has a
+    newer version in its registry (from the last image check)."""
+    rows, _truncated = await all_rows(db, user)
+    targets: dict[uuid.UUID, list[str]] = {}
+    for row in rows:
+        if row.image_status == "update" and row.machine_ready and not row.is_own:
+            names = targets.setdefault(row.machine_id, [])
+            if len(names) < MAX_BULK_CONTAINERS:
+                names.append(str(row.container.get("name")))
+    return targets
 
 
 def _sort_key(sort: str) -> Any:

@@ -26,6 +26,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import JSON, Boolean, ForeignKey, Integer, LargeBinary, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -339,6 +340,24 @@ class AppSettings(Base):
     # link of a running container (`app.services.docker_endpoint_checks`).
     # Off by default.
     docker_endpoint_checks: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # --- Docker → Settings (app.services.docker_daemon) ---
+    # The daemon.json keys debcontrol keeps the same on the machines in
+    # scope ({"log_driver": "local", "live_restore": true, ...}; a key left
+    # out is not managed). NULL = nothing managed.
+    docker_daemon_config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Machine groups the daemon settings are for; NULL/empty = every machine.
+    docker_daemon_group_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # What a container seen for the first time starts with: automatic
+    # updates limited to this policy ("patch" / "minor" / "any"; NULL = off),
+    # this vulnerability gate (NULL = off), autoheal (when it has a health
+    # check). A new stack starts with the gate.
+    docker_default_update_policy: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    docker_default_vulnerability_gate: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )
+    docker_default_autoheal: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
 

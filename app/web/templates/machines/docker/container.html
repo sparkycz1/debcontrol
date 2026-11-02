@@ -23,6 +23,7 @@
 
   {{ lazy_panel(request, base ~ "/panel", "container-panel") }}
 
+  <div class="settings-grid">
   {% if can_updates and ready and not is_protected %}
     <section class="panel">
       <h2>{{ t(request, "docker.update.heading") }}</h2>
@@ -61,13 +62,13 @@
           {% set current_policy = setting.update_policy if setting else 'any' %}
           {% for p in update_policies %}<option value="{{ p }}" {% if p == current_policy %}selected{% endif %}>{{ t(request, "docker.policy." ~ p) }}</option>{% endfor %}
         </select>
-        <p class="hint">{{ t(request, "docker.policy.hint") }}</p>
+        <details class="hint-more"><summary>{{ t(request, "docker.more_help") }}</summary><p class="hint">{{ t(request, "docker.policy.hint") }}</p></details>
         <label for="setting-gate">{{ t(request, "docker.gate.label") }}</label>
         <select id="setting-gate" name="gate">
           {% set current_gate = setting.vulnerability_gate if setting else 'off' %}
           {% for g in gates %}<option value="{{ g }}" {% if g == current_gate %}selected{% endif %}>{{ t(request, "docker.gate." ~ g) }}</option>{% endfor %}
         </select>
-        <p class="hint">{{ t(request, "docker.gate.hint") }}</p>
+        <details class="hint-more"><summary>{{ t(request, "docker.more_help") }}</summary><p class="hint">{{ t(request, "docker.gate.hint") }}</p></details>
         {% if setting and setting.updated_by %}
           <p class="hint">{{ t(request, "docker.changed_by", who=setting.updated_by, when=(setting.updated_at | local_time)) }}</p>
         {% endif %}
@@ -88,7 +89,7 @@
   {% if can_power and ready and not is_protected %}
     <section class="panel" id="autoheal">
       <h2>{{ t(request, "docker.autoheal.heading") }}</h2>
-      <p class="hint">{{ t(request, "docker.autoheal.hint") }}</p>
+      <details class="hint-more"><summary>{{ t(request, "docker.more_help") }}</summary><p class="hint">{{ t(request, "docker.autoheal.hint") }}</p></details>
       {% if not has_healthcheck %}
         <p class="hint text-warn">{{ t(request, "docker.autoheal.no_healthcheck") }}</p>
       {% endif %}
@@ -117,6 +118,7 @@
       <p>{{ t(request, "docker.autoheal.on", count=setting.autoheal_max_per_hour) }}</p>
     </section>
   {% endif %}
+  </div>
 
   <section class="panel">
     <h2>{{ t(request, "docker.jobs.heading") }}</h2>

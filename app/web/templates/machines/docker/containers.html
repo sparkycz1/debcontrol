@@ -1,7 +1,7 @@
 {% extends "machines/docker/_layout.html" %}
 {% from "partials/range_picker.html" import range_picker with context %}
 {% from "macros/charts.html" import chart_card with context %}
-{% from "machines/docker/_macros.html" import job_status, severity_compact, container_state, web_links, image_links %}
+{% from "machines/docker/_macros.html" import job_status, severity_compact, container_state, web_links, image_links, row_menu, bulk_more, usage_cell %}
 
 {% block docker_title %}{{ t(request, "docker.nav.containers") }}{% endblock %}
 
@@ -140,6 +140,8 @@
                 <th data-sort="text">{{ t(request, "monitoring.containers.image") }}</th>
                 <th data-sort="number" class="col-vulns">{{ t(request, "docker.vulnerabilities") }}</th>
                 <th data-sort="text">{{ t(request, "monitoring.containers.status") }}</th>
+                <th data-sort="number" class="col-usage">{{ t(request, "docker.usage") }}</th>
+                <th class="cell-menu"><span class="visually-hidden">{{ t(request, "docker.row_menu.heading") }}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -167,18 +169,6 @@
                       {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
                       {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}{% if setting.update_policy in ('minor', 'patch') %} · {{ t(request, "docker.policy.badge_" ~ setting.update_policy) }}{% endif %}</span>{% endif %}
                     </div>
-                    {% if can_act %}
-                      <div class="row-actions">
-                        {% set actions = ('restart', 'stop') if c.state in ('running', 'restarting', 'paused') else ('start',) %}
-                        {% for a in actions %}
-                          <form method="post" action="/machines/{{ machine.id }}/containers/{{ c.name | urlencode }}/{{ a }}" class="inline-form"
-                                data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button type="submit" class="row-action {{ 'row-action-danger' if a == 'stop' }}">{{ t(request, "monitoring.containers.action_" ~ a) }}</button>
-                          </form>
-                        {% endfor %}
-                      </div>
-                    {% endif %}
                   </td>
                   <td class="cell-links" data-label="{{ t(request, 'docker.links.ports_heading') }}">
                     {{ web_links(request, ov.web_links) }}
@@ -231,6 +221,14 @@
                       </div>
                     {% endif %}
                   </td>
+                  {{ usage_cell(request, c) }}
+                  <td class="cell-menu">
+                    {% if machine.host_key_fingerprint %}
+                      {{ row_menu(request, "row-menu-" ~ loop.index, c, docker_base ~ "/containers/bulk", c.name, csrf_token, machine.id,
+                                  can_act=can_act, can_update=can_update, can_terminal=can_terminal,
+                                  image_update=(img_status == 'update'), is_own=is_own) }}
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -247,6 +245,7 @@
                         data-confirm="{{ t(request, 'docker.bulk.confirm_restart') }}">{{ t(request, "monitoring.containers.action_restart") }}</button>
                 <button type="submit" form="containers-bulk" name="action" value="stop" class="button button-secondary log-small-button"
                         data-confirm="{{ t(request, 'docker.bulk.confirm_stop') }}">{{ t(request, "monitoring.containers.action_stop") }}</button>
+                {{ bulk_more(request, "containers-bulk") }}
               {% endif %}
               {% if can_update %}
                 <button type="submit" form="containers-bulk" name="action" value="update" class="button button-secondary log-small-button"

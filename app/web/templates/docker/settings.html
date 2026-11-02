@@ -1,0 +1,176 @@
+{#- Docker → Settings (app.web.routes.docker_settings): the daemon.json keys
+    debcontrol keeps the same on the machines in scope, the defaults for new
+    containers and stacks, and where each machine stands. -#}
+{% extends "base.html" %}
+{% from "docker/_shared_macros.html" import page_top %}
+
+{% block title %}{{ t(request, "docker_fleet.tab.settings") }} — Docker — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro tristate(name, label, hint) -%}
+  <label for="{{ name }}">{{ label }}</label>
+  <select id="{{ name }}" name="{{ name }}" {% if not can_manage %}disabled{% endif %}>
+    <option value="" {% if not values[name] %}selected{% endif %}>{{ t(request, "docker.settings.keep") }}</option>
+    <option value="on" {% if values[name] == 'on' %}selected{% endif %}>{{ t(request, "docker.settings.on") }}</option>
+    <option value="off" {% if values[name] == 'off' %}selected{% endif %}>{{ t(request, "docker.settings.off") }}</option>
+  </select>
+  <p class="hint">{{ hint }}</p>
+{%- endmacro %}
+
+{% macro field_error(name) -%}
+  {% if error and error_field == name %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
+{%- endmacro %}
+
+{% block content %}
+  {{ page_top(request, tabs, active_tab) }}
+  {% if error %}<div class="alert alert-error" role="alert"><p>{{ error }}</p></div>{% endif %}
+
+  <p class="hint">{{ t(request, "docker.settings.intro") }}</p>
+
+  <form method="post" action="/docker/settings" class="form form-wide" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="settings-grid">
+      <section class="panel">
+        <h2>{{ t(request, "docker.settings.logging") }}</h2>
+        <p class="hint">{{ t(request, "docker.settings.logging_hint") }}</p>
+        <label for="log_driver">{{ t(request, "docker.settings.log_driver") }}</label>
+        <select id="log_driver" name="log_driver" {% if not can_manage %}disabled{% endif %}>
+          <option value="">{{ t(request, "docker.settings.keep") }}</option>
+          {% for d in log_drivers %}<option value="{{ d }}" {% if values.log_driver == d %}selected{% endif %}>{{ t(request, "docker.settings.log_driver." ~ d) }}</option>{% endfor %}
+        </select>
+        <div class="field-pair">
+          <div>
+            <label for="log_max_size">{{ t(request, "docker.settings.log_max_size") }}</label>
+            <input id="log_max_size" name="log_max_size" value="{{ values.log_max_size }}" placeholder="20m" maxlength="8" spellcheck="false" {% if not can_manage %}disabled{% endif %}>
+          </div>
+          <div>
+            <label for="log_max_file">{{ t(request, "docker.settings.log_max_file") }}</label>
+            <input id="log_max_file" name="log_max_file" value="{{ values.log_max_file }}" placeholder="5" inputmode="numeric" maxlength="3" {% if not can_manage %}disabled{% endif %}>
+          </div>
+        </div>
+        {{ field_error("log_max_size") }}{{ field_error("log_max_file") }}{{ field_error("log_driver") }}
+        <p class="hint">{{ t(request, "docker.settings.log_rotation_hint") }}</p>
+      </section>
+
+      <section class="panel">
+        <h2>{{ t(request, "docker.settings.reliability") }}</h2>
+        {{ tristate("live_restore", t(request, "docker.settings.live_restore"), t(request, "docker.settings.live_restore_hint")) }}
+        {{ tristate("no_new_privileges", t(request, "docker.settings.no_new_privileges"), t(request, "docker.settings.no_new_privileges_hint")) }}
+        <label for="builder_keep_storage">{{ t(request, "docker.settings.builder_keep_storage") }}</label>
+        <input id="builder_keep_storage" name="builder_keep_storage" value="{{ values.builder_keep_storage }}" placeholder="20GB" maxlength="8" spellcheck="false" {% if not can_manage %}disabled{% endif %}>
+        {{ field_error("builder_keep_storage") }}
+        <p class="hint">{{ t(request, "docker.settings.builder_keep_storage_hint") }}</p>
+      </section>
+
+      <section class="panel">
+        <h2>{{ t(request, "docker.settings.network") }}</h2>
+        <label for="address_pools">{{ t(request, "docker.settings.address_pools") }}</label>
+        <textarea id="address_pools" name="address_pools" rows="3" spellcheck="false" placeholder="10.210.0.0/16 24" {% if not can_manage %}disabled{% endif %}>{{ values.address_pools }}</textarea>
+        {{ field_error("address_pools") }}
+        <p class="hint">{{ t(request, "docker.settings.address_pools_hint") }}</p>
+        <label for="dns">{{ t(request, "docker.settings.dns") }}</label>
+        <input id="dns" name="dns" value="{{ values.dns }}" placeholder="192.168.1.1 1.1.1.1" spellcheck="false" {% if not can_manage %}disabled{% endif %}>
+        {{ field_error("dns") }}
+        <p class="hint">{{ t(request, "docker.settings.dns_hint") }}</p>
+        <label for="registry_mirrors">{{ t(request, "docker.settings.registry_mirrors") }}</label>
+        <textarea id="registry_mirrors" name="registry_mirrors" rows="2" spellcheck="false" placeholder="https://mirror.example.com" {% if not can_manage %}disabled{% endif %}>{{ values.registry_mirrors }}</textarea>
+        {{ field_error("registry_mirrors") }}
+        <p class="hint">{{ t(request, "docker.settings.registry_mirrors_hint") }}</p>
+      </section>
+
+      <section class="panel">
+        <h2>{{ t(request, "docker.settings.defaults") }}</h2>
+        <p class="hint">{{ t(request, "docker.settings.defaults_hint") }}</p>
+        <label for="default_update_policy">{{ t(request, "docker.settings.default_update_policy") }}</label>
+        <select id="default_update_policy" name="default_update_policy" {% if not can_manage %}disabled{% endif %}>
+          <option value="">{{ t(request, "docker.settings.auto_update_off") }}</option>
+          {% for p in policies %}<option value="{{ p }}" {% if defaults.update_policy == p %}selected{% endif %}>{{ t(request, "docker.policy." ~ p) }}</option>{% endfor %}
+        </select>
+        <label for="default_vulnerability_gate">{{ t(request, "docker.settings.default_gate") }}</label>
+        <select id="default_vulnerability_gate" name="default_vulnerability_gate" {% if not can_manage %}disabled{% endif %}>
+          <option value="">{{ t(request, "docker.gate.off") }}</option>
+          {% for g in gates %}<option value="{{ g }}" {% if defaults.vulnerability_gate == g %}selected{% endif %}>{{ t(request, "docker.gate." ~ g) }}</option>{% endfor %}
+        </select>
+        <label class="inline-check"><input type="checkbox" name="default_autoheal" value="1" {% if defaults.autoheal %}checked{% endif %} {% if not can_manage %}disabled{% endif %}> {{ t(request, "docker.settings.default_autoheal") }}</label>
+        <p class="hint">{{ t(request, "docker.settings.default_autoheal_hint") }}</p>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>{{ t(request, "docker.settings.scope") }}</h2>
+      <p class="hint">{{ t(request, "docker.settings.scope_hint") }}</p>
+      {% if groups %}
+        <div class="check-list">
+          {% for g in groups %}
+            <label class="inline-check"><input type="checkbox" name="group" value="{{ g.id }}" {% if g.id | string in group_ids %}checked{% endif %} {% if not can_manage %}disabled{% endif %}> {{ g.name }}</label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="hint">{{ t(request, "docker.settings.scope_no_groups") }}</p>
+      {% endif %}
+    </section>
+
+    {% if can_manage %}
+      <div class="form-actions-sticky page-header-actions">
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+        <span class="hint">{{ t(request, "docker.settings.save_hint") }}</span>
+      </div>
+    {% endif %}
+  </form>
+
+  <section class="panel" id="machines">
+    <h2>{{ t(request, "docker.settings.machines") }}</h2>
+    <p class="hint">{{ t(request, "docker.settings.machines_hint") }}</p>
+    {% if (can_apply and configured and status_rows) or (can_restart and pending) %}
+      <div class="page-header-actions panel-actions">
+        {% if can_apply and configured and status_rows %}
+          <form method="post" action="/docker/settings/apply" class="inline-form"
+                data-confirm="{{ t(request, 'docker.settings.apply_confirm', count=status_rows | length) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button">{{ t(request, "docker.settings.apply", count=status_rows | length) }}</button>
+          </form>
+        {% endif %}
+        {% if can_restart and pending %}
+          <form method="post" action="/docker/settings/restart" class="inline-form"
+                data-confirm="{{ t(request, 'docker.settings.restart_confirm', count=pending | length) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button button-secondary">{{ t(request, "docker.settings.restart", count=pending | length) }}</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+    {% if not configured %}
+      <p class="hint">{{ t(request, "docker.settings.nothing_managed") }}</p>
+    {% elif not status_rows %}
+      <p class="hint">{{ t(request, "docker.settings.no_machines") }}</p>
+    {% else %}
+      <p class="hint">{{ t(request, "docker.settings.summary", count=status_rows | length, differing=differing, pending=pending | length) }}</p>
+      <div class="table-cards-wrap">
+        <table class="data-table table-cards">
+          <thead><tr>
+            <th>{{ t(request, "docker_fleet.machine") }}</th>
+            <th>{{ t(request, "docker.settings.state") }}</th>
+            <th>{{ t(request, "docker.settings.differs_in") }}</th>
+          </tr></thead>
+          <tbody>
+            {% for m, s in status_rows %}
+              <tr>
+                <td class="cell-name" data-label="{{ t(request, 'docker_fleet.machine') }}"><a href="/machines/{{ m.id }}/docker/host"><strong>{{ m.name }}</strong></a></td>
+                <td data-label="{{ t(request, 'docker.settings.state') }}">
+                  {% if s.error %}<span class="badge badge-error" title="{{ s.error }}">{{ t(request, "docker.settings.state_error") }}</span>
+                  {% elif s.restart_pending %}<span class="badge badge-warn">{{ t(request, "docker.settings.state_restart") }}</span>
+                  {% elif not s.checked %}<span class="badge">{{ t(request, "docker.settings.state_unknown") }}</span>
+                  {% elif s.differences %}<span class="badge badge-warn">{{ t(request, "docker.settings.state_differs") }}</span>
+                  {% else %}<span class="badge badge-ok">{{ t(request, "docker.settings.state_ok") }}</span>{% endif %}
+                </td>
+                <td data-label="{{ t(request, 'docker.settings.differs_in') }}">
+                  {% for d in s.differences %}<span class="badge badge-tag">{{ t(request, "docker.settings.field." ~ d.field) }}</span> {% else %}<span class="table-muted">—</span>{% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}
