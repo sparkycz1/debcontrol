@@ -47,6 +47,8 @@ def tabs(request: Request, user: User) -> list[tuple[str, str, str]]:
     items.append(
         ("vulnerabilities", t(request, "security.containers.tab"), "/security/containers")
     )
+    if user.has_permission(Permission.SETTINGS_VIEW):
+        items.append(("settings", t(request, "docker_fleet.tab.settings"), "/docker/settings"))
     return items
 
 
@@ -117,6 +119,7 @@ async def fleet_containers(
             "active_tab": "containers",
             "can_power": current_user.has_permission(Permission.ACTION_POWER),
             "can_updates": current_user.has_permission(Permission.ACTION_UPDATES),
+            "can_terminal": current_user.has_permission(Permission.ACTION_TERMINAL),
             "back": url_with(),
         },
     )
@@ -139,7 +142,7 @@ async def fleet_containers_bulk(
     if not back.startswith("/docker/containers"):
         back = "/docker/containers"
     permission = bulk_permission(action)
-    if permission is None or action == "remove":
+    if permission is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
     if not current_user.has_permission(permission):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
@@ -172,3 +175,36 @@ async def fleet_containers_bulk(
     }.get(action, f"docker.bulk.done_{action}")
     notice = LocalizedText(request, notice_key, count=done) if done else None
     return redirect(back, notice=notice, error="; ".join(errors) or None)
+
+
+@router.post(
+    "/containers/update-all",
+    dependencies=[
+        Depends(require_permission(Permission.ACTION_UPDATES)),
+        Depends(verify_csrf),
+    ],
+)
+async def fleet_containers_update_all(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """"Update all with a newer image" across the fleet: one update job per
+    such container, machine by machine, like each machine's own button."""
+    targets = await docker_fleet.update_targets(db, current_user)
+    if not targets:
+        return redirect(
+            "/docker/containers", error=LocalizedText(request, "docker.update.none_selected")
+        )
+    machines = await visible_machines_by_ids(db, current_user, list(targets))
+    done = 0
+    errors: list[str] = []
+    for machine in sorted(machines, key=lambda m: m.name.lower()):
+        outcome = await bulk_on_machine(
+            request, db, machine, current_user, "update", targets[machine.id]
+        )
+        done += outcome.done
+        if outcome.error:
+            errors.append(f"{machine.name}: {getattr(outcome.error, 'localized', outcome.error)}")
+    notice = LocalizedText(request, "docker.update.queued", count=done) if done else None
+    return redirect("/docker/containers", notice=notice, error="; ".join(errors) or None)

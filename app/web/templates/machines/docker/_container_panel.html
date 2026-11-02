@@ -13,10 +13,12 @@
       <h2>{{ t(request, "docker.container.state") }} {{ container_state(request, c) }}</h2>
       {% if can_power and ready %}
         <div class="page-header-actions">
-          {% set actions = ('restart', 'stop') if c.running else ('start',) %}
+          {% if c.state == 'paused' %}{% set actions = ('unpause', 'stop') %}
+          {% elif c.running %}{% set actions = ('restart', 'pause', 'stop') %}
+          {% else %}{% set actions = ('start',) %}{% endif %}
           {% for a in actions %}
             <form method="post" action="/machines/{{ machine.id }}/containers/{{ c.name | urlencode }}/{{ a }}?from=container" class="inline-form"
-                  data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}">
+                  {% if a != 'unpause' %}data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}"{% endif %}>
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <button type="submit" class="button {{ 'button-danger' if a == 'stop' else 'button-secondary' }} log-small-button">{{ t(request, "monitoring.containers.action_" ~ a) }}</button>
             </form>

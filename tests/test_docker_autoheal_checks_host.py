@@ -661,7 +661,8 @@ async def test_the_host_check_through_the_api(client: Any, db_session_factory: A
     machine_id = await make_docker_machine(db_session_factory)
     headers = await _api_token(client)
     before = await client.get(f"/api/v1/machines/{machine_id}/docker/host", headers=headers)
-    assert before.json() == {"host_check": None}
+    assert before.json()["host_check"] is None
+    assert before.json()["daemon_settings"]["configured"] is False
     await _set_host_check(db_session_factory, machine_id)
 
     after = await client.get(f"/api/v1/machines/{machine_id}/docker/host", headers=headers)

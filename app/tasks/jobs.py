@@ -74,8 +74,10 @@ from app.services import (
     config_drift,
     container_events,
     disk_forecast,
+    docker_daemon,
     docker_endpoint_checks,
     docker_host_check,
+    docker_jobs,
     health_events,
     image_versions,
     security_audit,
@@ -1819,6 +1821,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         previous_cluster = machine.pve_cluster
         machine.pve_cluster = sample.get("pve_cluster")
         machine.failed_units = sample.get("failed_units")
+        # To tell which containers are new (Docker → Settings defaults).
+        previous_containers = machine.docker_containers
         machine.docker_containers = (
             sample["docker_containers"] if sample["docker_status"] == "ok" else None
         )
@@ -1832,7 +1836,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         if incidents:
             await container_events.notify_incidents(session, machine, incidents)
         if machine.docker_status == "ok":
-            await _after_docker_sample(session, machine, app_settings.docker_endpoint_checks)
+            await _after_docker_sample(session, machine, app_settings, previous_containers)
         await health_events.notify_monitoring_changes(
             session,
             machine,
@@ -1847,17 +1851,36 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
 
 
 async def _after_docker_sample(
-    session: AsyncSession, machine: Machine, endpoint_checks_on: bool
+    session: AsyncSession,
+    machine: Machine,
+    app_settings: AppSettings,
+    previous_containers: list[Any] | None,
 ) -> None:
-    """Autoheal and the automatic endpoint checks, after a sample with
-    Docker in it. Neither may cost the sample itself."""
+    """Defaults for new containers, autoheal and the automatic endpoint
+    checks, after a sample with Docker in it. None may cost the sample
+    itself."""
+    try:
+        added = await docker_daemon.apply_container_defaults(
+            session,
+            machine,
+            previous_containers,
+            app_settings,
+            protected_project=await docker_jobs.protected_project(session, machine),
+        )
+        if added:
+            await session.commit()
+    except Exception:
+        logger.warning("Container defaults failed for %s", machine.name, exc_info=True)
+        await session.rollback()
     try:
         await autoheal.apply(session, machine)
     except Exception:
         logger.warning("Autoheal failed for %s", machine.name, exc_info=True)
         await session.rollback()
     try:
-        await docker_endpoint_checks.sync(session, machine, enabled=endpoint_checks_on)
+        await docker_endpoint_checks.sync(
+            session, machine, enabled=app_settings.docker_endpoint_checks
+        )
     except Exception:
         logger.warning("Container endpoint checks failed for %s", machine.name, exc_info=True)
         await session.rollback()

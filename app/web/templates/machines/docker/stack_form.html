@@ -15,7 +15,7 @@
   {% set v_known_hosts = (form.git_known_hosts if form and form.git_known_hosts is not none else (stack.git_known_hosts or '' if stack else '')) %}
   {% set v_keep_history = form.keep_history if form else (stack.keep_history if stack else false) %}
   {% set v_auto_rollback = form.auto_rollback if form else (stack.auto_rollback if stack else false) %}
-  {% set v_gate = form.vulnerability_gate if form else (stack.vulnerability_gate if stack else 'off') %}
+  {% set v_gate = form.vulnerability_gate if form else (stack.vulnerability_gate if stack else (default_gate or 'off')) %}
   {% set v_shared = (form.shared_variables if form and form.shared_variables is not none else (stack.shared_variables or [] if stack else [])) %}
   {% set v_drift = (form.drift_check if form and form.drift_check is not none else (stack.drift_check if stack else false)) %}
 

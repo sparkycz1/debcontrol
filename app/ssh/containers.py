@@ -22,13 +22,23 @@ from app.ssh.logs import (
 )
 from app.ssh.shell import with_root_shim
 
-ContainerAction = Literal["start", "stop", "restart"]
-CONTAINER_ACTIONS: tuple[ContainerAction, ...] = ("start", "stop", "restart")
+ContainerAction = Literal["start", "stop", "restart", "pause", "unpause"]
+CONTAINER_ACTIONS: tuple[ContainerAction, ...] = ("start", "stop", "restart", "pause", "unpause")
+# Actions that leave debcontrol's own containers running (or bring them
+# back), so they are allowed on them too.
+SAFE_FOR_OWN: tuple[str, ...] = ("start", "unpause")
 # What the selected rows can do at once: the same, plus removing a stopped
 # container (`docker rm` without `-f` refuses a running one). Removing needs
 # `action.updates`, not `action.power` — see the callers.
 BULK_ACTIONS: tuple[str, ...] = (*CONTAINER_ACTIONS, "remove")
-_DOCKER_VERB = {"start": "start", "stop": "stop", "restart": "restart", "remove": "rm"}
+_DOCKER_VERB = {
+    "start": "start",
+    "stop": "stop",
+    "restart": "restart",
+    "pause": "pause",
+    "unpause": "unpause",
+    "remove": "rm",
+}
 MAX_BULK_CONTAINERS = 100
 
 # Exit status of the docker command itself, echoed after its output so a

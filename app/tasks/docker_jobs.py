@@ -57,10 +57,12 @@ from app.db.models.notification_rule import NotificationEventType
 from app.services import (
     docker_acceptances,
     docker_backups,
+    docker_daemon,
     docker_jobs,
     docker_scans,
     docker_stacks,
     docker_variables,
+    self_host,
 )
 from app.services.docker_gate import evaluate as evaluate_gate
 from app.services.docker_gate import normalize_gate
@@ -69,6 +71,7 @@ from app.services.live_updates import KIND_DOCKER, publish_machine_event
 from app.services.notifications import notify
 from app.services.update_policy import bump_target, normalize_policy, parse_version, within
 from app.ssh import detached_jobs, docker_files, docker_images
+from app.ssh import docker_daemon as docker_daemon_ssh
 from app.ssh import docker_transfer as docker_transfer_ssh
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.docker_cli import (
@@ -165,6 +168,8 @@ _TIMEOUTS: dict[str, int] = {
     DockerJobKind.BACKUP_RESTORE: 12 * 60 * 60,
     DockerJobKind.BACKUP_VERIFY: 12 * 60 * 60,
     DockerJobKind.STACK_TRANSFER: 12 * 60 * 60,
+    DockerJobKind.DAEMON_CONFIG: 5 * 60,
+    DockerJobKind.DAEMON_RESTART: 10 * 60,
 }
 # Celery's kill switch, above the longest job.
 _JOB_TASK_TIME_LIMIT = 12 * 60 * 60 + 30 * 60
@@ -1472,6 +1477,126 @@ async def _job_stack_transfer(ctx: _Context) -> None:
     await _close(ctx, DockerJobStatus.SUCCEEDED)
 
 
+# --- Docker → Settings: daemon.json and a daemon restart --------------------
+
+
+def _remember_daemon_json(machine: Machine, content: dict[str, Any]) -> None:
+    """Keep the stored host check's view of daemon.json current, so the
+    pages don't show differences that were just written away."""
+    check = dict(machine.docker_host_check or {})
+    if not check:
+        return
+    check["facts"] = {
+        **(check.get("facts") or {}),
+        "daemon_config": docker_daemon.managed_view(content),
+    }
+    machine.docker_host_check = check
+
+
+async def _job_daemon_config(ctx: _Context) -> None:
+    """Write the fleet's daemon.json keys into the machine's file
+    (`app.services.docker_daemon`); Docker reads it at its next restart."""
+    app_settings = await get_or_create_app_settings(ctx.session)
+    config = dict(app_settings.docker_daemon_config or {})
+    if not config:
+        raise _JobFailedError("Docker → Settings manage no daemon.json keys.")
+    read = await run_script(
+        ctx.machine, ctx.secret, ctx.connect_timeout, docker_daemon_ssh.READ_SCRIPT
+    )
+    current = docker_daemon_ssh.parse_read(read.output)
+    if current.error == "invalid":
+        raise _JobFailedError(
+            f"{docker_daemon_ssh.DAEMON_JSON} is not valid JSON; fix it by hand first."
+        )
+    if current.error:
+        raise _JobFailedError(f"Could not read {docker_daemon_ssh.DAEMON_JSON}.")
+    wanted = docker_daemon.merge(current.content, config)
+    state = dict(ctx.machine.docker_daemon_state or {})
+    if current.present and wanted == current.content:
+        await _log(ctx, "daemon.json already has these settings; nothing written.")
+        ctx.result["changed"] = False
+        state.update({"hash": docker_daemon.config_hash(config), "error": None})
+        ctx.machine.docker_daemon_state = state
+        _remember_daemon_json(ctx.machine, current.content)
+        await _close(ctx, DockerJobStatus.SKIPPED)
+        return
+    changed = sorted(
+        d.field
+        for d in docker_daemon.differences(config, docker_daemon.managed_view(current.content))
+    )
+    await _log(ctx, "Writing " + docker_daemon_ssh.DAEMON_JSON + ": " + ", ".join(changed))
+    written = await run_script(
+        ctx.machine,
+        ctx.secret,
+        ctx.connect_timeout,
+        docker_daemon_ssh.WRITE_SCRIPT,
+        stdin=docker_daemon_ssh.render(wanted),
+    )
+    await _log(ctx, written.output.strip()[-2000:])
+    if written.exit_status != 0 or "@@WRITTEN" not in written.output:
+        reason = {
+            21: "dockerd refused the new settings — nothing was changed",
+            22: "writing /etc/docker needs root (or a sudo rule)",
+            23: "writing /etc/docker needs root (or a sudo rule)",
+            24: "writing /etc/docker needs root (or a sudo rule)",
+        }.get(written.exit_status or 0, "writing daemon.json failed")
+        state["error"] = reason
+        ctx.machine.docker_daemon_state = state
+        raise _JobFailedError(reason[0].upper() + reason[1:] + ".")
+    state.update(
+        {
+            "applied_at": datetime.now(UTC).isoformat(),
+            "hash": docker_daemon.config_hash(config),
+            "restart_pending": True,
+            "validated": docker_daemon_ssh.validated(written.output),
+            "error": None,
+        }
+    )
+    ctx.machine.docker_daemon_state = state
+    _remember_daemon_json(ctx.machine, wanted)
+    ctx.result.update({"changed": True, "fields": changed, "validated": state["validated"]})
+    await _close(ctx, DockerJobStatus.SUCCEEDED)
+
+
+async def _job_daemon_restart(ctx: _Context) -> None:
+    """Restart Docker so it reads daemon.json; put the backup back when it
+    doesn't come up again."""
+    if ctx.machine.id in (await self_host.find(ctx.session)).hosts:
+        raise _JobFailedError(
+            "debcontrol runs on this machine: restart Docker here by hand "
+            "(sudo systemctl restart docker)."
+        )
+    await _log(ctx, "Restarting the Docker daemon…")
+    output = await run_script(
+        ctx.machine,
+        ctx.secret,
+        ctx.connect_timeout,
+        docker_daemon_ssh.RESTART_SCRIPT,
+        run_timeout_seconds=2 * docker_daemon_ssh.RESTART_WAIT_SECONDS + 60,
+    )
+    await _log(ctx, output.output.strip()[-2000:])
+    outcome = docker_daemon_ssh.restart_outcome(output.output)
+    state = dict(ctx.machine.docker_daemon_state or {})
+    ctx.result["outcome"] = outcome
+    if outcome == "up":
+        state.update(
+            {
+                "restart_pending": False,
+                "restarted_at": datetime.now(UTC).isoformat(),
+                "error": None,
+            }
+        )
+        ctx.machine.docker_daemon_state = state
+        await _close(ctx, DockerJobStatus.SUCCEEDED)
+        return
+    state["error"] = {
+        "restored": "Docker did not start with the new daemon.json; the previous file was put back",
+        "no_root": "Restarting Docker needs root (or a sudo rule); nothing was restarted",
+    }.get(outcome, "Docker did not come back after the restart")
+    ctx.machine.docker_daemon_state = state
+    raise _JobFailedError(state["error"] + ".")
+
+
 _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.CONTAINER_UPDATE: _job_container_update,
     DockerJobKind.CONTAINER_ROLLBACK: _job_container_rollback,
@@ -1487,6 +1612,8 @@ _HANDLERS: dict[str, Callable[[_Context], Awaitable[None]]] = {
     DockerJobKind.BACKUP_RESTORE: _job_backup_restore,
     DockerJobKind.BACKUP_VERIFY: _job_backup_verify,
     DockerJobKind.STACK_TRANSFER: _job_stack_transfer,
+    DockerJobKind.DAEMON_CONFIG: _job_daemon_config,
+    DockerJobKind.DAEMON_RESTART: _job_daemon_restart,
 }
 
 

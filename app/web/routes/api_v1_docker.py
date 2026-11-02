@@ -57,6 +57,7 @@ from app.services import (
     autoheal,
     docker_actions,
     docker_backups,
+    docker_daemon,
     docker_drift,
     docker_jobs,
     docker_overview,
@@ -82,7 +83,11 @@ from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.ssh.docker_prune import PruneOptions
 from app.tasks import docker_jobs as docker_tasks
 from app.web.routes.api_v1 import _get_machine_or_404
-from app.web.routes.machines_docker import change_container_resources
+from app.web.routes.machines_docker import (
+    bulk_on_machine,
+    bulk_permission,
+    change_container_resources,
+)
 from app.web.routes.machines_docker_common import wait_task
 
 router = APIRouter(prefix="/api/v1/machines/{machine_id}/docker")
@@ -476,9 +481,15 @@ async def docker_host_api(
     """The Docker host check (Docker → Host): {"at", "ok", "error",
     "facts", "findings"}, refreshed with every image update check
     (`POST /api/v1/machines/{id}/docker/check-images`); null before the
-    first one."""
+    first one. `daemon_settings`: how the machine's daemon.json compares
+    with Docker → Settings (`in_scope`, `differences`, `restart_pending`,
+    `applied_at`, `error`)."""
     machine = await _get_machine_or_404(machine_id, db, user)
-    return {"host_check": machine.docker_host_check}
+    app_settings = await get_or_create_app_settings(db)
+    return {
+        "host_check": machine.docker_host_check,
+        "daemon_settings": docker_daemon.machine_status(machine, app_settings),
+    }
 
 
 class _ContainerSettings(BaseModel):
@@ -611,17 +622,10 @@ async def docker_update_many_api(
 
 
 class _BulkRequest(BaseModel):
-    action: Literal["start", "stop", "restart", "remove"]
+    action: Literal[
+        "start", "stop", "restart", "pause", "unpause", "remove", "autoheal_on", "autoheal_off"
+    ]
     containers: list[str] = Field(default_factory=list, max_length=100)
-
-
-# Same split as the web page's buttons under the containers table.
-_BULK_PERMISSION = {
-    "start": Permission.ACTION_POWER,
-    "stop": Permission.ACTION_POWER,
-    "restart": Permission.ACTION_POWER,
-    "remove": Permission.ACTION_UPDATES,
-}
 
 
 @router.post("/containers/bulk", dependencies=[_view])
@@ -632,18 +636,24 @@ async def docker_containers_bulk_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, Any]:
-    """Start, stop, restart or remove (stopped ones only) several containers
-    in one go — the web page's buttons for the selected rows. Start/stop/
-    restart need `action.power`, remove `action.updates`. Updating or
-    scanning the selected containers is `POST .../update` or
-    `POST .../images/scan` with `refs`."""
-    if not user.has_permission(_BULK_PERMISSION[body.action]):
+    """Start, stop, restart, pause, unpause, remove (stopped ones only) or
+    switch autoheal on/off for several containers in one go — the web
+    page's buttons for the selected rows. Remove needs `action.updates`,
+    the rest `action.power`. Updating or scanning the selected containers
+    is `POST .../update` or `POST .../images/scan` with `refs`."""
+    permission = bulk_permission(body.action)
+    if permission is None or not user.has_permission(permission):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
     machine = await _get_machine_or_404(machine_id, db, user)
     _ready(machine)
     names = [n for n in body.containers if is_container_name_valid(n)]
     if not names:
         raise _bad("No valid container names.")
+    if body.action in ("autoheal_on", "autoheal_off"):
+        outcome = await bulk_on_machine(request, db, machine, user, body.action, names)
+        if not outcome.done and outcome.error:
+            raise _protected()
+        return {"ok": True, "done": outcome.done}
     app_settings = await get_or_create_app_settings(db)
     result = await docker_actions.run_bulk_action(
         db, machine, body.action, names, timeout=app_settings.ssh_connect_timeout + 120
@@ -1237,7 +1247,9 @@ class _StackSave(BaseModel):
     deploy: bool = False
 
 
-def _stack_form(body: _StackSave, stack: DockerStack | None = None) -> docker_stacks.StackForm:
+def _stack_form(
+    body: _StackSave, stack: DockerStack | None = None, default_gate: str = "off"
+) -> docker_stacks.StackForm:
     def keep[T](value: T | None, stored: T) -> T:
         return stored if value is None else value
 
@@ -1261,7 +1273,8 @@ def _stack_form(body: _StackSave, stack: DockerStack | None = None) -> docker_st
         keep_history=keep(body.keep_history, stack.keep_history if stack else False),
         auto_rollback=keep(body.auto_rollback, stack.auto_rollback if stack else False),
         vulnerability_gate=keep(
-            body.vulnerability_gate, stack.vulnerability_gate if stack else "off"
+            body.vulnerability_gate,
+            stack.vulnerability_gate if stack else default_gate,
         ),
         shared_variables=body.shared_variables,
         drift_check=body.drift_check,
@@ -1330,7 +1343,8 @@ async def docker_stack_create_api(
     """Create a stack; `deploy: true` also deploys it (needs `action.updates`)."""
     machine = await _get_machine_or_404(machine_id, db, user)
     _check_deploy(body, user, machine)
-    form = _stack_form(body)
+    app_settings = await get_or_create_app_settings(db)
+    form = _stack_form(body, default_gate=app_settings.docker_default_vulnerability_gate or "off")
     form.directory = form.directory or ""
     replace = (body.replace_container or "").strip()
     errors = form.validate()

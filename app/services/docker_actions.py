@@ -32,7 +32,7 @@ from app.db.models.machine import Machine
 from app.services import docker_backups, docker_jobs
 from app.services.docker_gate import normalize_gate
 from app.services.update_policy import normalize_policy
-from app.ssh.containers import BULK_ACTIONS, MAX_BULK_CONTAINERS
+from app.ssh.containers import BULK_ACTIONS, MAX_BULK_CONTAINERS, SAFE_FOR_OWN
 from app.ssh.docker_cli import (
     DockerCommandError,
     is_container_name_valid,
@@ -147,7 +147,8 @@ async def run_bulk_action(
 ) -> BulkResult:
     """Start/stop/restart/remove the given containers in one docker command
     on the machine and wait for its answer (`app.ssh.containers`).
-    debcontrol's own containers are left out of everything but `start`."""
+    debcontrol's own containers are left out of everything but `start`
+    and `unpause`."""
     # Imported here: app.tasks.jobs imports the scheduler, which imports
     # this module.
     from app.tasks import jobs as tasks
@@ -160,7 +161,7 @@ async def run_bulk_action(
         if not is_container_name_valid(name):
             result.skipped[name] = "invalid"
         elif (
-            action != "start"
+            action not in SAFE_FOR_OWN
             and protected
             and docker_jobs.container_project(machine, name) == protected
         ):

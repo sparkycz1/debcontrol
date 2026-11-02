@@ -88,6 +88,10 @@ class DockerJobKind(enum.StrEnum):
     # Copy a stack (and its data) from another machine onto this one, run
     # by the worker itself (`app.services.docker_transfer`).
     STACK_TRANSFER = "stack_transfer"
+    # Write Docker → Settings into /etc/docker/daemon.json (no restart).
+    DAEMON_CONFIG = "daemon_config"
+    # Restart the Docker daemon so it reads daemon.json (a button).
+    DAEMON_RESTART = "daemon_restart"
 
 
 class DockerJobStatus(enum.StrEnum):

@@ -55,10 +55,18 @@ async def test_docker_table_shows_actions_per_state(client, db_session_factory):
 
     response = await client.get(f"/machines/{machine_id}/docker")
 
-    assert f"/machines/{machine_id}/containers/immich_server/restart" in response.text
-    assert f"/machines/{machine_id}/containers/immich_server/stop" in response.text
-    assert f"/machines/{machine_id}/containers/old/start" in response.text
-    assert f"/machines/{machine_id}/containers/old/stop" not in response.text
+    # Each row's menu posts to the table's bulk endpoint with that one
+    # container, offering only what fits its state.
+    menus = {
+        part.split('name="container" value="', 1)[1].split('"', 1)[0]: part
+        for part in response.text.split('popover class="row-menu"')[1:]
+    }
+    assert f'action="/machines/{machine_id}/docker/containers/bulk"' in menus["immich_server"]
+    assert 'value="restart"' in menus["immich_server"]
+    assert 'value="stop"' in menus["immich_server"]
+    assert 'value="pause"' in menus["immich_server"]
+    assert 'value="start"' in menus["old"]
+    assert 'value="stop"' not in menus["old"]
 
 
 async def test_action_dispatches_the_task_and_redirects(client, db_session_factory, celery_calls):

@@ -2102,6 +2102,77 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 .row-action:hover { color: var(--color-text); border-color: var(--color-border-strong); }
 .row-action-danger:hover { color: var(--color-danger); border-color: var(--color-danger); }
 
+/* A row's actions behind one "⋯" button (machines/docker/_macros.html
+   row_menu): a native popover, so it sits above the table (never clipped
+   by its scrolling box) and closes with Esc or a click outside. Where the
+   browser can anchor it, it opens under its button; elsewhere it centres
+   like a small dialog. */
+.cell-menu { width: 2.75rem; text-align: right; white-space: nowrap; }
+.row-menu-button {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.row-menu-button:hover,
+.row-menu-button:focus-visible { color: var(--color-text); border-color: var(--color-border-strong); }
+.row-menu[popover] {
+  width: auto;
+  min-width: 14rem;
+  max-width: min(90vw, 20rem);
+}
+.row-menu::backdrop { background: transparent; }
+@supports (position-area: bottom) {
+  .row-menu[popover] {
+    margin: var(--space-1) 0 0;
+    position-area: bottom span-left;
+    position-try-fallbacks: flip-block;
+  }
+}
+.row-menu-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.row-menu-title {
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
+}
+.row-menu-title .table-muted { display: block; font-size: 0.8rem; }
+.row-menu-list, .row-menu-links { display: flex; flex-direction: column; gap: 0.1rem; margin: 0; }
+.row-menu-links:not(:empty) { border-top: 1px solid var(--color-border); padding-top: var(--space-1); }
+.row-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.row-menu-item:hover, .row-menu-item:focus-visible { background: var(--color-surface-raised); }
+a.row-menu-item, a.row-menu-item:visited { color: var(--color-text); }
+.row-menu-item.row-menu-danger { color: var(--color-danger); }
+
 /* Vulnerabilities in one short line: critical and high as badges, the
    rest as a muted number; the whole line links to the details. */
 .severity-compact {
@@ -2247,7 +2318,17 @@ a.state-tile { text-decoration: none; }
     padding: 0;
     min-height: 0;
   }
-  .table-cards tbody td.cell-name { padding-right: 2rem; }
+  .table-cards tbody td.cell-name { padding-right: 5rem; }
+  /* The row's "⋯" menu sits top right, left of the checkbox. */
+  .table-cards tbody td.cell-menu {
+    position: absolute;
+    top: var(--space-1);
+    right: calc(var(--space-3) + 1.75rem);
+    width: auto;
+    padding: 0;
+    min-height: 0;
+  }
+  .table-cards tbody td.cell-menu::before { content: none; }
   .containers-table .cell-name, .containers-table .cell-image,
   .containers-table .cell-links, .containers-table .cell-status { min-width: 0; max-width: none; }
 }
@@ -2858,3 +2939,33 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .registry-logins summary { cursor: pointer; color: var(--color-muted); font-size: 0.88rem; }
 .registry-logins ul { margin-top: var(--space-2); }
 .registry-logins li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
+
+/* Settings split into panels side by side on a wide screen, one under
+   another on a narrow one (Docker → Settings, a container's settings). */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.settings-grid > .panel { margin: 0; }
+.settings-grid > .panel h2 { margin-top: 0; }
+/* Two short fields on one line (e.g. log size and file count). */
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.field-pair > div { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.field-pair input { width: 100%; box-sizing: border-box; }
+.form-actions-sticky.page-header-actions { margin-bottom: var(--space-4); }
+.panel-actions { margin: 0 0 var(--space-3); }
+.check-list { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.field-error { margin: var(--space-1) 0 0; color: var(--color-danger); font-size: 0.88rem; }
+.inline-check { display: inline-flex; align-items: center; gap: 0.4em; }
+.form .inline-check { color: var(--color-text); }
+.daemon-settings-panel { margin-top: var(--space-3); }
+/* Long help collapsed under its field ("More about this"). */
+.hint-more { margin: var(--space-1) 0 var(--space-2); padding: 0; border: 0; background: none; }
+.hint-more > summary { cursor: pointer; color: var(--color-muted); font-size: 0.85rem; width: fit-content; }
+.hint-more > summary:hover { color: var(--color-text); }
+.hint-more > p { margin: var(--space-1) 0 0; }
+.settings-grid > .panel .form { max-width: none; }
+/* CPU · memory: hidden where the table is narrow (the container page has it). */
+@container (44rem <= width < 66rem) { .col-usage, .cell-usage { display: none; } }

@@ -27,7 +27,8 @@ operational part of Settings have their own routers —
 machine's Docker tab has `api_v1_docker.py` (adopting projects, a
 container to a stack and drift in `api_v1_docker_adopt.py`), Docker across
 the fleet `api_v1_docker_fleet.py`, `api_v1_docker_vulnerabilities.py` and
-`api_v1_docker_shared.py` (registry logins, shared variables).)
+`api_v1_docker_shared.py` (registry logins, shared variables), Docker →
+Settings `api_v1_docker_settings.py`.)
 The interactive SSH terminal (and the Docker tab's shell inside a
 container, which runs over the same WebSocket terminal)
 (`app/web/routes/terminal_ws.py`, and likewise the Logs tab's live-follow
@@ -98,6 +99,7 @@ from app.schemas.machine_config import MachineConfigExport
 from app.schemas.machine_group import MachineGroupCreate
 from app.services import (
     acknowledgements,
+    docker_jobs,
     docker_sbom,
     hardware_inventory,
     machine_compare,
@@ -1585,11 +1587,19 @@ async def container_action_api(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
-    """Start/stop/restart one Docker container — the API equivalent of the
-    Monitoring tab's container actions, same `action.power` permission."""
+    """Start/stop/restart/pause/unpause one Docker container — the API
+    equivalent of the Docker tab's container actions, same `action.power`
+    permission. Pausing debcontrol's own container is refused (409)."""
     machine = await _get_machine_or_404(machine_id, db, user)
     if action not in CONTAINER_ACTIONS or not is_container_name_valid(container):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request.")
+    if action == "pause":
+        try:
+            await docker_jobs.check_container(db, machine, container)
+        except docker_jobs.ProtectedError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="debcontrol runs in this container."
+            ) from None
     app_settings = await get_or_create_app_settings(db)
 
     output = ""

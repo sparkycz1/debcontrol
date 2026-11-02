@@ -32,7 +32,7 @@
 {% macro container_state(request, c) -%}
   {%- set status_text = c.status or c.state -%}
   {%- if c.health == 'unhealthy' %}{% set cls = 'badge-error' -%}
-  {%- elif c.health == 'starting' or c.state == 'restarting' %}{% set cls = 'badge-warn' -%}
+  {%- elif c.health == 'starting' or c.state in ('restarting', 'paused') %}{% set cls = 'badge-warn' -%}
   {%- elif c.state == 'running' %}{% set cls = 'badge-ok' -%}
   {%- elif c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') %}{% set cls = 'badge-error' -%}
   {%- else %}{% set cls = '' %}{% endif -%}
@@ -86,4 +86,83 @@
   {%- if rest %}<span class="severity-rest">{{ t(request, "docker.severity_tiny.rest", count=rest) }}</span>{% endif -%}
   {%- if not counts.get('critical') and not counts.get('high') and not rest %}<span class="badge badge-ok">{{ t(request, "docker.scan.clean") }}</span>{% endif -%}
   </a>
+{%- endmacro %}
+
+
+{#- A row's actions behind one "Actions" button (a native popover: no
+    script, closes with Esc or a click outside). The buttons post `value`
+    with the action to `form_action` — the table's own bulk endpoint, so
+    one container goes through exactly the same code and permissions as
+    several. Only what fits the container's state is offered.
+    `menu_id` must be unique on the page. -#}
+{% macro row_menu(request, menu_id, c, form_action, value, csrf_token, machine_id, can_act=false, can_update=false, can_terminal=false, image_update=false, is_own=false, back=none) -%}
+  {%- set state = c.state or '' -%}
+  {%- set base = '/machines/' ~ machine_id ~ '/docker' -%}
+  {%- if state == 'paused' -%}{%- set power = ('unpause', 'stop') -%}
+  {%- elif state in ('running', 'restarting') -%}{%- set power = ('restart', 'stop', 'pause') -%}
+  {%- else -%}{%- set power = ('start',) -%}{%- endif -%}
+  {%- if is_own -%}{%- set power = power | select('in', ('start', 'unpause')) | list -%}{%- endif -%}
+  <button type="button" class="row-menu-button" popovertarget="{{ menu_id }}"
+          aria-label="{{ t(request, 'docker.row_menu.label', name=c.name) }}" title="{{ t(request, 'docker.row_menu.label', name=c.name) }}">⋯</button>
+  <div id="{{ menu_id }}" popover class="row-menu">
+    <div class="row-menu-card">
+      <p class="row-menu-title"><strong>{{ c.name }}</strong> <span class="table-muted">{{ c.status or c.state }}</span></p>
+      <form method="post" action="{{ form_action }}" class="row-menu-list">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="container" value="{{ value }}">
+        {% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}
+        {% if can_act %}
+          {% for a in power %}
+            <button type="submit" name="action" value="{{ a }}" class="row-menu-item {{ 'row-menu-danger' if a == 'stop' }}"
+                    {% if a in ('stop', 'restart', 'pause') %}data-confirm="{{ t(request, 'monitoring.containers.confirm_' ~ a, name=c.name) }}"{% endif %}>{{ t(request, "monitoring.containers.action_" ~ a) }}</button>
+          {% endfor %}
+        {% endif %}
+        {% if can_update and not is_own %}
+          {% if image_update and state in ('running', 'restarting', 'paused') %}
+            <button type="submit" name="action" value="update" class="row-menu-item"
+                    data-confirm="{{ t(request, 'docker.update.selected_confirm') }}">{{ t(request, "docker.row_menu.update") }}</button>
+          {% endif %}
+          {% if state in ('exited', 'created', 'dead') %}
+            <button type="submit" name="action" value="remove" class="row-menu-item row-menu-danger"
+                    data-confirm="{{ t(request, 'docker.row_menu.confirm_remove', name=c.name) }}">{{ t(request, "docker.row_menu.remove") }}</button>
+          {% endif %}
+        {% endif %}
+      </form>
+      <div class="row-menu-links">
+        <a class="row-menu-item" href="{{ base }}/containers/{{ c.name | urlencode }}">{{ t(request, "docker.row_menu.open") }}</a>
+        {% if can_terminal %}
+          <a class="row-menu-item" href="/machines/{{ machine_id }}/logs?source=docker&amp;container={{ c.name | urlencode }}">{{ t(request, "docker.row_menu.logs") }}</a>
+          {% if state == 'running' %}<a class="row-menu-item" href="{{ base }}/containers/{{ c.name | urlencode }}/shell">{{ t(request, "docker.row_menu.shell") }}</a>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{%- endmacro %}
+
+
+{#- The less common actions for the selected rows (pause, unpause,
+    autoheal on/off) in a small "More" menu next to start/restart/stop,
+    so the bar under the table stays one readable row. -#}
+{% macro bulk_more(request, form_id) -%}
+  <details class="actions-menu">
+    <summary class="button button-secondary log-small-button">{{ t(request, "docker.bulk.more") }}</summary>
+    <div class="actions-menu-list">
+      <button type="submit" form="{{ form_id }}" name="action" value="pause" class="row-menu-item"
+              data-confirm="{{ t(request, 'docker.bulk.confirm_pause') }}">{{ t(request, "monitoring.containers.action_pause") }}</button>
+      <button type="submit" form="{{ form_id }}" name="action" value="unpause" class="row-menu-item">{{ t(request, "monitoring.containers.action_unpause") }}</button>
+      <button type="submit" form="{{ form_id }}" name="action" value="autoheal_on" class="row-menu-item"
+              title="{{ t(request, 'docker.bulk.autoheal_hint') }}">{{ t(request, "docker.bulk.autoheal_on") }}</button>
+      <button type="submit" form="{{ form_id }}" name="action" value="autoheal_off" class="row-menu-item">{{ t(request, "docker.bulk.autoheal_off") }}</button>
+    </div>
+  </details>
+{%- endmacro %}
+
+{#- CPU and memory of a running container, from the last monitoring sample. -#}
+{% macro usage_cell(request, c) -%}
+  <td class="cell-nowrap cell-usage" data-label="{{ t(request, 'docker.usage') }}" data-sort-value="{{ c.cpu_percent if c.cpu_percent is number else -1 }}">
+    {%- if c.cpu_percent is number or c.mem_bytes is number -%}
+      {% if c.cpu_percent is number %}{{ '%.1f' | format(c.cpu_percent) }} %{% endif %}
+      {% if c.mem_bytes is number %}<span class="table-muted">· {{ c.mem_bytes | filesizeformat(true) }}</span>{% endif %}
+    {%- else -%}<span class="table-muted">—</span>{%- endif -%}
+  </td>
 {%- endmacro %}

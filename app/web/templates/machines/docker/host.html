@@ -21,6 +21,62 @@
     {% endif %}
   </div>
 
+  {#- Docker → Settings for this machine: what differs, a restart waiting. -#}
+  {% if daemon.in_scope or daemon.restart_pending %}
+    <section class="panel daemon-settings-panel">
+      <div class="panel-header">
+        <div>
+          <h3>{{ t(request, "docker.settings.host_heading") }}</h3>
+          <p class="hint">{{ t(request, "docker.settings.host_hint") }} <a href="/docker/settings">{{ t(request, "docker_fleet.tab.settings") }}</a></p>
+        </div>
+        <div class="page-header-actions panel-actions">
+          {% if can_terminal and daemon.in_scope and machine.host_key_fingerprint %}
+            <form method="post" action="/machines/{{ machine.id }}/docker/daemon/apply" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.settings.apply_here") }}</button>
+            </form>
+          {% endif %}
+          {% if can_power and daemon.restart_pending and not is_self_host and machine.host_key_fingerprint %}
+            <form method="post" action="/machines/{{ machine.id }}/docker/daemon/restart" class="inline-form"
+                  data-confirm="{{ t(request, 'docker.settings.restart_here_confirm', name=machine.name) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button log-small-button">{{ t(request, "docker.settings.restart_here") }}</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+      {% if daemon.error %}<div class="alert alert-error"><p>{{ daemon.error }}</p></div>{% endif %}
+      {% if daemon.restart_pending %}
+        <p><span class="badge badge-warn">{{ t(request, "docker.settings.state_restart") }}</span>
+          {{ t(request, "docker.settings.restart_pending_hint_self" if is_self_host else "docker.settings.restart_pending_hint") }}</p>
+      {% endif %}
+      {% if daemon.in_scope and not daemon.checked %}
+        <p class="hint">{{ t(request, "docker.settings.state_unknown_hint") }}</p>
+      {% elif daemon.differences %}
+        <div class="table-cards-wrap">
+          <table class="data-table table-cards">
+            <thead><tr>
+              <th>{{ t(request, "docker.settings.setting") }}</th>
+              <th>{{ t(request, "docker.settings.on_machine") }}</th>
+              <th>{{ t(request, "docker.settings.wanted") }}</th>
+            </tr></thead>
+            <tbody>
+              {% for d in daemon.differences %}
+                <tr>
+                  <td class="cell-name" data-label="{{ t(request, 'docker.settings.setting') }}">{{ t(request, "docker.settings.field." ~ d.field) }}</td>
+                  <td data-label="{{ t(request, 'docker.settings.on_machine') }}"><code>{{ d.current | tojson if d.current is not none else '—' }}</code></td>
+                  <td data-label="{{ t(request, 'docker.settings.wanted') }}"><code>{{ d.wanted | tojson }}</code></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% elif daemon.in_scope %}
+        <p><span class="badge badge-ok">{{ t(request, "docker.settings.state_ok") }}</span></p>
+      {% endif %}
+    </section>
+  {% endif %}
+
   {% if not check %}
     <p class="hint">{{ t(request, "docker.host.never") }}</p>
   {% elif not check.ok %}

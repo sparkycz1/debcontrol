@@ -4,7 +4,7 @@
     and a filtered view can be bookmarked. -#}
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabs %}
-{% from "machines/docker/_macros.html" import severity_compact, container_state, web_links %}
+{% from "machines/docker/_macros.html" import severity_compact, container_state, web_links, row_menu, bulk_more, usage_cell %}
 
 {% block title %}{{ t(request, "docker_fleet.tab.containers") }} — Docker — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -12,6 +12,15 @@
 {% block content %}
   <div class="page-header">
     <h1>Docker</h1>
+    {% if can_updates and page.with_update %}
+      <div class="page-header-actions">
+        <form method="post" action="/docker/containers/update-all" class="inline-form"
+              data-confirm="{{ t(request, 'docker_fleet.update_all_confirm', count=page.with_update) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-secondary">{{ t(request, "docker_fleet.update_all", count=page.with_update) }}</button>
+        </form>
+      </div>
+    {% endif %}
   </div>
   {{ render_tabs(tabs, active_tab) }}
 
@@ -98,6 +107,8 @@
             {{ sort_head('image', t(request, "monitoring.containers.image")) }}
             {{ sort_head('vulns', t(request, "docker.vulnerabilities"), 'col-vulns') }}
             {{ sort_head('state', t(request, "monitoring.containers.status")) }}
+            <th class="col-usage">{{ t(request, "docker.usage") }}</th>
+            <th class="cell-menu"><span class="visually-hidden">{{ t(request, "docker.row_menu.heading") }}</span></th>
           </tr>
         </thead>
         <tbody>
@@ -144,6 +155,14 @@
                 {% endif %}
               </td>
               <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}">{{ container_state(request, c) }}</td>
+              {{ usage_cell(request, c) }}
+              <td class="cell-menu">
+                {% if r.machine_ready %}
+                  {{ row_menu(request, "row-menu-" ~ loop.index, c, "/docker/containers/bulk", r.key, csrf_token, r.machine_id,
+                              can_act=can_power, can_update=can_updates, can_terminal=can_terminal,
+                              image_update=(r.image_status == 'update'), is_own=r.is_own, back=back) }}
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>
@@ -161,11 +180,16 @@
                     data-confirm="{{ t(request, 'docker.bulk.confirm_restart') }}">{{ t(request, "monitoring.containers.action_restart") }}</button>
             <button type="submit" form="fleet-containers-bulk" name="action" value="stop" class="button button-secondary log-small-button"
                     data-confirm="{{ t(request, 'docker.bulk.confirm_stop') }}">{{ t(request, "monitoring.containers.action_stop") }}</button>
+            {{ bulk_more(request, "fleet-containers-bulk") }}
           {% endif %}
           {% if can_updates %}
             <button type="submit" form="fleet-containers-bulk" name="action" value="update" class="button button-secondary log-small-button"
                     data-confirm="{{ t(request, 'docker.update.selected_confirm') }}" title="{{ t(request, 'docker.update.selected_hint') }}">{{ t(request, "docker.update.selected") }}</button>
             <button type="submit" form="fleet-containers-bulk" name="action" value="scan" class="button button-secondary log-small-button">{{ t(request, "docker.bulk.scan") }}</button>
+            <span class="bulk-danger-zone">
+              <button type="submit" form="fleet-containers-bulk" name="action" value="remove" class="button button-danger log-small-button"
+                      data-confirm="{{ t(request, 'docker.bulk.confirm_remove') }}" title="{{ t(request, 'docker.bulk.remove_hint') }}">{{ t(request, "docker.bulk.remove") }}</button>
+            </span>
           {% endif %}
         </div>
       </div>

@@ -68,9 +68,17 @@ def truncate_output(text: str) -> str:
 def own_project(machine: Machine, own: self_host.SelfHost) -> str | None:
     """The Compose project debcontrol's containers belong to on `machine`,
     when `machine` is the one debcontrol runs on; else None."""
-    if machine.id not in own.hosts:
+    return own_project_of(machine.id, machine.docker_containers, own)
+
+
+def own_project_of(
+    machine_id: uuid.UUID, docker_containers: list[Any] | None, own: self_host.SelfHost
+) -> str | None:
+    """`own_project` from a machine's id and container list alone (for a
+    query that loads only those columns)."""
+    if machine_id not in own.hosts:
         return None
-    containers = [c for c in machine.docker_containers or [] if isinstance(c, dict)]
+    containers = [c for c in docker_containers or [] if isinstance(c, dict)]
     hostname = socket.gethostname().lower()
     for container in containers:
         container_id = str(container.get("id") or "").lower()
@@ -300,9 +308,10 @@ _CANCELLABLE_PHASES = frozenset({(DockerJobKind.CONTAINER_UPDATE.value, "pull")}
 
 def cancel_permission(kind: str) -> Permission:
     """The permission that cancels a job: the one that starts that kind."""
-    if kind == DockerJobKind.STACK_ACTION:
+    if kind in (DockerJobKind.STACK_ACTION, DockerJobKind.DAEMON_RESTART):
         return Permission.ACTION_POWER
     if kind in (
+        DockerJobKind.DAEMON_CONFIG,
         DockerJobKind.STACK_CHECK,
         DockerJobKind.STACK_DEPLOY,
         DockerJobKind.STACK_TRANSFER,
