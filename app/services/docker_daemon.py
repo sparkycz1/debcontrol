@@ -38,6 +38,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -461,6 +462,26 @@ async def pending_restart(db: AsyncSession, user: User) -> list[Machine]:
     return [
         m for m in result.scalars().all() if (m.docker_daemon_state or {}).get("restart_pending")
     ]
+
+
+def note_daemon_start(machine: Machine) -> bool:
+    """Clear "waiting for a Docker restart" when the latest host check saw
+    dockerd start after daemon.json was written, e.g. restarted by hand
+    (the only way on the machine debcontrol runs on). True when cleared."""
+    state = dict(machine.docker_daemon_state or {})
+    facts = (machine.docker_host_check or {}).get("facts") or {}
+    if not state.get("restart_pending"):
+        return False
+    try:
+        started = datetime.fromisoformat(str(facts.get("daemon_started_at")))
+        applied = datetime.fromisoformat(str(state.get("applied_at")))
+    except ValueError:
+        return False
+    if started <= applied:
+        return False
+    state.update({"restart_pending": False, "restarted_at": started.isoformat(), "error": None})
+    machine.docker_daemon_state = state
+    return True
 
 
 async def queue_apply(db: AsyncSession, machine: Machine, *, actor: str) -> DockerJob | None:

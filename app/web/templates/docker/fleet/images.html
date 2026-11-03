@@ -1,0 +1,54 @@
+{% extends "docker/fleet/_layout.html" %}
+{% from "docker/fleet/_macros.html" import menu, prune_panel %}
+
+{% block head %}
+  <th>{{ t(request, "docker.images.ref") }}</th>
+  <th>{{ t(request, "docker.images.id") }}</th>
+  <th>{{ t(request, "docker.images.size") }}</th>
+  <th>{{ t(request, "docker.images.created") }}</th>
+  <th>{{ t(request, "docker.images.used") }}</th>
+{% endblock %}
+
+{% block cells %}
+  <td class="cell-image" data-label="{{ t(request, 'docker.images.ref') }}">
+    <div class="cell-image-ref">
+      {% if i.update == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
+      <a class="cell-truncate" href="{{ base }}/images/{{ i.id | urlencode }}{% if i.ref %}?ref={{ i.ref | urlencode }}{% endif %}" title="{{ i.ref or t(request, 'docker.image.open') }}">
+        {% if i.ref %}<code>{{ i.ref }}</code>{% else %}<span class="table-muted">{{ t(request, "docker.images.dangling") }}</span>{% endif %}
+      </a>
+    </div>
+  </td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.images.id') }}"><code>{{ i.id[7:19] }}</code></td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.images.size') }}">{{ i.size_bytes | bytes if i.size_bytes is number else '—' }}</td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.images.created') }}">{{ i.created[:16] }}</td>
+  <td data-label="{{ t(request, 'docker.images.used') }}">{% if i.in_use %}<span class="badge badge-ok">{{ t(request, "docker.images.in_use") }}</span>{% else %}<span class="badge">{{ t(request, "docker.images.unused") }}</span>{% endif %}</td>
+{% endblock %}
+
+{% block menu %}
+  {% set label = i.ref or i.id[7:19] %}
+  {% call menu(request, "row-menu-" ~ loop.index, label, r.machine_name, kind, r.key, csrf_token, back) %}
+    {% if i.ref %}
+      <button type="submit" name="action" value="pull" class="row-menu-item">{{ t(request, "docker.image.pull") }}</button>
+      <button type="submit" name="action" value="scan" class="row-menu-item">{{ t(request, "docker.scan.now") }}</button>
+    {% endif %}
+    {% if not i.in_use %}
+      <button type="submit" name="action" value="remove" class="row-menu-item row-menu-danger"
+              data-confirm="{{ t(request, 'docker.image.remove_confirm', image=label) }}">{{ t(request, "docker.image.remove_short") }}</button>
+    {% endif %}
+    <a class="row-menu-item" href="{{ base }}/images/{{ i.id | urlencode }}{% if i.ref %}?ref={{ i.ref | urlencode }}{% endif %}">{{ t(request, "docker.image.open") }}</a>
+  {% endcall %}
+{% endblock %}
+
+{% block bulk %}
+  <button type="submit" form="fleet-bulk" name="action" value="pull" class="button button-secondary log-small-button"
+          data-confirm="{{ t(request, 'docker_fleet.confirm.images.pull') }}">{{ t(request, "docker.image.pull") }}</button>
+  <button type="submit" form="fleet-bulk" name="action" value="scan" class="button button-secondary log-small-button">{{ t(request, "docker.scan.now") }}</button>
+  <span class="bulk-danger-zone">
+    <button type="submit" form="fleet-bulk" name="action" value="remove" class="button button-danger log-small-button"
+            data-confirm="{{ t(request, 'docker_fleet.confirm.images.remove') }}">{{ t(request, "docker.image.remove_short") }}</button>
+  </span>
+{% endblock %}
+
+{% block after %}
+  {% if can_prune %}{{ prune_panel(request, kind, flt, csrf_token) }}{% endif %}
+{% endblock %}

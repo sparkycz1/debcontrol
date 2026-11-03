@@ -1,0 +1,19 @@
+{% extends "docker/fleet/_layout.html" %}
+{% from "machines/docker/_macros.html" import job_status, job_title %}
+
+{% block head %}
+  <th>{{ t(request, "docker.jobs.when") }}</th>
+  <th>{{ t(request, "docker.jobs.what") }}</th>
+  <th>{{ t(request, "docker.jobs.status") }}</th>
+  <th>{{ t(request, "docker.jobs.by") }}</th>
+  <th>{{ t(request, "docker.jobs.duration") }}</th>
+{% endblock %}
+
+{% block cells %}
+  {% set job = i.job %}
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.jobs.when') }}"><a href="{{ base }}/jobs/{{ job.id }}">{{ job.created_at | local_time }}</a></td>
+  <td data-label="{{ t(request, 'docker.jobs.what') }}">{{ job_title(request, job) }}</td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.jobs.status') }}">{{ job_status(request, job) }}</td>
+  <td class="cell-truncate" data-label="{{ t(request, 'docker.jobs.by') }}">{{ job.started_by or '—' }}</td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.jobs.duration') }}">{% if job.started_at and job.finished_at %}{{ (job.finished_at - job.started_at).total_seconds() | short_duration }}{% else %}—{% endif %}</td>
+{% endblock %}

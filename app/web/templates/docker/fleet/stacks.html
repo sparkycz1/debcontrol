@@ -1,0 +1,70 @@
+{% extends "docker/fleet/_layout.html" %}
+{% from "docker/fleet/_macros.html" import menu %}
+
+{% block head %}
+  <th>{{ t(request, "docker.stacks.name") }}</th>
+  <th>{{ t(request, "docker.projects.containers") }}</th>
+  <th>{{ t(request, "docker.stacks.state") }}</th>
+{% endblock %}
+
+{% block cells %}
+  <td class="cell-name" data-label="{{ t(request, 'docker.stacks.name') }}">
+    {% if i.stack_id %}<a href="{{ base }}/stacks/{{ i.stack_id }}"><strong>{{ i.name }}</strong></a>
+    {% else %}<a href="{{ base }}/stacks"><strong>{{ i.name }}</strong></a>{% endif %}
+    <div class="cell-badges">
+      {% if i.managed %}<span class="badge badge-tag">{{ t(request, "docker.projects.managed") }}</span>{% endif %}
+      {% if r.is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
+      {% if i.total %}<a class="table-summary" href="/docker/containers?stack={{ i.name | urlencode }}">{{ t(request, "docker_fleet.stack_containers") }}</a>{% endif %}
+    </div>
+  </td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.projects.containers') }}">
+    {% if i.total %}{{ t(request, "docker_fleet.running_of", running=i.running, total=i.total) }}{% else %}<span class="table-muted">—</span>{% endif %}
+  </td>
+  <td data-label="{{ t(request, 'docker.stacks.state') }}">
+    <span class="badge {{ 'badge-ok' if i.state == 'running' else ('badge-warn' if i.state == 'partial' else '') }}">{{ t(request, "docker_fleet.stack_state." ~ i.state) }}</span>
+    {% if i.drift == 'drift' %}<span class="badge badge-warn">{{ t(request, "docker.drift.status.drift") }}</span>{% endif %}
+    {% if i.last_status == 'failed' %}<span class="badge badge-error">{{ t(request, "docker.job.status.failed") }}</span>{% endif %}
+    {% if i.status %}<div class="table-summary">{{ i.status }}</div>{% endif %}
+  </td>
+{% endblock %}
+
+{% block menu %}
+  {% if not r.is_own %}
+    {% call menu(request, "row-menu-" ~ loop.index, i.name, r.machine_name, kind, r.key, csrf_token, back) %}
+      {% if actions.update %}
+        {% for a in ('update', 'up') %}
+          <button type="submit" name="action" value="{{ a }}" class="row-menu-item"
+                  data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=i.name) }}">{{ t(request, "docker.projects.action_" ~ a) }}</button>
+        {% endfor %}
+      {% endif %}
+      {% if actions.restart %}
+        {% for a in ('start', 'restart', 'stop', 'down') %}
+          <button type="submit" name="action" value="{{ a }}" class="row-menu-item {{ 'row-menu-danger' if a in ('stop', 'down') }}"
+                  data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=i.name) }}">{{ t(request, "docker.projects.action_" ~ a) }}</button>
+        {% endfor %}
+      {% endif %}
+    {% endcall %}
+  {% endif %}
+{% endblock %}
+
+{% block bulk %}
+  {% if actions.restart %}
+    <button type="submit" form="fleet-bulk" name="action" value="start" class="button button-secondary log-small-button">{{ t(request, "docker.projects.action_start") }}</button>
+    <button type="submit" form="fleet-bulk" name="action" value="restart" class="button button-secondary log-small-button"
+            data-confirm="{{ t(request, 'docker_fleet.confirm.stacks.restart') }}">{{ t(request, "docker.projects.action_restart") }}</button>
+    <button type="submit" form="fleet-bulk" name="action" value="stop" class="button button-secondary log-small-button"
+            data-confirm="{{ t(request, 'docker_fleet.confirm.stacks.stop') }}">{{ t(request, "docker.projects.action_stop") }}</button>
+  {% endif %}
+  {% if actions.update %}
+    <button type="submit" form="fleet-bulk" name="action" value="update" class="button button-secondary log-small-button"
+            data-confirm="{{ t(request, 'docker_fleet.confirm.stacks.update') }}">{{ t(request, "docker.projects.action_update") }}</button>
+    <button type="submit" form="fleet-bulk" name="action" value="up" class="button button-secondary log-small-button"
+            data-confirm="{{ t(request, 'docker_fleet.confirm.stacks.up') }}">{{ t(request, "docker.projects.action_up") }}</button>
+  {% endif %}
+  {% if actions.down %}
+    <span class="bulk-danger-zone">
+      <button type="submit" form="fleet-bulk" name="action" value="down" class="button button-danger log-small-button"
+              data-confirm="{{ t(request, 'docker_fleet.confirm.stacks.down') }}">{{ t(request, "docker.projects.action_down") }}</button>
+    </span>
+  {% endif %}
+{% endblock %}

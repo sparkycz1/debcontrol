@@ -771,3 +771,32 @@ async def test_update_all_across_the_fleet(
         "/docker/containers/update-all", data={"csrf_token": client.cookies.get("csrftoken")}
     )
     assert denied.status_code == 403
+
+
+def test_the_host_check_reads_how_long_dockerd_has_been_up() -> None:
+    from app.services import docker_host_check
+    from app.ssh import docker_host
+    from tests.test_docker_autoheal_checks_host import _host_raw
+
+    raw = _host_raw().replace("@@END", "@@STARTED\n  120\n@@END")
+    host = docker_host.parse_host_output(raw)
+    assert host["daemon_uptime"] == 120
+    assert docker_host.parse_host_output(_host_raw())["daemon_uptime"] is None
+    assert (
+        "@@STARTED" in docker_host.HOST_CHECK_COMMAND and "etimes" in docker_host.HOST_CHECK_COMMAND
+    )
+    facts = docker_host_check.evaluate(host, _machine())["facts"]
+    assert facts["daemon_started_at"]
+
+
+@pytest.mark.parametrize(
+    ("started", "cleared"),
+    [("2026-11-03T12:00:00+00:00", True), ("2026-11-03T09:00:00+00:00", False), (None, False)],
+)
+def test_a_restart_by_hand_clears_waiting_for_a_restart(started: str | None, cleared: bool) -> None:
+    machine = SimpleNamespace(
+        docker_daemon_state={"restart_pending": True, "applied_at": "2026-11-03T10:00:00+00:00"},
+        docker_host_check={"facts": {"daemon_started_at": started}},
+    )
+    assert docker_daemon.note_daemon_start(machine) is cleared  # type: ignore[arg-type]
+    assert machine.docker_daemon_state["restart_pending"] is (not cleared)

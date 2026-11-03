@@ -85,6 +85,7 @@ from app.services import (
     wake_on_lan,
     watched_files,
 )
+from app.services import docker_inventory_snapshot as inventory_snapshot
 from app.services.condition_fields import evaluate_condition, summarize_condition
 from app.services.endpoint_checks import (
     ProbeResult,
@@ -97,6 +98,7 @@ from app.services.endpoint_checks import (
 )
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
+    KIND_DOCKER,
     KIND_FACTS,
     KIND_PACKAGES,
     KIND_SERVICES,
@@ -112,6 +114,7 @@ from app.ssh.client import test_connection
 from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.docker_host import read_host as read_docker_host
+from app.ssh.docker_inventory import read_inventory as read_docker_inventory
 from app.ssh.exceptions import HostKeyMismatchError, SSHConnectionError
 from app.ssh.exec import run_command
 from app.ssh.facts import check_reboot_required, gather_facts
@@ -670,10 +673,27 @@ async def _check_machine_image_updates(machine_id: str) -> dict[str, Any]:
         try:
             host = await read_docker_host(machine, secret, app_settings.ssh_connect_timeout)
             machine.docker_host_check = docker_host_check.evaluate(host, machine)
+            docker_daemon.note_daemon_start(machine)
         except Exception as exc:
             logger.warning("Docker host check failed for %s: %s", machine.name, exc)
             machine.docker_host_check = docker_host_check.failed(str(exc) or type(exc).__name__)
+        # And the images, volumes, networks and projects the fleet pages list.
+        try:
+            inventory = await read_docker_inventory(
+                machine,
+                secret,
+                app_settings.ssh_connect_timeout,
+                sections=inventory_snapshot.SECTIONS,
+            )
+            inventory_changed = inventory_snapshot.store(
+                machine, inventory.as_dict(), inventory_snapshot.SECTIONS
+            )
+        except Exception as exc:
+            inventory_changed = False
+            logger.warning("Docker inventory read failed for %s: %s", machine.name, exc)
         await session.commit()
+        if inventory_changed:
+            await publish_fleet_event(KIND_DOCKER)
         return {"ok": True, "updates": sum(1 for s in statuses.values() if s == "update")}
 
 

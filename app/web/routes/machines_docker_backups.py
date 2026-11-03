@@ -31,6 +31,7 @@ from app.services import docker_actions, docker_backups, docker_jobs
 from app.ssh.docker_cli import DockerCommandError
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
+from app.web.routes import docker_ops
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     machines_router,
@@ -616,31 +617,18 @@ async def docker_backup_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
     machine = await _get_machine_or_404(machine_id, db, current_user)
     backup = await _backup_or_404(db, machine, backup_id)
-    back = f"{docker_base(machine)}/backups/{backup.id}"
-    try:
-        job = await docker_actions.backup_job(
-            db,
-            machine,
-            backup,
-            what,
-            started_by=actor(current_user),
-            read_data_percent=read_data_percent,
-        )
-    except docker_jobs.ProtectedError:
-        return redirect(back, error=LocalizedText(request, "docker.protected"))
-    except DockerCommandError as exc:
-        return redirect(back, error=str(exc))
-    if job is None:
-        return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
+    op = await docker_ops.backup_job(
         request,
+        db,
         machine,
-        f"machine.docker.backup.{what}",
-        f'Started Docker backup job "{what}" of "{backup.name}" on "{machine.name}"',
-        details={"backup": backup.name},
+        current_user,
+        backup,
+        what,
+        read_data_percent=read_data_percent,
     )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    if op.job is None:
+        return redirect(f"{docker_base(machine)}/backups/{backup.id}", error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 @router.get("/{machine_id}/docker/backups/{backup_id}/snapshots")

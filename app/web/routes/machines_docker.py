@@ -58,6 +58,7 @@ from app.ssh.docker_resources import RESTART_POLICIES, ResourceChange
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
 from app.web.redirects import safe_local_path
+from app.web.routes import docker_ops
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     machines_router,
@@ -326,22 +327,10 @@ async def docker_daemon_apply(
     """Write Docker → Settings into this machine's daemon.json (a job; no
     restart)."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    app_settings = await get_or_create_app_settings(db)
-    base = f"{docker_base(machine)}/host"
-    if not docker_daemon.machine_status(machine, app_settings)["in_scope"]:
-        return redirect(base, error=LocalizedText(request, "docker.settings.not_in_scope"))
-    job = await docker_daemon.queue_apply(db, machine, actor=actor(current_user))
-    if job is None:
-        return redirect(base, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
-        request,
-        machine,
-        "machine.docker.daemon.apply",
-        f'Docker settings: daemon.json queued for "{machine.name}"',
-        details={"job": str(job.id)},
-    )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    op = await docker_ops.daemon_apply(request, db, machine, current_user)
+    if op.job is None:
+        return redirect(f"{docker_base(machine)}/host", error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 @router.post(
@@ -356,21 +345,10 @@ async def docker_daemon_restart(
     """Restart the Docker daemon so it reads daemon.json (a job). Refused on
     the machine debcontrol itself runs on."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    base = f"{docker_base(machine)}/host"
-    if machine.id in (await self_host.find(db)).hosts:
-        return redirect(base, error=LocalizedText(request, "docker.settings.restart_self"))
-    job = await docker_daemon.queue_restart(db, machine, actor=actor(current_user))
-    if job is None:
-        return redirect(base, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
-        request,
-        machine,
-        "machine.docker.daemon.restart",
-        f'Docker daemon restart queued on "{machine.name}"',
-        details={"job": str(job.id)},
-    )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    op = await docker_ops.daemon_restart(request, db, machine, current_user)
+    if op.job is None:
+        return redirect(f"{docker_base(machine)}/host", error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 def _parse_at(value: Any) -> datetime | None:
@@ -1029,36 +1007,21 @@ async def docker_images_scan(
     """Scan one image (`image` + `image_id`) or a scope of them with
     Trivy and Grype, both pulled fresh."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    try:
-        if image or image_id:
-            if not is_image_valid(image) or not is_image_id_valid(image_id):
-                raise DockerCommandError("Invalid image.")
-            job = await docker_actions.scan_images(
-                db, machine, started_by=actor(current_user), images={image: image_id}
-            )
-        else:
-            job = await docker_actions.scan_images(
-                db, machine, started_by=actor(current_user), scope=scope
-            )
-    except DockerCommandError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    # Back to the page the scan was started from, if it is one of this
-    # machine's Docker pages.
-    default_back = f"{docker_base(machine)}/images"
-    target_back = safe_local_path(back, default_back)
-    if not target_back.startswith(f"{docker_base(machine)}/"):
-        target_back = default_back
-    if job is None:
-        return redirect(target_back, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
+    if (image or image_id) and not (is_image_valid(image) and is_image_id_valid(image_id)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image.")
+    op = await docker_ops.image_scan(
         request,
+        db,
         machine,
-        "machine.docker.images.scan",
-        f'Started a vulnerability scan ({job.target}) on "{machine.name}"',
-        details={"target": job.target},
+        current_user,
+        images={image: image_id} if image or image_id else None,
+        scope=scope,
     )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    if op.invalid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(op.error))
+    if op.job is None:
+        return redirect(_images_back(machine, back), error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 def _images_back(machine: Machine, back: str) -> str:
@@ -1090,24 +1053,10 @@ async def docker_images_pull(
 ) -> Response:
     """Pull one image reference as a job (`DockerJobKind.IMAGE_PULL`)."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    target_back = _images_back(machine, back)
-    try:
-        job = await docker_actions.pull_image(
-            db, machine, ref, started_by=actor(current_user)
-        )
-    except DockerCommandError:
-        return redirect(target_back, error=LocalizedText(request, "docker.image.invalid_ref"))
-    if job is None:
-        return redirect(target_back, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
-        request,
-        machine,
-        "machine.docker.image.pull",
-        f'Started pulling {job.target} on "{machine.name}"',
-        details={"image": job.target},
-    )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    op = await docker_ops.image_pull(request, db, machine, current_user, ref)
+    if op.job is None:
+        return redirect(_images_back(machine, back), error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 @router.post(
@@ -1129,20 +1078,9 @@ async def docker_images_remove(
         target_back = f"{docker_base(machine)}/images"  # its page is gone with it
     if not is_image_valid(image):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image.")
-    _result, error = await _image_op(request, db, machine, "remove", image)
-    await _audit(
-        db,
-        request,
-        machine,
-        "machine.docker.image.remove",
-        f'Removed image {image} on "{machine.name}"'
-        if error is None
-        else f'Could not remove image {image} on "{machine.name}"',
-        ok=error is None,
-        details={"image": image, **({"error": str(error)[:300]} if error else {})},
-    )
-    if error is not None:
-        return redirect(_images_back(machine, back), error=error)
+    op = await docker_ops.image_remove(request, db, machine, image)
+    if op.error is not None:
+        return redirect(_images_back(machine, back), error=op.error)
     return redirect(target_back, notice=LocalizedText(request, "docker.image.removed", image=image))
 
 
@@ -1344,34 +1282,17 @@ async def docker_prune(
         all_volumes=form.get("all_volumes") == "1",
         build_cache=form.get("build_cache") == "1",
     )
-    back = f"{docker_base(machine)}/images"
-    if not options.anything:
-        return redirect(back, error=LocalizedText(request, "docker.prune.nothing"))
-    if options.all_volumes and (
-        not options.volumes or str(form.get("confirm_name") or "").strip() != machine.name
-    ):
-        await _audit(
-            db,
-            request,
-            machine,
-            "machine.docker.prune",
-            f'Refused to remove all unused volumes on "{machine.name}": name not confirmed',
-            denied=True,
-            details=options.as_dict(),
-        )
-        return redirect(back, error=LocalizedText(request, "docker.prune.confirm_mismatch"))
-    job = await docker_actions.prune(db, machine, options, started_by=actor(current_user))
-    if job is None:
-        return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
+    op = await docker_ops.prune(
         request,
+        db,
         machine,
-        "machine.docker.prune",
-        f'Started a Docker clean-up on "{machine.name}"',
-        details=options.as_dict(),
+        current_user,
+        options,
+        confirm_name=str(form.get("confirm_name") or ""),
     )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    if op.job is None:
+        return redirect(f"{docker_base(machine)}/images", error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 # --- Volumes and networks -----------------------------------------------------

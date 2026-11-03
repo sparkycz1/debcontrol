@@ -1,0 +1,69 @@
+{% extends "docker/fleet/_layout.html" %}
+{% from "docker/fleet/_macros.html" import menu %}
+
+{% block head %}
+  <th>{{ t(request, "docker.host.version") }}</th>
+  <th>{{ t(request, "docker.host.containers") }}</th>
+  <th>{{ t(request, "docker.host.findings") }}</th>
+  <th>{{ t(request, "docker_fleet.hosts.settings") }}</th>
+{% endblock %}
+
+{% block cells %}
+  {% set d = i.daemon %}
+  <td data-label="{{ t(request, 'docker.host.version') }}">
+    {{ i.version or '—' }}
+    <div class="table-summary">{{ i.storage_driver }}{% if i.logging_driver %} · {{ i.logging_driver }}{% endif %}</div>
+    {% if r.is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
+  </td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.host.containers') }}">
+    {% if i.containers is not none %}{{ t(request, "docker.host.containers_value", running=(i.running if i.running is not none else '—'), total=i.containers) }}{% else %}—{% endif %}
+  </td>
+  <td data-label="{{ t(request, 'docker.host.findings') }}">
+    {% if i.check_error %}<span class="badge badge-error" title="{{ i.check_error }}">{{ t(request, "docker.settings.state_error") }}</span>
+    {% elif not i.checked_at %}<span class="table-muted">{{ t(request, "docker_fleet.hosts.not_checked") }}</span>
+    {% elif i.warnings %}<a class="badge badge-warn" href="{{ base }}/host">{{ t(request, "docker_fleet.hosts.warnings", count=i.warnings) }}</a>
+    {% else %}<span class="badge badge-ok">{{ t(request, "docker.host.all_good") }}</span>{% endif %}
+    {% if i.checked_at %}<div class="table-summary">{{ t(request, "docker.host.checked_at", when=(i.checked_at | local_time)) }}</div>{% endif %}
+  </td>
+  <td data-label="{{ t(request, 'docker_fleet.hosts.settings') }}">
+    {% if d.error %}<span class="badge badge-error" title="{{ d.error }}">{{ t(request, "docker.settings.state_error") }}</span>
+    {% elif d.restart_pending and i.self_host %}<span class="badge badge-warn" title="{{ t(request, 'docker.settings.state_restart_self_hint') }}">{{ t(request, "docker.settings.state_restart_self") }}</span>
+    {% elif d.restart_pending %}<span class="badge badge-warn">{{ t(request, "docker.settings.state_restart") }}</span>
+    {% elif not d.in_scope %}<span class="table-muted">{{ t(request, "docker_fleet.hosts.not_in_scope") }}</span>
+    {% elif not d.checked %}<span class="table-muted">{{ t(request, "docker_fleet.hosts.not_checked") }}</span>
+    {% elif d.differences %}<span class="badge badge-warn" title="{{ d.differences | map(attribute='field') | join(', ') }}">{{ t(request, "docker.settings.state_differs") }}</span>
+    {% else %}<span class="badge badge-ok">{{ t(request, "docker.settings.state_ok") }}</span>{% endif %}
+  </td>
+{% endblock %}
+
+{% block menu %}
+  {% set d = i.daemon %}
+  {% call menu(request, "row-menu-" ~ loop.index, r.machine_name, i.version, kind, r.key, csrf_token, back) %}
+    {% if actions.check %}<button type="submit" name="action" value="check" class="row-menu-item">{{ t(request, "docker.host.check_now") }}</button>{% endif %}
+    {% if actions.apply and d.in_scope and d.differences %}
+      <button type="submit" name="action" value="apply" class="row-menu-item"
+              data-confirm="{{ t(request, 'docker.settings.apply_confirm', count=1) }}">{{ t(request, "docker.settings.apply_here") }}</button>
+    {% endif %}
+    {% if actions.restart and d.restart_pending and not i.self_host %}
+      <button type="submit" name="action" value="restart" class="row-menu-item row-menu-danger"
+              data-confirm="{{ t(request, 'docker.settings.restart_confirm', count=1) }}">{{ t(request, "docker.settings.restart_here") }}</button>
+    {% endif %}
+    <a class="row-menu-item" href="{{ base }}/host">{{ t(request, "docker_fleet.open") }}</a>
+  {% endcall %}
+{% endblock %}
+
+{% block bulk %}
+  {% if actions.check %}
+    <button type="submit" form="fleet-bulk" name="action" value="check" class="button button-secondary log-small-button">{{ t(request, "docker.host.check_now") }}</button>
+  {% endif %}
+  {% if actions.apply %}
+    <button type="submit" form="fleet-bulk" name="action" value="apply" class="button button-secondary log-small-button"
+            data-confirm="{{ t(request, 'docker_fleet.confirm.hosts.apply') }}">{{ t(request, "docker_fleet.hosts.apply") }}</button>
+  {% endif %}
+  {% if actions.restart %}
+    <span class="bulk-danger-zone">
+      <button type="submit" form="fleet-bulk" name="action" value="restart" class="button button-danger log-small-button"
+              data-confirm="{{ t(request, 'docker_fleet.confirm.hosts.restart') }}">{{ t(request, "docker_fleet.hosts.restart") }}</button>
+    </span>
+  {% endif %}
+{% endblock %}

@@ -284,6 +284,10 @@ class Machine(Base):
     # daemon.json (`app.services.docker_daemon`): {"applied_at", "hash",
     # "restart_pending", "error", "validated"}.
     docker_daemon_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # The machine's images, volumes, networks and Compose projects as last
+    # read (`app.services.docker_inventory_snapshot`), for the fleet-wide
+    # Docker pages: {"at", "images", "volumes", "networks", "projects"}.
+    docker_inventory: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Where the next monitoring sample's `docker events` read starts: the
     # machine's own clock (Unix seconds) at the previous sample, so events
     # are neither missed nor reported twice (app.services.container_events).
