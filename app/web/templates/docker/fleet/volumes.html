@@ -1,0 +1,28 @@
+{% extends "docker/fleet/_layout.html" %}
+{% from "docker/fleet/_macros.html" import prune_panel %}
+
+{% block head %}
+  <th>{{ t(request, "docker.volumes.name") }}</th>
+  <th>{{ t(request, "docker.volumes.driver") }}</th>
+  <th>{{ t(request, "docker.volumes.stack") }}</th>
+  <th>{{ t(request, "docker.volumes.used_by") }}</th>
+  <th>{{ t(request, "docker.images.size") }}</th>
+{% endblock %}
+
+{% block cells %}
+  <td class="cell-truncate" data-label="{{ t(request, 'docker.volumes.name') }}" title="{{ i.name }}">
+    <code>{{ i.name }}</code>
+    {% if i.anonymous %}<span class="badge">{{ t(request, "docker.volumes.anonymous") }}</span>{% endif %}
+  </td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.volumes.driver') }}">{{ i.driver or '—' }}</td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.volumes.stack') }}">{{ i.compose_project or '—' }}</td>
+  <td data-label="{{ t(request, 'docker.volumes.used_by') }}">
+    {% for name in i.used_by %}<a href="{{ base }}/containers/{{ name | urlencode }}">{{ name }}</a>{% if not loop.last %}, {% endif %}
+    {% else %}<span class="badge">{{ t(request, "docker.images.unused") }}</span>{% endfor %}
+  </td>
+  <td class="cell-nowrap" data-label="{{ t(request, 'docker.images.size') }}">{{ i.size_bytes | bytes if i.size_bytes is number else '—' }}</td>
+{% endblock %}
+
+{% block after %}
+  {% if can_prune %}{{ prune_panel(request, kind, flt, csrf_token) }}{% endif %}
+{% endblock %}

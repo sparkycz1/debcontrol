@@ -36,9 +36,19 @@ router = APIRouter(
 
 
 def tabs(request: Request, user: User) -> list[tuple[str, str, str]]:
-    """Docker's own tabs; registries and shared variables (their logins
-    and secrets reach the machines' Docker) only with `action.terminal`."""
+    """Docker's own tabs: first the same ones a machine's Docker tab has
+    (containers to jobs, across every visible machine), then what is
+    fleet-wide only. Registries and shared variables (their logins and
+    secrets reach the machines' Docker) only with `action.terminal`."""
     items = [("containers", t(request, "docker_fleet.tab.containers"), "/docker/containers")]
+    items += [
+        (kind, t(request, f"docker.nav.{kind}"), f"/docker/{kind}")
+        for kind in ("stacks", "images", "volumes", "networks", "backups")
+    ]
+    items += [
+        ("hosts", t(request, "docker_fleet.tab.hosts"), "/docker/hosts"),
+        ("jobs", t(request, "docker.nav.jobs"), "/docker/jobs"),
+    ]
     if user.has_permission(Permission.ACTION_TERMINAL):
         items += [
             ("registries", t(request, "docker_fleet.tab.registries"), "/docker/registries"),

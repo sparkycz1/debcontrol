@@ -120,7 +120,7 @@
 
   <section class="panel" id="machines" data-live-fleet data-live-kinds="docker">
     <h2>{{ t(request, "docker.settings.machines") }}</h2>
-    <p class="hint">{{ t(request, "docker.settings.machines_hint") }}</p>
+    <p class="hint">{{ t(request, "docker.settings.machines_hint") }} <a href="/docker/hosts">{{ t(request, "docker.settings.fleet_hosts_hint") }}</a></p>
     {% if (can_apply and configured and status_rows) or (can_restart and pending) %}
       <div class="page-header-actions panel-actions">
         {% if can_apply and configured and status_rows %}
@@ -158,6 +158,8 @@
                 <td class="cell-name" data-label="{{ t(request, 'docker_fleet.machine') }}"><a href="/machines/{{ m.id }}/docker/host"><strong>{{ m.name }}</strong></a></td>
                 <td data-label="{{ t(request, 'docker.settings.state') }}">
                   {% if s.error %}<span class="badge badge-error" title="{{ s.error }}">{{ t(request, "docker.settings.state_error") }}</span>
+                  {% elif s.restart_pending and m.id in own_hosts %}<span class="badge badge-warn">{{ t(request, "docker.settings.state_restart_self") }}</span>
+                    <span class="hint">{{ t(request, "docker.settings.state_restart_self_hint") }}</span>
                   {% elif s.restart_pending %}<span class="badge badge-warn">{{ t(request, "docker.settings.state_restart") }}</span>
                   {% elif not s.checked %}<span class="badge">{{ t(request, "docker.settings.state_unknown") }}</span>
                   {% elif s.differences %}<span class="badge badge-warn">{{ t(request, "docker.settings.state_differs") }}</span>

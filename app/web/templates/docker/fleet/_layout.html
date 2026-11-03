@@ -1,0 +1,143 @@
+{#- The fleet-wide Docker lists besides containers: the same tabs as a
+    machine's Docker tab, every visible machine at once
+    (app.web.routes.docker_fleet_pages, app.services.docker_fleet_lists).
+    Filters and paging are server-side (a GET form); each page fills the
+    blocks `head`, `cells`, `menu` and `bulk`. -#}
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+
+{% block title %}{{ t(request, "docker_fleet.title." ~ kind) }} — Docker — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  {% set can_select = actions.values() | select | list | length > 0 %}
+  <div class="page-header">
+    <h1>Docker</h1>
+    {% if inventory_page %}
+      <div class="page-header-actions">
+        <form method="post" action="/docker/refresh" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="from" value="{{ kind }}">
+          {% if flt.group_id %}<input type="hidden" name="group" value="{{ flt.group_id }}">{% endif %}
+          <button type="submit" class="button button-secondary" title="{{ t(request, 'docker_fleet.refresh_hint') }}">{{ t(request, "docker_fleet.refresh") }}</button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+
+  {% set flash_notice = flash(request, 'notice') %}
+  {% set flash_error = flash(request, 'error') %}
+  {% if flash_notice %}<div class="alert alert-ok" role="status"><p>{{ flash_notice }}</p></div>{% endif %}
+  {% if flash_error %}<div class="alert alert-error" role="alert"><p>{{ flash_error }}</p></div>{% endif %}
+  {% if result.truncated %}
+    <div class="alert alert-warn"><p>{{ t(request, "docker_fleet.list_truncated") }}</p></div>
+  {% endif %}
+
+  <p class="hint">{{ t(request, "docker_fleet.intro." ~ kind) }}</p>
+  {% if inventory_page and (result.oldest_read or result.never_read) %}
+    <p class="hint">
+      {% if result.oldest_read %}{{ t(request, "docker_fleet.read_at", when=(result.oldest_read | local_time)) }}{% endif %}
+      {% if result.never_read %}{{ t(request, "docker_fleet.never_read", count=result.never_read) }}{% endif %}
+    </p>
+  {% endif %}
+
+  <form method="get" action="/docker/{{ kind }}" class="search-form fleet-docker-filters" role="search">
+    <input type="search" name="q" value="{{ flt.q }}" placeholder="{{ t(request, 'docker_fleet.search.' ~ kind) }}"
+           aria-label="{{ t(request, 'docker_fleet.search.' ~ kind) }}">
+    {% if groups %}
+      <select name="group" aria-label="{{ t(request, 'docker_fleet.group') }}" class="inline-select">
+        <option value="">{{ t(request, "docker_fleet.all_groups") }}</option>
+        {% for g in groups %}<option value="{{ g.id }}" {% if flt.group_id == g.id %}selected{% endif %}>{{ g.name }}</option>{% endfor %}
+      </select>
+    {% endif %}
+    {% if shows %}
+      <select name="show" aria-label="{{ t(request, 'docker_fleet.show_label') }}" class="inline-select">
+        <option value="">{{ t(request, "docker_fleet.show_all") }}</option>
+        {% for s in shows %}<option value="{{ s }}" {% if flt.show == s %}selected{% endif %}>{{ t(request, "docker_fleet.show." ~ kind ~ "." ~ s) }}</option>{% endfor %}
+      </select>
+    {% endif %}
+    <button type="submit" class="button">{{ t(request, "docker_fleet.apply") }}</button>
+    {% if flt.q or flt.group_id or flt.show %}
+      <a href="/docker/{{ kind }}" class="button button-secondary">{{ t(request, "docker_fleet.clear") }}</a>
+    {% endif %}
+  </form>
+
+  {% if result.rows %}
+    <p class="hint">{{ t(request, "docker_fleet.list_summary", count=result.total, machines=result.machines) }}</p>
+    {% if can_select %}
+      <form method="post" action="/docker/{{ kind }}/bulk" id="fleet-bulk" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="back" value="{{ back }}">
+      </form>
+    {% endif %}
+
+    <div class="table-cards-wrap fleet-docker-table-wrap" id="fleet-{{ kind }}-live" data-live-fleet data-live-kinds="docker">
+      <table class="data-table table-cards" id="fleet-{{ kind }}-table">
+        <thead>
+          <tr>
+            {% if can_select %}
+              <th class="cell-select"><input type="checkbox" data-select-all="item" form="fleet-bulk" aria-label="{{ t(request, 'docker.select_all') }}"></th>
+            {% endif %}
+            <th>{{ t(request, "docker_fleet.machine") }}</th>
+            {% block head %}{% endblock %}
+            {% if can_select %}<th class="cell-menu"><span class="visually-hidden">{{ t(request, "docker.row_menu.heading") }}</span></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in result.rows %}
+            {% set repeat_machine = loop.index0 > 0 and result.rows[loop.index0 - 1].machine_id == r.machine_id %}
+            {% set base = "/machines/" ~ r.machine_id ~ "/docker" %}
+            {% set i = r.item %}
+            <tr>
+              {% if can_select %}
+                <td class="cell-select">
+                  {% if r.machine_ready and not r.is_own %}
+                    <input type="checkbox" name="item" value="{{ r.key }}" form="fleet-bulk"
+                           aria-label="{{ t(request, 'docker_fleet.select', name=r.ident, machine=r.machine_name) }}">
+                  {% endif %}
+                </td>
+              {% endif %}
+              <td data-label="{{ t(request, 'docker_fleet.machine') }}" {% if repeat_machine %}class="cell-repeat"{% endif %}>
+                <a href="{{ base }}/{{ kind if kind != 'hosts' else 'host' }}">{{ r.machine_name }}</a>
+                {% if r.group_name %}<div class="table-summary">{{ r.group_name }}</div>{% endif %}
+              </td>
+              {% block cells scoped %}{% endblock %}
+              {% if can_select %}
+                <td class="cell-menu">
+                  {% if r.machine_ready %}{% block menu scoped %}{% endblock %}{% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if can_select %}
+      <div class="bulk-bar" data-bulk-bar="item" data-bulk-form="fleet-bulk">
+        <p class="hint bulk-when-empty">{{ t(request, "docker_fleet.select_hint") }}</p>
+        <div class="bulk-when-selected">
+          <span class="hint">{{ t(request, "machines.bulk.with_selected") }} <strong data-bulk-count>0</strong></span>
+          {% block bulk %}{% endblock %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if result.pages > 1 %}
+      <nav class="page-header-actions pagination" aria-label="{{ t(request, 'docker_fleet.pages') }}">
+        {% if result.page > 1 %}<a class="button button-secondary" href="{{ url_with(page=result.page - 1) }}">{{ t(request, "machines.pagination.previous") }}</a>{% endif %}
+        <span class="hint">{{ t(request, "docker_fleet.page_of", page=result.page, pages=result.pages) }}</span>
+        {% if result.page < result.pages %}<a class="button button-secondary" href="{{ url_with(page=result.page + 1) }}">{{ t(request, "machines.pagination.next") }}</a>{% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <p class="hint">{{ t(request, "docker_fleet.none." ~ kind) }}</p>
+  {% endif %}
+
+  {% block after %}{% endblock %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/live-fleet.js') }}" defer></script>
+{% endblock %}

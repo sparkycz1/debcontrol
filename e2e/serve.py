@@ -122,6 +122,32 @@ async def seed() -> str:
                     "status": "Exited (0) 2 hours ago",
                 },
             ],
+            # Docker -> Images / Volumes / Networks / Stacks have rows to draw.
+            docker_inventory={
+                "at": now.isoformat(),
+                "images": [
+                    {"id": "sha256:" + "a" * 64, "ref": "nginx:1.27", "repository": "nginx",
+                     "tag": "1.27", "size_bytes": 190_000_000, "created": "2026-10-01 10:00",
+                     "in_use": True, "dangling": False},
+                    {"id": "sha256:" + "b" * 64, "ref": "", "repository": "", "tag": "",
+                     "size_bytes": 5_000_000, "created": "2026-09-01 10:00",
+                     "in_use": False, "dangling": True},
+                ],
+                "volumes": [
+                    {"name": "site_data", "driver": "local", "compose_project": "site",
+                     "anonymous": False, "used_by": ["nginx"], "size_bytes": None},
+                ],
+                "networks": [
+                    {"id": "n1", "name": "bridge", "driver": "bridge", "scope": "local",
+                     "internal": False, "builtin": True, "containers": []},
+                    {"id": "n2", "name": "site_default", "driver": "bridge", "scope": "local",
+                     "internal": False, "builtin": False, "containers": ["nginx"]},
+                ],
+                "projects": [
+                    {"name": "site", "status": "running(1)",
+                     "config_files": ["/srv/site/compose.yaml"], "working_dir": "/srv/site"},
+                ],
+            },
             # Docker -> Host has findings to list.
             docker_host_check={
                 "at": now.isoformat(),

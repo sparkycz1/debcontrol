@@ -64,10 +64,11 @@ from app.services import (
     docker_variables,
     self_host,
 )
+from app.services import docker_inventory_snapshot as inventory_snapshot
 from app.services.docker_gate import evaluate as evaluate_gate
 from app.services.docker_gate import normalize_gate
 from app.services.image_versions import parse_image
-from app.services.live_updates import KIND_DOCKER, publish_machine_event
+from app.services.live_updates import KIND_DOCKER, publish_fleet_event, publish_machine_event
 from app.services.notifications import notify
 from app.services.update_policy import bump_target, normalize_policy, parse_version, within
 from app.ssh import detached_jobs, docker_files, docker_images
@@ -1839,8 +1840,38 @@ async def _docker_inventory(machine_id: str, sections: list[str]) -> dict[str, A
             in_use = {str(c.get("image_id")) for c in inventory.containers if c.get("image_id")}
             await docker_scans.forget_missing(session, machine.id, present)
             await docker_scans.summarize(session, machine, in_use)
-            await session.commit()
-        return {"ok": True, "inventory": inventory.as_dict()}
+        result = inventory.as_dict()
+        inventory_snapshot.store(machine, result, tuple(sections))
+        await session.commit()
+        return {"ok": True, "inventory": result}
+
+
+async def _refresh_docker_inventory(machine_id: str) -> dict[str, Any]:
+    """Read the machine's images, volumes, networks and Compose projects for
+    the fleet-wide Docker pages (`app.services.docker_inventory_snapshot`),
+    then ring the fleet's live channel so open pages show them."""
+    async with db_session.AsyncSessionLocal() as session:
+        try:
+            machine, secret, timeout = await _machine_and_secret(session, machine_id)
+            inventory = await read_inventory(
+                machine, secret, timeout, sections=inventory_snapshot.SECTIONS
+            )
+        except _READ_ERRORS as exc:
+            return _error(exc)
+        changed = inventory_snapshot.store(
+            machine, inventory.as_dict(), inventory_snapshot.SECTIONS
+        )
+        await session.commit()
+    if changed:
+        await publish_fleet_event(KIND_DOCKER)
+    return {"ok": True, "changed": changed}
+
+
+@celery_app.task(
+    name="app.tasks.docker_jobs.refresh_docker_inventory", time_limit=_SHORT_TASK_TIME_LIMIT
+)
+def refresh_docker_inventory(machine_id: str) -> dict[str, Any]:
+    return asyncio.run(_refresh_docker_inventory(machine_id))
 
 
 @celery_app.task(name="app.tasks.docker_jobs.docker_inventory", time_limit=_SHORT_TASK_TIME_LIMIT)

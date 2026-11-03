@@ -26,7 +26,9 @@ operational part of Settings have their own routers —
 `api_v1_notifications.py`, `api_v1_checks.py`, `api_v1_settings.py`; the
 machine's Docker tab has `api_v1_docker.py` (adopting projects, a
 container to a stack and drift in `api_v1_docker_adopt.py`), Docker across
-the fleet `api_v1_docker_fleet.py`, `api_v1_docker_vulnerabilities.py` and
+the fleet `api_v1_docker_fleet.py` (containers) and `api_v1_docker_fleet_lists.py`
+(stacks, images, volumes, networks, backups, hosts, jobs, clean-up,
+refresh), `api_v1_docker_vulnerabilities.py` and
 `api_v1_docker_shared.py` (registry logins, shared variables), Docker →
 Settings `api_v1_docker_settings.py`.)
 The interactive SSH terminal (and the Docker tab's shell inside a

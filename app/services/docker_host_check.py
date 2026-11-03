@@ -30,7 +30,7 @@ What is checked:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.db.models.machine import Machine
@@ -167,8 +167,15 @@ def evaluate(host: dict[str, Any], machine: Machine) -> dict[str, Any]:
         "daemon_json": bool(daemon),
         # The keys Docker → Settings manage, as this file has them.
         "daemon_config": docker_daemon.managed_view(daemon),
+        "daemon_started_at": _started_at(host.get("daemon_uptime")),
     }
     return {"at": now, "ok": True, "error": None, "facts": facts, "findings": findings}
+
+
+def _started_at(uptime: Any) -> str | None:
+    if not isinstance(uptime, int) or uptime < 0:
+        return None
+    return (datetime.now(UTC) - timedelta(seconds=uptime)).isoformat()
 
 
 def failed(error: str) -> dict[str, Any]:

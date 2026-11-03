@@ -39,6 +39,7 @@ from app.ssh.docker_cli import DockerCommandError, is_container_name_valid, is_p
 from app.ssh.docker_compose import MAX_FILE_BYTES, STACK_ACTIONS
 from app.tasks import docker_jobs as docker_tasks
 from app.web.messages import LocalizedText
+from app.web.routes import docker_ops
 from app.web.routes.machines_common import (
     _get_machine_or_404,
     machines_router,
@@ -999,57 +1000,10 @@ async def docker_project_action(
     if not current_user.has_permission(_ACTION_PERMISSION[action]):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed.")
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    back = f"{docker_base(machine)}/stacks"
-    managed = next(
-        (s for s in await docker_stacks.list_stacks(db, machine.id) if s.name == project), None
-    )
-    working_dir = ""
-    files: list[str] = []
-    if action in ("up", "update") and managed is None:
-        projects, error = await _projects(request, db, machine)
-        found = next((p for p in projects if p["name"] == project), None)
-        if error is not None or found is None or not found["config_files"]:
-            return redirect(
-                back, error=error or LocalizedText(request, "docker.stack.files_unknown")
-            )
-        working_dir = str(found["working_dir"] or "")
-        files = [str(f) for f in found["config_files"]]
-    try:
-        job = await docker_actions.stack_action(
-            db,
-            machine,
-            project,
-            action,
-            started_by=actor(current_user),
-            working_dir=working_dir,
-            files=files,
-            stack=managed,
-        )
-    except docker_jobs.ProtectedError:
-        await _audit(
-            db,
-            request,
-            machine,
-            "machine.docker.stack.action",
-            f'Refused "{action}" of Compose project "{project}" on "{machine.name}": '
-            "debcontrol runs in it",
-            denied=True,
-            details={"project": project, "action": action},
-        )
-        return redirect(back, error=LocalizedText(request, "docker.protected"))
-    except DockerCommandError as exc:
-        return redirect(back, error=str(exc))
-    if job is None:
-        return redirect(back, error=LocalizedText(request, "docker.job.already_queued"))
-    await _audit(
-        db,
-        request,
-        machine,
-        "machine.docker.stack.action",
-        f'Started "{action}" of Compose project "{project}" on "{machine.name}"',
-        details={"project": project, "action": action},
-    )
-    return redirect(f"{docker_base(machine)}/jobs/{job.id}")
+    op = await docker_ops.project_action(request, db, machine, current_user, project, action)
+    if op.job is None:
+        return redirect(f"{docker_base(machine)}/stacks", error=op.error)
+    return redirect(f"{docker_base(machine)}/jobs/{op.job.id}")
 
 
 @router.get("/{machine_id}/docker/projects/{project}/compose", dependencies=[need_terminal])

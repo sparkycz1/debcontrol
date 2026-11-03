@@ -1,0 +1,42 @@
+{#- Helpers of the fleet-wide Docker lists (docker/fleet/*.html). -#}
+
+{#- A row's ⋯ menu: a popover with one form; the caller adds the buttons
+    (`name="action"`) and links. `value` is the row's `<machine>/<ident>`. -#}
+{% macro menu(request, menu_id, title, subtitle, kind, value, csrf_token, back) -%}
+  <button type="button" class="row-menu-button" popovertarget="{{ menu_id }}"
+          aria-label="{{ t(request, 'docker.row_menu.label', name=title) }}" title="{{ t(request, 'docker.row_menu.label', name=title) }}">⋯</button>
+  <div id="{{ menu_id }}" popover class="row-menu">
+    <div class="row-menu-card">
+      <p class="row-menu-title"><strong>{{ title }}</strong>{% if subtitle %} <span class="table-muted">{{ subtitle }}</span>{% endif %}</p>
+      <form method="post" action="/docker/{{ kind }}/bulk" class="row-menu-list">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="item" value="{{ value }}">
+        <input type="hidden" name="back" value="{{ back }}">
+        {{ caller() }}
+      </form>
+    </div>
+  </div>
+{%- endmacro %}
+
+{#- A clean-up across every visible machine (or the group filtered on):
+    one job per machine. Unused named volumes are left out on purpose. -#}
+{% macro prune_panel(request, kind, flt, csrf_token) -%}
+  <section class="panel">
+    <h2>{{ t(request, "docker_fleet.prune.heading") }}</h2>
+    <p class="hint">{{ t(request, "docker_fleet.prune.hint") }}</p>
+    <form method="post" action="/docker/prune" class="form form-wide" autocomplete="off"
+          data-confirm="{{ t(request, 'docker_fleet.prune.confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="from" value="{{ kind }}">
+      {% if flt.group_id %}<input type="hidden" name="group" value="{{ flt.group_id }}">{% endif %}
+      <label><input type="checkbox" name="containers" value="1"> {{ t(request, "docker_fleet.prune.containers") }}</label>
+      <label><input type="checkbox" name="images" value="1" {% if kind == 'images' %}checked{% endif %}> {{ t(request, "docker_fleet.prune.images") }}</label>
+      <label><input type="checkbox" name="all_images" value="1"> {{ t(request, "docker_fleet.prune.all_images") }}</label>
+      <label><input type="checkbox" name="networks" value="1" {% if kind == 'networks' %}checked{% endif %}> {{ t(request, "docker.prune.networks") }}</label>
+      <label><input type="checkbox" name="build_cache" value="1" {% if kind == 'images' %}checked{% endif %}> {{ t(request, "docker.prune.build_cache") }}</label>
+      <label><input type="checkbox" name="volumes" value="1" {% if kind == 'volumes' %}checked{% endif %}> {{ t(request, "docker.prune.volumes") }}</label>
+      <p class="hint">{{ t(request, "docker_fleet.prune.named_volumes_hint") }}</p>
+      <button type="submit" class="button button-danger">{{ t(request, "docker_fleet.prune.button") }}</button>
+    </form>
+  </section>
+{%- endmacro %}

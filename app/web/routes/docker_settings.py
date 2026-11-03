@@ -126,6 +126,7 @@ async def _page(
             "status_rows": status_rows,
             "differing": sum(1 for _m, s in status_rows if s["differences"]),
             "pending": pending,
+            "own_hosts": own,
             "log_drivers": docker_daemon.LOG_DRIVERS,
             "policies": docker_daemon.UPDATE_POLICIES,
             "gates": docker_daemon.GATES,

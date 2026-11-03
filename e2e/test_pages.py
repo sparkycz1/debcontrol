@@ -56,6 +56,15 @@ PAGES = [
     "/backup",
     "/account",
     "/search?q=web",
+    "/docker/containers",
+    "/docker/stacks",
+    "/docker/images",
+    "/docker/volumes",
+    "/docker/networks",
+    "/docker/backups",
+    "/docker/hosts",
+    "/docker/jobs",
+    "/docker/settings",
     "/api",
 ]
 

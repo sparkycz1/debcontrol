@@ -1,0 +1,60 @@
+{% extends "docker/fleet/_layout.html" %}
+{% from "docker/fleet/_macros.html" import menu %}
+
+{% macro status_cell(request, status, at=none) -%}
+  {%- if status == 'ok' -%}<span class="badge badge-ok">{{ t(request, "docker.job.status.succeeded") }}</span>
+  {%- elif status -%}<span class="badge badge-error">{{ t(request, "docker.job.status.failed") }}</span>
+  {%- else -%}<span class="table-muted">{{ t(request, "docker.backup.never") }}</span>{%- endif -%}
+  {%- if at %}<div class="table-summary">{{ at | local_time }}</div>{% endif -%}
+{%- endmacro %}
+
+{% block head %}
+  <th>{{ t(request, "docker.backup.name") }}</th>
+  <th>{{ t(request, "docker.backup.sources") }}</th>
+  <th>{{ t(request, "docker.backup.last") }}</th>
+  <th>{{ t(request, "docker.backup.last_check") }}</th>
+  <th>{{ t(request, "docker.backup.last_verify") }}</th>
+{% endblock %}
+
+{% block cells %}
+  <td class="cell-name" data-label="{{ t(request, 'docker.backup.name') }}">
+    <a href="{{ base }}/backups/{{ i.id }}"><strong>{{ i.name }}</strong></a>
+    {% if not i.enabled %}<span class="badge">{{ t(request, "docker.backup.disabled") }}</span>{% endif %}
+    <div class="table-summary cell-truncate" title="{{ i.repository }}">{{ i.repository }}</div>
+  </td>
+  <td data-label="{{ t(request, 'docker.backup.sources') }}">
+    {% for v in i.volumes %}<div><span class="table-muted">{{ t(request, "docker.backup.volume") }}</span> <code>{{ v }}</code></div>{% endfor %}
+    {% for p in i.paths %}<div><span class="table-muted">{{ t(request, "docker.backup.path") }}</span> <code>{{ p }}</code></div>{% endfor %}
+  </td>
+  <td data-label="{{ t(request, 'docker.backup.last') }}">
+    {{ status_cell(request, i.last_backup_status, i.last_backup_at) }}
+    {% if i.last_backup_bytes is number %}<div class="table-summary">{{ i.last_backup_bytes | bytes }}</div>{% endif %}
+  </td>
+  <td data-label="{{ t(request, 'docker.backup.last_check') }}">{{ status_cell(request, i.last_check_status) }}</td>
+  <td data-label="{{ t(request, 'docker.backup.last_verify') }}">{{ status_cell(request, i.last_verify_status) }}</td>
+{% endblock %}
+
+{% block menu %}
+  {% call menu(request, "row-menu-" ~ loop.index, i.name, r.machine_name, kind, r.key, csrf_token, back) %}
+    <button type="submit" name="action" value="run" class="row-menu-item"
+            data-confirm="{{ t(request, 'docker.backup.run_confirm_stop') }}">{{ t(request, "docker.backup.run") }}</button>
+    <button type="submit" name="action" value="check" class="row-menu-item">{{ t(request, "docker.backup.check") }}</button>
+    <button type="submit" name="action" value="verify" class="row-menu-item"
+            data-confirm="{{ t(request, 'docker.backup.verify_confirm') }}">{{ t(request, "docker.backup.verify") }}</button>
+    <button type="submit" name="action" value="forget" class="row-menu-item row-menu-danger"
+            data-confirm="{{ t(request, 'docker.backup.forget_confirm') }}">{{ t(request, "docker.backup.forget") }}</button>
+    <a class="row-menu-item" href="{{ base }}/backups/{{ i.id }}">{{ t(request, "docker_fleet.open") }}</a>
+  {% endcall %}
+{% endblock %}
+
+{% block bulk %}
+  <button type="submit" form="fleet-bulk" name="action" value="run" class="button button-secondary log-small-button"
+          data-confirm="{{ t(request, 'docker.backup.run_confirm_stop') }}">{{ t(request, "docker.backup.run") }}</button>
+  <button type="submit" form="fleet-bulk" name="action" value="check" class="button button-secondary log-small-button">{{ t(request, "docker.backup.check") }}</button>
+  <button type="submit" form="fleet-bulk" name="action" value="verify" class="button button-secondary log-small-button"
+          data-confirm="{{ t(request, 'docker.backup.verify_confirm') }}">{{ t(request, "docker.backup.verify") }}</button>
+  <span class="bulk-danger-zone">
+    <button type="submit" form="fleet-bulk" name="action" value="forget" class="button button-danger log-small-button"
+            data-confirm="{{ t(request, 'docker.backup.forget_confirm') }}">{{ t(request, "docker.backup.forget") }}</button>
+  </span>
+{% endblock %}

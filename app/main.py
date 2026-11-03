@@ -35,6 +35,7 @@ from app.web.routes import (
     api_v1_docker,
     api_v1_docker_adopt,
     api_v1_docker_fleet,
+    api_v1_docker_fleet_lists,
     api_v1_docker_settings,
     api_v1_docker_shared,
     api_v1_docker_vulnerabilities,
@@ -54,6 +55,7 @@ from app.web.routes import (
     checks,
     dashboard,
     docker_fleet,
+    docker_fleet_pages,
     docker_hooks,
     docker_settings,
     docker_shared,
@@ -289,6 +291,7 @@ def create_app() -> FastAPI:
     app.include_router(checks.router)
     app.include_router(machines.router)
     app.include_router(docker_fleet.router)
+    app.include_router(docker_fleet_pages.router)
     app.include_router(docker_shared.router)
     app.include_router(docker_settings.router)
     app.include_router(machine_groups.router)
@@ -325,6 +328,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_docker.router)
     app.include_router(api_v1_docker_vulnerabilities.router)
     app.include_router(api_v1_docker_fleet.router)
+    app.include_router(api_v1_docker_fleet_lists.router)
     app.include_router(api_v1_docker_shared.router)
     app.include_router(api_v1_docker_settings.router)
     app.include_router(users.router)

@@ -50,6 +50,10 @@ HOST_CHECK_COMMAND = (
     'find "$root/containers" -maxdepth 2 -name "*-json.log" '
     f"-size +{BIG_LOG_BYTES // 1024}k -printf '%s %f\\n' 2>/dev/null | head -n {_MAX_LOGS}; "
     "else echo unreadable; fi; "
+    # How long dockerd has been running (seconds), so a restart done by hand
+    # clears "waiting for a Docker restart" (`app.services.docker_daemon`).
+    "echo @@STARTED; p=$(pidof dockerd 2>/dev/null | cut -d' ' -f1); "
+    '[ -n "$p" ] && ps -o etimes= -p "$p" 2>/dev/null; '
     "echo @@END"
 )
 
@@ -75,7 +79,7 @@ def _json(text: str) -> Any:
 
 def parse_host_output(raw: str) -> dict[str, Any]:
     """{"no_access", "info", "daemon_json", "daemon_json_error",
-    "containers", "big_logs", "logs_readable"}."""
+    "containers", "big_logs", "logs_readable", "daemon_uptime"}."""
     if DOCKER_NO_ACCESS_MARKER in raw:
         return {"no_access": True}
     sections = _sections(raw)
@@ -100,8 +104,11 @@ def parse_host_output(raw: str) -> dict[str, Any]:
         container_id = filename.removesuffix("-json.log")
         if size.isdecimal() and container_id.isalnum():
             logs.append({"id": container_id[:64], "bytes": int(size)})
+    started = "".join(sections.get("STARTED") or []).strip()
     return {
         "no_access": False,
+        # Seconds dockerd has been up; None when unknown (busybox ps, no pidof).
+        "daemon_uptime": int(started) if started.isdecimal() and len(started) < 12 else None,
         "logs_readable": "unreadable" not in log_lines,
         "info": info if isinstance(info, dict) else None,
         "daemon_json": daemon,
