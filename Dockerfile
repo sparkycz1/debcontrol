@@ -45,7 +45,13 @@ ENV PATH="/opt/venv/bin:$PATH" \
     # to the working directory on their own — a plain `python
     # scripts/create_admin.py` invocation (docker compose exec) doesn't
     # get that same treatment, so it needs /app on sys.path explicitly.
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    # glibc gives every thread that allocates its own malloc arena (up to
+    # 8 per CPU core), each holding on to freed memory. Python here is
+    # asyncio on one thread plus short-lived helper threads (DNS lookups,
+    # SSH key work), which gain nothing from more arenas but leave each
+    # Celery worker child tens of MB larger. Two is the usual setting.
+    MALLOC_ARENA_MAX=2
 
 COPY --from=builder /opt/venv /opt/venv
 

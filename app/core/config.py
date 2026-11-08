@@ -55,6 +55,18 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
 
+    # Celery worker child recycling (app/tasks/celery_app.py): a forked
+    # child is replaced by a fresh one after this many tasks, or after a
+    # task leaves it above this much resident memory (MiB). Both keep the
+    # worker's memory flat over weeks of uptime instead of creeping up
+    # through fragmentation and copy-on-write. 0 turns either one off.
+    celery_worker_max_tasks_per_child: int = Field(
+        default=200, ge=0, alias="CELERY_WORKER_MAX_TASKS_PER_CHILD"
+    )
+    celery_worker_max_memory_per_child_mb: int = Field(
+        default=400, ge=0, alias="CELERY_WORKER_MAX_MEMORY_PER_CHILD_MB"
+    )
+
     # --- Redis (Celery broker + result backend, and the login rate limiter) ---
     # Same pattern as Postgres above: `redis_url` is built from these parts
     # unless set explicitly.
