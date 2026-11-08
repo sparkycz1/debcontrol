@@ -66,7 +66,7 @@ async def _publish(channel: str, kind: Kind) -> None:
     failing (or even slowing down) the actual job over, so every error is
     caught and logged, not raised."""
     try:
-        client: aioredis.Redis = aioredis.from_url(  # type: ignore[no-untyped-call]
+        client: aioredis.Redis = aioredis.from_url(
             get_settings().redis_url
         )
         try:

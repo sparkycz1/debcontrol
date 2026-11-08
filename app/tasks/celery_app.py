@@ -2,7 +2,7 @@
 
 Run (both handled by docker-compose.yml — the `worker` and `beat` services):
 
-    celery -A app.tasks.celery_app worker --loglevel=info --concurrency=10
+    celery -A app.tasks.celery_app worker --loglevel=info --autoscale=10,2
     celery -A app.tasks.celery_app beat   --loglevel=info
 
 Broker *and* result backend are the same Redis instance the rest of the app
@@ -55,6 +55,7 @@ stable contract, not a coincidence.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import sys
 import time
@@ -63,7 +64,7 @@ from typing import Any
 
 from celery import Celery
 from celery.schedules import crontab, schedstate, schedule
-from celery.signals import worker_process_init, worker_ready
+from celery.signals import worker_before_create_process, worker_process_init, worker_ready
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -275,6 +276,14 @@ celery_app.conf.update(
     # thousands, a full day's worth of these unread results sitting in Redis
     # is pure waste — one hour is more than enough headroom.
     result_expires=3600,
+    # Replace a child after N tasks or once a task leaves it above N KiB
+    # resident (Celery checks after each task, so a running task is never
+    # cut short). Long-lived Python processes that run a fresh
+    # `asyncio.run()` and SSH session per task drift upwards through heap
+    # fragmentation; recycling keeps a quiet worker small. See
+    # `CELERY_WORKER_MAX_TASKS_PER_CHILD`/`..._MAX_MEMORY_PER_CHILD_MB`.
+    worker_max_tasks_per_child=settings.celery_worker_max_tasks_per_child or None,
+    worker_max_memory_per_child=(settings.celery_worker_max_memory_per_child_mb * 1024) or None,
 )
 
 # --- Periodic work (Celery Beat) ---------------------------------------------
@@ -465,6 +474,21 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=4, minute=0),
     },
 }
+
+
+@worker_before_create_process.connect
+def _freeze_parent_heap(**kwargs: Any) -> None:
+    """Runs in the worker's parent process just before it forks a child.
+
+    Everything the parent imported (the whole app) is shared with each
+    child copy-on-write, but CPython's garbage collector writes into every
+    object it scans, so the first collection in a child copies those pages
+    and each child ends up with its own full copy of the app. `gc.freeze()`
+    moves everything alive now into a generation the collector never
+    scans, so those pages stay shared between the parent and all children.
+    """
+    gc.collect()
+    gc.freeze()
 
 
 @worker_process_init.connect

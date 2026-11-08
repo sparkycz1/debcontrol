@@ -293,13 +293,16 @@ services:
   # replicas — every task is idempotent enough for that, and Redis hands each
   # message to exactly one worker.
   #
-  # --concurrency defaults to 10, the previous queue's own ceiling of jobs in
-  # flight — raise it via CELERY_WORKER_CONCURRENCY in .env for a larger
-  # fleet (see wiki/Host-Requirements's capacity-planning math for how to
-  # size this against CPU/memory and DB_POOL_SIZE together — more workers
-  # means more concurrent DB connections too). Each concurrency slot is a
-  # forked child process, which rebuilds its own DB engine after the fork —
-  # see app/tasks/celery_app.py for why that matters.
+  # Up to CELERY_WORKER_CONCURRENCY (default 10) jobs run at once, each in
+  # its own forked child process (which rebuilds its own DB engine after
+  # the fork — see app/tasks/celery_app.py for why that matters). The
+  # worker grows to that many children only while jobs are waiting and
+  # shrinks back to CELERY_WORKER_MIN_CONCURRENCY (default 2) when quiet,
+  # so an idle worker holds 2 children, not 10 (each is ~100+ MB). Raise
+  # the maximum for a larger fleet (see wiki/Host-Requirements's
+  # capacity-planning math for how to size this against CPU/memory and
+  # DB_POOL_SIZE together — more workers means more concurrent DB
+  # connections too); set both to the same number for a fixed pool.
   worker:
     <<: *app-image
     command:
@@ -309,7 +312,7 @@ services:
         "app.tasks.celery_app",
         "worker",
         "--loglevel=info",
-        "--concurrency=${CELERY_WORKER_CONCURRENCY:-10}",
+        "--autoscale=${CELERY_WORKER_CONCURRENCY:-10},${CELERY_WORKER_MIN_CONCURRENCY:-2}",
       ]
     volumes:
       - ssh_data:/app/data
@@ -384,7 +387,7 @@ services:
   caddy:
     profiles: [caddy]
     # Pinned to an exact patch version, same reasoning as Postgres/Redis.
-    image: caddy:2.11.7
+    image: caddy:2.11.8
     restart: unless-stopped
     env_file:
       - .env

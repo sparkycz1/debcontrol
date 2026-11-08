@@ -175,8 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Celery and talks to Redis from the worker processes on its own. Kept
     # here so a burst of login attempts doesn't open a fresh connection per
     # request.
-    # redis-py's `from_url` carries no annotations, hence the ignore.
-    app.state.redis = aioredis.from_url(settings.redis_url)  # type: ignore[no-untyped-call]
+    app.state.redis = aioredis.from_url(settings.redis_url)
     # The auth middleware (app.auth.middleware) needs a DB session but runs
     # outside FastAPI's dependency injection — this is what it opens one
     # from. Kept on app.state (like `redis` above) rather than imported

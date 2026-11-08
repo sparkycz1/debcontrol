@@ -21,9 +21,9 @@ client is now built on the SDK that actually models it.
 
 Two HTTP client packages end up in play, purely as a fact of depending on
 these SDKs as they currently ship, not a choice made in this module:
-`anthropic` and `openai` build on `httpx2` — what the rest of this app
-uses too — while `openrouter` and `google-genai` still build on plain
-`httpx`, the only reason that package is still a dependency. `http_client=`/
+`anthropic`, `openai` and `google-genai` build on `httpx2` — what the rest
+of this app uses too — while `openrouter` still builds on plain `httpx`,
+the only reason that package is still a dependency. `http_client=`/
 `httpx_async_client=`/`transport=` (whichever the given SDK calls it) is
 how `tests/test_ai_providers.py` injects a `MockTransport` of the matching
 package and reaches no real network, for every client here.
@@ -55,16 +55,10 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import anthropic
 import httpx
 import httpx2
-import openai
-import openrouter as openrouter_sdk
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types as genai_types
 
 from app.ai.base import (
     AiProviderError,
@@ -74,8 +68,23 @@ from app.ai.base import (
     ToolCall,
     ToolDefinition,
 )
+from app.core.lazy_import import lazy_import
 from app.core.security import DecryptionError, decrypt_secret
 from app.db.models.ai_provider import AiProviderConfig, AiProviderKind
+
+# The four SDKs are imported on first use (see app.core.lazy_import): they
+# cost about 110 MB per process, and every Celery worker child imports this
+# module through app.tasks.jobs whether or not an AI provider is configured.
+if TYPE_CHECKING:
+    import anthropic
+    import openai
+    import openrouter as openrouter_sdk
+    from google import genai
+else:
+    anthropic = lazy_import("anthropic")
+    openai = lazy_import("openai")
+    openrouter_sdk = lazy_import("openrouter")
+    genai = lazy_import("google.genai")
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +105,7 @@ CHAT_TIMEOUT_SECONDS = 90.0
 # google-genai's `HttpOptions.timeout` wants milliseconds, not seconds.
 _GEMINI_MODELS_TIMEOUT_MS = int(MODELS_TIMEOUT_SECONDS * 1000)
 _GEMINI_CHAT_TIMEOUT_MS = int(CHAT_TIMEOUT_SECONDS * 1000)
+_GEMINI_API_VERSION = "v1beta"
 # So does `openrouter`'s `timeout_ms=`.
 _OPENROUTER_MODELS_TIMEOUT_MS = int(MODELS_TIMEOUT_SECONDS * 1000)
 _OPENROUTER_CHAT_TIMEOUT_MS = int(CHAT_TIMEOUT_SECONDS * 1000)
@@ -521,12 +531,16 @@ class GeminiClient(BaseAiClient):
     kind_value = AiProviderKind.GEMINI.value
 
     def __init__(
-        self, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None
+        self, api_key: str, *, transport: httpx2.AsyncBaseTransport | None = None
     ) -> None:
-        http_options = genai_types.HttpOptions(
-            httpx_async_client=httpx.AsyncClient(transport=transport)
+        http_options = genai.types.HttpOptions(
+            # google-genai 3 moved its default to `v1`, which lacks the
+            # `*-latest` model aliases an existing install may have picked;
+            # `v1beta` is the API this client was written and tested against.
+            api_version=_GEMINI_API_VERSION,
+            httpx_async_client=httpx2.AsyncClient(transport=transport)
             if transport is not None
-            else None
+            else None,
         )
         self._client = genai.Client(api_key=api_key, http_options=http_options)
 
@@ -534,8 +548,8 @@ class GeminiClient(BaseAiClient):
         models: list[ModelInfo] = []
         try:
             pager = await self._client.aio.models.list(
-                config=genai_types.ListModelsConfig(
-                    http_options=genai_types.HttpOptions(timeout=_GEMINI_MODELS_TIMEOUT_MS)
+                config=genai.types.ListModelsConfig(
+                    http_options=genai.types.HttpOptions(timeout=_GEMINI_MODELS_TIMEOUT_MS)
                 )
             )
             async for entry in pager:
@@ -552,7 +566,7 @@ class GeminiClient(BaseAiClient):
                         display_name=entry.display_name,
                     )
                 )
-        except genai_errors.APIError as exc:
+        except genai.errors.APIError as exc:
             raise _wrap_provider_error("Gemini", exc) from exc
         return models
 
@@ -563,10 +577,10 @@ class GeminiClient(BaseAiClient):
         model: str,
         system_prompt: str,
     ) -> ChatTurnResult:
-        config = genai_types.GenerateContentConfig(
+        config = genai.types.GenerateContentConfig(
             system_instruction=system_prompt,
-            automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
-            http_options=genai_types.HttpOptions(timeout=_GEMINI_CHAT_TIMEOUT_MS),
+            automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
+            http_options=genai.types.HttpOptions(timeout=_GEMINI_CHAT_TIMEOUT_MS),
             tools=(
                 [{"function_declarations": [_gemini_declaration(t) for t in tools]}]
                 if tools
@@ -578,7 +592,7 @@ class GeminiClient(BaseAiClient):
             response = await self._client.aio.models.generate_content(
                 model=model, contents=messages, config=config
             )
-        except genai_errors.APIError as exc:
+        except genai.errors.APIError as exc:
             raise _wrap_provider_error("Gemini", exc) from exc
 
         candidates = response.candidates or []
@@ -681,8 +695,8 @@ def build_client(config: AiProviderConfig) -> BaseAiClient:
     No `transport=` passthrough here (an earlier version had one, never
     actually used by any caller) — the four client classes want two
     different transport types between them (`httpx2` for `AnthropicClient`/
-    `OpenAICompatibleClient`, plain `httpx` for `OpenRouterClient`/
-    `GeminiClient` — see the module docstring), so tests construct the
+    `OpenAICompatibleClient`/`GeminiClient`, plain `httpx` for
+    `OpenRouterClient` — see the module docstring), so tests construct the
     client class they need directly instead of going through this factory.
     """
     api_key = decrypted_api_key(config)
