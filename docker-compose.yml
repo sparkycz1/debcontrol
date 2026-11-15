@@ -120,7 +120,7 @@ services:
   # (import-from-* below, scripts/switch_db.sh).
   timescaledb:
     profiles: [timescaledb]
-    image: timescale/timescaledb:2.31.0-pg18
+    image: timescale/timescaledb:2.32.0-pg18
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -198,7 +198,7 @@ services:
 
   import-from-timescaledb:
     profiles: [postgres]
-    image: timescale/timescaledb:2.31.0-pg18
+    image: timescale/timescaledb:2.32.0-pg18
     restart: "no"
     entrypoint: ["bash", "/db_import.sh"]
     environment: *db-import-env
