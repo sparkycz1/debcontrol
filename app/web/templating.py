@@ -22,7 +22,7 @@ from app.core.version import APP_VERSION, get_git_commit
 from app.db.models.role import Permission
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
-from app.services import acknowledgements, audit_subject, fleet_overview
+from app.services import acknowledgements, audit_subject, docker_overview, fleet_overview
 from app.ssh import proxmox
 from app.ssh.onboarding import SUDO_COMMAND_LIST
 from app.ssh.updates import reboot_hint_packages
@@ -403,6 +403,9 @@ templates.env.globals["t_or"] = t_or
 templates.env.globals["flash"] = read_flash
 templates.env.globals["logo_src"] = logo_src
 templates.env.globals["favicon_href"] = favicon_href
+# A container's state group and exit code (Docker pages' state badges).
+templates.env.globals["docker_row_state"] = docker_overview.row_state
+templates.env.globals["docker_exit_code"] = docker_overview.exit_code
 
 # Footer (base.html) — same values settings/_general.html's "Version" panel
 # used to show before that panel was removed in favor of the footer.

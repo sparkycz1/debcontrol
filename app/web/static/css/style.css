@@ -822,6 +822,7 @@ p { margin: 0 0 var(--space-3); }
    view, which is exactly when they're most useful. `top: 0` is relative to
    whichever ancestor actually scrolls (the modal body), not this table
    itself. */
+.modal-body .data-table, #packages-panel .data-table { border-collapse: separate; border-spacing: 0; }
 .modal-body .data-table th, #packages-panel .data-table th {
   position: sticky;
   top: 0;
@@ -871,6 +872,8 @@ p { margin: 0 0 var(--space-3); }
 .badge-ok { background: rgba(70, 191, 138, 0.16); color: var(--color-ok); }
 .badge-warn { background: rgba(224, 171, 74, 0.16); color: var(--color-warn); }
 .badge-error { background: rgba(240, 104, 95, 0.16); color: var(--color-danger); }
+/* Finished on purpose (a one-shot container that exited 0): quiet, not a problem. */
+.badge-done { background: transparent; color: var(--color-muted); border: 1px dashed var(--color-border-strong); }
 
 /* A machine tag (app.db.models.machine_tag) — neutral color since a tag
    carries no ok/warn/error meaning of its own, and a link (to that tag's
@@ -2054,7 +2057,10 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
 }
-.monitoring-table-wrap .data-table { margin: 0; }
+/* Separate borders: with collapsed ones Chromium paints the sticky header
+   a pixel or more below the scroll box's top edge, so the rows scrolling
+   underneath show through above it. The wrap already draws the frame. */
+.monitoring-table-wrap .data-table { margin: 0; border-collapse: separate; border-spacing: 0; border: 0; }
 .monitoring-table-wrap thead th {
   position: sticky;
   top: 0;
@@ -2084,6 +2090,56 @@ th[data-sort][aria-sort="descending"]::after { content: " \2193"; color: var(--c
 .containers-table .cell-links .cell-truncate { max-width: 12rem; }
 .containers-table .cell-status { min-width: 9rem; }
 .cell-select { width: 2.25rem; }
+/* --- Docker stacks: services as chips, one state per stack --- */
+.section-gap { margin-top: var(--space-6); }
+.service-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0; padding: 0; list-style: none; }
+.service-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+a.service-chip, .data-table a.service-chip { color: var(--color-text); text-decoration: none; }
+a.service-chip:hover { border-color: var(--color-border-strong); text-decoration: none; }
+.service-chip::before {
+  content: "";
+  flex: none;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--color-muted);
+}
+.service-chip-running::before { background: var(--color-ok); }
+.service-chip-unhealthy::before, .service-chip-failed::before { background: var(--color-danger); }
+.service-chip-restarting::before, .service-chip-paused::before { background: var(--color-warn); }
+.data-table a.service-chip-completed, .service-chip-completed { color: var(--color-muted); background: transparent; border-style: dashed; }
+.service-chip-completed::before { background: transparent; border: 1px solid var(--color-muted); }
+.stack-legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.stacks-table .cell-name { min-width: 12rem; max-width: 22rem; }
+.stacks-table .cell-name .cell-truncate { max-width: 20rem; }
+.stacks-table .cell-state { white-space: nowrap; }
+/* A stack's heading row in a containers table grouped by stack. */
+.data-table tr.group-row td {
+  padding-top: var(--space-3);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-strong);
+}
+.data-table tbody tr.group-row:hover { background: var(--color-surface); }
+.group-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.group-row-title .table-muted { font-size: 0.85rem; }
+.containers-table .name-full { display: none; }
+.containers-table:not(.is-grouped) .name-service { display: none; }
+.containers-table:not(.is-grouped) .name-full { display: inline; }
+.containers-table.is-grouped .stack-line { display: none; }
+.containers-table:not(.is-grouped) tr.group-row { display: none; }
+.containers-table.is-grouped tr:not(.group-row) .cell-machine > * { display: none; }
 .cell-badges { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; margin-top: 0.15rem; }
 .cell-badges .table-summary { margin: 0; }
 .cell-badges .badge-tag { margin: 0; }

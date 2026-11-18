@@ -30,6 +30,7 @@ from app.services import (
     docker_actions,
     docker_drift,
     docker_jobs,
+    docker_overview,
     docker_stacks,
     docker_transfer,
     docker_variables,
@@ -171,6 +172,18 @@ async def _projects(
             project["working_dir"] = container.get("compose_working_dir") or ""
         if not project["config_files"]:
             project["config_files"] = list(container.get("compose_config_files") or [])
+    for project in projects.values():
+        containers = sorted(
+            project["containers"],
+            key=lambda c: (str(c.get("compose_service") or c.get("name") or "")),
+        )
+        for container in containers:
+            container["row_state"] = docker_overview.row_state(container)
+        project["containers"] = containers
+        project["summary"] = docker_overview.stack_summary(
+            [c["row_state"] for c in containers],
+            [str(c.get("compose_service") or c.get("name") or "") for c in containers],
+        )
     return sorted(projects.values(), key=lambda p: p["name"]), None
 
 

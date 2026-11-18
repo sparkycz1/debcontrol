@@ -24,7 +24,13 @@ from app.db.models.docker import DockerBackup, DockerJob, DockerJobStatus, Docke
 from app.db.models.machine import Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.user import User
-from app.services import docker_daemon, docker_host_check, docker_jobs, self_host
+from app.services import (
+    docker_daemon,
+    docker_host_check,
+    docker_jobs,
+    docker_overview,
+    self_host,
+)
 from app.services import docker_inventory_snapshot as snapshot
 from app.services.access_scope import machines_visible_to
 
@@ -140,14 +146,23 @@ def _item(
     )
 
 
-def _stack_state(running: int, total: int, status: str) -> str:
-    """From the containers' last sample; without one (not sampled yet),
-    from what `docker compose ls` said, e.g. "exited(1), running(2)"."""
-    if total:
-        return "running" if running == total else ("partial" if running else "stopped")
+def _stack_from_status(status: str) -> dict[str, Any]:
+    """Without a containers' sample (not sampled yet): from what `docker
+    compose ls` said, e.g. "exited(1), running(2)"."""
     if "running" in status:
-        return "partial" if any(w in status for w in ("exited", "paused", "dead")) else "running"
-    return "stopped"
+        state = "partial" if any(w in status for w in ("exited", "paused", "dead")) else "running"
+    else:
+        state = "stopped"
+    return {
+        "state": state,
+        "running": 0,
+        "services": 0,
+        "completed": 0,
+        "stopped": 0,
+        "problems": 0,
+        "total": 0,
+        "down": [],
+    }
 
 
 async def _stacks(
@@ -161,24 +176,41 @@ async def _stacks(
     own = await self_host.find(db)
     rows: list[FleetItem] = []
     for m in machines:
-        counts: dict[str, list[int]] = {}
+        one_shot = docker_overview.one_shot_names(m)
+        members: dict[str, list[dict[str, Any]]] = {}
         for c in m.docker_containers or []:
             project = isinstance(c, dict) and str(c.get("compose_project") or "")
             if project:
-                entry = counts.setdefault(project, [0, 0])
-                entry[1] += 1
-                entry[0] += 1 if c.get("state") == "running" else 0
+                members.setdefault(project, []).append(
+                    {
+                        "name": str(c.get("name") or ""),
+                        "compose_service": str(c.get("compose_service") or ""),
+                        "state": str(c.get("state") or ""),
+                        "status": str(c.get("status") or ""),
+                        "row_state": docker_overview.row_state(c, one_shot),
+                    }
+                )
         stored = {str(p.get("name")): p for p in snapshot.rows(m, "projects")}
-        names = set(counts) | set(stored) | {n for (mid, n) in managed if mid == m.id}
+        names = set(members) | set(stored) | {n for (mid, n) in managed if mid == m.id}
         protected = docker_jobs.own_project_of(m.id, m.docker_containers, own)
         for name in sorted(names):
-            running, total = counts.get(name, [0, 0])
             stack = managed.get((m.id, name))
             status = str((stored.get(name) or {}).get("status") or "")
-            state = _stack_state(running, total, status)
-            if show == "running" and state == "stopped":
+            services = sorted(
+                members.get(name, []), key=lambda c: (c["compose_service"] or c["name"]).lower()
+            )
+            summary = (
+                docker_overview.stack_summary(
+                    [c["row_state"] for c in services],
+                    [c["compose_service"] or c["name"] for c in services],
+                )
+                if services
+                else _stack_from_status(status)
+            )
+            state = summary["state"]
+            if show == "running" and state not in ("running", "partial"):
                 continue
-            if show == "stopped" and state != "stopped":
+            if show == "stopped" and state not in ("stopped", "completed"):
                 continue
             if show == "managed" and stack is None:
                 continue
@@ -189,9 +221,10 @@ async def _stacks(
                     name,
                     {
                         "name": name,
-                        "running": running,
-                        "total": total,
-                        "state": state,
+                        **summary,
+                        # Each container: name, service, state, status and
+                        # its state group (`docker_overview.row_state`).
+                        "containers": services,
                         "status": status,
                         "managed": stack is not None,
                         "stack_id": str(stack.id) if stack else None,

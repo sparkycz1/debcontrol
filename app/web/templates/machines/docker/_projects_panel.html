@@ -1,74 +1,91 @@
 {#- Every Compose project on the machine right now, deployed by debcontrol
-    or not (machines_docker_stacks.docker_stacks_panel). -#}
-{% from "machines/docker/_macros.html" import container_state %}
+    or not (machines_docker_stacks.docker_stacks_panel): one row per
+    project — its services as small state chips, one state for the whole
+    stack, and every action behind the row's ⋯ menu. -#}
+{% from "machines/docker/_macros.html" import service_chips, stack_state %}
 {% if error %}
   <div class="alert alert-error"><p>{{ error }}</p></div>
 {% elif projects %}
   {% set ready = machine.host_key_fingerprint %}
-  <div class="monitoring-table-wrap table-cards-wrap">
-    <table class="data-table table-cards" id="projects-table" data-remember="docker-projects-table">
+  {% set can_act = ready and (can_power or can_updates or can_terminal) %}
+  <div class="table-cards-wrap">
+    <table class="data-table table-cards stacks-table" id="projects-table">
       <thead><tr>
         <th>{{ t(request, "docker.stacks.name") }}</th>
+        <th>{{ t(request, "docker.stacks.state") }}</th>
         <th>{{ t(request, "docker.projects.containers") }}</th>
-        <th>{{ t(request, "docker.projects.files") }}</th>
-        {% if ready and (can_power or can_updates or can_terminal) %}<th><span class="visually-hidden">{{ t(request, "monitoring.containers.actions") }}</span></th>{% endif %}
+        {% if can_act %}<th class="cell-menu"><span class="visually-hidden">{{ t(request, "docker.row_menu.heading") }}</span></th>{% endif %}
       </tr></thead>
       <tbody>
         {% for p in projects %}
           {% set stack = managed.get(p.name) %}
           {% set is_own = protected_project and p.name == protected_project %}
+          {% set has_files = stack or p.config_files %}
           <tr>
-            <td class="cell-nowrap">
-              {% if stack %}<a href="{{ docker_base }}/stacks/{{ stack.id }}"><strong>{{ p.name }}</strong></a> <span class="badge badge-tag">{{ t(request, "docker.projects.managed") }}</span>
+            <td class="cell-name" data-label="{{ t(request, 'docker.stacks.name') }}">
+              {% if stack %}<a href="{{ docker_base }}/stacks/{{ stack.id }}"><strong>{{ p.name }}</strong></a>
               {% else %}<strong>{{ p.name }}</strong>{% endif %}
-              {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
-              {% if p.status %}<div class="table-summary">{{ p.status }}</div>{% endif %}
+              <div class="cell-badges">
+                {% if stack %}<span class="badge badge-tag" title="{{ t(request, 'docker.projects.managed_hint') }}">{{ t(request, "docker.projects.managed") }}</span>{% endif %}
+                {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
+                {% if stack and stack.drift_status == 'drift' %}<span class="badge badge-warn" title="{{ t(request, 'docker.drift.label') }}">{{ t(request, "docker.drift.status.drift") }}</span>{% endif %}
+                {% if stack and stack.last_status == 'failed' %}<span class="badge badge-error" title="{{ stack.last_error or '' }}">{{ t(request, "docker.job.status.failed") }}</span>{% endif %}
+              </div>
+              {% set where = p.working_dir or (p.config_files[0] if p.config_files else '') %}
+              {% if where %}<div class="table-summary cell-truncate" title="{{ p.config_files | join(', ') or where }}"><code>{{ where }}</code></div>{% endif %}
             </td>
-            <td>
-              {% for c in p.containers %}
-                <div><a href="{{ docker_base }}/containers/{{ c.name | urlencode }}">{{ c.compose_service or c.name }}</a> {{ container_state(request, c) }}</div>
-              {% else %}<span class="table-muted">—</span>{% endfor %}
+            <td class="cell-state" data-label="{{ t(request, 'docker.stacks.state') }}">{{ stack_state(request, p.summary) }}</td>
+            <td data-label="{{ t(request, 'docker.projects.containers') }}">
+              {% if p.containers %}{{ service_chips(request, p.containers, docker_base) }}
+              {% else %}<span class="table-muted">—</span>{% endif %}
             </td>
-            <td class="cell-truncate">
-              {% for f in p.config_files %}<div title="{{ f }}"><code>{{ f }}</code></div>{% else %}<span class="table-muted">{{ t(request, "docker.projects.files_unknown") }}</span>{% endfor %}
-            </td>
-            {% if ready and (can_power or can_updates or can_terminal) %}
-              <td class="container-actions">
-                {% if not is_own %}
-                  {% if can_updates %}
-                    {% for a in ('update', 'up') %}
-                      {% if stack or p.config_files %}
-                        <form method="post" action="{{ docker_base }}/projects/{{ p.name }}/{{ a }}" class="inline-form"
-                              data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=p.name) }}">
-                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                          <button type="submit" class="button button-secondary log-small-button">{{ t(request, "docker.projects.action_" ~ a) }}</button>
-                        </form>
-                      {% endif %}
-                    {% endfor %}
-                  {% endif %}
-                  {% if can_power %}
-                    {% for a in ('restart', 'stop', 'start', 'down') %}
-                      <form method="post" action="{{ docker_base }}/projects/{{ p.name }}/{{ a }}" class="inline-form"
-                            data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=p.name) }}">
+            {% if can_act %}
+              <td class="cell-menu">
+                {% set menu_id = "project-menu-" ~ loop.index %}
+                <button type="button" class="row-menu-button" popovertarget="{{ menu_id }}"
+                        aria-label="{{ t(request, 'docker.row_menu.label', name=p.name) }}" title="{{ t(request, 'docker.row_menu.label', name=p.name) }}">⋯</button>
+                <div id="{{ menu_id }}" popover class="row-menu">
+                  <div class="row-menu-card">
+                    <p class="row-menu-title"><strong>{{ p.name }}</strong>{% if is_own %} <span class="table-muted">{{ t(request, "docker.protected") }}</span>{% endif %}</p>
+                    {% if not is_own and (can_power or (can_updates and has_files) or (can_terminal and p.config_files and not stack)) %}
+                      {#- One form, each button posts to its own action. -#}
+                      {%- set first = 'start' if can_power else ('update' if can_updates and has_files else 'adopt') -%}
+                      <form method="post" action="{{ docker_base }}/projects/{{ p.name }}/{{ first }}" class="row-menu-list">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="button {{ 'button-danger' if a in ('stop', 'down') else 'button-secondary' }} log-small-button">{{ t(request, "docker.projects.action_" ~ a) }}</button>
+                        {% if can_power %}
+                          {% for a in ('start', 'restart', 'stop') %}
+                            <button type="submit" formaction="{{ docker_base }}/projects/{{ p.name }}/{{ a }}" class="row-menu-item {{ 'row-menu-danger' if a == 'stop' }}"
+                                    data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=p.name) }}">{{ t(request, "docker.projects.action_" ~ a) }}</button>
+                          {% endfor %}
+                        {% endif %}
+                        {% if can_updates and has_files %}
+                          {% for a in ('update', 'up') %}
+                            <button type="submit" formaction="{{ docker_base }}/projects/{{ p.name }}/{{ a }}" class="row-menu-item"
+                                    title="{{ t(request, 'docker.projects.hint_' ~ a) }}"
+                                    data-confirm="{{ t(request, 'docker.projects.confirm_' ~ a, name=p.name) }}">{{ t(request, "docker.projects.action_" ~ a ~ "_long") }}</button>
+                          {% endfor %}
+                        {% endif %}
+                        {% if can_terminal and p.config_files and not stack %}
+                          <button type="submit" formaction="{{ docker_base }}/projects/{{ p.name }}/adopt" class="row-menu-item"
+                                  title="{{ t(request, 'docker.adopt.hint') }}"
+                                  data-confirm="{{ t(request, 'docker.adopt.confirm', name=p.name) }}">{{ t(request, "docker.adopt.button_long") }}</button>
+                        {% endif %}
+                        {% if can_power %}
+                          <button type="submit" formaction="{{ docker_base }}/projects/{{ p.name }}/down" class="row-menu-item row-menu-danger"
+                                  title="{{ t(request, 'docker.projects.hint_down') }}"
+                                  data-confirm="{{ t(request, 'docker.projects.confirm_down', name=p.name) }}">{{ t(request, "docker.projects.action_down_long") }}</button>
+                        {% endif %}
                       </form>
-                    {% endfor %}
-                  {% endif %}
-                {% endif %}
-                {% if can_terminal and p.config_files and not stack %}
-                  <a class="button button-secondary log-small-button" href="{{ docker_base }}/projects/{{ p.name }}/compose">{{ t(request, "docker.projects.view_compose") }}</a>
-                  {% if not is_own %}
-                    <form method="post" action="{{ docker_base }}/projects/{{ p.name }}/adopt" class="inline-form"
-                          data-confirm="{{ t(request, 'docker.adopt.confirm', name=p.name) }}">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                      <button type="submit" class="button log-small-button" title="{{ t(request, 'docker.adopt.hint') }}">{{ t(request, "docker.adopt.button") }}</button>
-                    </form>
-                  {% endif %}
-                {% endif %}
-                {% if can_terminal and p.containers %}
-                  <a class="button button-secondary log-small-button" href="/machines/{{ machine.id }}/logs?source=docker&amp;container={{ ('@' ~ p.name) | urlencode }}">{{ t(request, "docker.projects.logs") }}</a>
-                {% endif %}
+                    {% endif %}
+                    <div class="row-menu-links">
+                      {% if stack %}<a class="row-menu-item" href="{{ docker_base }}/stacks/{{ stack.id }}">{{ t(request, "docker.projects.open_stack") }}</a>
+                      {% elif can_terminal and p.config_files %}<a class="row-menu-item" href="{{ docker_base }}/projects/{{ p.name }}/compose">{{ t(request, "docker.projects.view_compose") }}</a>{% endif %}
+                      {% if can_terminal and p.containers %}
+                        <a class="row-menu-item" href="/machines/{{ machine.id }}/logs?source=docker&amp;container={{ ('@' ~ p.name) | urlencode }}">{{ t(request, "docker.projects.logs") }}</a>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
               </td>
             {% endif %}
           </tr>

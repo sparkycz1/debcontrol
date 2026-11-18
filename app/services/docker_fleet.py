@@ -97,6 +97,14 @@ class FleetRow:
         return str(self.container.get("name") or "")
 
     @property
+    def project(self) -> str:
+        return str(self.container.get("compose_project") or "")
+
+    @property
+    def stack_key(self) -> str:
+        return f"{self.machine_id}/{self.project}"
+
+    @property
     def key(self) -> str:
         """The value a row's checkbox submits: `<machine id>/<container>`."""
         return f"{self.machine_id}/{self.name}"
@@ -113,6 +121,18 @@ class FleetPage:
     machines: int = 0
     with_update: int = 0
     truncated: bool = False
+    # Each stack on the page at a glance (`docker_overview.stack_summary`),
+    # over all its containers, keyed `<machine id>/<project>`.
+    stacks: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def grouped(self) -> bool:
+        """Rows come machine by machine, stack by stack (the default sort),
+        so the page can put a heading row over each stack."""
+        return self.sort == "machine" and not self.desc
+
+    sort: str = "machine"
+    desc: bool = False
 
 
 def _severity_rank(counts: dict[str, int] | None) -> int:
@@ -187,6 +207,9 @@ async def all_rows(db: AsyncSession, user: User) -> tuple[list[FleetRow], bool]:
         Machine.group_id,
         Machine.docker_containers,
         Machine.docker_image_updates,
+        # Just the one-shot names out of the stored inventory, not its
+        # image / volume / network lists.
+        Machine.docker_inventory["one_shot"].label("one_shot"),
         maintain_column_froms=True,
     ).order_by(Machine.name)
     machines = (await db.execute(query)).all()
@@ -206,6 +229,7 @@ async def all_rows(db: AsyncSession, user: User) -> tuple[list[FleetRow], bool]:
     for m in machines:
         updates = m.docker_image_updates or {}
         protected = docker_jobs.own_project_of(m.id, m.docker_containers, own)
+        one_shot = docker_overview.one_shot_from(m.one_shot)
         for container in m.docker_containers or []:
             if not isinstance(container, dict) or not container.get("name"):
                 continue
@@ -221,7 +245,7 @@ async def all_rows(db: AsyncSession, user: User) -> tuple[list[FleetRow], bool]:
                     machine_ready=bool(m.host_key_fingerprint),
                     group_name=groups.get(m.group_id) if m.group_id else None,
                     container=container,
-                    row_state=docker_overview.row_state(container),
+                    row_state=docker_overview.row_state(container, one_shot),
                     image_status=updates.get(image) if isinstance(updates, dict) else None,
                     image_id=scan[0] if scan else None,
                     counts=scan[1] if scan else None,
@@ -261,7 +285,15 @@ def _sort_key(sort: str) -> Any:
         return lambda r: (_severity_rank(r.counts), r.machine_name.lower(), r.name.lower())
     if sort == "update":
         return lambda r: (r.image_status == "update", r.machine_name.lower(), r.name.lower())
-    return lambda r: (r.machine_name.lower(), r.name.lower())
+    # By machine, then stack by stack (containers of no stack last), then
+    # service: what the page's per-stack heading rows need.
+    return lambda r: (
+        r.machine_name.lower(),
+        str(r.machine_id),
+        not r.project,
+        r.project.lower(),
+        str(r.container.get("compose_service") or r.name).lower(),
+    )
 
 
 async def list_containers(db: AsyncSession, user: User, flt: FleetFilter) -> FleetPage:
@@ -298,8 +330,21 @@ async def list_containers(db: AsyncSession, user: User, flt: FleetFilter) -> Fle
     matching.sort(key=_sort_key(flt.sort), reverse=flt.desc)
     pages = max(1, -(-len(matching) // PAGE_SIZE))
     page = min(flt.page, pages)
+    shown = matching[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
+    wanted = {r.stack_key for r in shown if r.project}
+    states: dict[str, list[str]] = {}
+    services: dict[str, list[str]] = {}
+    for row in rows:
+        if row.stack_key in wanted:
+            states.setdefault(row.stack_key, []).append(row.row_state)
+            services.setdefault(row.stack_key, []).append(
+                str(row.container.get("compose_service") or row.name)
+            )
     return FleetPage(
-        rows=matching[(page - 1) * PAGE_SIZE : page * PAGE_SIZE],
+        rows=shown,
+        stacks={k: docker_overview.stack_summary(v, services[k]) for k, v in states.items()},
+        sort=flt.sort,
+        desc=flt.desc,
         total=len(matching),
         page=page,
         pages=pages,

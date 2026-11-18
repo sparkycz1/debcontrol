@@ -6,22 +6,32 @@
 {% block docker_content %}
   <div class="panel-header">
     <div>
-      <h2>{{ t(request, "docker.stacks.heading") }}</h2>
-      <p class="hint">{{ t(request, "docker.stacks.hint") }}</p>
+      <h2>{{ t(request, "docker.projects.heading") }}</h2>
+      <p class="hint">{{ t(request, "docker.projects.hint") }}</p>
     </div>
     {% if can_terminal %}
       <a class="button" href="{{ docker_base }}/stacks/new">{{ t(request, "docker.stacks.new") }}</a>
     {% endif %}
   </div>
+  <p class="hint stack-legend">
+    <span class="service-chip service-chip-running">{{ t(request, "docker.state.running") }}</span>
+    <span class="service-chip service-chip-exited">{{ t(request, "docker.state.exited") }}</span>
+    <span class="service-chip service-chip-exited service-chip-failed">{{ t(request, "docker.state.failed") }}</span>
+    <span class="service-chip service-chip-completed">{{ t(request, "docker.state.completed") }}</span>
+    {{ t(request, "docker.projects.legend") }}
+  </p>
+  {{ lazy_panel(request, docker_base ~ "/stacks/panel", "projects-panel") }}
 
   {% if stacks %}
-    <div class="monitoring-table-wrap table-cards-wrap">
-      <table class="data-table table-cards" id="stacks-table" data-remember="docker-stacks-table">
+    <h2 class="section-gap">{{ t(request, "docker.stacks.heading") }}</h2>
+    <p class="hint">{{ t(request, "docker.stacks.hint") }}</p>
+    <div class="table-cards-wrap">
+      <table class="data-table table-cards" id="stacks-table">
         <thead><tr>
           <th>{{ t(request, "docker.stacks.name") }}</th>
           <th>{{ t(request, "docker.stacks.source") }}</th>
           <th>{{ t(request, "docker.stacks.deployed") }}</th>
-          <th>{{ t(request, "docker.stacks.state") }}</th>
+          <th>{{ t(request, "docker.stacks.last_deploy") }}</th>
         </tr></thead>
         <tbody>
           {% for s in stacks %}
@@ -50,11 +60,5 @@
         </tbody>
       </table>
     </div>
-  {% else %}
-    <p class="hint">{{ t(request, "docker.stacks.none_managed") }}</p>
   {% endif %}
-
-  <h2>{{ t(request, "docker.projects.heading") }}</h2>
-  <p class="hint">{{ t(request, "docker.projects.hint") }}</p>
-  {{ lazy_panel(request, docker_base ~ "/stacks/panel", "projects-panel") }}
 {% endblock %}

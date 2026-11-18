@@ -58,7 +58,7 @@ async def test_docker_table_shows_actions_per_state(client, db_session_factory):
     # Each row's menu posts to the table's bulk endpoint with that one
     # container, offering only what fits its state.
     menus = {
-        part.split('name="container" value="', 1)[1].split('"', 1)[0]: part
+        part.split('name="container" value="', 1)[1].split('"', 1)[0]: part.split("</form>", 1)[0]
         for part in response.text.split('popover class="row-menu"')[1:]
     }
     assert f'action="/machines/{machine_id}/docker/containers/bulk"' in menus["immich_server"]

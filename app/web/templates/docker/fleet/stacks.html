@@ -1,10 +1,11 @@
 {% extends "docker/fleet/_layout.html" %}
 {% from "docker/fleet/_macros.html" import menu %}
+{% from "machines/docker/_macros.html" import stack_state, service_chips %}
 
 {% block head %}
   <th>{{ t(request, "docker.stacks.name") }}</th>
-  <th>{{ t(request, "docker.projects.containers") }}</th>
   <th>{{ t(request, "docker.stacks.state") }}</th>
+  <th>{{ t(request, "docker.projects.containers") }}</th>
 {% endblock %}
 
 {% block cells %}
@@ -12,19 +13,21 @@
     {% if i.stack_id %}<a href="{{ base }}/stacks/{{ i.stack_id }}"><strong>{{ i.name }}</strong></a>
     {% else %}<a href="{{ base }}/stacks"><strong>{{ i.name }}</strong></a>{% endif %}
     <div class="cell-badges">
-      {% if i.managed %}<span class="badge badge-tag">{{ t(request, "docker.projects.managed") }}</span>{% endif %}
+      {% if i.managed %}<span class="badge badge-tag" title="{{ t(request, 'docker.projects.managed_hint') }}">{{ t(request, "docker.projects.managed") }}</span>{% endif %}
       {% if r.is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
-      {% if i.total %}<a class="table-summary" href="/docker/containers?stack={{ i.name | urlencode }}">{{ t(request, "docker_fleet.stack_containers") }}</a>{% endif %}
+      {% if i.drift == 'drift' %}<span class="badge badge-warn" title="{{ t(request, 'docker.drift.label') }}">{{ t(request, "docker.drift.status.drift") }}</span>{% endif %}
+      {% if i.last_status == 'failed' %}<span class="badge badge-error">{{ t(request, "docker.job.status.failed") }}</span>{% endif %}
     </div>
   </td>
-  <td class="cell-nowrap" data-label="{{ t(request, 'docker.projects.containers') }}">
-    {% if i.total %}{{ t(request, "docker_fleet.running_of", running=i.running, total=i.total) }}{% else %}<span class="table-muted">—</span>{% endif %}
-  </td>
   <td data-label="{{ t(request, 'docker.stacks.state') }}">
-    <span class="badge {{ 'badge-ok' if i.state == 'running' else ('badge-warn' if i.state == 'partial' else '') }}">{{ t(request, "docker_fleet.stack_state." ~ i.state) }}</span>
-    {% if i.drift == 'drift' %}<span class="badge badge-warn">{{ t(request, "docker.drift.status.drift") }}</span>{% endif %}
-    {% if i.last_status == 'failed' %}<span class="badge badge-error">{{ t(request, "docker.job.status.failed") }}</span>{% endif %}
-    {% if i.status %}<div class="table-summary">{{ i.status }}</div>{% endif %}
+    {{ stack_state(request, i) }}
+    {% if not i.total and i.status %}<div class="table-summary">{{ i.status }}</div>{% endif %}
+  </td>
+  <td data-label="{{ t(request, 'docker.projects.containers') }}">
+    {% if i.containers %}
+      {{ service_chips(request, i.containers, base) }}
+      <a class="table-summary" href="/docker/containers?stack={{ i.name | urlencode }}">{{ t(request, "docker_fleet.stack_containers_link") }}</a>
+    {% else %}<span class="table-muted">—</span>{% endif %}
   </td>
 {% endblock %}
 

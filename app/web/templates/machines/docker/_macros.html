@@ -28,15 +28,71 @@
   </span>
 {%- endmacro %}
 
-{#- A container's state as a badge (same colours as the old Monitoring table). -#}
-{% macro container_state(request, c) -%}
-  {%- set status_text = c.status or c.state -%}
-  {%- if c.health == 'unhealthy' %}{% set cls = 'badge-error' -%}
-  {%- elif c.health == 'starting' or c.state in ('restarting', 'paused') %}{% set cls = 'badge-warn' -%}
-  {%- elif c.state == 'running' %}{% set cls = 'badge-ok' -%}
-  {%- elif c.state in ('dead', 'exited') and 'Exited (0)' not in (c.status or '') %}{% set cls = 'badge-error' -%}
-  {%- else %}{% set cls = '' %}{% endif -%}
-  <span class="badge {{ cls }}" {% if c.health %}title="{{ t(request, 'monitoring.containers.health') }}: {{ t(request, 'monitoring.containers.health_' ~ c.health) }}"{% endif %}>{{ status_text }}</span>
+{#- A container's state as a short, translated badge; Docker's own words
+    ("Up 3 hours (healthy)", "Exited (1) 2 days ago") in its tooltip and,
+    with `detail`, under it. `state` is the row's state group
+    (docker_overview.row_state) when the caller already has it: only that
+    knows a one-shot job that finished ("completed") from a stopped
+    service. -#}
+{% macro container_state(request, c, state=none, detail=false) -%}
+  {%- set state = state or docker_row_state(c) -%}
+  {%- set code = docker_exit_code(c) -%}
+  {%- set raw = (c.status or c.state or '') | replace(' (healthy)', '') | replace(' (unhealthy)', '') | replace(' (health: starting)', '') -%}
+  {%- if state == 'unhealthy' %}{% set cls = 'badge-error' %}{% set label = t(request, "docker.state.unhealthy") -%}
+  {%- elif c.health == 'starting' %}{% set cls = 'badge-warn' %}{% set label = t(request, "docker.state.starting") -%}
+  {%- elif state in ('restarting', 'paused') %}{% set cls = 'badge-warn' %}{% set label = t(request, "docker.state." ~ state) -%}
+  {%- elif state == 'running' %}{% set cls = 'badge-ok' %}{% set label = t(request, "docker.state.running") -%}
+  {%- elif state == 'completed' %}{% set cls = 'badge-done' %}{% set label = t(request, "docker.state.completed") -%}
+  {%- elif state == 'exited' and code %}{% set cls = 'badge-error' %}{% set label = t(request, "docker.state.exited_code", code=code) -%}
+  {%- elif state == 'exited' %}{% set cls = '' %}{% set label = t(request, "docker.state.exited") -%}
+  {%- else %}{% set cls = '' %}{% set label = t(request, "docker.state.created") if state == 'created' else (c.state or state) -%}
+  {%- endif -%}
+  {%- set tip -%}
+    {{ c.status or c.state }}{% if c.health %} · {{ t(request, 'monitoring.containers.health') }}: {{ t(request, 'monitoring.containers.health_' ~ c.health) }}{% endif %}{% if state == 'completed' %} — {{ t(request, 'docker.state.completed_hint') }}{% endif %}
+  {%- endset -%}
+  <span class="badge {{ cls }}" title="{{ tip | trim }}">{{ label }}{% if c.health == 'healthy' and state == 'running' %} <span aria-hidden="true">✓</span>{% endif %}</span>
+  {%- if detail and c.status %}<div class="table-summary">{{ raw }}</div>{% endif -%}
+{%- endmacro %}
+
+{#- A Compose project's state (docker_overview.stack_summary) as a badge
+    plus one line that says what runs, what finished and what is down. -#}
+{% macro stack_state(request, s, inline=false) -%}
+  {%- set cls = {'running': 'badge-ok', 'partial': 'badge-warn', 'completed': 'badge-done'}.get(s.state, '') -%}
+  <span class="badge {{ cls }}">{{ t(request, "docker_fleet.stack_state." ~ s.state) }}</span>
+  {%- if s.total %}
+    {%- set parts = [] -%}
+    {%- if s.services %}{% set _ = parts.append(t(request, "docker.stack_summary.running", running=s.running, total=s.services)) %}{% endif -%}
+    {%- if s.down %}{% set _ = parts.append(t(request, "docker.stack_summary.down", names=(s.down | join(', ')))) %}{% endif -%}
+    {%- if s.completed %}{% set _ = parts.append(t(request, "docker.stack_summary.completed", count=s.completed)) %}{% endif -%}
+    {%- if inline %} <span class="table-muted">{{ parts | join(' · ') }}</span>
+    {%- else %}<div class="table-summary">{{ parts | join(' · ') }}</div>{% endif -%}
+  {%- endif -%}
+{%- endmacro %}
+
+{#- A stack's services as small chips, each a dot coloured by its state
+    and a link to the container; finished one-shot jobs come last, quiet.
+    `containers` carry `row_state` (docker_overview.row_state). -#}
+{% macro service_chips(request, containers, docker_base) -%}
+  <ul class="service-chips">
+    {%- for c in (containers | rejectattr("row_state", "equalto", "completed") | list) + (containers | selectattr("row_state", "equalto", "completed") | list) %}
+      {%- set state = c.row_state or docker_row_state(c) -%}
+      {%- set label = t(request, "docker.state." ~ state) if state in ('running', 'unhealthy', 'restarting', 'paused', 'exited', 'completed', 'created') else state -%}
+      {%- set code = docker_exit_code(c) -%}
+      {%- if state == 'exited' and code %}{% set label = t(request, "docker.state.exited_code", code=code) %}{% endif -%}
+      <li><a class="service-chip service-chip-{{ state }}{{ ' service-chip-failed' if state == 'exited' and code }}" href="{{ docker_base }}/containers/{{ c.name | urlencode }}"
+             title="{{ c.name }} — {{ label }}">{{ c.compose_service or c.name }}<span class="visually-hidden">: {{ label }}</span></a></li>
+    {%- endfor %}
+  </ul>
+{%- endmacro %}
+
+{#- An image reference for a table cell: a bare image ID (an image whose
+    tag moved on) is cut to Docker's own short form. -#}
+{% macro image_ref(ref) -%}
+  {%- if ref and ref.startswith('sha256:') -%}
+    <code class="cell-truncate" title="{{ ref }}">{{ ref[7:19] }}</code>
+  {%- else -%}
+    <span class="cell-truncate" title="{{ ref }}">{{ ref }}</span>
+  {%- endif -%}
 {%- endmacro %}
 
 {#- A loading placeholder for an htmx panel that asks the machine. -#}

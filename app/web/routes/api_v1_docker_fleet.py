@@ -76,7 +76,8 @@ async def docker_fleet_containers_api(
 ) -> dict[str, Any]:
     """Every container of the visible machines, 100 per page. Filters:
     `q` (machine, name, image, stack, ports, group), `state` (running,
-    unhealthy, restarting, paused, exited, created), `group` (id),
+    unhealthy, restarting, paused, exited, completed — a one-shot job that
+    finished with exit code 0 —, created), `group` (id),
     `update` (a newer image exists), `vulns` (critical / high), `stack`
     (Compose project). `sort`: machine, name, image, state, vulns, update."""
     flt = docker_fleet.FleetFilter.parse(
@@ -101,6 +102,9 @@ async def docker_fleet_containers_api(
         "machines": result.machines,
         "with_update": result.with_update,
         "truncated": result.truncated,
+        # The stacks of the containers listed, each over all its containers
+        # (`<machine id>/<project>` → running, services, completed, state).
+        "stacks": result.stacks,
     }
 
 
