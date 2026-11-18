@@ -168,6 +168,7 @@ async def docker_containers_page(
         last_jobs.setdefault(job.target, job)
     protected = await docker_jobs.protected_project(db, machine)
     containers = docker_overview.containers_of(machine)
+    one_shot = docker_overview.one_shot_names(machine)
     return render(
         request,
         "machines/docker/containers.html",
@@ -185,9 +186,11 @@ async def docker_containers_page(
             "protected_project": protected,
             "has_active_jobs": await docker_jobs.has_active_jobs(db, machine.id),
             "overview": {
-                str(c.get("name")): docker_overview.describe(machine, c) for c in containers
+                str(c.get("name")): docker_overview.describe(machine, c, one_shot)
+                for c in containers
             },
-            "state_counts": docker_overview.state_counts(containers),
+            "state_counts": docker_overview.state_counts(containers, one_shot),
+            "groups": docker_overview.by_stack(containers, one_shot),
             "state_groups": docker_overview.STATE_GROUPS,
         },
     )

@@ -10,7 +10,13 @@ from typing import Any
 import pytest
 
 from app.services.container_links import image_links, is_hostname, safe_url, web_links
-from app.services.docker_overview import row_state, state_counts
+from app.services.docker_overview import (
+    by_stack,
+    exit_code,
+    row_state,
+    stack_summary,
+    state_counts,
+)
 
 
 def _urls(container: dict[str, Any], address: str = "10.0.0.5") -> list[str]:
@@ -197,5 +203,58 @@ def test_row_state_and_counts():
         "restarting": 1,
         "paused": 1,
         "exited": 2,
+        "completed": 0,
         "created": 1,
     }
+
+
+def test_one_shot_container_that_finished_is_completed_not_stopped():
+    # docker ps: no restart policy, so the stored one-shot names decide.
+    migrate = {"name": "app-migrate-1", "state": "exited", "status": "Exited (0) 2 days ago"}
+    failed = {"name": "app-migrate-1", "state": "exited", "status": "Exited (1) 2 days ago"}
+    db = {"name": "app-db-1", "state": "exited", "status": "Exited (0) 2 weeks ago"}
+    one_shot = {"app-migrate-1"}
+    assert row_state(migrate, one_shot) == "completed"
+    assert row_state(failed, one_shot) == "exited"
+    assert row_state(db, one_shot) == "exited"
+    assert row_state(migrate) == "exited"
+    # docker inspect carries the policy and the exit code itself.
+    assert row_state({"name": "x", "state": "exited", "exit_code": 0, "restart_policy": "no"}) == (
+        "completed"
+    )
+    assert (
+        row_state(
+            {"name": "x", "state": "exited", "exit_code": 0, "restart_policy": "unless-stopped"},
+            {"x"},
+        )
+        == "exited"
+    )
+    assert exit_code({"state": "running", "status": "Up 2 hours"}) is None
+    assert exit_code({"state": "exited", "status": "Exited (137) 1 minute ago"}) == 137
+
+
+def test_stack_summary():
+    running = stack_summary(["running", "running", "completed", "completed"], ["a", "b", "m", "i"])
+    assert running["state"] == "running"
+    assert (running["running"], running["services"], running["completed"]) == (2, 2, 2)
+    assert running["down"] == []
+    partial = stack_summary(["running", "exited", "completed"], ["web", "db", "migrate"])
+    assert partial["state"] == "partial"
+    assert partial["down"] == ["db"]
+    assert stack_summary(["exited", "exited"])["state"] == "stopped"
+    assert stack_summary(["completed"])["state"] == "completed"
+    assert stack_summary([])["state"] == "stopped"
+    assert stack_summary(["unhealthy", "running"])["state"] == "running"
+
+
+def test_by_stack_groups_and_orders():
+    containers = [
+        {"name": "solo", "compose_project": ""},
+        {"name": "b-web-1", "compose_project": "b", "compose_service": "web", "state": "running"},
+        {"name": "a-db-1", "compose_project": "a", "compose_service": "db", "state": "running"},
+        {"name": "b-api-1", "compose_project": "b", "compose_service": "api", "state": "running"},
+    ]
+    groups = by_stack(containers)
+    assert [g["name"] for g in groups] == ["a", "b", ""]
+    assert [c["name"] for c in groups[1]["containers"]] == ["b-api-1", "b-web-1"]
+    assert groups[1]["summary"]["state"] == "running"

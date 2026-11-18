@@ -1,7 +1,7 @@
 {% extends "machines/docker/_layout.html" %}
 {% from "partials/range_picker.html" import range_picker with context %}
 {% from "macros/charts.html" import chart_card with context %}
-{% from "machines/docker/_macros.html" import job_status, severity_compact, container_state, web_links, image_links, row_menu, bulk_more, usage_cell %}
+{% from "machines/docker/_macros.html" import job_status, severity_compact, container_state, stack_state, web_links, image_links, row_menu, bulk_more, usage_cell, image_ref %}
 
 {% block docker_title %}{{ t(request, "docker.nav.containers") }}{% endblock %}
 
@@ -118,6 +118,7 @@
           </select>
           <input type="search" class="chart-filter" data-table-filter="containers-table"
                  placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+          <button type="button" class="button button-secondary log-small-button" data-regroup="containers-table" hidden>{{ t(request, "docker.containers.regroup") }}</button>
         </div>
         {% if can_select %}
           {# The checkboxes in the table belong to this form (form="..."),
@@ -127,7 +128,7 @@
           </form>
         {% endif %}
         <div class="monitoring-table-wrap table-cards-wrap" tabindex="0" role="region" aria-label="{{ t(request, 'monitoring.containers.heading') }}">
-          <table class="data-table containers-table table-cards" id="containers-table" data-remember="docker-containers">
+          <table class="data-table containers-table table-cards is-grouped" id="containers-table" data-remember="docker-containers">
             <thead>
               <tr>
                 {% if can_select %}
@@ -145,7 +146,21 @@
               </tr>
             </thead>
             <tbody>
-              {% for c in machine.docker_containers %}
+              {% set ncols = 8 if can_select else 7 %}
+              {% for g in groups %}
+              <tr class="group-row">
+                <td colspan="{{ ncols }}">
+                  <div class="group-row-title">
+                    {% if g.name %}
+                      <a href="{{ docker_base }}/stacks"><strong>{{ t(request, "docker.stack_label", name=g.name) }}</strong></a>
+                      {{ stack_state(request, g.summary, inline=true) }}
+                    {% else %}
+                      <strong>{{ t(request, "docker.containers.standalone") }}</strong>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% for c in g.containers %}
                 {% set setting = settings.get(c.name) %}
                 {% set is_own = protected_project and c.compose_project == protected_project %}
                 {% set img_status = (machine.docker_image_updates or {}).get(c.image) %}
@@ -153,7 +168,7 @@
                 {% set scan = scans_by_ref.get(c.image) %}
                 {% set job = last_jobs.get(c.name) %}
                 {% set ov = overview.get(c.name) or {} %}
-                <tr data-row-state="{{ ov.row_state }}">
+                <tr data-row-state="{{ ov.row_state }}" {% if ov.row_state == 'completed' %}class="row-muted"{% endif %}>
                   {% if can_select %}
                     <td class="cell-select">
                       {% if not is_own %}
@@ -163,9 +178,9 @@
                     </td>
                   {% endif %}
                   <td class="cell-name" data-label="{{ t(request, 'monitoring.containers.name') }}">
-                    <a href="{{ docker_base }}/containers/{{ c.name | urlencode }}"><strong>{{ c.name }}</strong></a>
+                    <a href="{{ docker_base }}/containers/{{ c.name | urlencode }}" title="{{ c.name }}"><strong class="name-service">{{ c.compose_service or c.name }}</strong><strong class="name-full">{{ c.name }}</strong></a>
                     <div class="cell-badges">
-                      {% if c.compose_project %}<span class="table-summary">{{ t(request, "docker.stack_label", name=c.compose_project) }}</span>{% endif %}
+                      {% if c.compose_project %}<span class="table-summary stack-line">{{ t(request, "docker.stack_label", name=c.compose_project) }}</span>{% endif %}
                       {% if is_own %}<span class="badge" title="{{ t(request, 'docker.protected') }}">{{ t(request, "docker.own_badge") }}</span>{% endif %}
                       {% if setting and setting.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}{% if setting.update_policy in ('minor', 'patch') %} · {{ t(request, "docker.policy.badge_" ~ setting.update_policy) }}{% endif %}</span>{% endif %}
                     </div>
@@ -177,7 +192,7 @@
                   <td class="cell-image" data-label="{{ t(request, 'monitoring.containers.image') }}">
                     <div class="cell-image-ref">
                       {% if img_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
-                      <span class="cell-truncate" title="{{ c.image }}">{{ c.image }}</span>
+                      {{ image_ref(c.image) }}
                     </div>
                     {% if img_status == 'unknown' %}
                       {% set unknown_reason = ((machine.docker_image_check or {}).get('reasons') or {}).get(c.image) %}
@@ -208,11 +223,11 @@
                     {% if scan %}
                       {{ severity_compact(request, scan.counts, docker_base ~ "/images/" ~ scan.image_id ~ "/vulnerabilities") }}
                     {% else %}
-                      <span class="table-muted">{{ t(request, "docker.scan.not_scanned") }}</span>
+                      <span class="table-muted" title="{{ t(request, 'docker.scan.not_scanned') }}">—</span>
                     {% endif %}
                   </td>
-                  <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}">
-                    {{ container_state(request, c) }}
+                  <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}" data-sort-value="{{ ov.row_state }}">
+                    {{ container_state(request, c, ov.row_state, detail=true) }}
                     {% if job %}
                       <div class="table-summary">
                         {{ t(request, "docker.last_update") }}:
@@ -230,6 +245,7 @@
                     {% endif %}
                   </td>
                 </tr>
+              {% endfor %}
               {% endfor %}
             </tbody>
           </table>

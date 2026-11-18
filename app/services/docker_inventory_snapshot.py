@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.db.models.machine import Machine
+from app.services.docker_overview import ONE_SHOT_POLICIES
 
 # What one read needs for every list here (`app.ssh.docker_inventory`).
 SECTIONS: tuple[str, ...] = ("images", "volumes", "networks", "compose", "inspect")
@@ -100,6 +101,18 @@ def store(machine: Machine, inventory: dict[str, Any], sections: tuple[str, ...]
         snapshot["projects"] = projects_of(
             inventory.get("compose") or [], inventory.get("containers") or []
         )[:_CAP]
+    # Containers meant to run once (`docker_overview.is_one_shot`): the
+    # container lists elsewhere come from `docker ps`, which has no
+    # restart policy, so a finished migration would look like a stopped
+    # service without this.
+    snapshot["one_shot"] = sorted(
+        str(c.get("name"))[:255]
+        for c in inventory.get("containers") or []
+        if isinstance(c, dict)
+        and c.get("name")
+        and "restart_policy" in c
+        and str(c.get("restart_policy") or "") in ONE_SHOT_POLICIES
+    )[:_CAP]
     previous = dict(machine.docker_inventory or {})
     changed = {k: v for k, v in snapshot.items() if k != "at"} != {
         k: v for k, v in previous.items() if k != "at"

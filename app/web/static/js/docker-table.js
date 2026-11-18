@@ -8,6 +8,11 @@
 //  - `table[data-remember="<key>"]`: the filter text, the state picked and
 //    the sorted column are kept in this browser (localStorage) and put
 //    back on the next visit, and after an htmx panel re-renders;
+//  - `table.is-grouped`: rows come grouped by stack under heading rows
+//    (`tr.group-row`); a heading with nothing visible under it hides,
+//    sorting by a column drops the grouping (style.css then shows each
+//    row's own stack line) and `[data-regroup="<table id>"]` brings it
+//    back;
 //  - `table.table-cards`: each cell gets its column's name as
 //    `data-label` (unless the template set one), which style.css shows
 //    in front of the value when a narrow screen turns rows into cards.
@@ -75,6 +80,57 @@
     const button = event.submitter;
     if (!button || !button.dataset || !button.dataset.confirm) return;
     if (!window.confirm(button.dataset.confirm)) event.preventDefault();
+  });
+
+  // --- Grouped by stack ---
+  function syncGroups(table) {
+    if (!table || !table.classList.contains("is-grouped")) return;
+    let heading = null;
+    let visible = false;
+    const close = () => {
+      if (heading) heading.hidden = !visible;
+    };
+    Array.from(table.tBodies[0] ? table.tBodies[0].rows : []).forEach((tr) => {
+      if (tr.classList.contains("group-row")) {
+        close();
+        heading = tr;
+        visible = false;
+      } else if (!tr.hidden) {
+        visible = true;
+      }
+    });
+    close();
+  }
+
+  function syncGroupsLater(tableId) {
+    // monitoring-chart.js filters in its own handler; look once it ran.
+    window.setTimeout(() => syncGroups(document.getElementById(tableId)), 0);
+  }
+
+  document.addEventListener("input", (event) => {
+    const box = event.target.closest("[data-table-filter]");
+    if (box) syncGroupsLater(box.dataset.tableFilter);
+  });
+  document.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-row-state-filter]");
+    if (select) syncGroupsLater(select.dataset.rowStateFilter);
+  });
+
+  function ungroup(table) {
+    if (!table.classList.contains("is-grouped")) return;
+    table.classList.remove("is-grouped");
+    const button = document.querySelector(`[data-regroup="${table.id}"]`);
+    if (button) button.hidden = false;
+  }
+
+  document.addEventListener("click", (event) => {
+    const th = event.target.closest("table.is-grouped th[data-sort]");
+    if (th) ungroup(th.closest("table"));
+    const regroup = event.target.closest("[data-regroup]");
+    if (!regroup) return;
+    const key = rememberKey(regroup.dataset.regroup);
+    if (key) save(key, { sort: null, dir: null });
+    window.location.reload();
   });
 
   // --- Remembering filter, state and sort ---

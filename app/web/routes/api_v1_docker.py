@@ -335,6 +335,7 @@ async def docker_overview_api(
     settings = await docker_jobs.container_settings(db, machine.id)
     scans = await docker_scans.scans_by_image(db, machine.id)
     by_ref = {scan.image_ref: scan for scan in scans.values() if scan.image_ref}
+    one_shot = docker_overview.one_shot_names(machine)
     containers = []
     for container in machine.docker_containers or []:
         if not isinstance(container, dict):
@@ -357,12 +358,14 @@ async def docker_overview_api(
                 "vulnerability_gate": setting.vulnerability_gate if setting else "off",
                 "autoheal": bool(setting and setting.autoheal),
                 "vulnerabilities": (scan.counts or {}) if scan else None,
-                **docker_overview.describe(machine, container),
+                **docker_overview.describe(machine, container, one_shot),
             }
         )
     return {
         "status": machine.docker_status,
-        "state_counts": docker_overview.state_counts(docker_overview.containers_of(machine)),
+        "state_counts": docker_overview.state_counts(
+            docker_overview.containers_of(machine), one_shot
+        ),
         "protected_project": await docker_jobs.protected_project(db, machine),
         "images_checked_at": _iso(machine.docker_images_checked_at),
         # The last image update check, successful or not: {"at", "ok",
@@ -1849,10 +1852,20 @@ async def _projects(request: Request, db: AsyncSession, machine: Machine) -> lis
             {"name": name, "status": "", "config_files": [], "working_dir": "", "containers": []},
         )
         project["containers"].append(container.get("name"))
+        project.setdefault("_states", []).append(docker_overview.row_state(container))
+        project.setdefault("_services", []).append(
+            str(container.get("compose_service") or container.get("name") or "")
+        )
         if not project["working_dir"]:
             project["working_dir"] = container.get("compose_working_dir") or ""
         if not project["config_files"]:
             project["config_files"] = list(container.get("compose_config_files") or [])
+    for project in projects.values():
+        # running / services / completed (one-shot jobs that finished) and
+        # one word for the stack, as the web page shows it.
+        project["summary"] = docker_overview.stack_summary(
+            project.pop("_states", []), project.pop("_services", [])
+        )
     return sorted(projects.values(), key=lambda p: str(p["name"]))
 
 

@@ -4,7 +4,7 @@
     and a filtered view can be bookmarked. -#}
 {% extends "base.html" %}
 {% from "partials/_tabnav.html" import render as render_tabs %}
-{% from "machines/docker/_macros.html" import severity_compact, container_state, web_links, row_menu, bulk_more, usage_cell %}
+{% from "machines/docker/_macros.html" import severity_compact, container_state, stack_state, web_links, row_menu, bulk_more, usage_cell, image_ref %}
 
 {% block title %}{{ t(request, "docker_fleet.tab.containers") }} — Docker — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -95,7 +95,7 @@
     {%- endmacro %}
 
     <div class="table-cards-wrap fleet-docker-table-wrap" id="fleet-containers-live" data-live-fleet data-live-kinds="docker">
-      <table class="data-table containers-table table-cards" id="fleet-containers-table">
+      <table class="data-table containers-table table-cards {{ 'is-grouped' if page.grouped }}" id="fleet-containers-table">
         <thead>
           <tr>
             {% if can_select %}
@@ -114,9 +114,26 @@
         <tbody>
           {% for r in page.rows %}
             {% set c = r.container %}
-            {% set repeat_machine = flt.sort == 'machine' and loop.index0 > 0 and page.rows[loop.index0 - 1].machine_id == r.machine_id %}
+            {% set prev = page.rows[loop.index0 - 1] if loop.index0 > 0 else none %}
+            {% set repeat_machine = flt.sort == 'machine' and prev and prev.machine_id == r.machine_id %}
             {% set base = "/machines/" ~ r.machine_id ~ "/docker" %}
-            <tr>
+            {% if page.grouped and not (prev and prev.stack_key == r.stack_key) %}
+              <tr class="group-row">
+                {% if can_select %}<td class="cell-select"></td>{% endif %}
+                <td>{% if not repeat_machine %}<a href="{{ base }}"><strong>{{ r.machine_name }}</strong></a>{% if r.group_name %}<div class="table-summary">{{ r.group_name }}</div>{% endif %}{% endif %}</td>
+                <td colspan="7">
+                  <div class="group-row-title">
+                    {% if r.project %}
+                      <a href="{{ url_with(stack=r.project, page=none) }}" title="{{ t(request, 'docker_fleet.stack_filter_title') }}"><strong>{{ t(request, "docker.stack_label", name=r.project) }}</strong></a>
+                      {% if page.stacks.get(r.stack_key) %}{{ stack_state(request, page.stacks[r.stack_key], inline=true) }}{% endif %}
+                    {% else %}
+                      <strong>{{ t(request, "docker.containers.standalone") }}</strong>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% endif %}
+            <tr data-row-state="{{ r.row_state }}" {% if r.row_state == 'completed' %}class="row-muted"{% endif %}>
               {% if can_select %}
                 <td class="cell-select">
                   {% if r.machine_ready %}
@@ -125,14 +142,14 @@
                   {% endif %}
                 </td>
               {% endif %}
-              <td data-label="{{ t(request, 'docker_fleet.machine') }}" {% if repeat_machine %}class="cell-repeat"{% endif %}>
+              <td data-label="{{ t(request, 'docker_fleet.machine') }}" class="cell-machine {{ 'cell-repeat' if repeat_machine }}">
                 <a href="{{ base }}">{{ r.machine_name }}</a>
                 {% if r.group_name %}<div class="table-summary">{{ r.group_name }}</div>{% endif %}
               </td>
               <td class="cell-name" data-label="{{ t(request, 'monitoring.containers.name') }}">
-                <a href="{{ base }}/containers/{{ r.name | urlencode }}"><strong>{{ r.name }}</strong></a>
+                <a href="{{ base }}/containers/{{ r.name | urlencode }}" title="{{ r.name }}"><strong class="name-service">{{ c.compose_service or r.name }}</strong><strong class="name-full">{{ r.name }}</strong></a>
                 <div class="cell-badges">
-                  {% if c.compose_project %}<a class="table-summary" href="{{ url_with(stack=c.compose_project, page=none) }}" title="{{ t(request, 'docker_fleet.stack_filter_title') }}">{{ t(request, "docker.stack_label", name=c.compose_project) }}</a>{% endif %}
+                  {% if c.compose_project %}<a class="table-summary stack-line" href="{{ url_with(stack=c.compose_project, page=none) }}" title="{{ t(request, 'docker_fleet.stack_filter_title') }}">{{ t(request, "docker.stack_label", name=c.compose_project) }}</a>{% endif %}
                   {% if r.auto_update %}<span class="badge badge-tag" title="{{ t(request, 'docker.auto_update_hint') }}">{{ t(request, "docker.auto_update_badge") }}</span>{% endif %}
                 </div>
               </td>
@@ -143,7 +160,7 @@
               <td class="cell-image" data-label="{{ t(request, 'monitoring.containers.image') }}">
                 <div class="cell-image-ref">
                   {% if r.image_status == 'update' %}<span class="badge badge-warn">{{ t(request, "monitoring.containers.image_update") }}</span>{% endif %}
-                  <span class="cell-truncate" title="{{ c.image }}">{{ c.image }}</span>
+                  {{ image_ref(c.image) }}
                 </div>
                 {% if r.counts is not none %}<div class="vulns-inline">{{ severity_compact(request, r.counts, base ~ "/images/" ~ r.image_id ~ "/vulnerabilities") }}</div>{% endif %}
               </td>
@@ -151,10 +168,10 @@
                 {% if r.counts is not none %}
                   {{ severity_compact(request, r.counts, base ~ "/images/" ~ r.image_id ~ "/vulnerabilities") }}
                 {% else %}
-                  <span class="table-muted">{{ t(request, "docker.scan.not_scanned") }}</span>
+                  <span class="table-muted" title="{{ t(request, 'docker.scan.not_scanned') }}">—</span>
                 {% endif %}
               </td>
-              <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}">{{ container_state(request, c) }}</td>
+              <td class="cell-status" data-label="{{ t(request, 'monitoring.containers.status') }}">{{ container_state(request, c, r.row_state, detail=true) }}</td>
               {{ usage_cell(request, c) }}
               <td class="cell-menu">
                 {% if r.machine_ready %}

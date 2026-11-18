@@ -65,7 +65,10 @@ ensure_compose_profiles() {
 }
 
 # Stops the bundled database this stack no longer uses, if it still runs
-# (Compose leaves a service of a profile that was switched off running).
+# (Compose leaves a service of a profile that was switched off running),
+# and removes its container: a stopped one would otherwise stay listed as
+# a service that is down. Its volume (pg_data / ts_data) is kept as the
+# backup it is; switching back creates the container again from it.
 stop_unused_database() {
   local keep other container
   keep="$(database_service)"
@@ -76,5 +79,18 @@ stop_unused_database() {
       echo "==> Stopping the bundled database no longer in use ($other)..."
       docker stop "$container" >/dev/null
     fi
+    container="$(service_containers "$other")"
+    if [ -n "$container" ]; then
+      echo "==> Removing its stopped container ($other); the data volume stays..."
+      # shellcheck disable=SC2086 # one ID per word
+      docker rm $container >/dev/null || true
+    fi
   done
+}
+
+# Every container (running or not) of this compose project's service `$1`.
+service_containers() {
+  docker ps -aq \
+    --filter "label=com.docker.compose.project=debcontrol" \
+    --filter "label=com.docker.compose.service=$1" | tr '\n' ' '
 }
