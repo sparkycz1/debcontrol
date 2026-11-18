@@ -44,6 +44,21 @@ def test_compute_next_run_every_six_hours():
     assert next_run == datetime(2026, 1, 1, 6, 0, tzinfo=UTC)
 
 
+def test_compute_next_run_raises_value_error_when_nothing_ever_matches():
+    # croniter raises CroniterBadDateError here; the Beat sweep only catches
+    # ValueError (to disable the task), so this must stay a ValueError.
+    with pytest.raises(ValueError):
+        compute_next_run("0 0 31 2 *", after=datetime(2026, 1, 1, tzinfo=UTC))
+
+
+def test_a_step_from_the_field_maximum_is_one_value_since_croniter_7():
+    base = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    assert compute_next_run("59/15 * * * *", after=base) == datetime(2026, 1, 1, 0, 59, tzinfo=UTC)
+    assert compute_next_run("59/15 * * * *", after=base.replace(minute=59)) == datetime(
+        2026, 1, 1, 1, 59, tzinfo=UTC
+    )
+
+
 def test_encode_decode_target_round_trips_all_machines():
     encoded = encode_target(ScheduleTargetType.ALL_MACHINES, None, None)
     assert encoded == "all"

@@ -54,7 +54,7 @@ services:
     # Pinned to an exact patch version on purpose — the floating "18" tag
     # would silently pull newer minor releases on a rebuild. Bump this
     # deliberately (and re-test) rather than letting it happen implicitly.
-    image: postgres:18.6
+    image: postgres:18.7
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -120,7 +120,7 @@ services:
   # (import-from-* below, scripts/switch_db.sh).
   timescaledb:
     profiles: [timescaledb]
-    image: timescale/timescaledb:2.31.0-pg18
+    image: timescale/timescaledb:2.32.0-pg18
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -177,7 +177,7 @@ services:
   # See scripts/db_import.sh for every safety check.
   import-from-postgres:
     profiles: [timescaledb]
-    image: postgres:18.6
+    image: postgres:18.7
     restart: "no"
     entrypoint: ["bash", "/db_import.sh"]
     environment: &db-import-env
@@ -198,7 +198,7 @@ services:
 
   import-from-timescaledb:
     profiles: [postgres]
-    image: timescale/timescaledb:2.31.0-pg18
+    image: timescale/timescaledb:2.32.0-pg18
     restart: "no"
     entrypoint: ["bash", "/db_import.sh"]
     environment: *db-import-env
@@ -387,7 +387,7 @@ services:
   caddy:
     profiles: [caddy]
     # Pinned to an exact patch version, same reasoning as Postgres/Redis.
-    image: caddy:2.11.8
+    image: caddy:2.11.9
     restart: unless-stopped
     env_file:
       - .env
