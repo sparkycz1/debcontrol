@@ -284,6 +284,24 @@ def markdown_filter(text: str | None) -> Markup:
 
 templates.env.filters["markdown"] = markdown_filter
 
+# The AI assistant's answers: the same escaping renderer, plus the GitHub
+# extras models habitually write (tables, ~~strikethrough~~). Raw HTML in
+# a reply is escaped like everywhere else — a model's text is untrusted (it
+# may quote command output from a machine), and a link can only point
+# where mistune's link-safety check allows (no `javascript:`).
+_markdown_rich = mistune.create_markdown(escape=True, plugins=["table", "strikethrough"])
+
+
+def markdown_rich_filter(text: str | None) -> Markup:
+    if not text:
+        return Markup("")
+    html = _markdown_rich(text)
+    assert isinstance(html, str)
+    return Markup(html)  # noqa: S704 - escape=True above, not raw interpolation
+
+
+templates.env.filters["markdown_rich"] = markdown_rich_filter
+
 
 def t(request: Request, key: str, **kwargs: object) -> str:
     """`{{ t(request, "nav.dashboard") }}` — the current request's language

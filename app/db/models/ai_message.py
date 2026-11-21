@@ -18,11 +18,13 @@ Three columns carry three different things, on purpose:
   with a `status` of `pending` / `confirmed` / `discarded` / `denied`.
 
 `pending_actions` is the load-bearing safety structure of the whole
-feature. **Nothing in it ever executes on its own.** A mutating tool call
-is only ever *recorded* here by the background turn task; execution
-requires an explicit, CSRF-protected POST to
-`/ai/conversations/{id}/messages/{message_id}/confirm` after a human has
-seen the literal command text and target list rendered from this row. The
+feature. A mutating tool call is only ever *recorded* here by the
+background turn task; it starts only through
+`app.services.ai_actions.start_actions` — after a human's CSRF-protected
+Confirm of the literal command and target list rendered from this row,
+or, for a shell command only, when the account's AI command mode is
+"allow" (`User.ai_command_mode`). A started shell command keeps one
+`results` row per machine (status, exit status, output tail). The
 `denied` status exists so the conversation (and the reader) can see that
 the assistant *tried* to propose something the user's role doesn't allow,
 rather than the attempt silently vanishing.
@@ -35,7 +37,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, ForeignKey, Text
+from sqlalchemy import JSON, Boolean, ForeignKey, Text, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -56,6 +58,10 @@ class PendingActionStatus(enum.StrEnum):
     CONFIRMED = "confirmed"
     DISCARDED = "discarded"
     DENIED = "denied"
+    #: A shell command that is running now (`app.services.ai_actions`);
+    #: becomes `confirmed` once every machine answered and the assistant
+    #: summarized the output.
+    RUNNING = "running"
 
 
 class AiMessage(Base):
@@ -71,6 +77,12 @@ class AiMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     provider_native: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     pending_actions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # A "user" turn that is really a command's output handed to the model
+    # for a summary (`app.tasks.ai_jobs.execute_ai_actions`), not something
+    # a person typed: the chat shows it folded, as output.
+    is_tool_output: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     # Assigned in Python (`datetime.now(UTC)`), not via a DB `server_default`
     # like most other timestamps in this app — same reasoning as

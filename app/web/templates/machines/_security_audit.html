@@ -43,6 +43,22 @@
     </details>
   {% endif %}
 {% endmacro %}
+{% macro fix_with_ai(key) %}
+  {% if can_ai %}
+    <form method="post" action="/ai/explain" class="inline-form finding-fix">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="kind" value="security_finding">
+      <input type="hidden" name="machine_id" value="{{ machine.id }}">
+      <input type="hidden" name="key" value="{{ key }}">
+      <button type="submit" class="button button-secondary">{{ t(request, "security_audit.fix_with_ai") }}</button>
+    </form>
+  {% endif %}
+{% endmacro %}
+{% macro log_link(a) -%}
+  {%- if a.id in logged_ids -%}
+    <a href="/machines/{{ machine.id }}/security/audits/{{ a.id }}/log">{{ t(request, "security_audit.download_log") }}</a>
+  {%- endif -%}
+{%- endmacro %}
 {% macro lynis_finding(f) %}
   {%- set howto_key = "security_audit.howto." ~ f.test -%}
   {%- set howto = t(request, howto_key) -%}
@@ -84,7 +100,10 @@
       <p>{{ t(request, "security_audit.show_details_cmd") }} <code>lynis show details {{ f.test }}</code></p>
       <p><a href="{{ control_url.format(test=f.test) }}" rel="noopener noreferrer" target="_blank">{{ t(request, "security_audit.control_link", test=f.test) }}</a></p>
     </details>
-    {{ ok_form(f.key, f.test ~ ": " ~ f.text) }}
+    <div class="finding-actions">
+      {{ fix_with_ai(f.key) }}
+      {{ ok_form(f.key, f.test ~ ": " ~ f.text) }}
+    </div>
   </div>
 {% endmacro %}
 {% macro lynis_groups(groups) %}
@@ -104,6 +123,7 @@
       <p>
         {{ t(request, "security_audit.latest_run") }} {{ status_badge(current) }}
         <span class="table-muted">{{ current.created_at | local_time('%Y-%m-%d %H:%M') }}</span>
+        {% if current.id in logged_ids %}· {{ log_link(current) }}{% endif %}
       </p>
       {% if active %}<p class="hint">{{ t(request, "security_audit.running_hint") }}</p>{% endif %}
       {% if display_status(current) == 'interrupted' %}<p class="hint">{{ t(request, "security_audit.interrupted_hint") }}</p>{% endif %}
@@ -122,6 +142,7 @@
         {% if shown.lynis_version %}· Lynis {{ shown.lynis_version }}{% endif %}
         {% if shown.tests_done %}· {{ t(request, "security_audit.tests_done", count=shown.tests_done) }}{% endif %}
         {% if shown.started_by %}· {{ shown.started_by }}{% endif %}
+        {% if shown.id in logged_ids %}· {{ log_link(shown) }}{% endif %}
       </p>
       <div class="stat-grid">
         <div class="stat-card {{ 'stat-card-danger' if shown.hardening_index is not none and shown.hardening_index < 60 else ('stat-card-warn' if shown.hardening_index is not none and shown.hardening_index < 75 else '') }}">
@@ -200,7 +221,10 @@
                         <p>{{ t(request, base ~ ".why") }}</p>
                         <p>{{ t(request, base ~ ".fix") }}</p>
                       </details>
-                      {{ ok_form(ch.key, t(request, base ~ ".title")) }}
+                      <div class="finding-actions">
+                        {{ fix_with_ai(ch.key) }}
+                        {{ ok_form(ch.key, t(request, base ~ ".title")) }}
+                      </div>
                     {% elif ch.status == 'skip' %}
                       <div class="table-summary">{{ t(request, "security_audit.check_skipped") }}</div>
                     {% endif %}
@@ -269,7 +293,7 @@
     </section>
   {% endif %}
 
-  {% if audits | length > 1 %}
+  {% if audits | length > 1 or logged_ids %}
     <section class="panel">
       <h2>{{ t(request, "security_audit.history") }}</h2>
       <div class="monitoring-table-wrap">
@@ -282,6 +306,7 @@
               <th>{{ t(request, "security_audit.failed_checks") }}</th>
               <th>{{ t(request, "security_audit.warnings_short") }}</th>
               <th>{{ t(request, "security_audit.suggestions_short") }}</th>
+              <th>{{ t(request, "security_audit.log") }}</th>
             </tr>
           </thead>
           <tbody>
@@ -295,6 +320,7 @@
                 <td>{{ ac.failed_checks if ok and a.checks else '—' }}</td>
                 <td>{{ ac.warnings if ok and a.lynis_version else '—' }}</td>
                 <td>{{ ac.suggestions if ok and a.lynis_version else '—' }}</td>
+                <td>{{ log_link(a) or '—' }}</td>
               </tr>
             {% endfor %}
           </tbody>

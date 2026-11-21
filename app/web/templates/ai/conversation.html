@@ -3,14 +3,29 @@
 {% block title %}{{ conversation.title }} — AI — debcontrol{% endblock %}
 
 {% block content %}
+  {% set mode = request.state.user.ai_mode.value %}
   <div class="page-header">
     <h1>{{ conversation.title }}</h1>
     <a class="button button-secondary" href="/ai">{{ t(request, "ai.back_to_conversations") }}</a>
   </div>
 
-  <p class="hint">
-    {{ t(request, "ai.model") }}: <code>{{ conversation.model_id }}</code>
-  </p>
+  <div class="chat-meta">
+    <span class="hint">{{ t(request, "ai.model") }}: <code>{{ conversation.model_id }}</code></span>
+    <form method="post" action="/ai/command-mode" class="inline-form chat-mode-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="/ai/conversations/{{ conversation.id }}">
+      <label for="ai-mode">{{ t(request, "ai.mode.label") }}</label>
+      <select id="ai-mode" name="mode" data-autosubmit>
+        {% for value in ('deny', 'ask', 'allow') %}
+          <option value="{{ value }}" {% if mode == value %}selected{% endif %}>{{ t(request, "ai.mode." ~ value) }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="button button-secondary">{{ t(request, "common.save") }}</button></noscript>
+    </form>
+  </div>
+  {% if mode == 'allow' %}
+    <div class="alert alert-warn"><p>{{ t(request, "ai.mode.allow_banner") }}</p></div>
+  {% endif %}
 
   {% if errors %}
     <div class="alert alert-error">
@@ -18,5 +33,24 @@
     </div>
   {% endif %}
 
-  {% include "partials/ai_messages_panel.html" %}
+  <section class="panel chat-panel">
+    <div class="chat-scroll" data-ai-chat-scroll>
+      {% include "partials/ai_messages_panel.html" %}
+    </div>
+
+    <form method="post" action="/ai/conversations/{{ conversation.id }}/messages"
+          class="chat-compose" autocomplete="off" data-ai-compose>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="message" class="visually-hidden">{{ t(request, "ai.chat.message") }}</label>
+      <textarea id="message" name="message" rows="3"
+                placeholder="{{ t(request, 'ai.chat.message_placeholder') }}"
+                {% if awaiting_reply %}disabled{% endif %}></textarea>
+      <div class="chat-compose-actions">
+        <span class="hint" data-ai-compose-hint
+              data-waiting="{{ t(request, 'ai.chat.waiting_for_reply') }}"
+              data-idle="{{ t(request, 'ai.chat.enter_to_send') }}">{{ t(request, "ai.chat.waiting_for_reply") if awaiting_reply else t(request, "ai.chat.enter_to_send") }}</span>
+        <button type="submit" class="button" {% if awaiting_reply %}disabled{% endif %}>{{ t(request, "ai.chat.send") }}</button>
+      </div>
+    </form>
+  </section>
 {% endblock %}

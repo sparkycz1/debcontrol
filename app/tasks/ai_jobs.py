@@ -14,12 +14,15 @@ worker for a long time" situation every SSH operation in this app already
 solves with Celery, so it's solved the same way — the web route enqueues
 and waits on the result with `asyncio.to_thread(async_result.get, ...)`.
 
-**What this task can and cannot do.** It can read the fleet (the two
+**What the turn can and cannot do.** It can read the fleet (the
 read-only lookups execute here, immediately). It can *record* a proposed
-mutating action into `AiMessage.pending_actions`. It can never run one:
-there is no call to `machine_actions`, to `run_remote_ssh_command`, or to
-anything else that touches a machine anywhere in this module. Executing a
-proposal requires a human's confirmed POST — see `app.web.routes.ai`.
+mutating action into `AiMessage.pending_actions`. It never runs one
+itself: an action starts only through `app.services.ai_actions.
+start_actions` — after a human's confirmed POST (`app.web.routes.ai`), or,
+for a shell command only, right after the turn when the account's AI
+command mode is "allow" (`User.ai_command_mode`). `execute_ai_actions`
+below then runs a started shell command; it does no authorization of its
+own and is enqueued from nowhere else.
 
 Permissions are re-derived from the conversation owner's account **fresh
 from the database on every turn**, never from anything cached or passed in
@@ -42,11 +45,12 @@ from app.ai.base import AiProviderError, ChatTurnResult, ToolCall
 from app.ai.providers import build_client
 from app.ai.tools import (
     MAX_TOOL_ROUNDTRIPS,
-    SYSTEM_PROMPT,
+    RUN_SSH_COMMAND,
     TOOL_SPECS,
     available_tools,
     build_pending_action,
     execute_read_only_tool,
+    system_prompt,
 )
 from app.ai.usage import check_within_limits, record_usage
 from app.audit import log_event
@@ -62,7 +66,8 @@ from app.db.models.machine import Machine
 from app.db.models.machine_change import MachineChange
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.models.notification_rule import NotificationEventType
-from app.db.models.user import User
+from app.db.models.user import AiCommandMode, User
+from app.services import ai_actions
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.notifications import notify
 from app.tasks.celery_app import celery_app
@@ -76,6 +81,15 @@ _PROPOSAL_FEEDBACK = (
     "Recorded as a proposal and shown to the operator for confirmation. "
     "It has NOT run. Do not propose the same action again; instead tell the "
     "operator what you have proposed and that they need to confirm it."
+)
+
+# The same, for a shell command the account lets run without a Confirm
+# (`AiCommandMode.ALLOW`): it starts as soon as this turn is saved.
+_AUTO_RUN_FEEDBACK = (
+    "Accepted: the operator's settings let this command run without a "
+    "confirmation, so it starts as soon as this reply is sent, and its output "
+    "will be given to you in the next message. Do not propose it again; tell "
+    "the operator briefly what is running and why."
 )
 
 _NO_TEXT_FALLBACK = (
@@ -126,7 +140,11 @@ async def _persist_assistant_error(
 
 
 async def _run_turn(
-    conversation_id: str, user_message: str | None = None, *, allow_tools: bool
+    conversation_id: str,
+    user_message: str | None = None,
+    *,
+    allow_tools: bool,
+    tool_output: bool = False,
 ) -> dict[str, Any]:
     """Run one provider turn and persist the assistant's reply.
 
@@ -161,6 +179,7 @@ async def _run_turn(
                         role=AiMessageRole.USER,
                         content=user_message,
                         provider_native=None,
+                        is_tool_output=tool_output,
                     )
                 )
                 await db.commit()
@@ -186,6 +205,7 @@ async def _run_turn(
                     role=AiMessageRole.USER,
                     content=user_message,
                     provider_native=[user_native],
+                    is_tool_output=tool_output,
                 )
             )
             await db.commit()
@@ -203,7 +223,7 @@ async def _run_turn(
         for round_index in range(MAX_TOOL_ROUNDTRIPS):
             try:
                 result: ChatTurnResult = await client.send(
-                    messages, tools, conversation.model_id, SYSTEM_PROMPT
+                    messages, tools, conversation.model_id, system_prompt(owner)
                 )
             except AiProviderError as exc:
                 return await _persist_assistant_error(db, conversation.id, str(exc))
@@ -238,6 +258,11 @@ async def _run_turn(
                 pending_actions.append(entry)
                 if entry.get("status") == "denied":
                     feedback = str(entry.get("reason") or "Refused.")
+                elif (
+                    call.name in ai_actions.AUTO_RUN_TOOLS
+                    and owner.ai_mode == AiCommandMode.ALLOW
+                ):
+                    feedback = _AUTO_RUN_FEEDBACK
                 else:
                     feedback = _PROPOSAL_FEEDBACK
                 outputs.append((call, feedback))
@@ -262,6 +287,20 @@ async def _run_turn(
         )
         db.add(assistant_message)
         await db.commit()
+
+        # "allow": a proposed shell command starts now, through the same
+        # checks a Confirm goes through (app.services.ai_actions).
+        if owner.ai_mode == AiCommandMode.ALLOW:
+            auto = [
+                index
+                for index, entry in enumerate(pending_actions)
+                if entry.get("tool") == RUN_SSH_COMMAND
+                and entry.get("status") == ai_actions.PENDING
+            ]
+            if auto:
+                await ai_actions.start_actions(
+                    db, owner, conversation, assistant_message.id, auto, automatic=True
+                )
 
         return {
             "ok": True,
@@ -307,7 +346,151 @@ def summarize_tool_output(conversation_id: str, output_text: str) -> dict[str, A
     output can achieve is a misleading summary — it cannot reach a tool,
     and therefore cannot even produce a new proposal to confirm.
     """
-    return asyncio.run(_run_turn(conversation_id, allow_tools=False, user_message=output_text))
+    return asyncio.run(
+        _run_turn(conversation_id, allow_tools=False, user_message=output_text, tool_output=True)
+    )
+
+
+# --- Running a started shell command (app.services.ai_actions) -------------
+
+
+_MAX_PARALLEL_MACHINES = 8
+
+
+def _tail_output(text: str) -> str:
+    limit = ai_actions.MAX_RESULT_OUTPUT_CHARS
+    return text if len(text) <= limit else "[... earlier output cut ...]\n" + text[-limit:]
+
+
+async def _run_on_machine(machine_id: str, command: str, limit_seconds: int) -> dict[str, Any]:
+    """One machine's run, as a result row; never raises."""
+    # Imported here: app.tasks.jobs is the big SSH job module, and only
+    # this task needs it.
+    from app.tasks import jobs
+
+    try:
+        async with asyncio.timeout(limit_seconds):
+            result = await jobs._run_remote_ssh_command(machine_id, command)
+    except TimeoutError:
+        return {
+            "status": "timeout",
+            "error": f"The command did not finish within {limit_seconds} s.",
+        }
+    except Exception as exc:  # one machine's failure must not lose the others'
+        logger.warning("AI command on machine %s failed: %s", machine_id, exc)
+        return {"status": "failed", "error": str(exc) or type(exc).__name__}
+    if isinstance(result, dict) and result.get("ok"):
+        exit_status = result.get("exit_status")
+        return {
+            "status": "ok" if exit_status == 0 else "failed",
+            "exit_status": exit_status,
+            "output": _tail_output(str(result.get("output") or "")),
+        }
+    error = str(result.get("error")) if isinstance(result, dict) else "Unknown error."
+    return {"status": "failed", "error": error}
+
+
+async def _execute_ai_actions(
+    conversation_id: str, message_id: str, indexes: list[int]
+) -> dict[str, Any]:
+    """Run the started shell commands at `indexes` of one message on every
+    machine at once (`app.services.ai_actions.start_actions` already checked
+    and audit-logged them), store each machine's result in the action's
+    `results`, then let the assistant summarize the output — with no tools
+    (see `summarize_tool_output`). Bounded fan-out (`MAX_TARGET_MACHINES`
+    per action) inside one task, because the summary needs every result."""
+    conversation_uuid = uuid.UUID(conversation_id)
+    message_uuid = uuid.UUID(message_id)
+    async with db_session.AsyncSessionLocal() as db:
+        conversation = await db.get(AiConversation, conversation_uuid)
+        message = await db.get(AiMessage, message_uuid)
+        if conversation is None or message is None:
+            return {"ok": False, "error": "Conversation not found."}
+        app_settings = await get_or_create_app_settings(db)
+        timeout = app_settings.ssh_connect_timeout + 70
+        work: list[tuple[int, str, str]] = []
+        commands: dict[int, str] = {}
+        for index in indexes:
+            entries = message.pending_actions or []
+            if not 0 <= index < len(entries):
+                continue
+            entry = entries[index]
+            if entry.get("status") != ai_actions.RUNNING:
+                continue
+            commands[index] = str(entry.get("command") or "")
+            work.extend(
+                (index, str(row.get("machine_id")), str(row.get("machine_name")))
+                for row in entry.get("results") or []
+                if row.get("status") == "running"
+            )
+
+    # At most this many machines at once: each run holds a DB session for
+    # its credential lookup, and the pool is not sized for 25 at a time.
+    limit = asyncio.Semaphore(_MAX_PARALLEL_MACHINES)
+
+    async def _limited(machine_id: str, command: str) -> dict[str, Any]:
+        async with limit:
+            return await _run_on_machine(machine_id, command, timeout)
+
+    outcomes = await asyncio.gather(
+        *(_limited(machine_id, commands[index]) for index, machine_id, _ in work)
+    )
+    by_key = {
+        (index, machine_id): outcome
+        for (index, machine_id, _), outcome in zip(work, outcomes, strict=True)
+    }
+
+    sections: list[str] = []
+    async with db_session.AsyncSessionLocal() as db:
+        conversation = await db.get(AiConversation, conversation_uuid)
+        if conversation is None:
+            return {"ok": False, "error": "Conversation not found."}
+        message = await ai_actions.lock_message(db, conversation, message_uuid)
+        if message is None:
+            return {"ok": False, "error": "Message not found."}
+        actions = [dict(action) for action in message.pending_actions or []]
+        for index in commands:
+            entry = actions[index]
+            rows = []
+            for row in entry.get("results") or []:
+                outcome = by_key.get((index, str(row.get("machine_id"))))
+                rows.append({**row, **outcome} if outcome is not None else dict(row))
+            entry["results"] = rows
+            entry["finished_at"] = ai_actions.now_iso()
+            entry["status"] = ai_actions.CONFIRMED
+            for row in rows:
+                if row.get("status") == "skipped":
+                    continue
+                if row.get("status") in ("ok", "failed") and "exit_status" in row:
+                    output = row.get("output") or "(no output)"
+                    body = f"exit status: {row.get('exit_status')}\n{output}"
+                else:
+                    body = f"failed: {row.get('error') or 'unknown error'}"
+                sections.append(f"### {row.get('machine_name')} — `{commands[index]}`\n{body}")
+        message.pending_actions = actions
+        await db.commit()
+
+    if not sections:
+        return {"ok": True, "summarized": False}
+    summary_input = "Result of the confirmed command(s):\n\n" + "\n\n".join(sections)
+    return await _run_turn(
+        conversation_id, allow_tools=False, user_message=summary_input, tool_output=True
+    )
+
+
+# The SSH runs (connect timeout + 70 s each, 8 at a time, up to 25 machines)
+# plus one summary
+# turn (`_AI_TURN_TIME_LIMIT_SECONDS`).
+_EXECUTE_TIME_LIMIT_SECONDS = _AI_TURN_TIME_LIMIT_SECONDS + 600
+
+
+@celery_app.task(
+    name="app.tasks.ai_jobs.execute_ai_actions", time_limit=_EXECUTE_TIME_LIMIT_SECONDS
+)
+def execute_ai_actions(conversation_id: str, message_id: str, indexes: list[int]) -> dict[str, Any]:
+    """See `_execute_ai_actions`. Enqueued only by
+    `app.services.ai_actions.start_actions`, which did the authorization."""
+    return asyncio.run(_execute_ai_actions(conversation_id, message_id, indexes))
 
 
 # --- Scheduled fleet summary (app.db.models.fleet_summary.FleetSummary) ---

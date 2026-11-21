@@ -38,7 +38,7 @@ from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_group import MachineGroup
 from app.db.models.role import Permission
 from app.db.models.user import User
-from app.tasks import ai_jobs
+from app.tasks import ai_jobs, jobs
 from app.web.routes import settings as settings_routes
 from tests.conftest import ADMIN_USERNAME
 
@@ -479,11 +479,12 @@ async def test_a_proposed_update_is_pending_and_runs_nothing_until_confirmed(
         f"/ai/conversations/{conversation_id}/messages/{message_id}/confirm",
         data={"csrf_token": csrf_token, "action_index": "0"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 303
     assert "app.tasks.jobs.run_machine_update" in celery_calls.names
 
     _mid, actions_after = await pending_actions_of(db_session_factory, conversation_id)
     assert actions_after[0]["status"] == "confirmed"
+    assert actions_after[0]["ran_on"] == ["web1"]
 
     async with db_session_factory() as db:
         result = await db.execute(
@@ -492,25 +493,25 @@ async def test_a_proposed_update_is_pending_and_runs_nothing_until_confirmed(
         entries = list(result.scalars().all())
     assert len(entries) == 1
     assert entries[0].details["machines"] == ["web1"]
+    assert entries[0].details["automatic"] is False
 
-    # The "auto-confirm further commands" banner only appears *after* a
-    # human has confirmed at least one command by hand in this
-    # conversation — see app.web.routes.ai._any_action_confirmed.
-    assert "data-ai-auto-confirm-toggle" in response.text
-    assert "data-ai-confirm-form" not in response.text  # nothing pending right now
+    # Nothing pending any more, and the old per-tab "auto-confirm" switch
+    # is gone for good (replaced by the account's AI command mode).
+    page = await client.get(f"/ai/conversations/{conversation_id}")
+    assert "/confirm\"" not in page.text
+    assert "auto-confirm" not in page.text
 
 
-async def test_auto_confirm_banner_absent_before_any_confirmation(
+async def test_a_pending_proposal_shows_its_confirm_form(
     client, db_session_factory, use_test_db, monkeypatch, celery_calls
 ):
-    conversation_id, _message_id, _actions, _machine_id = await _propose_update(
+    conversation_id, message_id, _actions, _machine_id = await _propose_update(
         client, db_session_factory, monkeypatch
     )
     page = await client.get(f"/ai/conversations/{conversation_id}")
     assert page.status_code == 200
-    assert "data-ai-auto-confirm-toggle" not in page.text
-    # The one still-pending action's own confirm form is there, though.
-    assert "data-ai-confirm-form" in page.text
+    assert f"/messages/{message_id}/confirm\"" in page.text
+    assert "data-ai-chat-scroll" in page.text and "data-ai-compose" in page.text
 
 
 async def test_confirm_requires_a_csrf_token(
@@ -609,7 +610,7 @@ async def test_confirm_is_refused_after_the_permission_is_taken_away(
         data={"csrf_token": csrf_token, "action_index": "0"},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 303
     assert "app.tasks.jobs.run_machine_update" not in celery_calls.names
     _mid, actions_after = await pending_actions_of(db_session_factory, conversation_id)
     assert actions_after[0]["status"] == "denied"
@@ -649,12 +650,51 @@ async def test_confirming_a_shell_command_runs_it_and_asks_for_a_summary(
         f"/ai/conversations/{conversation_id}/messages/{message_id}/confirm",
         data={"csrf_token": csrf_token, "action_index": "0"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 303
 
-    assert "app.tasks.jobs.run_remote_ssh_command" in celery_calls.names
-    enqueued = [c for c in celery_calls if c[0] == "app.tasks.jobs.run_remote_ssh_command"]
-    assert enqueued[0][1][1] == "sudo -n apt-get -y install apache2"
-    assert "app.tasks.ai_jobs.summarize_tool_output" in celery_calls.names
+    # The request doesn't wait for SSH: the action is running, one result
+    # row per machine, and one background job runs it.
+    _mid, actions = await pending_actions_of(db_session_factory, conversation_id)
+    assert actions[0]["status"] == "running"
+    assert [r["status"] for r in actions[0]["results"]] == ["running"]
+    enqueued = [c for c in celery_calls if c[0] == "app.tasks.ai_jobs.execute_ai_actions"]
+    assert enqueued == [
+        ("app.tasks.ai_jobs.execute_ai_actions", (str(conversation_id), str(message_id), [0]), {})
+    ]
+    panel = await client.get(f"/ai/conversations/{conversation_id}/messages-panel")
+    assert 'hx-trigger="every 2s"' in panel.text  # polls until it is done
+
+    # The job: runs it, keeps the output per machine, asks for a summary
+    # with no tools, and marks the output message as such.
+    ran: list[tuple[str, str]] = []
+
+    async def fake_ssh(machine_id: str, command: str) -> dict[str, Any]:
+        ran.append((machine_id, command))
+        return {"ok": True, "exit_status": 0, "output": "apache2 installed"}
+
+    monkeypatch.setattr(jobs, "_run_remote_ssh_command", fake_ssh)
+    fake = install_fake_client(monkeypatch, [text_turn("apache2 is installed on web1.")])
+    await ai_jobs._execute_ai_actions(str(conversation_id), str(message_id), [0])
+
+    assert [command for _id, command in ran] == ["sudo -n apt-get -y install apache2"]
+    _mid, actions = await pending_actions_of(db_session_factory, conversation_id)
+    row = actions[0]["results"][0]
+    assert actions[0]["status"] == "confirmed"
+    assert (row["status"], row["exit_status"], row["output"]) == ("ok", 0, "apache2 installed")
+    assert fake.calls[0]["tools"] == []
+    async with db_session_factory() as db:
+        result = await db.execute(
+            select(AiMessage)
+            .where(AiMessage.conversation_id == conversation_id)
+            .order_by(AiMessage.created_at, AiMessage.id)
+        )
+        messages = list(result.scalars().all())
+    assert messages[-2].is_tool_output and "apache2 installed" in messages[-2].content
+    assert messages[-1].content == "apache2 is installed on web1."
+
+    panel = await client.get(f"/ai/conversations/{conversation_id}/messages-panel")
+    assert "hx-trigger" not in panel.text
+    assert "apache2 installed" in panel.text
 
 
 # --- Read-only tools auto-execute -------------------------------------------

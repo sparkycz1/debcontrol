@@ -10,35 +10,40 @@ could drive machine actions through a chat endpoint, is a bigger blast
 radius than this feature needs to accept in its first version. Everything
 here requires a browser session and a CSRF token.
 
-**The confirm gate.** `POST .../messages/{message_id}/confirm` is the only
-place in this application where an AI-proposed action can execute. It is:
+**Where an action starts.** `POST .../messages/{message_id}/confirm`
+(one action, optionally on some of its machines) and `.../confirm-all`
+hand over to `app.services.ai_actions.start_actions`, the only code that
+starts an AI-proposed action — also for the one automatic case (the
+account's AI command mode at "allow" starts a proposed shell command right
+after the turn, see `app.tasks.ai_jobs`). The routes are:
 
-- CSRF-protected (`Depends(verify_csrf)`), so it cannot be triggered
+- CSRF-protected (`Depends(verify_csrf)`), so they cannot be triggered
   cross-site;
 - scoped to the conversation's owner, so nobody can confirm someone else's
   proposal;
-- gated on the *current* permission for that specific tool, re-read from
-  the user's role at this moment (permission check #3 — see
-  `app.ai.tools`), so a role downgrade takes effect immediately even for a
-  proposal written before it;
-- restricted to entries still marked `pending`, so one proposal can be
-  executed exactly once;
-- audit-logged with the literal command and every resolved target.
 
-Nothing else — not the chat route, not the Celery turn task, not the tool
-layer — calls `machine_actions` or enqueues an SSH job. `app/tasks/ai_jobs.py`
-only ever *records* a proposal.
+and `start_actions` then checks, under a row lock on the message:
+
+- the *current* permission for that specific tool, re-read from the
+  user's role at this moment (permission check #3 — see `app.ai.tools`),
+  so a role downgrade takes effect immediately even for a proposal
+  written before it, and the account's command mode;
+- that the entry is still `pending`, so one proposal runs exactly once;
+- the target machines, re-loaded within the account's current scope;
+
+and audit-logs the literal command and every machine it starts on. A
+shell command then runs in the background (`ai_jobs.execute_ai_actions`);
+the page polls for the per-machine results.
 """
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import uuid
 from typing import Any
 
 # NOT the builtin `TimeoutError` — see app/web/routes/machines.py's import
 # of the same name for why that distinction is load-bearing.
-from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
@@ -47,41 +52,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.base import AiProviderError, BaseAiClient
 from app.ai.config import get_or_create_ai_provider_configs, get_selectable_models
 from app.ai.providers import build_client
-from app.ai.tools import (
-    CHECK_UPDATES,
-    REBOOT,
-    RUN_SSH_COMMAND,
-    RUN_UPDATE,
-    SHUTDOWN,
-    load_machines,
-    missing_permission,
-)
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
-from app.core.app_settings import get_or_create_app_settings
 from app.core.csrf import verify_csrf
 from app.db.models.ai_conversation import AiConversation, derive_title
-from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStatus
+from app.db.models.ai_message import AiMessage, AiMessageRole
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig
-from app.db.models.audit_log import AuditOutcome
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.machine import Machine
-from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus, UpgradeStrategy
+from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.models.role import Permission
-from app.db.models.user import User
+from app.db.models.security_audit import SecurityAuditStatus
+from app.db.models.user import AiCommandMode, User
 from app.db.session import get_db
-from app.services import machine_timeline
+from app.i18n import get_locale, translate
+from app.services import ai_actions, machine_timeline, security_audit
 from app.services.access_scope import machines_visible_to
 from app.services.endpoint_check_history import load_check_history
-from app.services.machine_actions import (
-    send_power_to_machines,
-    trigger_check_updates,
-    trigger_updates,
-)
-from app.ssh.power import PowerAction
 from app.tasks import ai_jobs
-from app.tasks import jobs as tasks
+from app.web.flash import read_flash, sign_flash
 from app.web.templating import t, templates
 
 router = APIRouter(
@@ -132,34 +122,35 @@ def _is_awaiting_reply(messages: list[AiMessage]) -> bool:
     return bool(messages) and messages[-1].role == AiMessageRole.USER
 
 
-def _any_action_confirmed(messages: list[AiMessage]) -> bool:
-    """True once at least one proposed action in this conversation has
-    already been confirmed by hand — gates the "auto-confirm further
-    commands in this conversation" control in
-    `partials/ai_messages_panel.html`. Per explicit product request, that
-    control only ever appears *after* a human has manually confirmed at
-    least one command here, never before the first one — it's an opt-in
-    convenience for a conversation already underway, not a way to skip
-    the very first confirmation."""
-    for message in messages:
-        for action in message.pending_actions or []:
-            if action.get("status") == PendingActionStatus.CONFIRMED.value:
-                return True
-    return False
+def _panel_state(messages: list[AiMessage]) -> dict[str, Any]:
+    """What `partials/ai_messages_panel.html` needs besides the messages:
+    whether a reply is still coming (`awaiting_reply`), whether a shell
+    command is still running (`busy`) — the panel polls while either holds
+    — and the "stale" test for a run that never finished."""
+    awaiting = _is_awaiting_reply(messages)
+    busy = ai_actions.is_busy(messages)
+    return {
+        "awaiting_reply": awaiting,
+        "busy": busy,
+        "polling": awaiting or busy,
+        "is_stale": ai_actions.is_stale,
+    }
 
 
 async def _render_conversation(
     request: Request, db: AsyncSession, conversation: AiConversation, errors: list[str]
 ) -> Response:
     messages = await _get_messages(db, conversation.id)
+    flashed = read_flash(request, "error")
+    if flashed:
+        errors = [*errors, flashed]
     return templates.TemplateResponse(
         request,
         "ai/conversation.html",
         {
             "conversation": conversation,
             "messages": messages,
-            "awaiting_reply": _is_awaiting_reply(messages),
-            "any_action_confirmed": _any_action_confirmed(messages),
+            **_panel_state(messages),
             "errors": errors,
             "csrf_token": request.state.csrf_token,
         },
@@ -202,8 +193,7 @@ async def _render_messages_panel(
         {
             "conversation": conversation,
             "messages": messages,
-            "awaiting_reply": _is_awaiting_reply(messages),
-            "any_action_confirmed": _any_action_confirmed(messages),
+            **_panel_state(messages),
             "csrf_token": request.state.csrf_token,
         },
     )
@@ -450,6 +440,7 @@ async def _build_explain_prompt(
     *,
     check_id: uuid.UUID | None = None,
     days: int = machine_timeline.DEFAULT_RANGE_DAYS,
+    finding_key: str | None = None,
 ) -> tuple[str, str]:
     """Returns `(prompt_text, audit_summary)` for the "Ask AI why" button,
     or raises `HTTPException` if there's nothing to explain (an unknown
@@ -532,7 +523,87 @@ async def _build_explain_prompt(
         )
         return prompt, f'Asked the AI assistant about "{machine.name}"\'s readiness check'
 
+    if kind == "security_finding":
+        return await _build_security_finding_prompt(db, machine, finding_key or "")
+
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown context.")
+
+
+def _english(key: str) -> str:
+    """A locale string in English: the prompt's facts stay the same
+    whatever the operator's UI language (they get "answer in <language>"
+    appended instead)."""
+    return translate(get_locale("en"), key)
+
+
+async def _build_security_finding_prompt(
+    db: AsyncSession, machine: Machine, key: str
+) -> tuple[str, str]:
+    """The "Fix with AI" button on a security audit finding: the finding
+    as the newest successful audit of the machine has it, what is known
+    about it (Lynis's own control page and solution, the setting's current
+    and recommended value; for debcontrol's own checks — vps-audit's —
+    what the check tests and how it is usually fixed), and a request for a
+    fix proposed as commands for this one machine."""
+    if not security_audit.valid_key(key):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown finding.")
+    audits = await security_audit.history(db, machine.id)
+    shown = next((a for a in audits if a.status == SecurityAuditStatus.SUCCEEDED), None)
+    finding = security_audit.find_finding(shown, key) if shown else None
+    if shown is None or finding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found.")
+
+    lines = [
+        f'The latest security audit of machine "{machine.name}" '
+        f"(OS: {machine.os_version or 'unknown'}) reported this finding:",
+        "",
+    ]
+    if finding["kind"] == security_audit.CHECK:
+        base = f"security_audit.check.{finding['id']}"
+        lines += [
+            f"- debcontrol check (based on vps-audit, https://github.com/nuver-labs/vps-audit): "
+            f"{_english(base + '.title')} (id `{finding['id']}`)",
+            f"- Result: {finding.get('status')}; found: {finding.get('value') or '-'}",
+            f"- What it checks and why it matters: {_english(base + '.why')}",
+            f"- Usual fix: {_english(base + '.fix')}",
+        ]
+    else:
+        test = str(finding.get("test", ""))
+        lines += [
+            f"- Lynis {finding['severity'][:-1]} {test}: {finding.get('text')}",
+        ]
+        if finding.get("detail"):
+            lines.append(f"- Detail: {finding['detail']}")
+        if finding.get("solution"):
+            lines.append(f"- Lynis's suggested solution: {finding['solution']}")
+        for detail in finding.get("details") or []:
+            lines.append(
+                f"- Setting `{detail.get('field')}` ({detail.get('service')}): current "
+                f"`{detail.get('value') or '-'}`, recommended `{detail.get('prefval') or '-'}`"
+            )
+        howto_key = f"security_audit.howto.{test}"
+        howto = _english(howto_key)
+        if howto != howto_key:
+            lines.append(f"- debcontrol's note: {howto}")
+        lines.append(
+            f"- Lynis control description: {security_audit.CONTROL_URL.format(test=test)} "
+            f"(`lynis show details {test}` on the machine prints the test's log)"
+        )
+    if shown.privileged is False:
+        lines.append("- Lynis ran without root on this machine, so some tests were skipped.")
+    lines += [
+        "",
+        "Explain briefly what this means and whether it is a real risk on this machine. "
+        "Then fix it: first check the current state with a read-only command, then "
+        f'propose the change as commands for machine "{machine.name}" only, keeping '
+        "access working (never lock out SSH: keep the current SSH port and the account "
+        "debcontrol connects with working). Say how to verify the fix (re-run the "
+        "security audit).",
+    ]
+    label = finding.get("id") or finding.get("test")
+    return "\n".join(lines), (
+        f'Asked the AI assistant to fix security finding "{label}" on "{machine.name}"'
+    )
 
 
 @router.post("/explain", dependencies=[Depends(verify_csrf)])
@@ -545,6 +616,7 @@ async def explain_with_ai(
     run_id: uuid.UUID | None = Form(None),
     check_id: uuid.UUID | None = Form(None),
     days: int = Form(machine_timeline.DEFAULT_RANGE_DAYS),
+    key: str = Form(""),
 ) -> Response:
     """The "Ask AI why" button on a failed update run (`partials/
     update_run_status.html`) and a machine's readiness banner
@@ -555,7 +627,7 @@ async def explain_with_ai(
     conversation" form lists first) rather than asking the user to choose
     again — this is meant to be one click, not a detour through a form."""
     prompt, audit_summary = await _build_explain_prompt(
-        db, user, kind, machine_id, run_id, check_id=check_id, days=days
+        db, user, kind, machine_id, run_id, check_id=check_id, days=days, finding_key=key
     )
 
     selectable = await get_selectable_models(db)
@@ -656,31 +728,11 @@ async def post_message(
     )
 
 
-async def _get_pending_action(
-    db: AsyncSession, conversation: AiConversation, message_id: uuid.UUID, index: int
-) -> tuple[AiMessage, list[dict[str, Any]], dict[str, Any]]:
-    message = await db.get(AiMessage, message_id)
-    if message is None or message.conversation_id != conversation.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
-    actions = list(message.pending_actions or [])
-    if index < 0 or index >= len(actions):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
-    return message, actions, dict(actions[index])
-
-
-def _store_actions(
-    message: AiMessage, actions: list[dict[str, Any]], index: int, entry: dict[str, Any]
-) -> None:
-    """Write one modified entry back.
-
-    A *new* list of new dicts is assigned rather than mutating the existing
-    one in place: SQLAlchemy's plain `JSON` column doesn't track in-place
-    mutation of the Python object it handed out, so an in-place edit would
-    simply never be written to the database.
-    """
-    updated = [dict(action) for action in actions]
-    updated[index] = entry
-    message.pending_actions = updated
+def _redirect_to(conversation: AiConversation, errors: list[str] | None = None) -> Response:
+    url = f"/ai/conversations/{conversation.id}"
+    if errors:
+        url += "?error=" + sign_flash(" ".join(dict.fromkeys(errors))[:500])
+    return RedirectResponse(url=url + "#chat-end", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post(
@@ -694,170 +746,52 @@ async def confirm_action(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     action_index: int = Form(0),
+    machine_id: list[str] | None = Form(None),
+    machines_selectable: bool = Form(False),
 ) -> Response:
-    """Execute one proposed action. See this module's docstring — this is
-    the only code path in the application that can."""
+    """Start one proposed action — on all its machines, or, when the form
+    offered machine checkboxes (`machines_selectable`), on the ones ticked.
+    Every check happens in `app.services.ai_actions.start_actions`; see
+    this module's docstring."""
     conversation = await _get_conversation(db, conversation_id, user)
-    message, actions, entry = await _get_pending_action(db, conversation, message_id, action_index)
-
-    if entry.get("status") != PendingActionStatus.PENDING.value:
-        return await _render_conversation(
-            request, db, conversation, [t(request, "ai.error.action_handled")]
-        )
-
-    tool_name = str(entry.get("tool") or "")
-    # Permission check #3 — current role, right now, not when the proposal
-    # was written.
-    denied = missing_permission(user, tool_name)
-    if denied is not None:
-        entry["status"] = PendingActionStatus.DENIED.value
-        entry["reason"] = (
-            f"Your role no longer has the '{denied.value}' permission — nothing was run."
-        )
-        _store_actions(message, actions, action_index, entry)
-        await db.commit()
-        await log_event(
-            db,
-            request=request,
-            action="ai.action.denied",
-            summary=f"Blocked AI action {tool_name}: missing '{denied.value}'",
-            outcome=AuditOutcome.DENIED,
-            target_type="ai_conversation",
-            target_id=conversation.id,
-            target_label=conversation.title,
-            details={"tool": tool_name, "permission": denied.value},
-        )
-        return await _render_conversation(request, db, conversation, [str(entry["reason"])])
-
-    machines = await load_machines(db, user, [str(m) for m in entry.get("machine_ids") or []])
-    if not machines:
-        entry["status"] = PendingActionStatus.DENIED.value
-        # Also covers "no longer visible to this account": `load_machines`
-        # re-filters by machine-group scope, so a proposal written before the
-        # account was restricted resolves to nothing here.
-        entry["reason"] = "None of the target machines are still available to this account."
-        _store_actions(message, actions, action_index, entry)
-        await db.commit()
-        return await _render_conversation(request, db, conversation, [str(entry["reason"])])
-
-    machine_names = [machine.name for machine in machines]
-    command = entry.get("command")
-    errors: list[str] = []
-
-    if tool_name == RUN_UPDATE:
-        strategy = UpgradeStrategy(str(entry.get("strategy") or UpgradeStrategy.DIST_UPGRADE.value))
-        await trigger_updates(db, machines, strategy)
-    elif tool_name == CHECK_UPDATES:
-        await trigger_check_updates(machines)
-    elif tool_name == REBOOT:
-        await send_power_to_machines(machines, PowerAction.REBOOT)
-    elif tool_name == SHUTDOWN:
-        await send_power_to_machines(machines, PowerAction.SHUTDOWN)
-    elif tool_name == RUN_SSH_COMMAND:
-        errors.extend(
-            await _run_command_and_summarize(db, conversation, machines, str(command or ""))
-        )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown proposed action."
-        )
-
-    entry["status"] = PendingActionStatus.CONFIRMED.value
-    _store_actions(message, actions, action_index, entry)
-    await db.commit()
-
-    await log_event(
+    selected = {action_index: machine_id or []} if machines_selectable else None
+    errors = await ai_actions.start_actions(
         db,
+        user,
+        conversation,
+        message_id,
+        [action_index],
+        selected_machine_ids=selected,
         request=request,
-        action=f"ai.action.{tool_name}",
-        summary=f"Confirmed AI-proposed {tool_name} on {', '.join(machine_names)}",
-        target_type="ai_conversation",
-        target_id=conversation.id,
-        target_label=conversation.title,
-        details={
-            "conversation_id": str(conversation.id),
-            "message_id": str(message.id),
-            "tool": tool_name,
-            "command": command,
-            "strategy": entry.get("strategy"),
-            "target_type": entry.get("target_type"),
-            "target_name": entry.get("target_name"),
-            "machines": machine_names,
-        },
     )
+    return _redirect_to(conversation, errors)
 
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/confirm-all",
+    dependencies=[Depends(verify_csrf)],
+)
+async def confirm_all_actions(
+    request: Request,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """"Confirm all" on an assistant reply with several proposals: every
+    one still pending, each on all its machines, through the same checks
+    as one Confirm (each one audit-logged on its own)."""
     conversation = await _get_conversation(db, conversation_id, user)
-    return await _render_conversation(request, db, conversation, errors)
-
-
-async def _run_command_and_summarize(
-    db: AsyncSession, conversation: AiConversation, machines: list[Any], command: str
-) -> list[str]:
-    """Run the confirmed command on each resolved machine, then hand the
-    combined output back to the model for one plain-language summary.
-
-    Unlike the fire-and-forget actions above, this one waits: the whole
-    point of running an ad-hoc command is seeing what it printed. Each
-    machine gets its own Celery task, using the same enqueue-then-
-    `asyncio.to_thread`-on-`.get()` pattern as `test_connection_endpoint`
-    in `app/web/routes/machines.py` — but every machine's task is
-    dispatched *before* any of them are awaited, and all the waits run
-    concurrently via `asyncio.gather`. Dispatching one at a time and
-    waiting in between (dispatch, block, dispatch the next, block, ...)
-    would turn the `MAX_TARGET_MACHINES`-machine cap into up to 25
-    back-to-back per-task timeouts stacked serially on this one web
-    request instead of one shared wait — the whole point of a "fan out to
-    a group" tool is that it actually fans out.
-    """
-    app_settings = await get_or_create_app_settings(db)
-    per_task_timeout = app_settings.ssh_connect_timeout + 70
-    errors: list[str] = []
-
-    dispatched = [
-        (machine, tasks.run_remote_ssh_command.delay(str(machine.id), command))
-        for machine in machines
-    ]
-
-    async def _await_one(machine: Any, async_result: Any) -> str:
-        try:
-            result = await asyncio.to_thread(async_result.get, timeout=per_task_timeout)
-        except CeleryTimeoutError:
-            errors.append(f"{machine.name}: the command did not finish in time.")
-            return f"### {machine.name}\n(the command did not finish in time)"
-        except Exception as exc:
-            errors.append(f"{machine.name}: {exc}")
-            return f"### {machine.name}\nfailed: {exc}"
-
-        if isinstance(result, dict) and result.get("ok"):
-            return (
-                f"### {machine.name}\nexit status: {result.get('exit_status')}\n"
-                f"{result.get('output') or '(no output)'}"
-            )
-        reason = str(result.get("error")) if isinstance(result, dict) else "Unknown error."
-        errors.append(f"{machine.name}: {reason}")
-        return f"### {machine.name}\nfailed: {reason}"
-
-    # `errors.append` above runs from coroutines interleaved on one event
-    # loop thread, never truly in parallel with each other, so appending
-    # to a shared list from several of them here is safe without a lock.
-    sections = await asyncio.gather(
-        *(_await_one(machine, async_result) for machine, async_result in dispatched)
+    message = await db.get(AiMessage, message_id)
+    if message is None or message.conversation_id != conversation.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    indexes = ai_actions.pending_indexes(message)
+    errors = (
+        await ai_actions.start_actions(db, user, conversation, message_id, indexes, request=request)
+        if indexes
+        else [t(request, "ai.error.action_handled")]
     )
-
-    summary_input = (
-        f"Result of the confirmed command `{command}`:\n\n" + "\n\n".join(sections)
-    )
-    async_result = ai_jobs.summarize_tool_output.delay(str(conversation.id), summary_input)
-    try:
-        await asyncio.to_thread(async_result.get, timeout=_TURN_WAIT_SECONDS)
-    except CeleryTimeoutError:
-        errors.append(
-            "The command ran, but the assistant's summary did not arrive in time — "
-            "reload this page shortly."
-        )
-    except Exception as exc:
-        errors.append(f"The command ran, but the assistant could not summarize it: {exc}")
-    return errors
+    return _redirect_to(conversation, errors)
 
 
 @router.post(
@@ -876,14 +810,73 @@ async def discard_action(
     there's no audit entry beyond the ones already written — declining to
     do something isn't a mutation of the fleet."""
     conversation = await _get_conversation(db, conversation_id, user)
-    message, actions, entry = await _get_pending_action(db, conversation, message_id, action_index)
-    if entry.get("status") == PendingActionStatus.PENDING.value:
-        entry["status"] = PendingActionStatus.DISCARDED.value
-        _store_actions(message, actions, action_index, entry)
-        await db.commit()
-    return RedirectResponse(
-        url=f"/ai/conversations/{conversation.id}", status_code=status.HTTP_303_SEE_OTHER
+    await ai_actions.discard_actions(db, conversation, message_id, [action_index])
+    return _redirect_to(conversation)
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/discard-all",
+    dependencies=[Depends(verify_csrf)],
+)
+async def discard_all_actions(
+    request: Request,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    conversation = await _get_conversation(db, conversation_id, user)
+    message = await db.get(AiMessage, message_id)
+    if message is None or message.conversation_id != conversation.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+    await ai_actions.discard_actions(
+        db, conversation, message_id, ai_actions.pending_indexes(message)
     )
+    return _redirect_to(conversation)
+
+
+@router.post("/command-mode", dependencies=[Depends(verify_csrf)])
+async def update_command_mode(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    mode: str = Form(...),
+    next: str = Form("/account"),
+) -> Response:
+    """My account -> AI assistant: what the assistant may do with a shell
+    command it proposes for this account (`AiCommandMode`). Web-only like
+    the rest of the assistant — see this module's docstring. Changing it
+    is audit-logged, since "allow" lets proposals run without a Confirm."""
+    try:
+        new_mode = AiCommandMode(mode)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown mode."
+        ) from None
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    old_mode = user.ai_mode
+    user.ai_command_mode = new_mode.value
+    await db.commit()
+    if old_mode != new_mode:
+        await log_event(
+            db,
+            request=request,
+            action="ai.command_mode.update",
+            summary=f'"{user.username}" set the AI command mode to "{new_mode.value}"',
+            target_type="user",
+            target_id=user.id,
+            target_label=user.username,
+            details={"from": old_mode.value, "to": new_mode.value},
+        )
+    # Back where the form was: a conversation (rebuilt from its parsed id,
+    # never the submitted text) or My account — nowhere else.
+    target = "/account"
+    prefix = "/ai/conversations/"
+    if next.startswith(prefix):
+        with contextlib.suppress(ValueError):
+            target = prefix + str(uuid.UUID(next.removeprefix(prefix)))
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/conversations/{conversation_id}/delete", dependencies=[Depends(verify_csrf)])

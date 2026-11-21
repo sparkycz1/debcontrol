@@ -55,6 +55,26 @@ UNPRIVILEGED_MARKER = "DEBCONTROL_LYNIS_UNPRIVILEGED"
 EXIT_MARKER = "DEBCONTROL_LYNIS_EXIT="
 REPORT_DELIMITER = "===DEBCONTROL_LYNIS_REPORT==="
 OUTPUT_DELIMITER = "===DEBCONTROL_LYNIS_OUTPUT==="
+LOGFILE_DELIMITER = "===DEBCONTROL_LYNIS_LOGFILE==="
+
+# Lynis's log of the last run, kept on the machine at Lynis's own default
+# path: emptied right before every run, so it always holds exactly the
+# last one. Owned by the account
+# debcontrol connects with (onboarding creates it for the scoped
+# `debcontrol` account; connected as root the audit creates it), so that
+# account can empty and read it, and Lynis running as root writes into it
+# (truncating keeps the owner and mode, as with the report file). When the
+# account cannot write it (a scoped account on a machine onboarded before
+# 0.139.0, where the file is still root's), the log goes to the run's
+# private directory instead and only debcontrol keeps it.
+MACHINE_LOGFILE = "/var/log/lynis.log"
+
+# How much of Lynis's own log file (`--logfile`) comes back with a run: its
+# end, where a run that failed stopped. Lynis writes a few hundred KB for a
+# full audit.
+LOGFILE_TAIL_BYTES = 400_000
+# The run log kept with an audit (`SecurityAudit.run_log`), at most.
+MAX_LOG_CHARS = 1_000_000
 
 # The fixed install locations, tried before whatever `PATH` finds — a
 # non-login SSH session often has no /usr/sbin in its PATH, and the sudo
@@ -123,7 +143,14 @@ _LINE = re.compile(r"^([a-z_]+)(\[\])?=(.*)$")
 def build_audit_command() -> str:
     """The whole audit as one script (one SSH exec): install or upgrade
     Lynis, run it, print the markers above and the report's kept lines;
-    see the module docstring."""
+    see the module docstring.
+
+    Everything before `REPORT_DELIMITER` that is not a marker is the run's
+    log (`LynisResult.log`): the install step's apt output and Lynis's own
+    console output, streamed rather than kept in a file, so a run cut off
+    by the time limit still brings back how far it got
+    (`run_audit`). After the report comes the tail of Lynis's log file
+    (`--logfile`, in the same private directory as the report)."""
     find = (
         "L=; for c in " + " ".join(_LYNIS_PATHS) + ' "$(command -v lynis 2>/dev/null)"; do '
         '[ -n "$c" ] && [ -x "$c" ] && { L="$c"; break; }; done; '
@@ -132,36 +159,57 @@ def build_audit_command() -> str:
         "export DEBIAN_FRONTEND=noninteractive; "
         # Root: CISOfy's repository, then install or upgrade from it.
         'if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then '
+        'echo "+ CISOfy repository"; '
         f"{CISOFY_REPO_SETUP} || echo {CISOFY_FAILED_MARKER}; "
-        "apt-get -q update >/dev/null 2>&1; "
-        "apt-get -y -q install lynis >/dev/null 2>&1 "
-        f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
+        'echo "+ apt-get update"; apt-get -q update 2>&1 | tail -n 40; '
+        'echo "+ apt-get install lynis"; apt-get -y -q install lynis 2>&1 | tail -n 40; '
         f"{find}"
+        f'[ -z "$L" ] && echo {INSTALL_FAILED_MARKER}; '
         # A scoped sudo account: install or upgrade from the
         # repositories the machine already has (CISOfy's, once
         # onboarding added it).
         "elif command -v apt-get >/dev/null 2>&1; then "
-        "sudo -n apt-get -q update >/dev/null 2>&1; "
-        "sudo -n apt-get -y -q install lynis >/dev/null 2>&1 "
-        f"|| {{ [ -z \"$L\" ] && echo {INSTALL_FAILED_MARKER}; }}; "
+        'echo "+ sudo -n apt-get update"; sudo -n apt-get -q update 2>&1 | tail -n 40; '
+        'echo "+ sudo -n apt-get install lynis"; '
+        "sudo -n apt-get -y -q install lynis 2>&1 | tail -n 40; "
         f"{find}"
+        f'[ -z "$L" ] && echo {INSTALL_FAILED_MARKER}; '
+        "else echo '+ no apt-get on this machine'; "
         "fi; "
     )
     return (
         f"{find}"
         f"{install}"
         f'if [ -z "$L" ]; then echo {MISSING_MARKER}; exit 0; fi; '
+        'echo "+ using $L"; '
         "T=$(mktemp -d /tmp/debcontrol-lynis.XXXXXX) || exit 97; "
         "trap 'rm -rf \"$T\"' EXIT; "
-        'R="$T/report.dat"; : > "$R"; chmod 600 "$R"; cd "$T" || exit 97; '
+        'R="$T/report.dat"; : > "$R"; chmod 600 "$R"; '
+        f'G={MACHINE_LOGFILE}; '
+        '[ "$(id -u)" = 0 ] && [ ! -e "$G" ] && install -m 600 /dev/null "$G"; '
+        'if [ -f "$G" ] && [ ! -L "$G" ] && { [ "$(id -u)" = 0 ] || [ -O "$G" ]; } '
+        '&& : > "$G" 2>/dev/null; then '
+        'echo "+ Lynis log on the machine: $G (emptied before this run)"; '
+        'else G="$T/lynis.log"; : > "$G"; chmod 600 "$G"; '
+        f'echo "+ {MACHINE_LOGFILE} not writable by this account; log kept by debcontrol only"; '
+        "fi; "
+        'cd "$T" || exit 97; '
         'if sudo -n -l "$L" >/dev/null 2>&1; then P="sudo -n"; '
         f"echo {PRIVILEGED_MARKER}; else P=; echo {UNPRIVILEGED_MARKER}; fi; "
-        '$P "$L" audit system --cronjob --no-log --report-file "$R" >"$T/out" 2>&1; '
-        f'rc=$?; echo "{EXIT_MARKER}$rc"; '
+        'echo "+ $P $L audit system --cronjob"; '
+        # Lynis's console output goes to stdout as it runs (the log above)
+        # and into a file for the failure tail below; `rc` is its own exit
+        # status, not the pipe's.
+        '{ $P "$L" audit system --cronjob --logfile "$G" --report-file "$R" 2>&1; '
+        'echo $? > "$T/rc"; } | tee "$T/out"; '
+        'rc=$(cat "$T/rc" 2>/dev/null || echo 98); '
+        f'echo "{EXIT_MARKER}$rc"; '
         f"echo {REPORT_DELIMITER}; "
         f"grep -E '{_REPORT_LINES}' \"$R\"; "
         f"echo {OUTPUT_DELIMITER}; "
-        '[ "$rc" -eq 0 ] || tail -c 1500 "$T/out"'
+        '[ "$rc" -eq 0 ] || tail -c 1500 "$T/out"; '
+        f"echo {LOGFILE_DELIMITER}; "
+        f'tail -c {LOGFILE_TAIL_BYTES} "$G"'
     )
 
 
@@ -207,6 +255,12 @@ class LynisResult:
     checks: list[dict[str, str]] = field(default_factory=list)
     # The tail of Lynis's own output when it exited non-zero.
     output: str = ""
+    # The run's log: install step and Lynis's console output (`console`),
+    # the tail of Lynis's log file (`logfile`); see `build_audit_command`.
+    console: str = ""
+    logfile: str = ""
+    # stderr of the audit script (apt and sudo complaints end up here).
+    stderr: str = ""
 
     @property
     def usable(self) -> bool:
@@ -277,21 +331,26 @@ _HEAD_FLAGS: dict[str, tuple[str, bool]] = {
 }
 
 
+_SECTIONS = {
+    REPORT_DELIMITER: "report",
+    OUTPUT_DELIMITER: "output",
+    LOGFILE_DELIMITER: "logfile",
+}
+
+
 def parse_audit_output(text: str) -> LynisResult:
     result = LynisResult()
     section = "head"
     seen: dict[str, set[tuple[str, str, str]]] = {"warning": set(), "suggestion": set()}
-    output_lines: list[str] = []
+    tail_lines: dict[str, list[str]] = {"output": [], "logfile": []}
+    console_lines: list[str] = []
     for raw in text.splitlines():
         line = raw.rstrip("\r")
-        if line == REPORT_DELIMITER:
-            section = "report"
+        if line in _SECTIONS:
+            section = _SECTIONS[line]
             continue
-        if line == OUTPUT_DELIMITER:
-            section = "output"
-            continue
-        if section == "output":
-            output_lines.append(line)
+        if section in tail_lines:
+            tail_lines[section].append(line)
             continue
         if section == "head":
             if line in _HEAD_FLAGS:
@@ -299,6 +358,7 @@ def parse_audit_output(text: str) -> LynisResult:
                 setattr(result, attr, flag)
             elif line.startswith(EXIT_MARKER):
                 result.exit_status = _int(line[len(EXIT_MARKER) :])
+            console_lines.append(line)
             continue
         match = _LINE.match(line)
         if match is None:
@@ -329,8 +389,34 @@ def parse_audit_output(text: str) -> LynisResult:
             bucket = result.warnings if key == "warning" else result.suggestions
             if len(bucket) < MAX_FINDINGS:
                 bucket.append(finding)
-    result.output = "\n".join(output_lines).strip()[-1500:]
+    result.output = "\n".join(tail_lines["output"]).strip()[-1500:]
+    result.console = "\n".join(console_lines).strip()[-MAX_LOG_CHARS:]
+    result.logfile = "\n".join(tail_lines["logfile"]).strip()[-MAX_LOG_CHARS:]
     return result
+
+
+class AuditRunError(SSHConnectionError):
+    """The audit could not finish: no connection, or it ran out of time.
+    `partial_log` is whatever the machine had printed by then (see
+    `build_audit_command`), for the run log."""
+
+    def __init__(self, message: str, partial_log: str = "") -> None:
+        super().__init__(message)
+        self.partial_log = partial_log
+
+
+def _describe(exc: BaseException, timeout_seconds: int) -> str:
+    """A readable reason; `str(TimeoutError())` is empty, which used to
+    leave "Security audit failed on web1: " as the whole error."""
+    if isinstance(exc, TimeoutError):
+        return f"it did not finish within {timeout_seconds} seconds"
+    return str(exc) or type(exc).__name__
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else bytes(value).decode(errors="replace")
 
 
 async def run_audit(
@@ -341,7 +427,8 @@ async def run_audit(
     run_timeout_seconds: int,
 ) -> LynisResult:
     """Run the audit on `machine` and parse what came back. A connection
-    or timeout problem raises `SSHConnectionError`. Its own connection
+    problem or the time limit raises `AuditRunError` (an
+    `SSHConnectionError`) carrying the output so far. Its own connection
     rather than `app.ssh.exec.run_command`, whose output cap would cut the
     head (the markers) off a report with many findings."""
     command = build_audit_command()
@@ -350,8 +437,18 @@ async def run_audit(
             checks = await _run_checks(conn)
             result = await shell.run(conn, command, check=False, timeout=run_timeout_seconds)
     except (asyncssh.Error, OSError, TimeoutError) as exc:
-        raise SSHConnectionError(f"Security audit failed on {machine.name}: {exc}") from exc
+        # asyncssh's own TimeoutError keeps what the command printed so far.
+        partial = _text(getattr(exc, "stdout", None))
+        stderr = _text(getattr(exc, "stderr", None))
+        if stderr:
+            partial += "\n--- stderr ---\n" + stderr
+        raise AuditRunError(
+            f"Security audit failed on {machine.name}: "
+            f"{_describe(exc, run_timeout_seconds)}",
+            partial_log=partial[-MAX_LOG_CHARS:],
+        ) from exc
     parsed = parse_audit_output(shell.output_text(result))
+    parsed.stderr = _text(result.stderr)[-20_000:]
     parsed.checks = checks
     return parsed
 

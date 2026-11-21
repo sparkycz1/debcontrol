@@ -129,6 +129,7 @@ from app.ssh.logs import (
     view_file,
     view_journal,
 )
+from app.ssh.lynis import AuditRunError
 from app.ssh.lynis import run_audit as run_lynis_audit
 from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
@@ -3555,11 +3556,12 @@ async def _run_security_audit(audit_id: str) -> None:
         if machine is None:
             return
         audit.status = SecurityAuditStatus.RUNNING
-        audit.started_at = datetime.now(UTC)
+        started_at = audit.started_at = datetime.now(UTC)
         await session.commit()
 
         error: str | None = None
         succeeded = False
+        console = logfile = stderr = ""
         try:
             secret = await resolve_machine_credential(machine, session)
             result = await run_lynis_audit(
@@ -3569,8 +3571,11 @@ async def _run_security_audit(audit_id: str) -> None:
                 run_timeout_seconds=security_audit.RUN_TIMEOUT_SECONDS,
             )
         except (SSHConnectionError, TimeoutError, ValueError) as exc:
-            error = str(exc)
+            error = str(exc) or type(exc).__name__
+            if isinstance(exc, AuditRunError):
+                console = exc.partial_log
         else:
+            console, logfile, stderr = result.console, result.logfile, result.stderr
             audit.lynis_version = result.version
             audit.privileged = result.privileged
             audit.hardening_index = result.hardening_index
@@ -3607,7 +3612,18 @@ async def _run_security_audit(audit_id: str) -> None:
             if error is None or succeeded
             else SecurityAuditStatus.FAILED
         )
-        audit.finished_at = datetime.now(UTC)
+        finished_at = audit.finished_at = datetime.now(UTC)
+        audit.run_log = security_audit.build_run_log(
+            machine_name=machine.name,
+            started_at=started_at,
+            finished_at=finished_at,
+            started_by=audit.started_by,
+            checks=audit.checks,
+            console=console,
+            logfile=logfile,
+            stderr=stderr,
+            error=error,
+        )
         await session.flush()
         await security_audit.prune(session, machine.id)
         await session.commit()
