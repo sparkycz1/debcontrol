@@ -11,9 +11,11 @@ four.
 
 **Limits** keep a turn's request within what the providers take and the
 table small: `MAX_IMAGES_PER_MESSAGE` pictures per message, each at most
-`MAX_IMAGE_BYTES` (3.75 MB, so its base64 form stays under Anthropic's
-5 MB per picture) and all of them together at most `MAX_TOTAL_BYTES`
-(4.5 MB, inside the bundled Caddy's 5 MB request limit). A
+`MAX_IMAGE_BYTES` (5 MB) and all of them together at most
+`MAX_TOTAL_BYTES` (25 MB, inside the bundled Caddy's 26 MB request limit).
+A provider may refuse a picture smaller than that (Anthropic takes at
+most 5 MB of base64, about 3.75 MB of picture); its error shows in the
+chat. A
 conversation's pictures are sent again with every later turn (the
 provider keeps no state between calls), so a long conversation with many
 pictures costs input tokens on each reply — the chat's hint says so.
@@ -32,11 +34,11 @@ from sqlalchemy.orm import undefer
 from app.ai.base import ImageInput
 from app.db.models.ai_attachment import AiAttachment
 
-MAX_IMAGES_PER_MESSAGE = 4
-MAX_IMAGE_BYTES = 3_750_000
+MAX_IMAGES_PER_MESSAGE = 5
+MAX_IMAGE_BYTES = 5_000_000
 # All pictures of one message together — keeps the upload under the bundled
-# Caddy's 5 MB request body limit (`Caddyfile`), form fields included.
-MAX_TOTAL_BYTES = 4_500_000
+# Caddy's 26 MB request body limit (`Caddyfile`), form fields included.
+MAX_TOTAL_BYTES = 25_000_000
 ACCEPT = "image/png,image/jpeg,image/gif,image/webp"
 _FILENAME_MAX = 255
 
@@ -82,13 +84,13 @@ def validate(uploads: Sequence[Upload]) -> list[tuple[str, str, bytes]]:
     if len(uploads) > MAX_IMAGES_PER_MESSAGE:
         raise AttachmentError("ai.attach.too_many", count=MAX_IMAGES_PER_MESSAGE)
     if sum(len(upload.data) for upload in uploads) > MAX_TOTAL_BYTES:
-        raise AttachmentError("ai.attach.too_large_total", mb=f"{MAX_TOTAL_BYTES / 1_000_000:.1f}")
+        raise AttachmentError("ai.attach.too_large_total", mb=f"{MAX_TOTAL_BYTES / 1_000_000:g}")
     checked: list[tuple[str, str, bytes]] = []
     for upload in uploads:
         name = _clean_filename(upload.filename)
         if len(upload.data) > MAX_IMAGE_BYTES:
             raise AttachmentError(
-                "ai.attach.too_large", name=name, mb=f"{MAX_IMAGE_BYTES / 1_000_000:.2f}"
+                "ai.attach.too_large", name=name, mb=f"{MAX_IMAGE_BYTES / 1_000_000:g}"
             )
         media_type = sniff_media_type(upload.data)
         if media_type is None:

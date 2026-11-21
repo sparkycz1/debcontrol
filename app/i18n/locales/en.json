@@ -4192,7 +4192,7 @@
     "ai.rename.empty": "The title can't be empty.",
     "ai.attach.button": "Add picture",
     "ai.attach.chosen": "Attached:",
-    "ai.attach.hint": "Up to {count} pictures (PNG, JPEG, GIF, WebP; 4.5 MB together), or paste one into the message. The model must support images; pictures are sent again with every reply.",
+    "ai.attach.hint": "Up to {count} pictures (PNG, JPEG, GIF, WebP; 5 MB each, 25 MB together), or paste one into the message. The model must support images; pictures are sent again with every reply.",
     "ai.attach.too_many": "At most {count} pictures per message.",
     "ai.attach.too_large": "\"{name}\" is larger than {mb} MB.",
     "ai.attach.bad_type": "\"{name}\" is not a PNG, JPEG, GIF or WebP picture.",

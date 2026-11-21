@@ -25,12 +25,12 @@
 
 	# The largest legitimate bodies are a pasted runbook, SSH key, a config/
 	# notification-rule JSON/YAML import, or the pictures of one AI chat
-	# message (at most 4.5MB together, app/services/ai_attachments.py).
-	# 5MB is headroom against those while capping an
+	# message (at most 25MB together, app/services/ai_attachments.py).
+	# 26MB is headroom against those while capping an
 	# oversized POST (accidental or malicious) before it reaches `web` at
 	# all, rather than relying on the app process to notice and reject one.
 	request_body {
-		max_size 5MB
+		max_size 26MB
 	}
 
 	header {

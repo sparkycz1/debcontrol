@@ -76,7 +76,7 @@ def test_validate_refuses_svg_too_many_and_too_large() -> None:
     assert bad.value.key == "ai.attach.bad_type" and bad.value.params["name"] == "x.png"
 
     with pytest.raises(ai_attachments.AttachmentError) as many:
-        ai_attachments.validate([ai_attachments.Upload(f"{i}.png", PNG) for i in range(5)])
+        ai_attachments.validate([ai_attachments.Upload(f"{i}.png", PNG) for i in range(6)])
     assert many.value.key == "ai.attach.too_many"
 
     big = PNG + b"\x00" * ai_attachments.MAX_IMAGE_BYTES
@@ -84,9 +84,12 @@ def test_validate_refuses_svg_too_many_and_too_large() -> None:
         ai_attachments.validate([ai_attachments.Upload("big.png", big)])
     assert large.value.key == "ai.attach.too_large"
 
-    two_mb = PNG + b"\x00" * 2_000_000
+    almost_5mb = PNG + b"\x00" * 4_999_000
+    assert len(ai_attachments.validate([ai_attachments.Upload("ok.png", almost_5mb)])) == 1
     with pytest.raises(ai_attachments.AttachmentError) as total:
-        ai_attachments.validate([ai_attachments.Upload(f"{i}.png", two_mb) for i in range(3)])
+        ai_attachments.validate(
+            [ai_attachments.Upload(f"{i}.png", almost_5mb + b"\x00" * 2_000) for i in range(5)]
+        )
     assert total.value.key == "ai.attach.too_large_total"
 
     checked = ai_attachments.validate([ai_attachments.Upload("C:\\shots\\err.png", PNG)])
