@@ -41,7 +41,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.base import AiProviderError, ChatTurnResult, ToolCall
+from app.ai.base import AiProviderError, BaseAiClient, ChatTurnResult, ToolCall
 from app.ai.providers import build_client
 from app.ai.tools import (
     MAX_TOOL_ROUNDTRIPS,
@@ -67,7 +67,7 @@ from app.db.models.machine_change import MachineChange
 from app.db.models.machine_update_run import MachineUpdateRun, UpdateRunStatus
 from app.db.models.notification_rule import NotificationEventType
 from app.db.models.user import AiCommandMode, User
-from app.services import ai_actions
+from app.services import ai_actions, ai_attachments
 from app.services.fleet_stats import compute_fleet_stats
 from app.services.notifications import notify
 from app.tasks.celery_app import celery_app
@@ -97,19 +97,32 @@ _NO_TEXT_FALLBACK = (
 )
 
 
-async def _load_history(db: Any, conversation_id: uuid.UUID) -> list[Any]:
+async def _load_history(
+    db: Any, conversation_id: uuid.UUID, client: BaseAiClient | None = None
+) -> list[Any]:
     """Replay every stored provider-native message, oldest first. Each
     `AiMessage.provider_native` holds the list of native messages that turn
     contributed (see `app.db.models.ai_message`), so the history is just
     those lists concatenated — no translation, which is the entire reason
-    they're stored provider-shaped in the first place."""
+    they're stored provider-shaped in the first place.
+
+    The one exception is a user message with pictures (`AiAttachment`):
+    its stored native form is text only, and `client` builds the turn again
+    with the pictures in that provider's own shape."""
     result = await db.execute(
         select(AiMessage)
         .where(AiMessage.conversation_id == conversation_id)
         .order_by(AiMessage.created_at, AiMessage.id)
     )
+    rows = list(result.scalars().all())
+    images = (
+        await ai_attachments.images_by_message(db, conversation_id) if client is not None else {}
+    )
     messages: list[Any] = []
-    for row in result.scalars().all():
+    for row in rows:
+        if client is not None and row.id in images and row.provider_native is not None:
+            messages.append(client.build_user_message(row.content, images[row.id]))
+            continue
         native = row.provider_native
         if isinstance(native, list):
             messages.extend(native)
@@ -197,7 +210,7 @@ async def _run_turn(
             return await _persist_assistant_error(db, conversation.id, str(exc))
 
         if user_message is not None:
-            history = await _load_history(db, conversation.id)
+            history = await _load_history(db, conversation.id, client)
             user_native = client.build_user_message(user_message)
             db.add(
                 AiMessage(
@@ -211,7 +224,7 @@ async def _run_turn(
             await db.commit()
             messages: list[Any] = [*history, user_native]
         else:
-            messages = await _load_history(db, conversation.id)
+            messages = await _load_history(db, conversation.id, client)
 
         # Permission filter #1: re-derived from the owner's current role.
         tools = available_tools(owner) if allow_tools else []
@@ -228,6 +241,9 @@ async def _run_turn(
             except AiProviderError as exc:
                 return await _persist_assistant_error(db, conversation.id, str(exc))
 
+            conversation.input_tokens += max(result.input_tokens, 0)
+            conversation.output_tokens += max(result.output_tokens, 0)
+            # Commits the conversation's counts too.
             await record_usage(
                 db,
                 user_id=owner.id,

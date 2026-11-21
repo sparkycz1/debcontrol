@@ -10,6 +10,9 @@
 //   `data-awaiting`), re-enabled by the swap that brings the reply. Enter
 //   sends, Shift+Enter is a new line.
 // - Copy buttons: `data-copy-text` (a proposed command) to the clipboard.
+// - Pictures: the compose box's file input (`data-ai-attach`) lists the
+//   chosen files; a picture pasted into the message box is added to it.
+//   The server checks type and size again (app/services/ai_attachments.py).
 //
 // No inline script or style anywhere (CSP), only these listeners.
 
@@ -29,7 +32,7 @@ function syncCompose() {
   const form = document.querySelector("[data-ai-compose]");
   if (!panel || !form) return;
   const awaiting = panel.dataset.awaiting === "true";
-  for (const field of form.querySelectorAll("textarea, button[type=submit]")) {
+  for (const field of form.querySelectorAll("textarea, button[type=submit], input[type=file]")) {
     field.disabled = awaiting;
   }
   const hint = form.querySelector("[data-ai-compose-hint]");
@@ -59,7 +62,47 @@ document.addEventListener("keydown", (event) => {
   if (!(field instanceof HTMLTextAreaElement) || !field.closest("[data-ai-compose]")) return;
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
   event.preventDefault();
-  if (field.value.trim() && !field.disabled) field.form.requestSubmit();
+  const files = field.form.querySelector("[data-ai-attach]");
+  const hasFiles = files && files.files && files.files.length > 0;
+  if ((field.value.trim() || hasFiles) && !field.disabled) field.form.requestSubmit();
+});
+
+function showChosen(input) {
+  const names = input.form && input.form.querySelector("[data-ai-attach-names]");
+  if (!names) return;
+  if (!names.dataset.idle) names.dataset.idle = names.textContent;
+  const chosen = Array.from(input.files || []).map((file) => file.name || "image");
+  names.textContent = chosen.length
+    ? `${input.dataset.chosenLabel || ""} ${chosen.join(", ")}`.trim()
+    : names.dataset.idle;
+}
+
+function setFiles(input, files) {
+  const max = Number(input.dataset.max) || files.length;
+  const transfer = new DataTransfer();
+  for (const file of files.slice(0, max)) transfer.items.add(file);
+  input.files = transfer.files;
+  showChosen(input);
+}
+
+document.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !input.matches("[data-ai-attach]")) return;
+  const max = Number(input.dataset.max) || 0;
+  if (max && input.files.length > max) setFiles(input, Array.from(input.files));
+  else showChosen(input);
+});
+
+document.addEventListener("paste", (event) => {
+  const field = event.target;
+  if (!(field instanceof HTMLTextAreaElement) || !field.closest("[data-ai-compose]")) return;
+  const input = field.form.querySelector("[data-ai-attach]");
+  const pasted = Array.from(event.clipboardData ? event.clipboardData.files : []).filter(
+    (file) => file.type.startsWith("image/"),
+  );
+  if (!input || input.disabled || pasted.length === 0) return;
+  event.preventDefault();
+  setFiles(input, [...Array.from(input.files || []), ...pasted]);
 });
 
 document.addEventListener("submit", (event) => {

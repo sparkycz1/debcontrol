@@ -39,7 +39,18 @@
                 <span class="chat-time">{{ message.created_at | local_time('%H:%M') }}</span>
               </div>
               {% if message.role.value == 'user' %}
-                <div class="chat-bubble-content">{{ message.content }}</div>
+                {% if message.content %}<div class="chat-bubble-content">{{ message.content }}</div>{% endif %}
+                {% set pictures = attachments.get(message.id, []) if attachments is defined else [] %}
+                {% if pictures %}
+                  <div class="chat-pictures">
+                    {% for picture in pictures %}
+                      {% set src = "/ai/conversations/" ~ conversation.id ~ "/attachments/" ~ picture.id %}
+                      <a href="{{ src }}" target="_blank" rel="noopener" class="chat-picture">
+                        <img src="{{ src }}" alt="{{ picture.filename }}" loading="lazy">
+                      </a>
+                    {% endfor %}
+                  </div>
+                {% endif %}
               {% else %}
                 <div class="chat-bubble-content chat-markdown">{{ message.content | markdown_rich }}</div>
               {% endif %}

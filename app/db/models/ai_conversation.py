@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, func
+from sqlalchemy import BigInteger, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -33,6 +33,8 @@ from app.db.models.ai_provider import AiProviderConfig
 # model — a second provider call (with its own cost, latency, and failure
 # mode) to produce a list label would be a poor trade.
 TITLE_MAX_CHARS = 60
+# A title the person types (Rename) may be longer than a derived one.
+TITLE_EDIT_MAX_CHARS = 200
 
 
 def derive_title(first_message: str) -> str:
@@ -59,6 +61,18 @@ class AiConversation(Base):
     )
     provider: Mapped[AiProviderConfig] = relationship(lazy="selectin")
     model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Tokens this conversation's provider calls used (every turn, tool round
+    # trips and summaries included) — the same numbers `AiUsageRecord`
+    # rows count against the global limits, summed here so the chat and the
+    # list can show them without a query over the usage table. Counted from
+    # 0.140.0 on: older conversations start at 0.
+    input_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

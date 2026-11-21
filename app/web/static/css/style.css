@@ -1780,6 +1780,31 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   gap: var(--space-3);
 }
 .chat-compose-actions .hint { margin: 0; }
+.chat-attach { position: relative; cursor: pointer; margin: 0; flex: none; }
+.chat-attach:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.chat-attach-names {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pictures in a user message: small thumbnails, the full one on click. */
+.chat-pictures { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.chat-picture { display: block; border-radius: var(--radius-sm); overflow: hidden; }
+.chat-picture img {
+  display: block;
+  max-width: 14rem;
+  max-height: 10rem;
+  object-fit: cover;
+  border: 1px solid var(--color-border);
+}
+
+.chat-rename { margin: calc(-1 * var(--space-2)) 0 var(--space-3); }
+.chat-rename summary { cursor: pointer; color: var(--color-muted); font-size: 0.88rem; }
+.chat-rename form { display: flex; gap: var(--space-2); margin-top: var(--space-2); max-width: 36rem; }
+.chat-rename input[type="text"] { flex: 1; }
 
 .chat-log {
   display: flex;
@@ -3171,3 +3196,27 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .radio-card:has(input:checked) { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
 .radio-card input { margin-top: 0.2rem; width: auto; }
 .radio-card .hint { margin: 0; }
+
+/* "Ask AI about this machine" (partials/ai_ask_machine.html): a button in
+   the machine page header that opens a small question form under it. */
+.ai-ask { position: relative; border: 0; padding: 0; margin: 0; background: none; }
+.ai-ask summary { list-style: none; }
+.ai-ask[open] summary { margin-bottom: 0; }
+.ai-ask summary::-webkit-details-marker { display: none; }
+.ai-ask-form {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-2));
+  z-index: 20;
+  width: min(28rem, calc(100vw - 3rem));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+.ai-ask-form .hint { margin: 0; }
+.ai-ask-form .button { align-self: flex-end; }

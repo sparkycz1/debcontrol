@@ -56,6 +56,13 @@
 
   <section class="panel">
     <h2>{{ t(request, "ai.your_conversations") }}</h2>
+    <form method="get" action="/ai" class="search-form" role="search">
+      <input type="search" name="q" value="{{ search }}" maxlength="200"
+             aria-label="{{ t(request, 'ai.search.label') }}"
+             placeholder="{{ t(request, 'ai.search.placeholder') }}">
+      <button type="submit" class="button">{{ t(request, "machines.search.submit") }}</button>
+      {% if search %}<a class="button button-secondary" href="/ai">{{ t(request, "machines.search.clear") }}</a>{% endif %}
+    </form>
     {% if conversations %}
       <table class="data-table">
         <thead>
@@ -63,6 +70,7 @@
             <th>{{ t(request, "ai.table.title") }}</th>
             <th>{{ t(request, "ai.model") }}</th>
             <th>{{ t(request, "ai.table.last_activity") }}</th>
+            <th>{{ t(request, "ai.tokens.label") }}</th>
             <th></th>
           </tr>
         </thead>
@@ -72,6 +80,7 @@
               <td><a href="/ai/conversations/{{ conversation.id }}">{{ conversation.title }}</a></td>
               <td><code>{{ conversation.model_id }}</code></td>
               <td>{{ conversation.updated_at | local_time('%Y-%m-%d %H:%M %Z') }}</td>
+              <td class="table-muted">{{ (conversation.input_tokens + conversation.output_tokens) | token_count }}</td>
               <td>
                 <form method="post" action="/ai/conversations/{{ conversation.id }}/delete"
                       class="inline-form"
@@ -84,6 +93,10 @@
           {% endfor %}
         </tbody>
       </table>
+    {% elif search %}
+      <div class="empty-state">
+        <p>{{ t(request, "ai.search.no_results") }}</p>
+      </div>
     {% else %}
       <div class="empty-state">
         <p>{{ t(request, "ai.no_conversations") }}</p>

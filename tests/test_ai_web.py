@@ -73,7 +73,13 @@ class FakeClient(BaseAiClient):
         )
         return self.results.pop(0)
 
-    def build_user_message(self, text: str) -> Any:
+    def build_user_message(self, text: str, images: Any = ()) -> Any:
+        if images:
+            return {
+                "role": "user",
+                "content": text,
+                "images": [(image.media_type, len(image.data)) for image in images],
+            }
         return {"role": "user", "content": text}
 
     def build_tool_result_messages(

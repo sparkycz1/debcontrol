@@ -6,11 +6,25 @@
   {% set mode = request.state.user.ai_mode.value %}
   <div class="page-header">
     <h1>{{ conversation.title }}</h1>
-    <a class="button button-secondary" href="/ai">{{ t(request, "ai.back_to_conversations") }}</a>
+    <div class="page-header-actions">
+      <a class="button button-secondary" href="/ai/conversations/{{ conversation.id }}/export.md" download>{{ t(request, "ai.export.button") }}</a>
+      <a class="button button-secondary" href="/ai">{{ t(request, "ai.back_to_conversations") }}</a>
+    </div>
   </div>
+
+  <details class="chat-rename">
+    <summary>{{ t(request, "ai.rename.button") }}</summary>
+    <form method="post" action="/ai/conversations/{{ conversation.id }}/rename" class="inline-form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="conversation-title" class="visually-hidden">{{ t(request, "ai.rename.label") }}</label>
+      <input type="text" id="conversation-title" name="title" value="{{ conversation.title }}" maxlength="200" required>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+  </details>
 
   <div class="chat-meta">
     <span class="hint">{{ t(request, "ai.model") }}: <code>{{ conversation.model_id }}</code></span>
+    <span class="hint" title="{{ t(request, 'ai.tokens.detail', input=(conversation.input_tokens | token_count), output=(conversation.output_tokens | token_count)) }}">{{ t(request, "ai.tokens.label") }}: {{ (conversation.input_tokens + conversation.output_tokens) | token_count }}</span>
     <form method="post" action="/ai/command-mode" class="inline-form chat-mode-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="next" value="/ai/conversations/{{ conversation.id }}">
@@ -39,13 +53,21 @@
     </div>
 
     <form method="post" action="/ai/conversations/{{ conversation.id }}/messages"
-          class="chat-compose" autocomplete="off" data-ai-compose>
+          class="chat-compose" autocomplete="off" enctype="multipart/form-data" data-ai-compose>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label for="message" class="visually-hidden">{{ t(request, "ai.chat.message") }}</label>
       <textarea id="message" name="message" rows="3"
                 placeholder="{{ t(request, 'ai.chat.message_placeholder') }}"
                 {% if awaiting_reply %}disabled{% endif %}></textarea>
       <div class="chat-compose-actions">
+        <label class="button button-secondary chat-attach">
+          {{ t(request, "ai.attach.button") }}
+          <input type="file" name="images" accept="{{ image_accept }}" multiple
+                 class="visually-hidden" data-ai-attach data-max="{{ max_images }}"
+                 data-chosen-label="{{ t(request, 'ai.attach.chosen') }}"
+                 {% if awaiting_reply %}disabled{% endif %}>
+        </label>
+        <span class="hint chat-attach-names" data-ai-attach-names title="{{ t(request, 'ai.attach.hint', count=max_images) }}">{{ t(request, "ai.attach.hint", count=max_images) }}</span>
         <span class="hint" data-ai-compose-hint
               data-waiting="{{ t(request, 'ai.chat.waiting_for_reply') }}"
               data-idle="{{ t(request, 'ai.chat.enter_to_send') }}">{{ t(request, "ai.chat.waiting_for_reply") if awaiting_reply else t(request, "ai.chat.enter_to_send") }}</span>

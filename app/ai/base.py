@@ -33,6 +33,8 @@ provider's next call.
 from __future__ import annotations
 
 import abc
+import base64
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -90,6 +92,19 @@ class ChatTurnResult:
 
 
 @dataclass(frozen=True)
+class ImageInput:
+    """One picture attached to a user turn (`app.db.models.ai_attachment`):
+    its sniffed media type (png, jpeg, gif or webp only) and raw bytes.
+    Each client puts it into its own wire format in `build_user_message`."""
+
+    media_type: str
+    data: bytes
+
+    def base64(self) -> str:
+        return base64.b64encode(self.data).decode("ascii")
+
+
+@dataclass(frozen=True)
 class ModelInfo:
     id: str
     display_name: str | None = None
@@ -123,8 +138,9 @@ class BaseAiClient(abc.ABC):
         representation (see the module docstring). Raises `AiProviderError`."""
 
     @abc.abstractmethod
-    def build_user_message(self, text: str) -> Any:
-        """This provider's native representation of a user turn."""
+    def build_user_message(self, text: str, images: Sequence[ImageInput] = ()) -> Any:
+        """This provider's native representation of a user turn, with any
+        attached pictures (sent inline, base64)."""
 
     @abc.abstractmethod
     def build_tool_result_messages(
