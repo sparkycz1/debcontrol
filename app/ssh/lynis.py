@@ -57,16 +57,17 @@ REPORT_DELIMITER = "===DEBCONTROL_LYNIS_REPORT==="
 OUTPUT_DELIMITER = "===DEBCONTROL_LYNIS_OUTPUT==="
 LOGFILE_DELIMITER = "===DEBCONTROL_LYNIS_LOGFILE==="
 
-# Lynis's log of the last run, kept on the machine: emptied right before
-# every run, so it always holds exactly the last one. Owned by the account
+# Lynis's log of the last run, kept on the machine at Lynis's own default
+# path: emptied right before every run, so it always holds exactly the
+# last one. Owned by the account
 # debcontrol connects with (onboarding creates it for the scoped
 # `debcontrol` account; connected as root the audit creates it), so that
 # account can empty and read it, and Lynis running as root writes into it
 # (truncating keeps the owner and mode, as with the report file). When the
 # account cannot write it (a scoped account on a machine onboarded before
-# 0.139.0), the log goes to the run's private directory instead and only
-# debcontrol keeps it.
-MACHINE_LOGFILE = "/var/log/debcontrol-lynis.log"
+# 0.139.0, where the file is still root's), the log goes to the run's
+# private directory instead and only debcontrol keeps it.
+MACHINE_LOGFILE = "/var/log/lynis.log"
 
 # How much of Lynis's own log file (`--logfile`) comes back with a run: its
 # end, where a run that failed stopped. Lynis writes a few hundred KB for a
