@@ -79,6 +79,15 @@ async def test_the_mode_is_set_on_my_account_and_audit_logged(
         data={"mode": "ask", "csrf_token": csrf_token, "next": "https://evil.example/"},
     )
     assert away.headers["location"] == "/account"
+    back = await client.post(
+        "/ai/command-mode",
+        data={
+            "mode": "ask",
+            "csrf_token": csrf_token,
+            "next": f"/ai/conversations/{uuid.UUID(int=1)}",
+        },
+    )
+    assert back.headers["location"] == f"/ai/conversations/{uuid.UUID(int=1)}"
     no_csrf = await client.post("/ai/command-mode", data={"mode": "allow"})
     assert no_csrf.status_code == 403
 

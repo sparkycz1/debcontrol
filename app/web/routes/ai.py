@@ -38,6 +38,7 @@ the page polls for the per-machine results.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from typing import Any
 
@@ -868,9 +869,13 @@ async def update_command_mode(
             target_label=user.username,
             details={"from": old_mode.value, "to": new_mode.value},
         )
-    target = next if next.startswith("/ai") or next == "/account" else "/account"
-    if target.startswith("//") or "\\" in target:
-        target = "/account"
+    # Back where the form was: a conversation (rebuilt from its parsed id,
+    # never the submitted text) or My account — nowhere else.
+    target = "/account"
+    prefix = "/ai/conversations/"
+    if next.startswith(prefix):
+        with contextlib.suppress(ValueError):
+            target = prefix + str(uuid.UUID(next.removeprefix(prefix)))
     return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
 
 
