@@ -21,7 +21,17 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -71,6 +81,10 @@ class SecurityAudit(Base):
     # A few Lynis report facts (`app.ssh.lynis._FACTS`).
     facts: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # The whole run as text (debcontrol's own timeline, the Lynis install
+    # step, Lynis's output and its log file, each capped), for diagnosing a
+    # run that failed. Deferred: only the "Download log" route reads it.
+    run_log: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)

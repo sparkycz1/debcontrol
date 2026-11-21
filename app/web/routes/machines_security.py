@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import Depends, Form, HTTPException, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_event
@@ -61,6 +61,12 @@ async def machine_security(
         "display_status": security_audit.display_status,
         "control_url": security_audit.CONTROL_URL,
         "can_run": current_user.has_permission(Permission.ACTION_UPDATES),
+        "logged_ids": await security_audit.ids_with_log(db, [a.id for a in audits])
+        if current_user.has_permission(Permission.ACTION_UPDATES)
+        else set(),
+        # "Fix with AI" on a finding: only with AI access and a usable model.
+        "can_ai": current_user.has_permission(Permission.AI_ACCESS)
+        and bool(getattr(request.state, "ai_available", False)),
         "audit_error": read_flash(request, "audit_error"),
         "csrf_token": csrf_token,
     }
@@ -115,6 +121,31 @@ async def run_machine_security_audit(
         )
         url += "?audit_error=" + sign_flash(t(request, reason))
     return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{machine_id}/security/audits/{audit_id}/log", dependencies=[need_updates])
+async def download_security_audit_log(
+    machine_id: uuid.UUID,
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """One audit run's log as a text file (`SecurityAudit.run_log`): for
+    finding out why a run failed. Same permission as running an audit —
+    Lynis's own log says more about the machine than the findings do."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    found = await security_audit.get_run_log(db, machine.id, audit_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No log for this audit.")
+    audit, text = found
+    filename = security_audit.run_log_filename(machine.name, audit)
+    return PlainTextResponse(
+        text,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/{machine_id}/security/ok", dependencies=[need_updates, Depends(verify_csrf)])

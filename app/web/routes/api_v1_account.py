@@ -91,6 +91,9 @@ async def get_account_api(user: User = Depends(get_api_token_user)) -> dict[str,
         "display_name": user.display_name,
         "email": user.email,
         "locale": user.locale or "en",
+        # Read-only here: changing what the AI assistant may run is
+        # web-only, like the assistant itself (see app/web/routes/ai.py).
+        "ai_command_mode": user.ai_mode.value,
     }
 
 

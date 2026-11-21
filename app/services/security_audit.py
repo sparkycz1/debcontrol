@@ -182,6 +182,96 @@ def audit_to_dict(
     return data
 
 
+# --- The run log (`SecurityAudit.run_log`) -----------------------------
+
+
+def build_run_log(
+    *,
+    machine_name: str,
+    started_at: datetime,
+    finished_at: datetime,
+    started_by: str | None,
+    checks: list[dict[str, Any]] | None,
+    console: str = "",
+    logfile: str = "",
+    stderr: str = "",
+    error: str | None = None,
+) -> str:
+    """One audit run as plain text, for the "Download log" link: what
+    debcontrol saw (times, outcome, its own checks' results), then what the
+    machine printed (`app.ssh.lynis.build_audit_command`: the install step
+    and Lynis's console output, stderr, the tail of Lynis's log file).
+    Capped at `app.ssh.lynis.MAX_LOG_CHARS`; the head is what goes."""
+    from app.core.version import APP_VERSION
+    from app.ssh.lynis import MAX_LOG_CHARS
+
+    seconds = max(0, int((finished_at - started_at).total_seconds()))
+    lines = [
+        f"debcontrol {APP_VERSION} security audit of {machine_name}",
+        f"started:  {started_at.isoformat(timespec='seconds')}"
+        + (f" by {started_by}" if started_by else ""),
+        f"finished: {finished_at.isoformat(timespec='seconds')} ({seconds} s)",
+        f"outcome:  {error or 'ok'}",
+    ]
+    if checks:
+        lines.append("")
+        lines.append("== debcontrol checks ==")
+        lines.extend(
+            f"{c.get('status', '?'):5} {c.get('id', '?')}: {c.get('value', '')}" for c in checks
+        )
+    for title, body in (
+        ("install step and Lynis output", console),
+        ("stderr", stderr),
+        ("Lynis log file (end)", logfile),
+    ):
+        if body.strip():
+            lines.extend(["", f"== {title} ==", body.rstrip()])
+    text = "\n".join(lines) + "\n"
+    if len(text) > MAX_LOG_CHARS:
+        text = "[... beginning cut ...]\n" + text[-MAX_LOG_CHARS:]
+    return text
+
+
+async def get_run_log(
+    db: AsyncSession, machine_id: uuid.UUID, audit_id: uuid.UUID
+) -> tuple[SecurityAudit, str] | None:
+    """One of the machine's audits and its run log; None when the audit is
+    not this machine's or has no log (it ran before 0.139.0, or is still
+    running)."""
+    from sqlalchemy.orm import undefer
+
+    result = await db.execute(
+        select(SecurityAudit)
+        .options(undefer(SecurityAudit.run_log))
+        .where(SecurityAudit.id == audit_id, SecurityAudit.machine_id == machine_id)
+    )
+    audit = result.scalar_one_or_none()
+    if audit is None or not audit.run_log:
+        return None
+    return audit, audit.run_log
+
+
+async def ids_with_log(db: AsyncSession, audit_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+    """Which of these audits have a run log (without loading the logs)."""
+    ids = list(audit_ids)
+    if not ids:
+        return set()
+    result = await db.execute(
+        select(SecurityAudit.id).where(
+            SecurityAudit.id.in_(ids), SecurityAudit.run_log.is_not(None)
+        )
+    )
+    return set(result.scalars().all())
+
+
+def run_log_filename(machine_name: str, audit: SecurityAudit) -> str:
+    """`security-audit-<machine>-<YYYYmmdd-HHMM>.log`, the machine name
+    reduced to characters safe in any file name."""
+    safe = "".join(c if c.isascii() and (c.isalnum() or c in "-_.") else "-" for c in machine_name)
+    when = audit.started_at or audit.created_at
+    return f"security-audit-{safe.strip('-.') or 'machine'}-{when:%Y%m%d-%H%M}.log"
+
+
 # --- Findings marked OK --------------------------------------------------
 
 LYNIS = "lynis"
@@ -373,6 +463,30 @@ def annotate(audit: SecurityAudit, suppressed: set[str]) -> dict[str, Any]:
         "marked": marked,
         "counts": counts(audit, suppressed),
     }
+
+
+def find_finding(audit: SecurityAudit, key: str) -> dict[str, Any] | None:
+    """The finding of `audit` with this key (`finding_key`), annotated like
+    `annotate` does (`kind`; for Lynis `severity` and the test's
+    `details`), or None."""
+    kind = key.partition(":")[0]
+    if kind == CHECK:
+        for check in audit.checks or []:
+            if finding_key(CHECK, check) == key:
+                return {**check, "key": key, "kind": CHECK}
+        return None
+    for name in ("warnings", "suggestions"):
+        for finding in getattr(audit, name) or []:
+            if finding_key(LYNIS, finding) == key:
+                test = str(finding.get("test", ""))
+                return {
+                    **finding,
+                    "key": key,
+                    "kind": LYNIS,
+                    "severity": name,
+                    "details": [d for d in audit.details or [] if d.get("test") == test],
+                }
+    return None
 
 
 def suppression_to_dict(row: SecurityAuditSuppression) -> dict[str, Any]:

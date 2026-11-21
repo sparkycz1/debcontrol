@@ -41,7 +41,11 @@ keystrokes to a PTY and a real terminal emulator's output back; a
 conversational back-and-forth where every proposed action needs an
 explicit human confirmation click) with no meaningful "REST" shape to
 expose — there's nothing here for a script to call that would do anything
-useful without a human driving it. Impersonate (`/users/{id}/impersonate`,
+useful without a human driving it. The same goes for the account's AI
+command mode (My account → AI assistant, `POST /ai/command-mode`): "allow"
+lets the assistant's shell commands run without a Confirm, so a stolen
+token must not be able to switch it on; `GET /api/v1/account` reports it
+read-only. Impersonate (`/users/{id}/impersonate`,
 `app/web/routes/impersonation.py`) is excluded for the same reason as the
 terminal/AI chat: it swaps the browser's own session cookie for another
 one, a concept that doesn't translate to a stateless bearer-token API call
@@ -71,6 +75,7 @@ from datetime import UTC, date, datetime
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -3237,6 +3242,32 @@ async def machine_security_audits_api(
         security_audit.audit_to_dict(a, suppressed=suppressed)
         for a in await security_audit.history(db, machine.id)
     ]
+
+
+@router.get(
+    "/machines/{machine_id}/security-audits/{audit_id}/log",
+    dependencies=[_action_updates],
+    response_class=PlainTextResponse,
+)
+async def machine_security_audit_log_api(
+    machine_id: uuid.UUID,
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> Response:
+    """One audit run's log as plain text — the API equivalent of the
+    Security tab's "Download log". 404 when the audit has none (it ran
+    before 0.139.0 or is still running). Needs `action.updates`, like
+    starting an audit."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    found = await security_audit.get_run_log(db, machine.id, audit_id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No log for this audit.")
+    audit, text = found
+    filename = security_audit.run_log_filename(machine.name, audit)
+    return PlainTextResponse(
+        text, headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 @router.get("/machines/{machine_id}/security-audits/ok", dependencies=[_view_machines])

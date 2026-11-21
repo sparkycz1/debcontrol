@@ -1,133 +1,216 @@
-{# The chat itself, plus the compose form — polls itself every ~2s while
-   awaiting_reply (a reply was asked for but hasn't arrived yet), stopping
-   on its own once it has, the same self-replacing (outerHTML) pattern
-   partials/update_run_status.html uses and for the same reason: dropping
-   this element's own hx-trigger from the *next* response is how polling
-   stops, which only works if the whole polling element is what gets
-   replaced. See GET /ai/conversations/{id}/messages-panel. #}
+{# The chat itself (oldest first, newest at the bottom; the scrolling box
+   around it lives in ai/conversation.html, so this element can be swapped
+   without losing the scroll position). Polls itself every ~2s while a
+   reply is coming or a shell command is still running (`polling`),
+   stopping on its own once neither holds: the same self-replacing
+   (outerHTML) pattern partials/update_run_status.html uses — dropping this
+   element's own hx-trigger from the *next* response is how polling stops.
+   See GET /ai/conversations/{id}/messages-panel and static/js/ai-chat.js. #}
+{% macro result_badge(status) -%}
+  <span class="badge {{ {'ok': 'badge-ok', 'running': 'badge-warn', 'skipped': 'badge-tag'}.get(status, 'badge-error') }}">{{ t(request, "ai.result." ~ status) }}</span>
+{%- endmacro %}
 <div
   id="ai-messages-panel"
-  data-ai-auto-confirm-root
-  data-conversation-id="{{ conversation.id }}"
-  {% if awaiting_reply %}
+  data-ai-panel
+  data-awaiting="{{ 'true' if awaiting_reply else 'false' }}"
+  {% if polling %}
   hx-get="/ai/conversations/{{ conversation.id }}/messages-panel"
   hx-trigger="every 2s"
   hx-swap="outerHTML"
   {% endif %}
 >
-  {% if any_action_confirmed %}
-    <div class="alert alert-error ai-auto-confirm-banner">
-      <p><strong>⚠ {{ t(request, "ai.chat.auto_confirm_title") }}</strong></p>
-      <p>{{ t(request, "ai.chat.auto_confirm_warning") }}</p>
-      <label class="ai-auto-confirm-label">
-        <input type="checkbox" data-ai-auto-confirm-toggle>
-        {{ t(request, "ai.chat.auto_confirm_toggle") }}
-      </label>
-    </div>
-  {% endif %}
-
-  <section class="panel chat-panel">
-    {% if messages %}
-      <div class="chat-log">
-        {% for message in messages %}
+  {% if messages %}
+    <div class="chat-log">
+      {% for message in messages %}
+        {% if message.is_tool_output %}
+          <div class="chat-row chat-row-tool">
+            <details class="chat-tool-output">
+              <summary>{{ t(request, "ai.chat.tool_output") }}</summary>
+              <pre><code>{{ message.content }}</code></pre>
+            </details>
+          </div>
+        {% else %}
+          {% set actions = message.pending_actions or [] %}
+          {% set pending_count = actions | selectattr('status', 'equalto', 'pending') | list | length %}
           <div class="chat-row chat-row-{{ message.role.value }}">
-            <div class="chat-bubble chat-bubble-{{ message.role.value }}">
-              <div class="chat-bubble-role">{{ t(request, "ai.chat.you") if message.role.value == 'user' else t(request, "ai.chat.assistant") }}</div>
-              <div class="chat-bubble-content">{{ message.content }}</div>
+            <div class="chat-bubble chat-bubble-{{ message.role.value }}{{ ' chat-bubble-wide' if actions }}">
+              <div class="chat-bubble-role">
+                {{ t(request, "ai.chat.you") if message.role.value == 'user' else t(request, "ai.chat.assistant") }}
+                <span class="chat-time">{{ message.created_at | local_time('%H:%M') }}</span>
+              </div>
+              {% if message.role.value == 'user' %}
+                <div class="chat-bubble-content">{{ message.content }}</div>
+              {% else %}
+                <div class="chat-bubble-content chat-markdown">{{ message.content | markdown_rich }}</div>
+              {% endif %}
 
-              {% for action in message.pending_actions or [] %}
-                <div class="alert {{ 'alert-error' if action.status in ('denied',) else 'alert-warn' }} chat-bubble-action">
-                  <p><strong>{{ action.summary }}</strong></p>
+              {% if pending_count > 1 %}
+                <div class="chat-batch-bar">
+                  <span>{{ t(request, "ai.chat.pending_count", count=pending_count) }}</span>
+                  <form method="post" action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/confirm-all"
+                        class="inline-form" data-confirm="{{ t(request, 'ai.chat.confirm_all_question', count=pending_count) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="button button-danger">{{ t(request, "ai.chat.confirm_all") }}</button>
+                  </form>
+                  <form method="post" action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/discard-all" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="button button-secondary">{{ t(request, "ai.chat.discard_all") }}</button>
+                  </form>
+                </div>
+              {% endif %}
+
+              {% for action in actions %}
+                {% set stale = is_stale(action) %}
+                {% set multi = (action.machine_names or []) | length > 1 %}
+                <div class="chat-action chat-action-{{ 'interrupted' if stale else action.status }}">
+                  <div class="chat-action-head">
+                    <strong>{{ action.summary }}</strong>
+                    {% if action.status == 'pending' %}
+                      <span class="badge badge-warn">{{ t(request, "ai.chat.status.pending") }}</span>
+                    {% elif stale %}
+                      <span class="badge badge-error">{{ t(request, "ai.chat.status.interrupted") }}</span>
+                    {% elif action.status == 'running' %}
+                      <span class="badge badge-warn">{{ t(request, "ai.chat.status.running") }}</span>
+                    {% elif action.status == 'confirmed' %}
+                      <span class="badge badge-ok">{{ t(request, "ai.chat.status.automatic" if action.automatic else "ai.chat.status.confirmed") }}</span>
+                    {% elif action.status == 'discarded' %}
+                      <span class="badge badge-tag">{{ t(request, "ai.chat.discarded") }}</span>
+                    {% else %}
+                      <span class="badge badge-error">{{ t(request, "ai.chat.blocked") }}</span>
+                    {% endif %}
+                  </div>
 
                   {% if action.command %}
-                    <p>{{ t(request, "ai.chat.command_label") }}</p>
-                    <pre><code>{{ action.command }}</code></pre>
+                    <div class="chat-command">
+                      <pre><code>{{ action.command }}</code></pre>
+                      <button type="button" class="button button-secondary button-small" data-copy-text="{{ action.command }}"
+                              data-copied-label="{{ t(request, 'ai.chat.copied') }}">{{ t(request, "ai.chat.copy") }}</button>
+                    </div>
                   {% endif %}
                   {% if action.strategy %}
                     <p>{{ t(request, "ai.chat.strategy_label") }} <code>{{ action.strategy }}</code></p>
                   {% endif %}
-
-                  {% if action.machine_names %}
-                    <p>
-                      {{ t(request, "ai.chat.will_run_on", count=(action.machine_names | length)) }}
-                      {% for name in action.machine_names %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-                    </p>
-                  {% endif %}
-                  {% if action.skipped_unpinned %}
-                    <p class="hint">
-                      {{ t(request, "ai.chat.skipped_unpinned") }}
-                      {% for name in action.skipped_unpinned %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-                    </p>
+                  {% if action.status == 'denied' %}
+                    <p>{{ action.reason }}</p>
                   {% endif %}
 
                   {% if action.status == 'pending' %}
-                    <p class="hint">
-                      {{ t(request, "ai.chat.read_before_confirming") }}
-                    </p>
-                    <div class="page-header-actions">
-                      <form method="post"
-                            action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/confirm"
-                            class="inline-form"
-                            data-ai-confirm-form
-                            data-confirm="{{ t(request, 'ai.chat.really_run_confirm', count=(action.machine_names | length)) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <input type="hidden" name="action_index" value="{{ loop.index0 }}">
+                    <form method="post"
+                          action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/confirm"
+                          class="chat-action-form"
+                          data-confirm="{{ t(request, 'ai.chat.really_run_confirm', count=(action.machine_names | length)) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="action_index" value="{{ loop.index0 }}">
+                      {% if multi %}
+                        <input type="hidden" name="machines_selectable" value="true">
+                        <fieldset class="chat-machine-picker">
+                          <legend>{{ t(request, "ai.chat.will_run_on", count=(action.machine_names | length)) }}</legend>
+                          {% for name in action.machine_names %}
+                            <label class="chat-machine-choice">
+                              <input type="checkbox" name="machine_id" value="{{ action.machine_ids[loop.index0] }}" checked>
+                              <code>{{ name }}</code>
+                            </label>
+                          {% endfor %}
+                        </fieldset>
+                      {% elif action.machine_names %}
+                        <p>{{ t(request, "ai.chat.will_run_on", count=1) }} <code>{{ action.machine_names[0] }}</code></p>
+                      {% endif %}
+                      {% if action.skipped_unpinned %}
+                        <p class="hint">
+                          {{ t(request, "ai.chat.skipped_unpinned") }}
+                          {% for name in action.skipped_unpinned %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+                        </p>
+                      {% endif %}
+                      <p class="hint">{{ t(request, "ai.chat.read_before_confirming") }}</p>
+                      <div class="page-header-actions">
                         <button type="submit" class="button button-danger">{{ t(request, "ai.chat.confirm_and_run") }}</button>
-                      </form>
-                      <form method="post"
-                            action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/discard"
-                            class="inline-form">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <input type="hidden" name="action_index" value="{{ loop.index0 }}">
-                        <button type="submit" class="button button-secondary">{{ t(request, "ai.chat.discard") }}</button>
-                      </form>
+                        {# Submits the discard form below (no nested forms, and no
+                           "Really run?" question for a discard). #}
+                        <button type="submit" class="button button-secondary" form="discard-{{ message.id }}-{{ loop.index0 }}">{{ t(request, "ai.chat.discard") }}</button>
+                      </div>
+                    </form>
+                    <form method="post" id="discard-{{ message.id }}-{{ loop.index0 }}"
+                          action="/ai/conversations/{{ conversation.id }}/messages/{{ message.id }}/discard"
+                          class="chat-discard-form" hidden>
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="action_index" value="{{ loop.index0 }}">
+                    </form>
+                  {% elif action.results %}
+                    {% set rows = action.results | rejectattr('status', 'equalto', 'skipped') | list %}
+                    {% set bad = rows | rejectattr('status', 'in', ['ok', 'running']) | list %}
+                    <p class="hint">
+                      {{ t(request, "ai.chat.results_summary", ok=(rows | selectattr('status', 'equalto', 'ok') | list | length), total=(rows | length)) }}
+                      {% if action.started_by %}· {{ action.started_by }}{% endif %}
+                    </p>
+                    <div class="monitoring-table-wrap">
+                      <table class="data-table chat-results">
+                        <thead>
+                          <tr>
+                            <th>{{ t(request, "ai.chat.machine") }}</th>
+                            <th>{{ t(request, "ai.chat.result") }}</th>
+                            <th>{{ t(request, "ai.chat.output") }}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {# Problems first, then the rest in proposal order. #}
+                          {% for row in bad + (action.results | rejectattr('status', 'in', ['failed', 'timeout']) | list) %}
+                            <tr>
+                              <td><code>{{ row.machine_name }}</code></td>
+                              <td>
+                                {% if stale and row.status == 'running' %}{{ result_badge('interrupted') }}{% else %}{{ result_badge(row.status) }}{% endif %}
+                                {% if row.exit_status is defined and row.exit_status is not none %}<span class="table-muted">exit {{ row.exit_status }}</span>{% endif %}
+                              </td>
+                              <td>
+                                {% if row.output %}
+                                  <details {% if (action.results | length) == 1 or row.status != 'ok' %}open{% endif %}>
+                                    <summary>{{ t(request, "ai.chat.show_output") }}</summary>
+                                    <pre class="chat-output"><code>{{ row.output }}</code></pre>
+                                  </details>
+                                {% elif row.error %}
+                                  <span>{{ row.error }}</span>
+                                {% elif row.status == 'running' and not stale %}
+                                  <span class="table-muted">…</span>
+                                {% else %}
+                                  <span class="table-muted">—</span>
+                                {% endif %}
+                              </td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
                     </div>
-                  {% elif action.status == 'confirmed' %}
-                    <p><span class="badge badge-ok">{{ t(request, "ai.chat.confirmed_and_triggered") }}</span></p>
-                  {% elif action.status == 'discarded' %}
-                    <p><span class="badge badge-warn">{{ t(request, "ai.chat.discarded") }}</span></p>
-                  {% else %}
-                    <p><span class="badge badge-warn">{{ t(request, "ai.chat.blocked") }}</span> {{ action.reason }}</p>
+                  {% elif action.ran_on %}
+                    <p>
+                      {{ t(request, "ai.chat.ran_on", count=(action.ran_on | length)) }}
+                      {% for name in action.ran_on %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+                    </p>
+                  {% elif action.machine_names %}
+                    <p>
+                      {% for name in action.machine_names %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+                    </p>
                   {% endif %}
                 </div>
               {% endfor %}
             </div>
           </div>
-        {% endfor %}
+        {% endif %}
+      {% endfor %}
 
-        {% if awaiting_reply %}
-          <div class="chat-row chat-row-assistant">
-            <div class="chat-bubble chat-bubble-assistant chat-bubble-pending">
-              <div class="chat-bubble-role">{{ t(request, "ai.chat.assistant") }}</div>
-              <div class="chat-typing" aria-live="polite">
-                <span></span><span></span><span></span>
-              </div>
+      {% if awaiting_reply %}
+        <div class="chat-row chat-row-assistant">
+          <div class="chat-bubble chat-bubble-assistant chat-bubble-pending">
+            <div class="chat-bubble-role">{{ t(request, "ai.chat.assistant") }}</div>
+            <div class="chat-typing" aria-live="polite">
+              <span></span><span></span><span></span>
             </div>
           </div>
-        {% endif %}
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <p>{{ t(request, "ai.chat.no_messages_yet") }}</p>
-      </div>
-    {% endif %}
-  </section>
-
-  <section class="panel">
-    <h2>{{ t(request, "ai.chat.your_message") }}</h2>
-    <form method="post" action="/ai/conversations/{{ conversation.id }}/messages"
-          class="form" autocomplete="off">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="message">{{ t(request, "ai.chat.message") }}</label>
-      <textarea id="message" name="message" rows="4"
-                placeholder="{{ t(request, 'ai.chat.message_placeholder') }}"
-                {% if awaiting_reply %}disabled{% endif %}></textarea>
-      {% if awaiting_reply %}
-        <p class="hint">{{ t(request, "ai.chat.waiting_for_reply") }}</p>
-      {% else %}
-        <p class="hint">{{ t(request, "ai.chat.answers_can_take_a_while") }}</p>
+        </div>
       {% endif %}
-      <button type="submit" class="button" {% if awaiting_reply %}disabled{% endif %}>{{ t(request, "ai.chat.send") }}</button>
-    </form>
-  </section>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <p>{{ t(request, "ai.chat.no_messages_yet") }}</p>
+    </div>
+  {% endif %}
+  <div id="chat-end"></div>
 </div>

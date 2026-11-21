@@ -76,6 +76,23 @@ def role_has_permission(role: Role, permission: Permission) -> bool:
     return _permission_granted(role.permissions, permission)
 
 
+class AiCommandMode(enum.StrEnum):
+    """Per account: what happens to a shell command the AI assistant
+    proposes (`app.ai.tools`, `app.services.ai_actions`).
+
+    - `deny` — the assistant is offered no tool that changes anything; it
+      can only look things up and explain.
+    - `ask` — every proposal waits for the operator's Confirm (the default,
+      and the only behaviour before 0.139.0).
+    - `allow` — a proposed `run_ssh_command` runs straight away. Updates,
+      update checks, reboots and shutdowns still wait for a Confirm.
+    """
+
+    DENY = "deny"
+    ASK = "ask"
+    ALLOW = "allow"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -107,6 +124,13 @@ class User(Base):
     # section keys, read through `app.services.dashboard_layout.resolve`.
     # None = the default order with everything shown.
     dashboard_layout: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # What the AI assistant may do with a shell command it proposes for
+    # this account (My account -> AI assistant): `AiCommandMode`. Stored as
+    # its plain string value; anything unrecognized reads as "ask" (see
+    # `ai_mode`), so a bad value can only ever make it stricter.
+    ai_command_mode: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="ask", server_default="ask"
+    )
 
     auth_provider: Mapped[AuthProvider] = mapped_column(
         pg_enum(AuthProvider, name="auth_provider"), nullable=False
@@ -227,6 +251,13 @@ class User(Base):
         # UTC, so a naive value here is treated as already being UTC rather
         # than local time. Same reasoning as app.audit._normalized_timestamp.
         return self.locked_until > now.replace(tzinfo=None)
+
+    @property
+    def ai_mode(self) -> AiCommandMode:
+        try:
+            return AiCommandMode(self.ai_command_mode)
+        except ValueError:
+            return AiCommandMode.ASK
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"User(id={self.id!r}, username={self.username!r})"

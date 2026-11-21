@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import shlex
 
-from app.ssh.lynis import CISOFY_REPO_SETUP
+from app.ssh.lynis import CISOFY_REPO_SETUP, MACHINE_LOGFILE
 
 # The account debcontrol connects as afterwards — matches
 # `debcontrol_user` in ansible/debcontrol-onboard.yml.
@@ -129,6 +129,10 @@ def build_onboarding_command(public_key: str) -> str:
         # current and stays so with ordinary updates; it removes itself
         # again when the machine cannot reach it.
         f"{CISOFY_REPO_SETUP} || true; "
+        # The security audit's Lynis log (`app.ssh.lynis.MACHINE_LOGFILE`):
+        # the account empties it before each run and reads it back.
+        f'[ -L {MACHINE_LOGFILE} ] || install -m 600 -o {user} -g {user} /dev/null '
+        f"{MACHINE_LOGFILE} 2>/dev/null || true; "
         "(apt-get update -q >/dev/null 2>&1 && "
         "apt-get install -y ncurses-term >/dev/null 2>&1) || true; "
         f"echo {ONBOARD_SUCCESS_MARKER}"

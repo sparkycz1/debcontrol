@@ -1332,19 +1332,6 @@ p { margin: 0 0 var(--space-3); }
 .alert-warn { background: rgba(224, 171, 74, 0.1); border-color: rgba(224, 171, 74, 0.4); color: var(--color-text); }
 .alert-warn::before { content: "!"; color: var(--color-warn); }
 
-/* The AI chat's "auto-confirm further commands in this conversation"
-   banner (partials/ai_messages_panel.html) — an .alert-error already
-   reads as a danger zone; this just styles its own toggle to match rather
-   than falling back to a bare unstyled checkbox+label. */
-.ai-auto-confirm-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  font-weight: 600;
-  cursor: pointer;
-}
-
 .alert-ok { background: rgba(70, 191, 138, 0.1); border-color: rgba(70, 191, 138, 0.4); color: var(--color-text); }
 .alert-ok::before { content: "✓"; color: var(--color-ok); }
 
@@ -1753,6 +1740,47 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
 
 /* --- AI chat (app/web/templates/partials/ai_messages_panel.html) --- */
 
+/* The page: a meta row (model, AI command mode), then one panel holding
+   the scrolling chat (newest at the bottom, static/js/ai-chat.js keeps it
+   in view) with the compose box under it. */
+.chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.chat-mode-form { display: flex; align-items: center; gap: var(--space-2); }
+.chat-mode-form label { margin: 0; color: var(--color-muted); font-size: 0.88rem; }
+.chat-mode-form select { width: auto; }
+
+.chat-panel { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.chat-scroll {
+  max-height: calc(100dvh - 25rem);
+  min-height: 14rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--space-2);
+}
+
+.chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+.chat-compose textarea { resize: vertical; min-height: 4.5rem; }
+.chat-compose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.chat-compose-actions .hint { margin: 0; }
+
 .chat-log {
   display: flex;
   flex-direction: column;
@@ -1761,16 +1789,20 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
 
 .chat-row {
   display: flex;
+  min-width: 0;
 }
 
 .chat-row-user { justify-content: flex-end; }
 .chat-row-assistant { justify-content: flex-start; }
+.chat-row-tool { justify-content: center; }
 
 .chat-bubble {
-  max-width: min(85%, 640px);
+  max-width: min(85%, 720px);
+  min-width: 0;
   border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
 }
+.chat-bubble-wide { max-width: min(100%, 960px); width: 100%; }
 
 .chat-bubble-user {
   background: color-mix(in srgb, var(--color-accent) 16%, var(--color-surface-raised));
@@ -1783,6 +1815,8 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
 }
 
 .chat-bubble-role {
+  display: flex;
+  gap: var(--space-2);
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -1790,16 +1824,104 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: var(--spac
   color: var(--color-muted);
   margin-bottom: var(--space-1);
 }
+.chat-time { font-weight: 400; text-transform: none; }
 
 .chat-bubble-content {
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.chat-bubble-action {
-  margin: var(--space-3) 0 0;
+/* The assistant's answers are Markdown (app.web.templating's
+   `markdown_rich`), so whitespace comes from the HTML, not pre-wrap. */
+.chat-markdown { white-space: normal; line-height: 1.55; }
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+.chat-markdown p, .chat-markdown ul, .chat-markdown ol, .chat-markdown pre,
+.chat-markdown table, .chat-markdown blockquote { margin: 0 0 var(--space-3); }
+.chat-markdown ul, .chat-markdown ol { padding-left: 1.4em; }
+.chat-markdown h1, .chat-markdown h2, .chat-markdown h3, .chat-markdown h4 {
+  font-size: 1rem;
+  margin: var(--space-3) 0 var(--space-2);
 }
-.chat-bubble-action:last-child { margin-bottom: 0; }
+.chat-markdown pre { white-space: pre-wrap; word-break: break-word; }
+.chat-markdown blockquote {
+  border-left: 3px solid var(--color-border-strong);
+  padding-left: var(--space-3);
+  color: var(--color-muted);
+}
+.chat-markdown table { border-collapse: collapse; display: block; overflow-x: auto; }
+.chat-markdown th, .chat-markdown td {
+  border: 1px solid var(--color-border);
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+}
+
+/* One proposed action. */
+.chat-action {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-left: 4px solid var(--color-warn);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.chat-action-confirmed { border-left-color: var(--color-ok); }
+.chat-action-denied, .chat-action-interrupted { border-left-color: var(--color-danger); }
+.chat-action-discarded { border-left-color: var(--color-border-strong); opacity: 0.8; }
+.chat-action-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.chat-action p { margin: var(--space-2) 0; }
+
+.chat-command { display: flex; align-items: flex-start; gap: var(--space-2); }
+.chat-command pre { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; word-break: break-all; }
+.chat-command .button { flex: none; padding: var(--space-1) var(--space-2); font-size: 0.8rem; }
+
+.chat-machine-picker {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+}
+.chat-machine-picker legend { padding: 0 var(--space-1); color: var(--color-muted); font-size: 0.88rem; }
+.chat-machine-choice { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; }
+.chat-action-form .page-header-actions { margin-top: var(--space-2); }
+
+.chat-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-warn) 12%, transparent);
+}
+.chat-batch-bar span { flex: 1; font-weight: 600; }
+
+.chat-results td { vertical-align: top; }
+.chat-results details { padding: 0; border: none; background: none; }
+.chat-results summary { cursor: pointer; color: var(--color-muted); }
+.chat-output { max-height: 18rem; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: var(--space-1) 0 0; }
+
+@media (max-width: 640px) {
+  .chat-panel { padding: var(--space-3) var(--space-2); }
+  .chat-scroll { padding-right: 0; }
+  .chat-bubble { max-width: 100%; padding: var(--space-2) var(--space-3); }
+  .chat-action { padding: var(--space-2); }
+  .chat-command { flex-direction: column; }
+}
+
+.chat-tool-output { max-width: min(100%, 720px); font-size: 0.85rem; color: var(--color-muted); }
+.chat-tool-output pre { max-height: 16rem; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
 /* The assistant's "still thinking" bubble (app/web/templates/partials/
    ai_messages_panel.html) — dimmed slightly so it visually reads as
@@ -2827,6 +2949,9 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .finding-group { margin: var(--space-4) 0 var(--space-1); font-size: 1rem; }
 .finding-details { margin: var(--space-2) 0; }
 .finding-ok { display: inline-block; margin-top: var(--space-1); }
+.finding-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-1); }
+.finding-actions .finding-ok { margin-top: 0; }
+.finding-fix .button { padding: var(--space-1) var(--space-2); font-size: 0.85rem; }
 .audit-facts {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -3029,3 +3154,20 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .settings-grid > .panel .form { max-width: none; }
 /* CPU · memory: hidden where the table is narrow (the container page has it). */
 @container (44rem <= width < 66rem) { .col-usage, .cell-usage { display: none; } }
+
+/* My account -> AI assistant: one choice per card. */
+.radio-cards { border: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
+.radio-cards legend { margin-bottom: var(--space-2); font-weight: 600; }
+.radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 400;
+}
+.radio-card:has(input:checked) { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+.radio-card input { margin-top: 0.2rem; width: auto; }
+.radio-card .hint { margin: 0; }

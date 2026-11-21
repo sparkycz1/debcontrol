@@ -63,6 +63,28 @@
     </form>
   </section>
 
+  {% if request.state.user.has_permission('ai.access') %}
+    <section class="panel" id="ai-assistant">
+      <h2>{{ t(request, "account.ai.heading") }}</h2>
+      <form method="post" action="/ai/command-mode" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="/account">
+        <fieldset class="radio-cards">
+          <legend>{{ t(request, "account.ai.mode_label") }}</legend>
+          {% for value in ('deny', 'ask', 'allow') %}
+            <label class="radio-card">
+              <input type="radio" name="mode" value="{{ value }}" {% if user.ai_mode.value == value %}checked{% endif %}>
+              <span><strong>{{ t(request, "ai.mode." ~ value) }}</strong><br>
+              <span class="hint">{{ t(request, "ai.mode." ~ value ~ "_help") }}</span></span>
+            </label>
+          {% endfor %}
+        </fieldset>
+        <p class="hint">{{ t(request, "account.ai.mode_hint") }}</p>
+        <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+      </form>
+    </section>
+  {% endif %}
+
   {% if user.auth_provider.value == 'local' %}
     <section class="panel">
       <h2>{{ t(request, "account.password.heading") }}</h2>
