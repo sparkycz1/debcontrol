@@ -44,10 +44,21 @@ from typing import Any
 
 # NOT the builtin `TimeoutError` — see app/web/routes/machines.py's import
 # of the same name for why that distinction is load-bearing.
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import RedirectResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.ai.base import AiProviderError, BaseAiClient
 from app.ai.config import get_or_create_ai_provider_configs, get_selectable_models
@@ -55,7 +66,8 @@ from app.ai.providers import build_client
 from app.audit import log_event
 from app.auth.dependencies import get_current_user, require_permission
 from app.core.csrf import verify_csrf
-from app.db.models.ai_conversation import AiConversation, derive_title
+from app.db.models.ai_attachment import AiAttachment
+from app.db.models.ai_conversation import TITLE_EDIT_MAX_CHARS, AiConversation, derive_title
 from app.db.models.ai_message import AiMessage, AiMessageRole
 from app.db.models.ai_model import AiModel
 from app.db.models.ai_provider import AiProviderConfig
@@ -67,7 +79,7 @@ from app.db.models.security_audit import SecurityAuditStatus
 from app.db.models.user import AiCommandMode, User
 from app.db.session import get_db
 from app.i18n import get_locale, translate
-from app.services import ai_actions, machine_timeline, security_audit
+from app.services import ai_actions, ai_attachments, ai_export, machine_timeline, security_audit
 from app.services.access_scope import machines_visible_to
 from app.services.endpoint_check_history import load_check_history
 from app.tasks import ai_jobs
@@ -151,6 +163,9 @@ async def _render_conversation(
             "conversation": conversation,
             "messages": messages,
             **_panel_state(messages),
+            "attachments": await ai_attachments.by_message(db, conversation.id),
+            "image_accept": ai_attachments.ACCEPT,
+            "max_images": ai_attachments.MAX_IMAGES_PER_MESSAGE,
             "errors": errors,
             "csrf_token": request.state.csrf_token,
         },
@@ -158,22 +173,34 @@ async def _render_conversation(
 
 
 async def _send_user_message(
-    db: AsyncSession, conversation: AiConversation, client: BaseAiClient, text: str
+    db: AsyncSession,
+    conversation: AiConversation,
+    client: BaseAiClient,
+    text: str,
+    images: list[tuple[str, str, bytes]] | None = None,
 ) -> None:
     """Persists one human message and enqueues the turn that answers it —
     shared by `post_message` (an existing conversation's compose box) and
     `create_conversation` (the "New conversation" form's own message field,
     which used to only *name* the conversation from this text and silently
     throw the text itself away, never actually sending it — see that
-    route's own comment)."""
-    db.add(
-        AiMessage(
-            conversation_id=conversation.id,
-            role=AiMessageRole.USER,
-            content=text,
-            provider_native=[client.build_user_message(text)],
-        )
+    route's own comment).
+
+    `images` (already checked by `ai_attachments.validate`) are stored as
+    `AiAttachment` rows of this message; its `provider_native` stays text
+    only and the turn adds the pictures in the provider's own shape (see
+    `app.tasks.ai_jobs._load_history`)."""
+    message = AiMessage(
+        id=uuid.uuid4(),
+        conversation_id=conversation.id,
+        role=AiMessageRole.USER,
+        content=text,
+        provider_native=[client.build_user_message(text)],
     )
+    db.add(message)
+    if images:
+        await db.flush()
+        ai_attachments.add_to_message(db, conversation.id, message.id, images)
     await db.commit()
     ai_jobs.run_ai_turn.delay(str(conversation.id))
 
@@ -194,9 +221,14 @@ async def _render_messages_panel(
             "conversation": conversation,
             "messages": messages,
             **_panel_state(messages),
+            "attachments": await ai_attachments.by_message(db, conversation.id),
             "csrf_token": request.state.csrf_token,
         },
     )
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 @router.get("")
@@ -204,11 +236,29 @@ async def list_conversations(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    q: str = "",
 ) -> Response:
+    """The account's conversations, newest activity first. `q` searches
+    their titles and the text of every message (case-insensitive, LIKE
+    metacharacters taken literally); only the account's own conversations
+    are ever searched."""
+    query = select(AiConversation).where(AiConversation.user_id == user.id)
+    search = q.strip()[:200]
+    if search:
+        pattern = "%" + _escape_like(search) + "%"
+        in_messages = (
+            select(AiMessage.id)
+            .where(
+                AiMessage.conversation_id == AiConversation.id,
+                AiMessage.content.ilike(pattern, escape="\\"),
+            )
+            .exists()
+        )
+        query = query.where(
+            or_(AiConversation.title.ilike(pattern, escape="\\"), in_messages)
+        )
     result = await db.execute(
-        select(AiConversation)
-        .where(AiConversation.user_id == user.id)
-        .order_by(AiConversation.updated_at.desc(), AiConversation.created_at.desc())
+        query.order_by(AiConversation.updated_at.desc(), AiConversation.created_at.desc())
     )
     conversations = list(result.scalars().all())
     # Creating the five provider rows lazily here as well as on the Settings
@@ -221,6 +271,7 @@ async def list_conversations(
         "ai/list.html",
         {
             "conversations": conversations,
+            "search": search,
             "selectable_models": selectable,
             "can_manage_settings": user.has_permission(Permission.SETTINGS_MANAGE),
             "csrf_token": request.state.csrf_token,
@@ -351,6 +402,8 @@ async def create_conversation(
 # reasoning as that constant: an apt failure's actual error is almost
 # always in the last few dozen lines, not the top of a long, chatty run.
 _EXPLAIN_OUTPUT_CHARS = 6000
+# A question typed on a machine's page ("Ask AI about this machine").
+_QUESTION_MAX_CHARS = 4000
 
 
 def _tail(text: str, limit: int = _EXPLAIN_OUTPUT_CHARS) -> str:
@@ -366,7 +419,9 @@ async def _get_explain_machine(db: AsyncSession, user: User, machine_id: uuid.UU
     already passed this same check, but the route re-checks independently
     since a form post is untrusted input regardless of what rendered it."""
     result = await db.execute(
-        (await machines_visible_to(db, user)).where(Machine.id == machine_id)
+        (await machines_visible_to(db, user))
+        .options(selectinload(Machine.group))
+        .where(Machine.id == machine_id)
     )
     machine = result.scalar_one_or_none()
     if machine is None:
@@ -441,6 +496,7 @@ async def _build_explain_prompt(
     check_id: uuid.UUID | None = None,
     days: int = machine_timeline.DEFAULT_RANGE_DAYS,
     finding_key: str | None = None,
+    question: str = "",
 ) -> tuple[str, str]:
     """Returns `(prompt_text, audit_summary)` for the "Ask AI why" button,
     or raises `HTTPException` if there's nothing to explain (an unknown
@@ -525,6 +581,21 @@ async def _build_explain_prompt(
 
     if kind == "security_finding":
         return await _build_security_finding_prompt(db, machine, finding_key or "")
+
+    if kind == "machine":
+        asked = question.strip()[:_QUESTION_MAX_CHARS]
+        if not asked:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Type a question first."
+            )
+        prompt = (
+            f'This is about machine "{machine.name}" ({machine.ip_address}'
+            + (f", group {machine.group.name}" if machine.group else "")
+            + f"). Its current state:\n{_machine_state_lines(machine)}\n\n"
+            "You can look up more about it with the read-only tools before answering.\n\n"
+            f"My question: {asked}"
+        )
+        return prompt, f'Asked the AI assistant about "{machine.name}"'
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown context.")
 
@@ -617,6 +688,7 @@ async def explain_with_ai(
     check_id: uuid.UUID | None = Form(None),
     days: int = Form(machine_timeline.DEFAULT_RANGE_DAYS),
     key: str = Form(""),
+    question: str = Form(""),
 ) -> Response:
     """The "Ask AI why" button on a failed update run (`partials/
     update_run_status.html`) and a machine's readiness banner
@@ -627,7 +699,15 @@ async def explain_with_ai(
     conversation" form lists first) rather than asking the user to choose
     again — this is meant to be one click, not a detour through a form."""
     prompt, audit_summary = await _build_explain_prompt(
-        db, user, kind, machine_id, run_id, check_id=check_id, days=days, finding_key=key
+        db,
+        user,
+        kind,
+        machine_id,
+        run_id,
+        check_id=check_id,
+        days=days,
+        finding_key=key,
+        question=question,
     )
 
     selectable = await get_selectable_models(db)
@@ -679,6 +759,26 @@ async def conversation_messages_panel(
     return await _render_messages_panel(request, db, conversation)
 
 
+async def _read_images(uploads: list[UploadFile]) -> list[tuple[str, str, bytes]]:
+    """The chosen pictures, checked (`ai_attachments.validate`). Reads at
+    most one byte past the size limit per file, and stops once the total
+    is over, so an oversized upload is refused without holding all of it."""
+    chosen = [upload for upload in uploads if upload.filename]
+    if len(chosen) > ai_attachments.MAX_IMAGES_PER_MESSAGE:
+        raise ai_attachments.AttachmentError(
+            "ai.attach.too_many", count=ai_attachments.MAX_IMAGES_PER_MESSAGE
+        )
+    read: list[ai_attachments.Upload] = []
+    total = 0
+    for upload in chosen:
+        data = await upload.read(ai_attachments.MAX_IMAGE_BYTES + 1)
+        total += len(data)
+        read.append(ai_attachments.Upload(upload.filename or "", data))
+        if total > ai_attachments.MAX_TOTAL_BYTES:
+            break
+    return ai_attachments.validate(read)
+
+
 @router.post("/conversations/{conversation_id}/messages", dependencies=[Depends(verify_csrf)])
 async def post_message(
     request: Request,
@@ -686,8 +786,10 @@ async def post_message(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     message: str = Form(""),
+    images: list[UploadFile] = File(default_factory=list),
 ) -> Response:
-    """Persists the human's message and enqueues the reply, but does **not**
+    """Persists the human's message (and any attached pictures, see
+    `app.services.ai_attachments`) and enqueues the reply, but does **not**
     wait for it — see `partials/ai_messages_panel.html`'s self-poll for how
     the reply actually shows up. This used to block the whole request on
     `AsyncResult.get(timeout=90)`, which was two bugs stacked on each other:
@@ -703,7 +805,13 @@ async def post_message(
     """
     conversation = await _get_conversation(db, conversation_id, user)
     text = message.strip()
-    if not text:
+    try:
+        checked = await _read_images(images)
+    except ai_attachments.AttachmentError as exc:
+        return await _render_conversation(
+            request, db, conversation, [t(request, exc.key, **exc.params)]
+        )
+    if not text and not checked:
         return await _render_conversation(
             request, db, conversation, [t(request, "ai.error.empty_message")]
         )
@@ -718,10 +826,10 @@ async def post_message(
     except AiProviderError as exc:
         return await _render_conversation(request, db, conversation, [str(exc)])
 
-    if conversation.title in ("", "New conversation"):
+    if conversation.title in ("", "New conversation") and text:
         conversation.title = derive_title(text)
 
-    await _send_user_message(db, conversation, client, text)
+    await _send_user_message(db, conversation, client, text, checked)
 
     return RedirectResponse(
         url=f"/ai/conversations/{conversation.id}", status_code=status.HTTP_303_SEE_OTHER
@@ -879,6 +987,82 @@ async def update_command_mode(
     return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/conversations/{conversation_id}/rename", dependencies=[Depends(verify_csrf)])
+async def rename_conversation(
+    request: Request,
+    conversation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    title: str = Form(""),
+) -> Response:
+    """A new title for the account's own conversation (one line, at most
+    `TITLE_EDIT_MAX_CHARS`); an empty one is refused."""
+    conversation = await _get_conversation(db, conversation_id, user)
+    new_title = " ".join(title.split())[:TITLE_EDIT_MAX_CHARS]
+    if not new_title:
+        return _redirect_to(conversation, [t(request, "ai.rename.empty")])
+    old_title = conversation.title
+    if new_title != old_title:
+        conversation.title = new_title
+        await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="ai.conversation.rename",
+            summary=f'Renamed the AI conversation "{old_title}" to "{new_title}"',
+            target_type="ai_conversation",
+            target_id=conversation.id,
+            target_label=new_title,
+        )
+    return RedirectResponse(
+        url=f"/ai/conversations/{conversation.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/conversations/{conversation_id}/export.md")
+async def export_conversation(
+    conversation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """The conversation as a Markdown file (`app.services.ai_export`)."""
+    conversation = await _get_conversation(db, conversation_id, user)
+    messages = await _get_messages(db, conversation.id)
+    attachments = await ai_attachments.by_message(db, conversation.id)
+    return Response(
+        content=ai_export.render(conversation, messages, attachments),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{ai_export.filename(conversation)}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.get("/conversations/{conversation_id}/attachments/{attachment_id}")
+async def show_attachment(
+    conversation_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """One picture of the account's own conversation, served with the type
+    debcontrol sniffed when it was uploaded (PNG, JPEG, GIF or WebP only)."""
+    conversation = await _get_conversation(db, conversation_id, user)
+    attachment = await ai_attachments.get(db, conversation.id, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Picture not found.")
+    return Response(
+        content=attachment.data,
+        media_type=attachment.media_type,
+        headers={
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
 @router.post("/conversations/{conversation_id}/delete", dependencies=[Depends(verify_csrf)])
 async def delete_conversation(
     request: Request,
@@ -893,6 +1077,7 @@ async def delete_conversation(
     # the test suite runs on) doesn't enforce foreign keys unless the
     # pragma is on, so leaning on it alone would leave orphans there and
     # hide the difference.
+    await db.execute(delete(AiAttachment).where(AiAttachment.conversation_id == conversation.id))
     await db.execute(delete(AiMessage).where(AiMessage.conversation_id == conversation.id))
     await db.delete(conversation)
     await db.commit()

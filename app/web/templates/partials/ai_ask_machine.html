@@ -1,0 +1,19 @@
+{# "Ask AI about this machine" on the machine page header: one question,
+   which starts a new conversation with the machine's state as context
+   (POST /ai/explain, kind "machine"; app/web/routes/ai.py). Shown only
+   with `ai.access`. #}
+{% if request.state.user.has_permission('ai.access') %}
+  <details class="ai-ask">
+    <summary class="button button-secondary">{{ t(request, "ai.ask_machine.button") }}</summary>
+    <form method="post" action="/ai/explain" class="ai-ask-form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="kind" value="machine">
+      <input type="hidden" name="machine_id" value="{{ machine.id }}">
+      <label for="ai-ask-question">{{ t(request, "ai.ask_machine.label", name=machine.name) }}</label>
+      <textarea id="ai-ask-question" name="question" rows="3" maxlength="4000" required
+                placeholder="{{ t(request, 'ai.ask_machine.placeholder') }}"></textarea>
+      <p class="hint">{{ t(request, "ai.ask_machine.hint") }}</p>
+      <button type="submit" class="button">{{ t(request, "ai.ask_machine.submit") }}</button>
+    </form>
+  </details>
+{% endif %}

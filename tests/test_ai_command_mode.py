@@ -128,7 +128,14 @@ async def test_deny_offers_no_mutating_tool_and_refuses_one(
     await ai_jobs._run_turn(str(conversation_id), "uptime on web1", allow_tools=True)
 
     offered = {tool.name for tool in fake.calls[0]["tools"]}
-    assert offered == {"list_machines", "list_groups"}
+    assert offered == {
+        "list_machines",
+        "list_groups",
+        "get_machine_details",
+        "get_pending_updates",
+        "get_security_audit",
+        "get_service_logs",
+    }
     _mid, actions = await pending_actions_of(db_session_factory, conversation_id)
     assert actions[0]["status"] == "denied" and "AI command setting" in actions[0]["reason"]
     assert celery_calls.names == []

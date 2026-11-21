@@ -1,3 +1,4 @@
+from app.db.models.ai_attachment import AiAttachment
 from app.db.models.ai_conversation import AiConversation
 from app.db.models.ai_message import AiMessage, AiMessageRole, PendingActionStatus
 from app.db.models.ai_model import AiModel
@@ -77,6 +78,7 @@ from app.db.models.user_session import UserSession
 from app.db.models.webauthn_credential import WebAuthnCredential
 
 __all__ = [
+    "AiAttachment",
     "AiConversation",
     "AiMessage",
     "AiMessageRole",

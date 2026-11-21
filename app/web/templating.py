@@ -67,6 +67,16 @@ def local_time(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
 templates.env.filters["local_time"] = local_time
 
 
+def token_count(value: int | None) -> str:
+    """A token total grouped in threes ("12 345"), or "—" for none."""
+    if not value:
+        return "—"
+    return f"{value:,}".replace(",", "\u202f")
+
+
+templates.env.filters["token_count"] = token_count
+
+
 def to_local_input(value: datetime | None) -> str:
     """A stored UTC timestamp as a `<input type="datetime-local">` value in
     the configured `TZ` (the zone every other timestamp is shown in)."""

@@ -55,6 +55,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -64,6 +65,7 @@ from app.ai.base import (
     AiProviderError,
     BaseAiClient,
     ChatTurnResult,
+    ImageInput,
     ModelInfo,
     ToolCall,
     ToolDefinition,
@@ -233,8 +235,23 @@ class AnthropicClient(BaseAiClient):
             raw_assistant_message={"role": "assistant", "content": blocks},
         )
 
-    def build_user_message(self, text: str) -> Any:
-        return {"role": "user", "content": text}
+    def build_user_message(self, text: str, images: Sequence[ImageInput] = ()) -> Any:
+        if not images:
+            return {"role": "user", "content": text}
+        blocks: list[dict[str, Any]] = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": image.media_type,
+                    "data": image.base64(),
+                },
+            }
+            for image in images
+        ]
+        if text:
+            blocks.append({"type": "text", "text": text})
+        return {"role": "user", "content": blocks}
 
     def build_tool_result_messages(
         self, result: ChatTurnResult, outputs: list[tuple[ToolCall, str]]
@@ -369,8 +386,8 @@ class OpenAICompatibleClient(BaseAiClient):
             raw_assistant_message=message,
         )
 
-    def build_user_message(self, text: str) -> Any:
-        return {"role": "user", "content": text}
+    def build_user_message(self, text: str, images: Sequence[ImageInput] = ()) -> Any:
+        return _openai_user_message(text, images)
 
     def build_tool_result_messages(
         self, result: ChatTurnResult, outputs: list[tuple[ToolCall, str]]
@@ -493,8 +510,8 @@ class OpenRouterClient(BaseAiClient):
             raw_assistant_message=message,
         )
 
-    def build_user_message(self, text: str) -> Any:
-        return {"role": "user", "content": text}
+    def build_user_message(self, text: str, images: Sequence[ImageInput] = ()) -> Any:
+        return _openai_user_message(text, images)
 
     def build_tool_result_messages(
         self, result: ChatTurnResult, outputs: list[tuple[ToolCall, str]]
@@ -627,8 +644,14 @@ class GeminiClient(BaseAiClient):
             raw_assistant_message={"role": "model", "parts": part_dicts},
         )
 
-    def build_user_message(self, text: str) -> Any:
-        return {"role": "user", "parts": [{"text": text}]}
+    def build_user_message(self, text: str, images: Sequence[ImageInput] = ()) -> Any:
+        parts: list[dict[str, Any]] = [
+            {"inlineData": {"mimeType": image.media_type, "data": image.base64()}}
+            for image in images
+        ]
+        if text or not parts:
+            parts.append({"text": text})
+        return {"role": "user", "parts": parts}
 
     def build_tool_result_messages(
         self, result: ChatTurnResult, outputs: list[tuple[ToolCall, str]]
@@ -648,6 +671,23 @@ class GeminiClient(BaseAiClient):
             result.raw_assistant_message,
             {"role": "user", "parts": responses},
         ]
+
+
+def _openai_user_message(text: str, images: Sequence[ImageInput]) -> dict[str, Any]:
+    """The OpenAI chat-completions user turn — also OpenRouter's: plain text,
+    or content parts with each picture as a `data:` URL."""
+    if not images:
+        return {"role": "user", "content": text}
+    parts: list[dict[str, Any]] = [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{image.media_type};base64,{image.base64()}"},
+        }
+        for image in images
+    ]
+    if text:
+        parts.insert(0, {"type": "text", "text": text})
+    return {"role": "user", "content": parts}
 
 
 def _gemini_declaration(tool: ToolDefinition) -> dict[str, Any]:
