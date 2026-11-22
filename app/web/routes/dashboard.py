@@ -25,7 +25,7 @@ from app.db.models.scheduled_task import ScheduledTask
 from app.db.models.user import User
 from app.db.session import get_db
 from app.scheduling.targets import task_within_scope
-from app.services import dashboard_layout
+from app.services import dashboard_layout, machine_health
 from app.services.access_scope import allowed_group_ids, count_visible_groups
 from app.services.dashboard_cache import cached_fleet_stats
 from app.web.routes.fleet import fleet_grid_context
@@ -55,6 +55,10 @@ async def show_dashboard(
             await db.execute(select(func.count()).select_from(PendingMachine))
         ).scalar_one()
         context["machine_stats"] = {**stats, "pending_count": pending_count}
+        # Fleet health (app.services.machine_health): the score, the count
+        # per status and the machines in the worst shape — all scoped.
+        context["fleet_health"] = await machine_health.fleet_health(db, scope)
+        context["health_worst"] = await machine_health.worst_machines(db, scope)
         # The machine cards at the bottom of the page (formerly /fleet).
         context.update(await fleet_grid_context(db, user))
 
@@ -80,6 +84,9 @@ async def show_dashboard(
                 context["trend_timestamps"] = [
                     datetime.combine(s.snapshot_date, time.min, tzinfo=UTC) for s in snapshots
                 ]
+                # Recorded since 0.141.0: drawn once it has two days.
+                if sum(1 for s in snapshots if s.health_score is not None) >= 2:
+                    context["health_trend"] = [s.health_score for s in snapshots]
 
             # Same "unrestricted accounts only" reasoning as fleet_snapshots
             # just above: this is a single fleet-wide report a background
@@ -136,6 +143,7 @@ async def show_dashboard(
     # section it has no permission for is not even named.
     present = {
         "machines": "machine_stats" in context,
+        "health": "machine_stats" in context,
         "fleet": "machine_stats" in context,
         "summary": bool(context.get("fleet_summary")),
         "trends": "fleet_snapshots" in context,

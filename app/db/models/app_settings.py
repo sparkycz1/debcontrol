@@ -342,6 +342,40 @@ class AppSettings(Base):
     docker_endpoint_checks: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    # --- Machine health thresholds (app.services.machine_health) ---
+    # Where a reading becomes a warning / a critical problem. CPU is the
+    # average of the last three samples; "disk full" days come from the
+    # hourly forecast (the warning is the larger number of days).
+    health_cpu_warn_percent: Mapped[int] = mapped_column(
+        Integer, default=85, server_default="85", nullable=False
+    )
+    health_cpu_critical_percent: Mapped[int] = mapped_column(
+        Integer, default=95, server_default="95", nullable=False
+    )
+    health_memory_warn_percent: Mapped[int] = mapped_column(
+        Integer, default=85, server_default="85", nullable=False
+    )
+    health_memory_critical_percent: Mapped[int] = mapped_column(
+        Integer, default=95, server_default="95", nullable=False
+    )
+    health_disk_warn_percent: Mapped[int] = mapped_column(
+        Integer, default=85, server_default="85", nullable=False
+    )
+    health_disk_critical_percent: Mapped[int] = mapped_column(
+        Integer, default=95, server_default="95", nullable=False
+    )
+    health_temperature_warn_celsius: Mapped[int] = mapped_column(
+        Integer, default=80, server_default="80", nullable=False
+    )
+    health_temperature_critical_celsius: Mapped[int] = mapped_column(
+        Integer, default=90, server_default="90", nullable=False
+    )
+    health_disk_full_warn_days: Mapped[int] = mapped_column(
+        Integer, default=7, server_default="7", nullable=False
+    )
+    health_disk_full_critical_days: Mapped[int] = mapped_column(
+        Integer, default=2, server_default="2", nullable=False
+    )
     # --- Docker → Settings (app.services.docker_daemon) ---
     # The daemon.json keys debcontrol keeps the same on the machines in
     # scope ({"log_driver": "local", "live_restore": true, ...}; a key left

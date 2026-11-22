@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% from "macros/health.html" import health_badge, severity_badge, finding_text with context %}
+
+{% block title %}{{ t(request, "health.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro score_class(score) -%}
+  health-score-{{ 'ok' if score is none or score >= 90 else ('warning' if score >= 60 else 'critical') }}
+{%- endmacro %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "health.title") }}</h1>
+  </div>
+  <p class="hint">{{ t(request, "health.intro") }}</p>
+
+  <section class="panel">
+    <div class="stat-grid">
+      <div class="stat-card">
+        <span class="stat-value health-score {{ score_class(fleet.score) }}">{{ fleet.score if fleet.score is not none else '—' }}</span>
+        <span class="stat-label">{{ t(request, "health.score") }}</span>
+      </div>
+      <a class="stat-card stat-card-link" href="/machines?status=critical">
+        <span class="stat-value{% if fleet.counts.critical %} health-score-critical{% endif %}">{{ fleet.counts.critical }}</span>
+        <span class="stat-label">{{ t(request, "health.status.critical") }}</span>
+      </a>
+      <a class="stat-card stat-card-link" href="/machines?status=warning">
+        <span class="stat-value{% if fleet.counts.warning %} health-score-warning{% endif %}">{{ fleet.counts.warning }}</span>
+        <span class="stat-label">{{ t(request, "health.status.warning") }}</span>
+      </a>
+      <div class="stat-card">
+        <span class="stat-value">{{ fleet.counts.ok + fleet.counts.info }}</span>
+        <span class="stat-label">{{ t(request, "health.status.ok") }}</span>
+      </div>
+      {% if fleet.unknown %}
+        <div class="stat-card">
+          <span class="stat-value">{{ fleet.unknown }}</span>
+          <span class="stat-label">{{ t(request, "health.status.unknown") }}</span>
+        </div>
+      {% endif %}
+    </div>
+    <p class="hint">{{ t(request, "health.score_hint") }} <a href="/settings?tab=checks#health-thresholds">{{ t(request, "health.thresholds_link") }}</a></p>
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "health.problems_heading") }}</h2>
+    {% if machines %}
+      <table class="data-table">
+        <thead><tr>
+          <th>{{ t(request, "machines.table.name") }}</th>
+          <th>{{ t(request, "health.panel.severity") }}</th>
+          <th>{{ t(request, "health.panel.category") }}</th>
+          <th>{{ t(request, "health.panel.problem") }}</th>
+          {% if can_manage %}<th>{{ t(request, "health.panel.snooze") }}</th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for machine, view in machines %}
+            {% for finding in view.active if finding.severity != 'info' %}
+              <tr>
+                <td>{% if loop.first %}<a href="/machines/{{ machine.id }}#health-panel">{{ machine.name }}</a> {{ health_badge(view.status) }}{% endif %}</td>
+                <td>{{ severity_badge(finding.severity) }}</td>
+                <td>{{ t(request, "health.category." ~ finding.category) }}</td>
+                <td>{% if finding.tab %}<a href="/machines/{{ machine.id }}/{{ finding.tab }}">{{ finding_text(finding) }}</a>{% else %}{{ finding_text(finding) }}{% endif %}</td>
+                {% if can_manage %}
+                  <td>
+                    {% if finding.key != 'connection.unreachable' %}
+                    <form method="post" action="/machines/{{ machine.id }}/health/snooze?from=health" class="inline-form">
+                      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                      <input type="hidden" name="key" value="{{ finding.key }}">
+                      {% for choice, _hours in snooze_choices %}
+                        <button type="submit" name="duration" value="{{ choice }}" class="button button-secondary log-small-button">{{ t(request, "health.snooze." ~ choice) }}</button>
+                      {% endfor %}
+                    </form>
+                    {% endif %}
+                  </td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "health.no_problems") }}</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>{{ t(request, "health.snoozed_heading") }}</h2>
+    {% if snoozes %}
+      <table class="data-table">
+        <thead><tr>
+          <th>{{ t(request, "machines.table.name") }}</th>
+          <th>{{ t(request, "health.panel.problem") }}</th>
+          <th>{{ t(request, "health.snoozed_until") }}</th>
+          <th>{{ t(request, "health.snoozed_by") }}</th>
+          {% if can_manage %}<th></th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for machine, snooze, finding in snoozes %}
+            <tr>
+              <td><a href="/machines/{{ machine.id }}#health-panel">{{ machine.name }}</a></td>
+              <td>
+                {% if finding %}{{ severity_badge(finding.severity) }} {{ finding_text(finding) }}{% else %}<code>{{ snooze.finding_key }}</code>{% endif %}
+                {% if snooze.note %}<div class="hint">{{ snooze.note }}</div>{% endif %}
+              </td>
+              <td>{% if snooze.until %}{{ snooze.until | local_time('%Y-%m-%d %H:%M') }}{% else %}{{ t(request, "health.snooze.until_gone") }}{% endif %}</td>
+              <td>{{ snooze.created_by or '—' }}</td>
+              {% if can_manage %}
+                <td>
+                  <form method="post" action="/machines/{{ machine.id }}/health/unsnooze?from=health" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                    <input type="hidden" name="key" value="{{ snooze.finding_key }}">
+                    <button type="submit" class="button button-secondary log-small-button">{{ t(request, "health.snooze.clear") }}</button>
+                  </form>
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "health.no_snoozes") }}</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -9,7 +9,8 @@ What's exposed and why:
   unauthenticated-adjacent on the Settings page to any logged-in user with
   `settings.view`.
 - **Background-check intervals and timeouts, every retention window,
-  monitoring downsampling, the AI token limits and the sign-in policy's
+  monitoring downsampling, the machine health thresholds, the AI token
+  limits and the sign-in policy's
   session lifetime/lockout numbers** — operational facts, not secrets.
   These are also *writable* here (`PATCH /api/v1/settings`,
   `settings.manage`), with exactly the ranges the Settings page enforces
@@ -91,6 +92,7 @@ from app.services.settings_limits import (
     RETENTION_FIELDS,
     SIGN_IN_POLICY_FIELDS,
     TOKEN_LIMIT_FIELDS,
+    threshold_pair_errors,
 )
 from app.ssh.identity import get_or_create_identity
 
@@ -175,6 +177,16 @@ async def update_settings_api(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="; ".join(errors))
 
     app_settings = await get_or_create_app_settings(db)
+    # A health warning level must come before its critical one.
+    pair_errors = threshold_pair_errors(
+        {
+            f: validated.get(f, getattr(app_settings, f))
+            for f in BOUNDED_FIELDS
+            if f.startswith("health_")
+        }
+    )
+    if pair_errors:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="; ".join(pair_errors))
     changed = {f: v for f, v in validated.items() if getattr(app_settings, f) != v}
     for field, value in changed.items():
         setattr(app_settings, field, value)

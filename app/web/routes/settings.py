@@ -68,6 +68,7 @@ from app.services.settings_limits import (
     BOOLEAN_FIELDS,
     BOUNDED_FIELDS,
     SIGN_IN_POLICY_FIELDS,
+    threshold_pairs_out_of_order,
 )
 from app.ssh.identity import (
     activate_pending_identity,
@@ -234,6 +235,16 @@ _CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
     ("update_timeout_seconds", "settings.checks.update_timeout"),
     ("facts_refresh_interval_seconds", "settings.checks.facts_refresh"),
     ("docker_image_check_interval_hours", "settings.checks.docker_image_check"),
+    ("health_cpu_warn_percent", "settings.checks.health.cpu_warn"),
+    ("health_cpu_critical_percent", "settings.checks.health.cpu_critical"),
+    ("health_memory_warn_percent", "settings.checks.health.memory_warn"),
+    ("health_memory_critical_percent", "settings.checks.health.memory_critical"),
+    ("health_disk_warn_percent", "settings.checks.health.disk_warn"),
+    ("health_disk_critical_percent", "settings.checks.health.disk_critical"),
+    ("health_temperature_warn_celsius", "settings.checks.health.temperature_warn"),
+    ("health_temperature_critical_celsius", "settings.checks.health.temperature_critical"),
+    ("health_disk_full_warn_days", "settings.checks.health.disk_full_warn"),
+    ("health_disk_full_critical_days", "settings.checks.health.disk_full_critical"),
 )
 _CHECKS_TAB_RETENTION: tuple[str, ...] = (
     "monitoring_history_retention_days",
@@ -276,6 +287,23 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
             errors.append(error)
         else:
             values[name] = value
+    # Each health warning level must come before its critical one.
+    labels = dict(_CHECKS_TAB_BOUNDED)
+    merged = {
+        name: values.get(name, getattr(app_settings, name)) for name in BOUNDED_FIELDS
+        if name.startswith("health_")
+    }
+    for warn, critical, higher in threshold_pairs_out_of_order(merged):
+        errors.append(
+            t(
+                request,
+                "settings.checks.health.pair_error_lower"
+                if higher
+                else "settings.checks.health.pair_error_higher",
+                warn=t(request, labels[warn]),
+                critical=t(request, labels[critical]),
+            )
+        )
     if errors:
         return await _render_settings(request, db, errors, tab="checks")
     # A checkbox sends nothing when unticked: the hidden marker says the

@@ -34,6 +34,7 @@ from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
 from app.db.models.machine_change import MachineChange
 from app.db.models.machine_group import MachineGroup
+from app.db.models.machine_health_snooze import MachineHealthSnooze
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_note import MachineNote
 from app.db.models.machine_package import MachinePackage
@@ -116,6 +117,7 @@ __all__ = [
     "Machine",
     "MachineChange",
     "MachineGroup",
+    "MachineHealthSnooze",
     "MachineMonitoringSample",
     "MachineNote",
     "MachinePackage",

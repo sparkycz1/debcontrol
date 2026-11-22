@@ -21,7 +21,9 @@ def test_a_stored_layout_survives_added_and_removed_sections() -> None:
     )
 
     # Known keys in the stored order, then every section it did not mention.
-    assert layout.order == ("fleet", "machines", "summary", "trends", "scheduling", "activity")
+    assert layout.order == (
+        "fleet", "machines", "health", "summary", "trends", "scheduling", "activity"
+    )
     assert layout.hidden == frozenset({"trends"})
     assert "trends" not in layout.visible and layout.visible[0] == "fleet"
     assert dashboard_layout.resolve(None) == dashboard_layout.DEFAULT
@@ -62,6 +64,7 @@ async def test_arranging_the_dashboard(client: AsyncClient, db_session_factory: 
 
     assert position(page.text, 'id="fleet"') > position(page.text, "/audit")
     for action, section in (
+        ("up", "fleet"),
         ("up", "fleet"),
         ("up", "fleet"),
         ("up", "fleet"),

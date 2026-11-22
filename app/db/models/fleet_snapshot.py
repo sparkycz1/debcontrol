@@ -37,6 +37,9 @@ class FleetSnapshot(Base):
     needs_updates: Mapped[int] = mapped_column(Integer, nullable=False)
     needs_security_updates: Mapped[int] = mapped_column(Integer, nullable=False)
     needs_reboot: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The fleet health score that day (app.services.machine_health.
+    # score_of), 0-100; None before 0.141.0 or with no evaluated machine.
+    health_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 

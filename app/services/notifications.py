@@ -40,6 +40,8 @@ add another):
   _RESTART_LOOP / _OOM / _UNHEALTHY, for the container events since the
   previous sample, and (via `app.services.autoheal`) DOCKER_CONTAINER_AUTOHEAL
   when autoheal restarted an unhealthy container or gave up.
+- `app.services.machine_health.refresh` — HEALTH_DEGRADED / HEALTH_RECOVERED,
+  only when a machine's overall health actually changes.
 """
 
 from __future__ import annotations
@@ -189,6 +191,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: Proxmox cluster {cluster} lost quorum",
             "{machine_name} ({machine_ip}) reports that cluster {cluster} is no longer "
             "quorate at {timestamp}.\n\n{details}",
+        ),
+        NotificationEventType.HEALTH_DEGRADED: (
+            "debcontrol: {machine_name} health is now {status}",
+            "The health of {machine_name} ({machine_ip}) changed from {previous_status} "
+            "to {status} at {timestamp} ({problem_count} problems):\n\n{problems}",
+        ),
+        NotificationEventType.HEALTH_RECOVERED: (
+            "debcontrol: {machine_name} is healthy again",
+            "{machine_name} ({machine_ip}) has no open problems any more "
+            "(was {previous_status}) as of {timestamp}.",
         ),
         NotificationEventType.APP_BACKUP_FAILED: (
             "debcontrol: the automatic backup failed",
@@ -350,6 +362,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: cluster Proxmoxu {cluster} ztratil quorum",
             "{machine_name} ({machine_ip}) hlásí v {timestamp}, že cluster {cluster} "
             "nemá quorum.\n\n{details}",
+        ),
+        NotificationEventType.HEALTH_DEGRADED: (
+            "debcontrol: zdraví {machine_name} je teď {status}",
+            "Zdraví {machine_name} ({machine_ip}) se v {timestamp} změnilo z "
+            "{previous_status} na {status} ({problem_count} problémů):\n\n{problems}",
+        ),
+        NotificationEventType.HEALTH_RECOVERED: (
+            "debcontrol: {machine_name} je zase v pořádku",
+            "{machine_name} ({machine_ip}) k {timestamp} nemá žádné otevřené problémy "
+            "(předtím {previous_status}).",
         ),
         NotificationEventType.APP_BACKUP_FAILED: (
             "debcontrol: automatická záloha selhala",

@@ -29,7 +29,52 @@ BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "session_absolute_max_hours": (1, 8760),
     "login_max_failed_attempts": (1, 100),
     "login_lockout_minutes": (1, 1440),
+    # Machine health thresholds (app.services.machine_health).
+    "health_cpu_warn_percent": (1, 100),
+    "health_cpu_critical_percent": (1, 100),
+    "health_memory_warn_percent": (1, 100),
+    "health_memory_critical_percent": (1, 100),
+    "health_disk_warn_percent": (1, 100),
+    "health_disk_critical_percent": (1, 100),
+    "health_temperature_warn_celsius": (20, 150),
+    "health_temperature_critical_celsius": (20, 150),
+    "health_disk_full_warn_days": (1, 365),
+    "health_disk_full_critical_days": (0, 365),
 }
+
+# (warning, critical) pairs that must stay in order: a percent or a
+# temperature warns before it is critical; "days until full" warns at more
+# days than it is critical at.
+HEALTH_THRESHOLD_PAIRS: tuple[tuple[str, str, bool], ...] = (
+    # (warning field, critical field, critical is the higher number)
+    ("health_cpu_warn_percent", "health_cpu_critical_percent", True),
+    ("health_memory_warn_percent", "health_memory_critical_percent", True),
+    ("health_disk_warn_percent", "health_disk_critical_percent", True),
+    ("health_temperature_warn_celsius", "health_temperature_critical_celsius", True),
+    ("health_disk_full_warn_days", "health_disk_full_critical_days", False),
+)
+
+
+def threshold_pairs_out_of_order(values: dict[str, object]) -> list[tuple[str, str, bool]]:
+    """The `HEALTH_THRESHOLD_PAIRS` whose warning level is not short of the
+    critical one in `values` (the merged old and new settings)."""
+    wrong: list[tuple[str, str, bool]] = []
+    for warn, critical, critical_higher in HEALTH_THRESHOLD_PAIRS:
+        low, high = values.get(warn), values.get(critical)
+        if not isinstance(low, int) or not isinstance(high, int):
+            continue
+        if (critical_higher and low >= high) or (not critical_higher and low <= high):
+            wrong.append((warn, critical, critical_higher))
+    return wrong
+
+
+def threshold_pair_errors(values: dict[str, object]) -> list[str]:
+    """`threshold_pairs_out_of_order` as English sentences (the API)."""
+    return [
+        f"{warn} must be {'lower' if higher else 'higher'} than {critical}"
+        for warn, critical, higher in threshold_pairs_out_of_order(values)
+    ]
+
 
 # Fields whose new value must reach `app.auth.session_policy`'s in-process
 # cache at once — the saving handler invalidates it.
@@ -92,6 +137,10 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "session_absolute_max_hours": "settings.sign_in_policy.update",
     "login_max_failed_attempts": "settings.sign_in_policy.update",
     "login_lockout_minutes": "settings.sign_in_policy.update",
+    **dict.fromkeys(
+        (name for name in BOUNDED_FIELDS if name.startswith("health_")),
+        "settings.health_thresholds.update",
+    ),
 }
 
 # Fields whose change needs a worker/beat restart — none any more: Beat

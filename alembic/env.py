@@ -33,6 +33,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     Machine,
     MachineChange,
     MachineGroup,
+    MachineHealthSnooze,
     MachineNote,
     MachineReachabilitySample,
     MachineUpdateRun,

@@ -1,0 +1,89 @@
+{% from "macros/health.html" import health_badge, severity_badge, finding_text with context %}
+{# A machine's health on its Overview tab (app.services.machine_health):
+   the verdict, the ten categories, the problems that count and the
+   snoozed ones. Redrawn by GET /machines/{id}/health-panel. #}
+{% set base = "/machines/" ~ machine.id %}
+<div class="panel-header">
+  <h2>{{ t(request, "health.panel.heading") }} {{ health_badge(health.status) }}</h2>
+  {% if health.evaluated_at %}<span class="hint">{{ t(request, "health.panel.evaluated_at", when=(health.evaluated_at | local_time('%Y-%m-%d %H:%M'))) }}</span>{% endif %}
+</div>
+{% if health.status is none %}
+  <p class="hint">{{ t(request, "health.panel.not_evaluated") }}</p>
+{% else %}
+  <ul class="health-categories" aria-label="{{ t(request, 'health.panel.categories') }}">
+    {% for category, cat_status, active, snoozed in health.categories %}
+      <li class="health-category health-category-{{ cat_status }}">
+        <span class="health-category-name">{{ t(request, "health.category." ~ category) }}</span>
+        <span class="health-category-state">{{ t(request, "health.status." ~ cat_status) }}{% if snoozed %} · {{ t(request, "health.panel.snoozed_count", count=snoozed | length) }}{% endif %}</span>
+      </li>
+    {% endfor %}
+  </ul>
+
+  {% if health.active %}
+    <table class="data-table">
+      <thead><tr>
+        <th>{{ t(request, "health.panel.severity") }}</th>
+        <th>{{ t(request, "health.panel.category") }}</th>
+        <th>{{ t(request, "health.panel.problem") }}</th>
+        {% if can_manage %}<th>{{ t(request, "health.panel.snooze") }}</th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for finding in health.active %}
+          <tr>
+            <td>{{ severity_badge(finding.severity) }}</td>
+            <td>{{ t(request, "health.category." ~ finding.category) }}</td>
+            <td>
+              {% if finding.tab %}<a href="{{ base }}/{{ finding.tab }}">{{ finding_text(finding) }}</a>{% else %}{{ finding_text(finding) }}{% endif %}
+            </td>
+            {% if can_manage %}
+              <td>
+                {% if finding.key != 'connection.unreachable' %}
+                <form method="post" action="{{ base }}/health/snooze" class="inline-form">
+                  <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                  <input type="hidden" name="key" value="{{ finding.key }}">
+                  {% for choice, _hours in snooze_choices %}
+                    <button type="submit" name="duration" value="{{ choice }}" class="button button-secondary log-small-button">{{ t(request, "health.snooze." ~ choice) }}</button>
+                  {% endfor %}
+                </form>
+                {% endif %}
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="hint">{{ t(request, "health.panel.no_problems") }}</p>
+  {% endif %}
+
+  {% if health.snoozed %}
+    <details class="form-advanced">
+      <summary>{{ t(request, "health.panel.snoozed_heading", count=health.snoozed | length) }}</summary>
+      <table class="data-table">
+        <tbody>
+          {% for finding, snooze in health.snoozed %}
+            <tr>
+              <td>{{ severity_badge(finding.severity) }}</td>
+              <td>{{ finding_text(finding) }}</td>
+              <td class="hint">
+                {% if snooze.until %}{{ t(request, "health.snooze.until", when=(snooze.until | local_time('%Y-%m-%d %H:%M'))) }}{% else %}{{ t(request, "health.snooze.until_gone") }}{% endif %}
+                {% if snooze.created_by %} · {{ snooze.created_by }}{% endif %}
+                {% if snooze.note %} · {{ snooze.note }}{% endif %}
+              </td>
+              {% if can_manage %}
+                <td>
+                  <form method="post" action="{{ base }}/health/unsnooze" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                    <input type="hidden" name="key" value="{{ finding.key }}">
+                    <button type="submit" class="button button-secondary log-small-button">{{ t(request, "health.snooze.clear") }}</button>
+                  </form>
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  {% endif %}
+{% endif %}
+<p class="hint"><a href="/health">{{ t(request, "health.panel.fleet_link") }}</a></p>

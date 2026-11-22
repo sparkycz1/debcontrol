@@ -39,6 +39,7 @@ from app.services import (
     acknowledgements,
     docker_jobs,
     hardware_inventory,
+    machine_health,
     machine_timeline,
     proxmox_guest_links,
     self_host,
@@ -165,6 +166,8 @@ async def machine_detail(
             "warranty_soon_days": hardware_inventory.WARRANTY_SOON_DAYS,
             "asset_error": read_flash(request, "asset_error"),
             "can_manage_machine": current_user.has_permission(Permission.MACHINE_MANAGE),
+            "health": await machine_health.view_for(db, machine),
+            "snooze_choices": machine_health.SNOOZE_CHOICES,
             "self_host_role": await self_host.role_of(db, machine),
             # The package *rows* themselves are deliberately not fetched
             # here — a machine can easily have several hundred installed
@@ -202,6 +205,24 @@ async def machine_status_panel(
 ) -> Response:
     machine = await _get_machine_or_404(machine_id, db, current_user)
     return templates.TemplateResponse(request, "partials/machine_status.html", {"machine": machine})
+
+
+@router.get("/{machine_id}/health-panel")
+async def machine_health_panel(
+    request: Request, machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    return templates.TemplateResponse(
+        request,
+        "partials/machine_health.html",
+        {
+            "machine": machine,
+            "health": await machine_health.view_for(db, machine),
+            "snooze_choices": machine_health.SNOOZE_CHOICES,
+            "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
+        },
+    )
 
 
 @router.get("/{machine_id}/facts-panel")
@@ -1594,6 +1615,84 @@ async def clear_machine_acknowledgement(
         target_label=machine.name,
     )
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- Snoozing one health problem (app.services.machine_health) ------------
+
+
+def _back_to_health(request: Request, machine_id: uuid.UUID) -> RedirectResponse:
+    """Back where the button was: the fleet Health page or the machine."""
+    target = "/health" if request.query_params.get("from") == "health" else (
+        f"/machines/{machine_id}#health-panel"
+    )
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{machine_id}/health/snooze", dependencies=[need_manage, Depends(verify_csrf)])
+async def snooze_machine_health_problem(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    key: str = Form(...),
+    duration: str = Form("24h"),
+    note: str = Form(""),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Put one problem off: it stays listed, apart, and stops counting
+    towards the machine's health until the time passes, it goes away or it
+    gets worse."""
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    try:
+        hours = machine_health.snooze_hours_for(duration)
+        await machine_health.snooze(
+            db, machine, key, hours=hours, by=current_user.username, note=note
+        )
+    except machine_health.UnknownFindingError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No such problem on this machine."
+        ) from None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from None
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="machine.health.snooze",
+        summary=f'Snoozed "{key}" on "{machine.name}"',
+        target_type="machine",
+        target_id=machine.id,
+        target_label=machine.name,
+        details={"key": key, "hours": hours, "note": note.strip()[:500] or None},
+    )
+    return _back_to_health(request, machine.id)
+
+
+@router.post("/{machine_id}/health/unsnooze", dependencies=[need_manage, Depends(verify_csrf)])
+async def unsnooze_machine_health_problem(
+    request: Request,
+    machine_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    key: str = Form(...),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    machine = await _get_machine_or_404(machine_id, db, current_user)
+    if await machine_health.unsnooze(db, machine, key):
+        await db.commit()
+        await log_event(
+            db,
+            request=request,
+            action="machine.health.snooze.clear",
+            summary=f'Cleared the snooze of "{key}" on "{machine.name}"',
+            target_type="machine",
+            target_id=machine.id,
+            target_label=machine.name,
+            details={"key": key},
+        )
+    else:
+        await db.commit()
+    return _back_to_health(request, machine.id)
 
 
 @router.post("/{machine_id}/asset", dependencies=[need_manage, Depends(verify_csrf)])
