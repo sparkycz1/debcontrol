@@ -27,7 +27,6 @@ health (`app.services.machine_health`) can count it.
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -171,9 +170,6 @@ def _rises(before: str | None, after: str | None) -> bool:
 
 
 # --- ZFS -------------------------------------------------------------------
-
-_PARTITION_RE = re.compile(r"^(.*?)(?:p?\d+)?$")
-
 
 def _zfs_matches(name: str, device: dict[str, Any]) -> bool:
     """Is the pool member `name` (as `zpool status` shows it) this disk?
