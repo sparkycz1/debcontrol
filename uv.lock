@@ -660,7 +660,7 @@ wheels = [
 
 [[package]]
 name = "debcontrol"
-version = "0.141.0"
+version = "0.141.1"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -798,7 +798,7 @@ wheels = [
 
 [[package]]
 name = "fastapi"
-version = "0.164.0"
+version = "0.165.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -809,9 +809,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/9f/d0e353b6c275329d17b1c926db48003e1276879855e8b6c87eb9d57907ad/fastapi-0.164.0.tar.gz", hash = "sha256:3db1b4b146924d284b33bd6b9ca244c8bd0560d5e3526591447fd3abe4383989", size = 555183, upload-time = "2026-11-18T13:09:09.456Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/f9/e7820ef181026fea100bde02d811445bf8e883362d7092b6928767147056/fastapi-0.165.0.tar.gz", hash = "sha256:dd94d4128319c1e1d50535ab023ab698f850a4d2822f0e181747b46f4ff3c0ab", size = 557984, upload-time = "2026-11-18T19:15:37.076Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/56/d1ddbd742cd6c5d309651d3906ef7c246f170b73246db9b63d8a2fd5b3b3/fastapi-0.164.0-py3-none-any.whl", hash = "sha256:6ec63b74a112a6acc22c87f29bb8cb209002050cfeb4f993b959e6caea65c468", size = 157847, upload-time = "2026-11-18T13:09:07.796Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/c1/3b74c030262a1b38b1fee180f80b4007bbc11c9ac12028cb18c7bcecaec9/fastapi-0.165.0-py3-none-any.whl", hash = "sha256:896f48462042bb4f162147eb8fac7e858753dc1f486765709baf105d70e4fc5b", size = 159475, upload-time = "2026-11-18T19:15:35.345Z" },
 ]
 
 [[package]]
@@ -834,7 +834,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "3.5.0"
+version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -848,9 +848,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/7d/7c6c225a5903fa4f79feeb251d1daa2b56c0e6bb499694d8e3a3caf6ddcb/google_genai-3.5.0.tar.gz", hash = "sha256:3bf424714df775f38aa8adf6c002d660276a147bec288c55db41cccae6ba2eef", size = 881269, upload-time = "2026-11-18T02:29:51.718Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/15/ecebc770eb7edec0e588498d6b872aff6091ce1af1a9c503bd70b5a1ea7a/google_genai-3.6.1.tar.gz", hash = "sha256:dfd4120a15ba5aff6a3de8a85d76e1d5d0af65c70a54c459b1c5e76f503e46e7", size = 885277, upload-time = "2026-11-18T22:18:48.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/56/69819dde4744a3d8007e571435d8c7ba21bbc824c90b15cabd863ce9619d/google_genai-3.5.0-py3-none-any.whl", hash = "sha256:2a8320df8a27d4483a95a65211bc787a78a7ba3c8512d0e9e3daabf9d8dda34e", size = 1467926, upload-time = "2026-11-18T02:29:49.399Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/1a/576adc030b48c7491b33ab94b96521151ef5b956552c0057628ef39c69bb/google_genai-3.6.1-py3-none-any.whl", hash = "sha256:4b35064da644f61d7e5f6c0e9406bf63b945e7e96b4af18cadb3371cbc3acf74", size = 1472097, upload-time = "2026-11-18T22:18:46.803Z" },
 ]
 
 [[package]]
@@ -1549,7 +1549,7 @@ wheels = [
 
 [[package]]
 name = "openrouter"
-version = "1.3.187"
+version = "1.3.203"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpcore" },
@@ -1557,9 +1557,9 @@ dependencies = [
     { name = "jsonpath-python" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0c/b7/9f6fcf689e65131b8a745ea68c0fcbd663af83b65947e3268cdc189136af/openrouter-1.3.187.tar.gz", hash = "sha256:d6443c41fed7146138d540db03a7f4b1a5bee6ffbffd6c992bb2661b95d199dc", size = 692088, upload-time = "2026-11-18T15:31:53.862Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/72/dea55664246a7f0d57448eee2f5fc2e6b611c82dadec4beafc06c891f222/openrouter-1.3.203.tar.gz", hash = "sha256:f4baac9b10debaae15611898f9d370e1a52538d9ca09faaff2867954e74b75d4", size = 701537, upload-time = "2026-11-21T18:17:12.308Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/04/aea6a1966e9b91cae34513210834038a164bf675c1daf0a72ccadd25f406/openrouter-1.3.187-py3-none-any.whl", hash = "sha256:7677d73b1b851435252ff7c83c387607889a4200f8178ad9d86eb1920b47005b", size = 1491625, upload-time = "2026-11-18T15:31:51.836Z" },
+    { url = "https://files.pythonhosted.org/packages/31/79/e6b13de10bac92352aa831584ed9cc978e97da8d13ee0f4896fc3b49fdbd/openrouter-1.3.203-py3-none-any.whl", hash = "sha256:0b67f12195db31a2684cbf15feb05eee4311dacc0757d00b7423ac5ae83531fb", size = 1508669, upload-time = "2026-11-21T18:17:10.505Z" },
 ]
 
 [[package]]
@@ -1837,11 +1837,11 @@ wheels = [
 
 [[package]]
 name = "pyotp"
-version = "2.12.0"
+version = "2.12.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/81/51/02d8f9400d6e86fa9358bc091d31d20d325ba833d209099a22fc7784e653/pyotp-2.12.0.tar.gz", hash = "sha256:638ea37341567ec01277af3a16b682590d938f54f8ed3fb31963513233fd05f2", size = 26858, upload-time = "2026-11-15T22:03:06.513Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/d7/fe43d6cfd1e80081a374c612df6b6555205a7ab761fdd6ba6e30435fd963/pyotp-2.12.1.tar.gz", hash = "sha256:8d0c4192f3c5d1b1a8792df23b9d8acbb7e70abd2b160962af55c5700edbd236", size = 27480, upload-time = "2026-11-19T05:06:24.189Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/8e/a293e976f73fed42e19cd7921175c6aac66cedbf8bed91766d3506fdea33/pyotp-2.12.0-py3-none-any.whl", hash = "sha256:d66830ab614e857c1e1b810b80384bcf7d437972f1e96625686e128e2e17ff83", size = 16734, upload-time = "2026-11-15T22:03:05.143Z" },
+    { url = "https://files.pythonhosted.org/packages/32/d5/ca399f55b474357c42b8d0ee1c0222a22e6f88bbf4588130b75737c3b73b/pyotp-2.12.1-py3-none-any.whl", hash = "sha256:2f65978d0a0afe5588ec960c810cbb974ba1957ffbf29775d8d4e1b2d4b8984c", size = 17026, upload-time = "2026-11-19T05:06:22.922Z" },
 ]
 
 [[package]]
