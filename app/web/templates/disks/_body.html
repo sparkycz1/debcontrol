@@ -1,0 +1,138 @@
+{# The disk's facts, risk, counters, events and attributes — shared by the
+   detail page and the printable report. Expects the context of
+   app.web.routes.disks._detail_context and `report` (bool). #}
+{% from "disks/_macros.html" import risk_badge, event_text, reason_text, wear_ring with context %}
+{% from "macros/health.html" import severity_badge with context %}
+
+<section class="panel disk-summary">
+  <div class="disk-summary-grid">
+    {% if latest.wear_percent is not none %}
+      <div class="disk-wear">
+        {{ wear_ring(latest.wear_percent, wear_level) }}
+        <span class="stat-label">{{ t(request, "disks.wear") }}</span>
+        {% if prediction.wear_days_left is not none %}
+          <span class="hint">{{ t(request, "disks.wear_days_left", days=prediction.wear_days_left) }}</span>
+        {% endif %}
+      </div>
+    {% endif %}
+    <dl class="disk-facts">
+      <dt>{{ t(request, "disks.col.risk") }}</dt>
+      <dd>{{ risk_badge(prediction.risk) }}</dd>
+      <dt>S.M.A.R.T.</dt>
+      <dd>
+        {% if latest.passed is sameas true %}<span class="badge badge-ok">PASSED</span>
+        {% elif latest.passed is sameas false %}<span class="badge badge-error">FAILED</span>
+        {% else %}<span class="badge">{{ t(request, "monitoring.hardware.smart_unknown") }}</span>{% endif %}
+      </dd>
+      <dt>{{ t(request, "disks.col.model") }}</dt><dd>{{ disk.model or '—' }}{% if disk.kind %} <span class="badge">{{ disk.kind | upper }}</span>{% endif %}</dd>
+      <dt>{{ t(request, "disks.col.serial") }}</dt><dd><code>{{ disk.serial }}</code></dd>
+      <dt>{{ t(request, "disks.firmware") }}</dt><dd>{{ disk.firmware or '—' }}</dd>
+      <dt>{{ t(request, "monitoring.smart.capacity") }}</dt><dd>{{ disk.capacity_bytes | bytes if disk.capacity_bytes else '—' }}{% if disk.rotation_rpm %} · {{ disk.rotation_rpm }} rpm{% endif %}</dd>
+      <dt>{{ t(request, "disks.col.machine") }}</dt>
+      <dd>
+        {% if disk.machine_id and not report %}<a href="/machines/{{ disk.machine_id }}/monitoring">{{ disk.machine_name }}</a>{% else %}{{ disk.machine_name or '—' }}{% endif %}
+        {% if disk.device %}<code>{{ disk.device }}</code>{% endif %}
+        {% if latest.missing %}<span class="badge badge-warn">{{ t(request, "disks.missing") }}</span>{% endif %}
+      </dd>
+      {% if latest.zfs %}
+        <dt>ZFS</dt><dd>{{ latest.zfs.pool }} · {{ latest.zfs.state }}</dd>
+      {% endif %}
+      <dt>{{ t(request, "monitoring.smart.power_on") }}</dt>
+      <dd>{% if latest.power_on_hours is not none %}{{ t(request, "monitoring.smart.hours", hours=latest.power_on_hours | int) }} ({{ t(request, "monitoring.smart.days", days=((latest.power_on_hours // 24) | int)) }}){% else %}—{% endif %}</dd>
+      <dt>{{ t(request, "monitoring.smart.cycles") }}</dt><dd>{{ latest.power_cycles if latest.power_cycles is not none else '—' }}</dd>
+      <dt>{{ t(request, "monitoring.smart.temperature") }}</dt>
+      <dd>
+        {{ latest.temperature_c | chart_value('celsius') if latest.temperature_c is not none else '—' }}
+        {% if temperature_level %}{{ severity_badge(temperature_level) }}{% endif %}
+        <span class="hint">{{ t(request, "disks.temp_limits", kind=t(request, "disks.class." ~ temp_class), warn=temp_thresholds[0], critical=temp_thresholds[1]) }}</span>
+      </dd>
+      <dt>{{ t(request, "disks.written") }}</dt><dd>{{ latest.written_bytes | bytes if latest.written_bytes else '—' }}</dd>
+      <dt>{{ t(request, "disks.read") }}</dt><dd>{{ latest.read_bytes | bytes if latest.read_bytes else '—' }}</dd>
+      <dt>{{ t(request, "disks.first_seen") }}</dt><dd>{{ disk.first_seen_at | local_time }}</dd>
+      <dt>{{ t(request, "disks.col.last_seen") }}</dt><dd>{{ disk.last_seen_at | local_time }}</dd>
+    </dl>
+  </div>
+  {% if prediction.reasons %}
+    <h3>{{ t(request, "disks.why_heading") }}</h3>
+    <ul>
+      {% for reason in prediction.reasons %}<li>{{ reason_text(reason) }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+  <p class="hint">{{ t(request, "disks.prediction_hint") }}</p>
+</section>
+
+{% if latest.counters %}
+  <section class="panel">
+    <h2>{{ t(request, "disks.counters_heading") }}</h2>
+    <table class="data-table">
+      <thead><tr><th>{{ t(request, "disks.counter_name") }}</th><th>{{ t(request, "disks.counter_value") }}</th></tr></thead>
+      <tbody>
+        {% for name, value in latest.counters | dictsort %}
+          <tr><td>{{ t(request, "disks.counter." ~ name) }}</td><td>{{ value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">{{ t(request, "disks.counters_hint") }}</p>
+  </section>
+{% endif %}
+
+<section class="panel">
+  <h2>{{ t(request, "disks.events_heading", count=events | length) }}</h2>
+  {% if events %}
+    <table class="data-table">
+      <thead><tr>
+        <th>{{ t(request, "disks.event_when") }}</th>
+        <th>{{ t(request, "health.panel.severity") }}</th>
+        <th>{{ t(request, "disks.col.machine") }}</th>
+        <th>{{ t(request, "disks.event_what") }}</th>
+      </tr></thead>
+      <tbody>
+        {% for event in events %}
+          <tr>
+            <td>{{ event.occurred_at | local_time }}</td>
+            <td>{{ severity_badge(event.severity) }}</td>
+            <td>{{ event.machine_name or '—' }}</td>
+            <td>{{ event_text(event) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="hint">{{ t(request, "disks.no_events") }}</p>
+  {% endif %}
+</section>
+
+{% if latest.attributes %}
+  <section class="panel">
+    <h2>{{ t(request, "disks.attributes_heading") }}</h2>
+    {% set has_normalized = latest.attributes | selectattr('value', 'number') | list %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          {% if has_normalized %}<th>ID</th>{% endif %}
+          <th>{{ t(request, "monitoring.smart.attr_name") }}</th>
+          {% if has_normalized %}
+            <th>{{ t(request, "monitoring.smart.attr_value") }}</th>
+            <th>{{ t(request, "monitoring.smart.attr_worst") }}</th>
+            <th>{{ t(request, "monitoring.smart.attr_threshold") }}</th>
+          {% endif %}
+          <th>{{ t(request, "monitoring.smart.attr_raw") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in latest.attributes %}
+          <tr>
+            {% if has_normalized %}<td class="table-muted">{{ a.id if a.id is not none else '' }}</td>{% endif %}
+            <td title="{{ a.name }}">{{ smart_attr_label(request, a.name) }}{% if a.failing %} <span class="badge badge-error">!</span>{% endif %}</td>
+            {% if has_normalized %}
+              <td>{{ a.value if a.value is not none else '' }}</td>
+              <td>{{ a.worst if a.worst is not none else '' }}</td>
+              <td>{{ a.threshold if a.threshold is not none else '' }}</td>
+            {% endif %}
+            <td>{{ a.raw }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endif %}

@@ -32,6 +32,7 @@ from app.web.routes import (
     api_v1_backup,
     api_v1_checks,
     api_v1_dashboard,
+    api_v1_disks,
     api_v1_docker,
     api_v1_docker_adopt,
     api_v1_docker_fleet,
@@ -56,6 +57,7 @@ from app.web.routes import (
     check_push,
     checks,
     dashboard,
+    disks,
     docker_fleet,
     docker_fleet_pages,
     docker_hooks,
@@ -299,6 +301,7 @@ def create_app() -> FastAPI:
     app.include_router(machine_groups.router)
     app.include_router(security.router)
     app.include_router(health.router)
+    app.include_router(disks.router)
     app.include_router(search.router)
     # Before `scheduling.router`: its `/scheduling/{task_id}` would
     # otherwise swallow `/scheduling/maintenance`.
@@ -324,6 +327,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_account.router)
     app.include_router(api_v1_checks.router)
     app.include_router(api_v1_health.router)
+    app.include_router(api_v1_disks.router)
     app.include_router(api_v1_machines_live.router)
     app.include_router(api_v1_notifications.router)
     app.include_router(api_v1_search.router)

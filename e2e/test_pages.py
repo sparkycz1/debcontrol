@@ -34,6 +34,7 @@ PAGES = [
     "/dashboard",
     "/machines",
     "/health",
+    "/disks",
     "/machine-groups",
     "/machine-groups/batches",
     "/security/updates",
@@ -214,6 +215,9 @@ def test_docker_tab_loads_without_browser_errors(page: Any) -> None:
 def test_detail_pages_load_without_browser_errors(page: Any) -> None:
     _open(page, _first_href(page, "/checks", "/checks/"))
     _open(page, _first_href(page, "/machine-groups", "/machine-groups/"))
+    disk = _first_href(page, "/disks", "/disks/")
+    _open(page, disk)
+    _open(page, disk + "/report")
     recording = _first_href(page, "/audit/terminal-recordings", "/audit/terminal-recordings/")
     page.expected_noise.append(_XTERM_NOISE)
     _open(page, recording)

@@ -130,6 +130,6 @@ def digest_due(rule: NotificationRule, now: datetime, has_items: bool) -> bool:
     if last is None:
         return True
     if last.tzinfo is None:
-        # Stored naive in UTC, like every other timestamp column.
+        # SQLite (the tests) hands timestamps back without their zone.
         last = last.replace(tzinfo=UTC)
     return last < slot

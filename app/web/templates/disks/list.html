@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "disks/_macros.html" import risk_badge with context %}
+
+{% block title %}{{ t(request, "disks.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "disks.title") }}</h1>
+  </div>
+  <p class="hint">{{ t(request, "disks.intro") }}</p>
+
+  <section class="panel">
+    <div class="stat-grid">
+      <a class="stat-card stat-card-link" href="/disks">
+        <span class="stat-value">{{ counts.values() | sum }}</span>
+        <span class="stat-label">{{ t(request, "disks.all") }}</span>
+      </a>
+      {% for name in ['failing', 'high', 'elevated'] %}
+        <a class="stat-card stat-card-link" href="/disks?risk={{ name }}">
+          <span class="stat-value{% if counts[name] %} health-score-{{ 'critical' if name != 'elevated' else 'warning' }}{% endif %}">{{ counts[name] }}</span>
+          <span class="stat-label">{{ t(request, "disks.risk." ~ name) }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="chart-card chart-card-wide">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "disks.list_heading") }}{% if risk %} — {{ t(request, "disks.risk." ~ risk) }}{% endif %}</h3>
+      </div>
+      <input type="search" class="chart-filter" data-table-filter="disks-table" placeholder="{{ t(request, 'monitoring.filter_placeholder') }}"
+             aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+    </header>
+    {% if disks %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="disks-table">
+          <thead>
+            <tr>
+              <th data-sort="text">{{ t(request, "disks.col.machine") }}</th>
+              <th data-sort="text">{{ t(request, "disks.col.model") }}</th>
+              <th data-sort="text">{{ t(request, "disks.col.serial") }}</th>
+              <th data-sort="number">{{ t(request, "monitoring.smart.capacity") }}</th>
+              <th data-sort="number">{{ t(request, "monitoring.smart.temperature") }}</th>
+              <th data-sort="number">{{ t(request, "disks.col.wear") }}</th>
+              <th data-sort="text">{{ t(request, "disks.col.risk") }}</th>
+              <th data-sort="number">{{ t(request, "disks.col.events") }}</th>
+              <th data-sort="text">{{ t(request, "disks.col.last_seen") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d, latest, prediction in disks %}
+              <tr>
+                <td>
+                  {% if d.machine_id %}<a href="/machines/{{ d.machine_id }}/monitoring">{{ d.machine_name }}</a>{% else %}{{ d.machine_name or '—' }}{% endif %}
+                  {% if d.device %}<code>{{ d.device }}</code>{% endif %}
+                  {% if latest.missing %}<span class="badge badge-warn">{{ t(request, "disks.missing") }}</span>{% endif %}
+                </td>
+                <td class="cell-truncate" title="{{ d.model }}"><a href="/disks/{{ d.id }}">{{ d.model or '—' }}</a>{% if d.kind %} <span class="badge">{{ d.kind | upper }}</span>{% endif %}</td>
+                <td><code>{{ d.serial }}</code></td>
+                <td data-sort-value="{{ d.capacity_bytes or 0 }}">{{ d.capacity_bytes | bytes if d.capacity_bytes else '—' }}</td>
+                <td data-sort-value="{{ latest.temperature_c or 0 }}">{{ latest.temperature_c | chart_value('celsius') if latest.temperature_c is not none else '—' }}</td>
+                <td data-sort-value="{{ latest.wear_percent if latest.wear_percent is not none else -1 }}">{{ (latest.wear_percent | round(0) | int ~ ' %') if latest.wear_percent is not none else '—' }}</td>
+                <td>{{ risk_badge(prediction.risk) }}</td>
+                <td data-sort-value="{{ d.event_count }}">{{ d.event_count }}</td>
+                <td data-sort-value="{{ d.last_seen_at.isoformat() if d.last_seen_at else '' }}">{{ d.last_seen_at | local_time }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="hint chart-empty">{{ t(request, "disks.none") }}</p>
+    {% endif %}
+  </section>
+{% endblock %}

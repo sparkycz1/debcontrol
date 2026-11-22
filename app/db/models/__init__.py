@@ -7,6 +7,7 @@ from app.db.models.ai_usage import AiUsageRecord
 from app.db.models.api_token import ApiToken
 from app.db.models.app_settings import AppSettings, FleetSummaryFrequency
 from app.db.models.audit_log import AuditChainState, AuditLogEntry, AuditOutcome
+from app.db.models.disk import Disk, DiskEvent, DiskSample
 from app.db.models.docker import (
     DockerBackup,
     DockerContainerSetting,
@@ -95,6 +96,9 @@ __all__ = [
     "AuditOutcome",
     "AuthMethod",
     "AuthProvider",
+    "Disk",
+    "DiskEvent",
+    "DiskSample",
     "DockerBackup",
     "DockerContainerSetting",
     "DockerImageFinding",

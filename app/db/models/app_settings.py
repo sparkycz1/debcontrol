@@ -376,6 +376,33 @@ class AppSettings(Base):
     health_disk_full_critical_days: Mapped[int] = mapped_column(
         Integer, default=2, server_default="2", nullable=False
     )
+    # A disk's own temperature (S.M.A.R.T.) by kind — spinning disks run
+    # cooler than SSDs, SSDs cooler than NVMe — and how much of an SSD's
+    # rated endurance is used (`app.services.disk_history`).
+    health_disk_temp_hdd_warn_celsius: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    health_disk_temp_hdd_critical_celsius: Mapped[int] = mapped_column(
+        Integer, default=60, server_default="60", nullable=False
+    )
+    health_disk_temp_ssd_warn_celsius: Mapped[int] = mapped_column(
+        Integer, default=60, server_default="60", nullable=False
+    )
+    health_disk_temp_ssd_critical_celsius: Mapped[int] = mapped_column(
+        Integer, default=70, server_default="70", nullable=False
+    )
+    health_disk_temp_nvme_warn_celsius: Mapped[int] = mapped_column(
+        Integer, default=70, server_default="70", nullable=False
+    )
+    health_disk_temp_nvme_critical_celsius: Mapped[int] = mapped_column(
+        Integer, default=80, server_default="80", nullable=False
+    )
+    health_disk_wear_warn_percent: Mapped[int] = mapped_column(
+        Integer, default=80, server_default="80", nullable=False
+    )
+    health_disk_wear_critical_percent: Mapped[int] = mapped_column(
+        Integer, default=95, server_default="95", nullable=False
+    )
     # Internet round trip (ms, the machine's own ping to
     # `connectivity_internet_target`) from which it is a warning / critical.
     health_latency_warn_ms: Mapped[int] = mapped_column(

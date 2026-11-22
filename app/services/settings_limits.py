@@ -42,6 +42,14 @@ BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "health_disk_full_critical_days": (0, 365),
     "health_latency_warn_ms": (1, 10000),
     "health_latency_critical_ms": (1, 10000),
+    "health_disk_temp_hdd_warn_celsius": (20, 150),
+    "health_disk_temp_hdd_critical_celsius": (20, 150),
+    "health_disk_temp_ssd_warn_celsius": (20, 150),
+    "health_disk_temp_ssd_critical_celsius": (20, 150),
+    "health_disk_temp_nvme_warn_celsius": (20, 150),
+    "health_disk_temp_nvme_critical_celsius": (20, 150),
+    "health_disk_wear_warn_percent": (1, 200),
+    "health_disk_wear_critical_percent": (1, 200),
 }
 
 # (warning, critical) pairs that must stay in order: a percent or a
@@ -55,6 +63,10 @@ HEALTH_THRESHOLD_PAIRS: tuple[tuple[str, str, bool], ...] = (
     ("health_temperature_warn_celsius", "health_temperature_critical_celsius", True),
     ("health_disk_full_warn_days", "health_disk_full_critical_days", False),
     ("health_latency_warn_ms", "health_latency_critical_ms", True),
+    ("health_disk_temp_hdd_warn_celsius", "health_disk_temp_hdd_critical_celsius", True),
+    ("health_disk_temp_ssd_warn_celsius", "health_disk_temp_ssd_critical_celsius", True),
+    ("health_disk_temp_nvme_warn_celsius", "health_disk_temp_nvme_critical_celsius", True),
+    ("health_disk_wear_warn_percent", "health_disk_wear_critical_percent", True),
 )
 
 

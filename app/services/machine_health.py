@@ -45,6 +45,9 @@ from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.notification_rule import NotificationEventType
 from app.db.models.security_audit import SecurityAudit, SecurityAuditStatus
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale, translate
+from app.services import disk_history
+from app.services.disk_history import DEFAULT_THRESHOLDS as DEFAULT_DISK_THRESHOLDS
+from app.services.disk_history import DiskThresholds
 from app.ssh import proxmox
 
 logger = logging.getLogger(__name__)
@@ -118,6 +121,7 @@ class Thresholds:
     disk_full_critical_days: int = 2
     latency_warn: int = 150
     latency_critical: int = 500
+    disks: DiskThresholds = DEFAULT_DISK_THRESHOLDS
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> Thresholds:
@@ -134,6 +138,7 @@ class Thresholds:
             disk_full_critical_days=settings.health_disk_full_critical_days,
             latency_warn=settings.health_latency_warn_ms,
             latency_critical=settings.health_latency_critical_ms,
+            disks=DiskThresholds.from_settings(settings),
         )
 
 
@@ -340,8 +345,34 @@ def _storage(
     return findings
 
 
-def _disks(machine: Machine, newest: MachineMonitoringSample | None) -> list[Finding]:
+def _disks(
+    machine: Machine, newest: MachineMonitoringSample | None, th: Thresholds
+) -> list[Finding]:
     findings: list[Finding] = []
+    for smart in machine.smart_devices or []:
+        if not isinstance(smart, dict):
+            continue
+        name = str(smart.get("device") or "")
+        temp = smart.get("temperature_c")
+        severity = disk_history.temperature_level(smart, th.disks)
+        if severity:
+            findings.append(
+                Finding(f"disks.temperature:{name}", "disks", severity, "disk_temperature",
+                        {"device": name, "value": temp}, "monitoring")
+            )
+        severity = disk_history.wear_level(smart, th.disks)
+        if severity:
+            findings.append(
+                Finding(f"disks.wear:{name}", "disks", severity, "disk_wear",
+                        {"device": name, "value": smart.get("wear_percent")}, "monitoring")
+            )
+        risk = str((smart.get("prediction") or {}).get("risk") or "")
+        if risk in ("elevated", "high"):
+            findings.append(
+                Finding(f"disks.risk:{name}", "disks",
+                        "critical" if risk == "high" else "warning", f"disk_risk_{risk}",
+                        {"device": name}, "monitoring")
+            )
     for disk in (newest.smart_disks or []) if newest else []:
         if isinstance(disk, dict) and disk.get("healthy") is False:
             device = str(disk.get("device") or "")
@@ -503,7 +534,7 @@ def evaluate(
     findings += _cpu(samples, thresholds)
     findings += _memory(newest, thresholds)
     findings += _storage(machine, newest, thresholds)
-    findings += _disks(machine, newest)
+    findings += _disks(machine, newest, thresholds)
     findings += _services(machine)
     findings += _updates(machine)
     findings += _security(machine, audit)

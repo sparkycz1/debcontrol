@@ -232,7 +232,7 @@ def _zfs_number(value: str) -> int | None:
 def parse_zfs_pools(list_section: str, status_section: str) -> list[dict[str, Any]] | None:
     """`zpool list -H -p` rows merged with `zpool status` details:
     `{"name", "size_bytes", "alloc_bytes", "free_bytes", "frag_percent",
-    "cap_percent", "health", "status", "scan", "errors"}`. `status` is
+    "cap_percent", "health", "status", "scan", "errors", "devices"}`. `status` is
     zpool's own explanation of a problem (empty when healthy), `scan` the
     last scrub/resilver line, `errors` its data-error summary. None = no
     ZFS on this machine."""
@@ -258,6 +258,7 @@ def parse_zfs_pools(list_section: str, status_section: str) -> list[dict[str, An
                 "status": extra.get("status", ""),
                 "scan": extra.get("scan", ""),
                 "errors": extra.get("errors", ""),
+                "devices": extra.get("devices", []),
             }
         )
     return pools
@@ -268,13 +269,51 @@ _STATUS_KEY_RE = re.compile(r"^ {0,6}([a-z]+):(?: (.*))?$")
 _KEPT_KEYS = ("status", "scan", "errors")
 
 
-def _parse_zpool_status(raw: str) -> dict[str, dict[str, str]]:
-    """{pool: {"status", "scan", "errors"}} from `zpool status`'s
-    `key: value` header lines. A value continues on following lines that
-    start with a tab — the device tree under `config:` does too, which is
-    why only `status`/`scan` ever take continuations."""
-    pools: dict[str, dict[str, str]] = {}
-    current: dict[str, str] | None = None
+# Rows of the device tree that group disks rather than being one.
+_VDEV_GROUPS = ("mirror", "raidz", "draid", "replacing", "spare", "logs", "cache",
+                "spares", "special", "dedup")
+
+
+def _zpool_count(text: str) -> int | None:
+    """A READ/WRITE/CKSUM column ("0", "12", "1.2K", "3M") as a number."""
+    text = text.strip().upper()
+    multiplier = 1
+    if text[-1:] in ("K", "M", "G"):
+        multiplier = {"K": 1_000, "M": 1_000_000, "G": 1_000_000_000}[text[-1]]
+        text = text[:-1]
+    try:
+        return int(float(text) * multiplier)
+    except ValueError:
+        return None
+
+
+def _zpool_device(line: str, pool: str) -> dict[str, Any] | None:
+    """One disk of the `config:` tree: `{"name", "state", "read", "write",
+    "cksum"}`; None for the header, the pool itself and a vdev group."""
+    fields = line.split()
+    if len(fields) < 5 or fields[0] in ("NAME", pool):
+        return None
+    name = fields[0]
+    if name.split("-", 1)[0] in _VDEV_GROUPS:
+        return None
+    counts = [_zpool_count(f) for f in fields[2:5]]
+    if any(c is None for c in counts):
+        return None
+    return {"name": name, "state": fields[1], "read": counts[0],
+            "write": counts[1], "cksum": counts[2]}
+
+
+def _parse_zpool_status(raw: str) -> dict[str, dict[str, Any]]:
+    """{pool: {"status", "scan", "errors", "devices"}} from `zpool status`'s
+    `key: value` header lines and its `config:` device tree. A value
+    continues on following lines that start with a tab — the device tree
+    does too, which is why only `status`/`scan` ever take continuations.
+    `devices` lists each disk with its state and error counts (the name is
+    whatever the pool was built with: often `/dev/disk/by-id`, which holds
+    the serial number)."""
+    pools: dict[str, dict[str, Any]] = {}
+    current: dict[str, Any] | None = None
+    pool_name = ""
     key: str | None = None
     for line in raw.splitlines():
         match = None if line.startswith("\t") else _STATUS_KEY_RE.match(line)
@@ -282,12 +321,19 @@ def _parse_zpool_status(raw: str) -> dict[str, dict[str, str]]:
             key = match.group(1)
             value = (match.group(2) or "").strip()
             if key == "pool":
-                current = pools.setdefault(value, dict.fromkeys(_KEPT_KEYS, ""))
+                pool_name = value
+                current = pools.setdefault(
+                    value, {**dict.fromkeys(_KEPT_KEYS, ""), "devices": []}
+                )
             elif current is not None and key in _KEPT_KEYS:
                 current[key] = value
             continue
         if current is not None and key in ("status", "scan") and line.startswith("\t"):
             current[key] = f"{current[key]} {line.strip()}".strip()
+        elif current is not None and key == "config" and line.startswith("\t"):
+            device = _zpool_device(line, pool_name)
+            if device is not None:
+                current["devices"].append(device)
     return pools
 
 
