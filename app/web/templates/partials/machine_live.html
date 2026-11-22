@@ -1,0 +1,148 @@
+{#- The Overview's live cards (app.services.live_overview.build_cards),
+    redrawn on every new monitoring sample. The CPU and memory cards open
+    the top processes, the network card the connectivity test (both
+    popovers live in machines/detail.html, outside this panel, so a redraw
+    never closes them). Rings are SVG with r = 15.9155 (circumference 100):
+    the dash length is the percentage as is. -#}
+{% macro ring(percent, level) -%}
+  <svg class="live-ring" viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="live-ring-track" cx="18" cy="18" r="15.9155"></circle>
+    {% if percent is not none %}
+      <circle class="live-ring-value live-{{ level }}" cx="18" cy="18" r="15.9155"
+              stroke-dasharray="{{ '%.1f' % ([[percent, 0] | max, 100] | min) }} 100"></circle>
+    {% endif %}
+  </svg>
+{%- endmacro %}
+{% macro spark(points, level='ok') -%}
+  {% if points %}
+    <svg class="live-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+      <polyline class="live-spark-line live-{{ level }}" points="{{ points }}"></polyline>
+    </svg>
+  {% endif %}
+{%- endmacro %}
+{% macro ms(value) -%}{{ '—' if value is none else ('%.1f ms' % value if value < 100 else '%.0f ms' % value) }}{%- endmacro %}
+
+{% set s = live_settings %}
+<div class="panel-header">
+  <h2>{{ t(request, "live_overview.heading") }}</h2>
+  {% if live.sampled_at %}
+    <span class="hint">{{ t(request, "live_overview.sampled", when=(live.sampled_at | local_time('%H:%M:%S'))) }}</span>
+  {% endif %}
+</div>
+{% if not live.sampled_at %}
+  <p class="hint">{{ t(request, "live_overview.no_sample") }}</p>
+{% else %}
+<div class="live-grid">
+  {# --- CPU --- #}
+  {% set cpu = live.cpu %}
+  {% set cpu_level = level_of(cpu.percent, s.health_cpu_warn_percent, s.health_cpu_critical_percent) %}
+  <button type="button" class="live-card live-card-button" popovertarget="processes-modal"
+          hx-get="/machines/{{ machine.id }}/processes?sort=cpu" hx-target="#processes-panel"
+          title="{{ t(request, 'live_overview.open_processes') }}">
+    <span class="live-card-title">{{ t(request, "live_overview.cpu") }}</span>
+    <span class="live-card-main">
+      {{ ring(cpu.percent, cpu_level) }}
+      <span class="live-card-value">{{ cpu.percent | chart_value('percent') }}</span>
+    </span>
+    <span class="live-card-detail">
+      {% if cpu.user is not none %}
+        {{ t(request, "live_overview.cpu_split", user=(cpu.user | chart_value('percent')), system=(cpu.system | chart_value('percent')), iowait=(cpu.iowait | chart_value('percent'))) }}
+      {% endif %}
+    </span>
+    <span class="live-card-detail">
+      {% if cpu.load[0] is not none %}{{ t(request, "live_overview.load", load1=('%.2f' % cpu.load[0]), load5=('%.2f' % cpu.load[1]), load15=('%.2f' % cpu.load[2])) }}{% endif %}
+      {% if cpu.cores %} · {{ t(request, "live_overview.cores", count=cpu.cores) }}{% endif %}
+    </span>
+    {{ spark(cpu.spark, cpu_level) }}
+  </button>
+
+  {# --- Memory --- #}
+  {% set mem = live.memory %}
+  {% set mem_level = level_of(mem.percent, s.health_memory_warn_percent, s.health_memory_critical_percent) %}
+  <button type="button" class="live-card live-card-button" popovertarget="processes-modal"
+          hx-get="/machines/{{ machine.id }}/processes?sort=memory" hx-target="#processes-panel"
+          title="{{ t(request, 'live_overview.open_processes') }}">
+    <span class="live-card-title">{{ t(request, "live_overview.memory") }}</span>
+    <span class="live-card-main">
+      {{ ring(mem.percent, mem_level) }}
+      <span class="live-card-value">{{ mem.percent | chart_value('percent') }}</span>
+    </span>
+    <span class="live-card-detail">
+      {% if mem.total %}{{ t(request, "live_overview.memory_used", used=(mem.used | bytes), total=(mem.total | bytes)) }}{% endif %}
+    </span>
+    <span class="live-card-detail">
+      {% if mem.cache is not none %}{{ t(request, "live_overview.memory_cache", size=(mem.cache | bytes)) }}{% endif %}
+      {% if mem.arc %} · {{ t(request, "live_overview.memory_arc", size=(mem.arc | bytes)) }}{% endif %}
+    </span>
+    {{ spark(mem.spark, mem_level) }}
+  </button>
+
+  {# --- Storage --- #}
+  {% set st = live.storage %}
+  {% set fullest_percent = st.fullest.use_percent if st.fullest else none %}
+  {% set st_level = level_of(fullest_percent, s.health_disk_warn_percent, s.health_disk_critical_percent) %}
+  <a class="live-card" href="/machines/{{ machine.id }}/monitoring">
+    <span class="live-card-title">{{ t(request, "live_overview.storage") }}</span>
+    <span class="live-card-main">
+      {{ ring(fullest_percent, st_level) }}
+      <span class="live-card-value">{{ fullest_percent | chart_value('percent') }}</span>
+    </span>
+    <span class="live-card-detail">
+      {% if st.fullest %}{{ t(request, "live_overview.storage_fullest", mount=st.fullest.mount, used=(st.fullest.used_bytes | bytes), size=(st.fullest.size_bytes | bytes)) }}{% endif %}
+    </span>
+    <span class="live-card-detail">
+      {% if st.read is not none %}{{ t(request, "live_overview.disk_io", read=(st.read | bytes) ~ '/s', write=(st.write | bytes) ~ '/s') }}{% endif %}
+      {% if st.mounts > 1 %} · {{ t(request, "live_overview.mounts", count=st.mounts) }}{% endif %}
+    </span>
+  </a>
+
+  {# --- Network --- #}
+  {% set net = live.network %}
+  {% set lat = net.internet_latency %}
+  {% set net_level = 'none' %}
+  {% if net.internet_loss is not none and net.internet_loss >= 100 %}{% set net_level = 'critical' %}
+  {% elif lat is not none %}{% set net_level = level_of(lat, s.health_latency_warn_ms, s.health_latency_critical_ms) %}{% endif %}
+  <button type="button" class="live-card live-card-button" popovertarget="connectivity-modal"
+          title="{{ t(request, 'live_overview.open_connectivity') }}">
+    <span class="live-card-title">{{ t(request, "live_overview.network") }}</span>
+    <span class="live-card-main live-card-rates">
+      <span>↓ {{ net.rx | net_rate(request) }}</span>
+      <span>↑ {{ net.tx | net_rate(request) }}</span>
+    </span>
+    <span class="live-card-detail">
+      {% for group in net.links if group.kind != 'virtual' %}
+        <span class="badge {{ 'badge-ok' if group.up == group.total else 'badge-warn' }}">{{ t(request, "network.kind." ~ group.kind) }} {{ group.up }}/{{ group.total }}</span>
+      {% endfor %}
+    </span>
+    <span class="live-card-detail">
+      {% if net.gateway_latency is not none or net.gateway_loss is not none %}
+        {{ t(request, "live_overview.gateway") }}: {% if net.gateway_loss is not none and net.gateway_loss >= 100 %}<span class="live-text-critical">{{ t(request, "live_overview.no_answer") }}</span>{% else %}{{ ms(net.gateway_latency) }}{% endif %}
+      {% endif %}
+      {% if net.internet_latency is not none or net.internet_loss is not none %}
+        · {{ t(request, "live_overview.internet") }}: {% if net.internet_loss is not none and net.internet_loss >= 100 %}<span class="live-text-critical">{{ t(request, "live_overview.no_answer") }}</span>{% else %}<span class="live-text-{{ net_level }}">{{ ms(lat) }}</span>{% if net.internet_loss %} ({{ t(request, "live_overview.loss", percent=(net.internet_loss | round(0) | int)) }}){% endif %}{% endif %}
+      {% endif %}
+    </span>
+    <span class="live-card-detail">
+      {% if net.dns_ok is not none %}DNS: {% if net.dns_ok %}{{ ms(net.dns_ms) }}{% else %}<span class="live-text-warn">{{ t(request, "live_overview.failed") }}</span>{% endif %}{% endif %}
+      {% if net.ntp_synced is not none or net.ntp_offset is not none %}
+        · NTP: {% if net.ntp_synced is sameas false %}<span class="live-text-warn">{{ t(request, "live_overview.not_synced") }}</span>{% elif net.ntp_offset is not none %}{{ '%+.1f ms' % net.ntp_offset }}{% else %}{{ t(request, "live_overview.synced") }}{% endif %}
+      {% endif %}
+    </span>
+    {{ spark(net.spark, net_level if net_level != 'none' else 'ok') }}
+  </button>
+
+  {# --- Temperature (physical machines with sensors) --- #}
+  {% if live.temperature %}
+    {% set temp = live.temperature %}
+    {% set temp_level = level_of(temp.celsius, s.health_temperature_warn_celsius, s.health_temperature_critical_celsius) %}
+    <a class="live-card" href="/machines/{{ machine.id }}/monitoring">
+      <span class="live-card-title">{{ t(request, "live_overview.temperature") }}</span>
+      <span class="live-card-main">
+        <span class="live-card-value live-text-{{ temp_level }}">{{ temp.celsius | chart_value('celsius') }}</span>
+      </span>
+      <span class="live-card-detail">{{ temp.sensor }}</span>
+      {{ spark(temp.spark, temp_level) }}
+    </a>
+  {% endif %}
+</div>
+{% endif %}

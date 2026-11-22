@@ -130,7 +130,12 @@
     }
   }
 
+  // Rung after every monitoring sample — redraws the live cards, but far
+  // too often to be worth a notification.
+  const SILENT_KINDS = new Set(["monitoring"]);
+
   function notifyIfBackgrounded(kind) {
+    if (SILENT_KINDS.has(kind)) return;
     if (!("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     if (!notificationsWanted()) return;

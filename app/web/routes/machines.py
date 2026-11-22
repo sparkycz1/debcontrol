@@ -11,6 +11,8 @@ The routes themselves live in one module per area, each with its own
 - `machines_updates` — the Updates tab: check, preview, run, roll back,
   holds, changelog, run history.
 - `machines_monitoring` — the Monitoring tab and its "Refresh now".
+- `machines_live` — the Overview's live cards, top processes (and
+  signalling one) and the connectivity test.
 - `machines_security` — the Security tab: Lynis security audits.
 - `machines_logs` — the Logs tab, saved log views, the file browser, and
   the Terminal page.
@@ -33,6 +35,7 @@ from app.web.routes import (
     machines_docker_stacks,
     machines_files,
     machines_list,
+    machines_live,
     machines_logs,
     machines_monitoring,
     machines_security,
@@ -47,6 +50,7 @@ router.include_router(machines_detail.router)
 router.include_router(machines_updates.router)
 router.include_router(machines_files.router)
 router.include_router(machines_monitoring.router)
+router.include_router(machines_live.router)
 router.include_router(machines_security.router)
 router.include_router(machines_logs.router)
 router.include_router(machines_docker.router)

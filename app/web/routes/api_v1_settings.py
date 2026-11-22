@@ -9,7 +9,8 @@ What's exposed and why:
   unauthenticated-adjacent on the Settings page to any logged-in user with
   `settings.view`.
 - **Background-check intervals and timeouts, every retention window,
-  monitoring downsampling, the machine health thresholds, the AI token
+  monitoring downsampling, the machine health thresholds, the
+  connectivity checks (on/off, internet target, DNS name), the AI token
   limits and the sign-in policy's
   session lifetime/lockout numbers** — operational facts, not secrets.
   These are also *writable* here (`PATCH /api/v1/settings`,
@@ -91,9 +92,11 @@ from app.services.settings_limits import (
     NEEDS_RESTART_FIELDS,
     RETENTION_FIELDS,
     SIGN_IN_POLICY_FIELDS,
+    TARGET_FIELDS,
     TOKEN_LIMIT_FIELDS,
     threshold_pair_errors,
 )
+from app.ssh import connectivity
 from app.ssh.identity import get_or_create_identity
 
 router = APIRouter(prefix="/api/v1/settings")
@@ -101,7 +104,9 @@ router = APIRouter(prefix="/api/v1/settings")
 _view = Depends(require_api_permission(Permission.SETTINGS_VIEW))
 _manage = Depends(require_api_permission(Permission.SETTINGS_MANAGE))
 
-_WRITABLE_FIELDS = (*BOUNDED_FIELDS, *RETENTION_FIELDS, *TOKEN_LIMIT_FIELDS, *BOOLEAN_FIELDS)
+_WRITABLE_FIELDS = (
+    *BOUNDED_FIELDS, *RETENTION_FIELDS, *TOKEN_LIMIT_FIELDS, *BOOLEAN_FIELDS, *TARGET_FIELDS
+)
 
 
 @router.get("", dependencies=[_view])
@@ -127,8 +132,12 @@ async def get_settings_api(db: AsyncSession = Depends(get_db)) -> dict[str, obje
     }
 
 
-def _validate(field: str, value: object) -> tuple[int | None, str | None]:
+def _validate(field: str, value: object) -> tuple[int | str | None, str | None]:
     """`(value, error)` — the same rules the Settings page applies."""
+    if field in TARGET_FIELDS:
+        if not isinstance(value, str) or not connectivity.valid_target(value):
+            return None, f"{field}: must be a host name or an IP address"
+        return value.strip(), None
     if field in BOOLEAN_FIELDS:
         if not isinstance(value, bool):
             return None, f"{field}: must be true or false"
@@ -165,7 +174,7 @@ async def update_settings_api(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Not a writable setting: {', '.join(unknown)}",
         )
-    validated: dict[str, int | None] = {}
+    validated: dict[str, int | str | None] = {}
     errors: list[str] = []
     for field, raw in changes.items():
         value, error = _validate(field, raw)
@@ -198,7 +207,7 @@ async def update_settings_api(
 
     # One audit entry per Settings form touched, under that form's own
     # action code.
-    by_action: dict[str, dict[str, int | None]] = {}
+    by_action: dict[str, dict[str, int | str | None]] = {}
     for field, value in changed.items():
         by_action.setdefault(AUDIT_ACTION_BY_FIELD[field], {})[field] = value
     for action, details in by_action.items():

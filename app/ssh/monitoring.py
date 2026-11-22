@@ -25,7 +25,9 @@ import shlex
 from typing import Any, NotRequired, TypedDict
 
 from app.db.models.machine import Machine
+from app.ssh import connectivity as connectivity_probe
 from app.ssh import proxmox
+from app.ssh.connectivity import Connectivity
 from app.ssh.pool import machine_connection
 from app.ssh.shell import with_root_shim
 
@@ -34,12 +36,14 @@ _SECTION_MARKERS = (
     "LOAD",
     "RAM_KB",
     "NET",
+    "NETLINKS",
     "DISKIO",
     "FILESYSTEMS",
     "FAILED_SERVICES",
     "DOCKER",
     "ZFS_ARC",
     *proxmox.LIVE_MARKERS,
+    "CONNECTIVITY",
 )
 
 # Appended to MONITORING_COMMAND only for a machine with `is_physical`
@@ -193,7 +197,10 @@ MONITORING_COMMAND = (
     "t1 = u1+n1+s1+i1+w1+irq1+sirq1; t2 = u2+n2+s2+i2+w2+irq2+sirq2; "
     "idle1 = i1+w1; idle2 = i2+w2; "
     "td = t2-t1; idled = idle2-idle1; "
-    "if (td > 0) printf \"%.1f\\n\", (td-idled)*100/td; "
+    # Busy total, then its user (incl. nice), system (incl. IRQ) and
+    # I/O-wait shares — all percent of the whole second.
+    "if (td > 0) printf \"%.1f %.1f %.1f %.1f\\n\", (td-idled)*100/td, "
+    "(u2+n2-u1-n1)*100/td, (s2+irq2+sirq2-s1-irq1-sirq1)*100/td, (w2-w1)*100/td; "
     "}'; "
     "} 2>/dev/null; "
     "echo ===LOAD===; "
@@ -210,8 +217,27 @@ MONITORING_COMMAND = (
     "echo ===ZFS_ARC===; "
     "awk '$1 == \"size\" {print $3; exit}' /proc/spl/kstat/zfs/arcstats 2>/dev/null; "
     "echo ===NET===; "
-    "awk 'NR>2 {gsub(\":\", \"\", $1); if ($1 != \"lo\") print $1, $2, $10}' "
+    # rx/tx bytes, then rx errors, rx drops, tx errors, tx drops. The
+    # colon is spaced out first: a busy counter can run into the name.
+    "awk 'NR>2 {sub(\":\", \" \"); if ($1 != \"lo\") "
+    "print $1, $2, $10, $4, $5, $12, $13}' "
     "/proc/net/dev 2>/dev/null; "
+    # One line per interface: name, kind, state, speed (Mbit/s), the
+    # bridge/bond it belongs to, MTU. Kinds from sysfs: a `bridge`/`bonding`
+    # directory, DEVTYPE=vlan, a backing device (a real card), else virtual
+    # (veth, tap, tun, WireGuard...).
+    "echo ===NETLINKS===; "
+    "for i in /sys/class/net/*; do n=\"${i##*/}\"; [ \"$n\" = lo ] && continue; "
+    "[ -e \"$i/operstate\" ] || continue; k=virtual; "
+    "if [ -d \"$i/bridge\" ]; then k=bridge; elif [ -d \"$i/bonding\" ]; then k=bond; "
+    "elif grep -q '^DEVTYPE=vlan' \"$i/uevent\" 2>/dev/null; then k=vlan; "
+    "elif [ -d \"$i/wireless\" ] || [ -d \"$i/phy80211\" ]; then k=wireless; "
+    "elif [ -e \"$i/device\" ]; then k=physical; fi; "
+    "m=; [ -L \"$i/master\" ] && m=\"$(basename \"$(readlink \"$i/master\")\")\"; "
+    "printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"$n\" \"$k\" "
+    "\"$(cat \"$i/operstate\" 2>/dev/null)\" \"$(cat \"$i/speed\" 2>/dev/null)\" \"$m\" "
+    "\"$(cat \"$i/mtu\" 2>/dev/null)\"; "
+    "done; "
     "echo ===DISKIO===; "
     "disks=\"$(lsblk -d -n -o NAME 2>/dev/null)\"; "
     "awk -v disks=\"$disks\" 'BEGIN { n = split(disks, arr, \" \"); "
@@ -233,6 +259,10 @@ MONITORING_COMMAND = (
 
 class MonitoringSample(TypedDict):
     cpu_percent: float | None
+    # Its user (with nice), system (with IRQ) and I/O-wait parts.
+    cpu_user_percent: NotRequired[float | None]
+    cpu_system_percent: NotRequired[float | None]
+    cpu_iowait_percent: NotRequired[float | None]
     # 1/5/15-minute load averages (`/proc/loadavg`).
     load1: float | None
     load5: float | None
@@ -254,6 +284,12 @@ class MonitoringSample(TypedDict):
     # Each {"device": ..., "read_bytes": ..., "write_bytes": ...} —
     # cumulative counters since boot, one entry per whole disk found.
     disk_io: list[dict[str, Any]]
+    # Each {"name", "kind" (physical/wireless/bridge/bond/vlan/virtual),
+    # "state" (up/down/...), "speed_mbps", "master", "mtu"} — see NETLINKS.
+    network_links: NotRequired[list[dict[str, Any]]]
+    # From the machine's own point of view (app.ssh.connectivity); None
+    # when the probe is off or didn't run.
+    connectivity: NotRequired[Connectivity | None]
     # Each {"mount", "size_bytes", "used_bytes", "avail_bytes", "use_percent"}.
     filesystems: list[dict[str, Any]]
     # None = couldn't tell (no systemd), not "zero failed".
@@ -329,7 +365,11 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         _split_sections(raw, _HARDWARE_SECTION_MARKERS) if is_physical else {}
     )
 
-    cpu_percent = _parse_float(sections.get("CPU", ""))
+    cpu_fields = [_parse_float(f) for f in sections.get("CPU", "").split()]
+    cpu_percent = cpu_fields[0] if cpu_fields else None
+    cpu_user = cpu_system = cpu_iowait = None
+    if len(cpu_fields) == 4:
+        cpu_user, cpu_system, cpu_iowait = cpu_fields[1:]
 
     load1 = load5 = load15 = None
     load_fields = sections.get("LOAD", "").split()
@@ -356,10 +396,18 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     network_io: list[dict[str, Any]] = []
     for line in sections.get("NET", "").splitlines():
         fields = line.split()
-        if len(fields) == 3 and fields[1].isdecimal() and fields[2].isdecimal():
-            network_io.append(
-                {"iface": fields[0], "rx_bytes": int(fields[1]), "tx_bytes": int(fields[2])}
-            )
+        if len(fields) in (3, 7) and all(f.isdecimal() for f in fields[1:]):
+            entry: dict[str, Any] = {
+                "iface": fields[0], "rx_bytes": int(fields[1]), "tx_bytes": int(fields[2])
+            }
+            if len(fields) == 7:
+                entry.update(
+                    rx_errors=int(fields[3]),
+                    rx_dropped=int(fields[4]),
+                    tx_errors=int(fields[5]),
+                    tx_dropped=int(fields[6]),
+                )
+            network_io.append(entry)
 
     disk_io: list[dict[str, Any]] = []
     for line in sections.get("DISKIO", "").splitlines():
@@ -415,8 +463,16 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     gpu_powers = [g["power_watts"] for g in gpus if g["power_watts"] is not None]
     gpu_power_watts = round(sum(gpu_powers), 2) if gpu_powers else sensor_gpu_power_watts
 
+    connectivity_text = sections.get("CONNECTIVITY")
     return MonitoringSample(
         cpu_percent=cpu_percent,
+        cpu_user_percent=cpu_user,
+        cpu_system_percent=cpu_system,
+        cpu_iowait_percent=cpu_iowait,
+        network_links=parse_network_links(sections.get("NETLINKS", "")),
+        connectivity=(
+            connectivity_probe.parse(connectivity_text) if connectivity_text is not None else None
+        ),
         load1=load1,
         load5=load5,
         load15=load15,
@@ -445,6 +501,31 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         gpus=gpus,
         gpu_power_watts=gpu_power_watts,
     )
+
+
+LINK_KINDS = ("physical", "wireless", "bridge", "bond", "vlan", "virtual")
+
+
+def parse_network_links(raw: str) -> list[dict[str, Any]]:
+    """The NETLINKS section: one dict per interface, sorted by name."""
+    links: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 6 or not fields[0].strip():
+            continue
+        name, kind, state, speed, master, mtu = (f.strip() for f in fields)
+        links.append(
+            {
+                "name": name,
+                "kind": kind if kind in LINK_KINDS else "virtual",
+                "state": state.lower() or "unknown",
+                # -1 (or nothing) when the driver doesn't know, e.g. no cable.
+                "speed_mbps": int(speed) if speed.isdecimal() and int(speed) > 0 else None,
+                "master": master or None,
+                "mtu": int(mtu) if mtu.isdecimal() else None,
+            }
+        )
+    return sorted(links, key=lambda link: link["name"])
 
 
 # Chip-name prefixes lm-sensors uses for the kernel drivers that expose a
@@ -878,16 +959,37 @@ def _parse_docker_events(raw: str | None) -> tuple[int | None, list[dict[str, An
     return clock, events
 
 
+def connectivity_wrapped(command: str, internet_target: str, dns_name: str) -> str:
+    """`command` with the connectivity probe running in the background
+    alongside it (it mostly waits on the network, as the CPU probe waits on
+    its `sleep`), its output collected at the end as the CONNECTIVITY
+    section."""
+    probe = connectivity_probe.command(internet_target, dns_name)
+    return (
+        'DC_CT="$(mktemp 2>/dev/null)"; '
+        f'if [ -n "$DC_CT" ]; then ( {probe} ) > "$DC_CT" 2>/dev/null & fi; '
+        f"{command}; "
+        'echo ===CONNECTIVITY===; if [ -n "$DC_CT" ]; then wait; cat "$DC_CT"; rm -f "$DC_CT"; fi'
+    )
+
+
 async def gather_monitoring_sample(
-    machine: Machine, secret: str | None, timeout_seconds: int
+    machine: Machine,
+    secret: str | None,
+    timeout_seconds: int,
+    *,
+    connectivity: tuple[str, str] | None = None,
 ) -> MonitoringSample:
     """Connect to a machine and take one monitoring sample — plus, only
     when `machine.is_physical`, hardware sensors/fans/S.M.A.R.T./power/GPUs
     (see _HARDWARE_COMMAND). Requires a pinned host key. Container events
     are read from where the previous sample's left off
-    (`Machine.docker_events_since`)."""
+    (`Machine.docker_events_since`). `connectivity` is the internet target
+    and DNS name for the connectivity probe (None = probe off)."""
     is_physical = bool(machine.is_physical)
     command = f"{MONITORING_COMMAND}; {_HARDWARE_COMMAND}" if is_physical else MONITORING_COMMAND
+    if connectivity is not None:
+        command = connectivity_wrapped(command, *connectivity)
     if machine.docker_events_since is not None:
         command = f"DC_EVENTS_SINCE={int(machine.docker_events_since)}; {command}"
     async with machine_connection(machine, secret, timeout_seconds) as conn:

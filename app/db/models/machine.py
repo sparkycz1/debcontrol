@@ -170,6 +170,12 @@ class Machine(Base):
     # and IPv4 addresses per network interface (via `ip addr`).
     filesystems: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     network_interfaces: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Every interface with its kind (physical, wireless, bridge, bond,
+    # vlan, virtual), state, speed, MTU and the bridge/bond it belongs to —
+    # from the latest monitoring sample (app.ssh.monitoring, NETLINKS).
+    network_links: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # The IPv4 default gateway the latest connectivity probe pinged.
+    default_gateway: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Listening TCP `address:port`s, local admin accounts and local login
     # accounts (see app.ssh.facts) — refreshed with the facts and compared
     # against the previous refresh by app.services.config_drift.

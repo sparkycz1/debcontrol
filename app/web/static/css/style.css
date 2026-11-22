@@ -3221,7 +3221,7 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .ai-ask-form .hint { margin: 0; }
 .ai-ask-form .button { align-self: flex-end; }
 
-/* Machine health (app.services.machine_health): the ten categories as a
+/* Machine health (app.services.machine_health): the eleven categories as a
    row of small tiles, each edged in its status color. */
 .health-categories {
   display: grid;
@@ -3250,3 +3250,77 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .health-score-ok { color: var(--color-ok); }
 .health-score-warning { color: var(--color-warn); }
 .health-score-critical { color: var(--color-danger); }
+
+/* --- Machine Overview: live cards, top processes, connectivity test
+   (partials/machine_live.html, machine_processes.html) --- */
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.live-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  transition: border-color var(--transition-fast);
+}
+.live-card-button { cursor: pointer; }
+.live-card:hover { border-color: var(--color-accent); }
+.live-card:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.live-card-title { color: var(--color-muted); font-size: 0.82rem; font-weight: 600; }
+.live-card-main { display: flex; align-items: center; gap: var(--space-3); }
+.live-card-value { font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+.live-card-rates { flex-direction: column; align-items: flex-start; gap: 0; font-weight: 600; }
+.live-card-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+  align-items: center;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  min-height: 1.1em;
+}
+.live-ring { width: 46px; height: 46px; flex-shrink: 0; transform: rotate(-90deg); }
+.live-ring-track { fill: none; stroke: var(--color-border); stroke-width: 3.5; }
+.live-ring-value { fill: none; stroke: var(--color-ok); stroke-width: 3.5; stroke-linecap: round; }
+.live-ring-value.live-warn { stroke: var(--color-warn); }
+.live-ring-value.live-critical { stroke: var(--color-danger); }
+.live-spark { width: 100%; height: 28px; margin-top: var(--space-1); }
+.live-spark-line {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.live-spark-line.live-warn { stroke: var(--color-warn); }
+.live-spark-line.live-critical { stroke: var(--color-danger); }
+.live-text-warn { color: var(--color-warn); }
+.live-text-critical { color: var(--color-danger); }
+.live-text-ok, .live-text-none { color: inherit; }
+.modal-dialog-wide { width: min(1100px, 96vw); }
+.tab-switch { display: inline-flex; gap: var(--space-1); }
+.button-small { padding: 0.25rem 0.7rem; font-size: 0.85rem; }
+.data-table td.num, .data-table th.num { text-align: right; white-space: nowrap; }
+.process-command {
+  max-width: 48ch;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+.process-signals { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }
+.data-table-compact td, .data-table-compact th { padding: 0.35rem 0.5rem; }
+
+/* --- Monitoring: network interfaces (machines/monitoring.html) --- */
+.netif-group { margin-top: var(--space-3); }
+.netif-group summary { cursor: pointer; font-weight: 600; }
+.netif-down { color: var(--color-muted); }
+#processes-modal { max-width: min(96vw, 1100px); }

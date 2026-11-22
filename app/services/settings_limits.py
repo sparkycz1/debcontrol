@@ -40,6 +40,8 @@ BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "health_temperature_critical_celsius": (20, 150),
     "health_disk_full_warn_days": (1, 365),
     "health_disk_full_critical_days": (0, 365),
+    "health_latency_warn_ms": (1, 10000),
+    "health_latency_critical_ms": (1, 10000),
 }
 
 # (warning, critical) pairs that must stay in order: a percent or a
@@ -52,6 +54,7 @@ HEALTH_THRESHOLD_PAIRS: tuple[tuple[str, str, bool], ...] = (
     ("health_disk_warn_percent", "health_disk_critical_percent", True),
     ("health_temperature_warn_celsius", "health_temperature_critical_celsius", True),
     ("health_disk_full_warn_days", "health_disk_full_critical_days", False),
+    ("health_latency_warn_ms", "health_latency_critical_ms", True),
 )
 
 
@@ -91,6 +94,15 @@ SIGN_IN_POLICY_FIELDS: frozenset[str] = frozenset(
 BOOLEAN_FIELDS: tuple[str, ...] = (
     # Endpoint checks for container web links (app.services.docker_endpoint_checks).
     "docker_endpoint_checks",
+    # Connectivity from the machines (app.ssh.connectivity).
+    "connectivity_checks_enabled",
+)
+
+# A host name or IP address the machines ping or resolve
+# (`app.ssh.connectivity.valid_target`).
+TARGET_FIELDS: tuple[str, ...] = (
+    "connectivity_internet_target",
+    "connectivity_dns_name",
 )
 
 # A whole number of days >= 0, or `None` for "keep forever"/"disabled".
@@ -123,6 +135,9 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "notification_condition_check_interval_seconds": "settings.background_checks.update",
     "docker_image_check_interval_hours": "settings.background_checks.update",
     "docker_endpoint_checks": "settings.background_checks.update",
+    "connectivity_checks_enabled": "settings.background_checks.update",
+    "connectivity_internet_target": "settings.background_checks.update",
+    "connectivity_dns_name": "settings.background_checks.update",
     "audit_log_retention_days": "settings.audit_retention.update",
     "dashboard_trends_retention_days": "settings.dashboard_trends_retention.update",
     "machine_update_run_retention_days": "settings.machine_update_run_retention.update",

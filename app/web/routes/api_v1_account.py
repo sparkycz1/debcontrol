@@ -4,7 +4,8 @@ API-token equivalent of `/account/...` in `app/web/routes/auth.py`.
 Needs only a valid API token, no particular `Permission` — same as the web
 routes it mirrors: a locale, a saved machine-list view, or a display name
 is data about a specific account, not something an admin's role-permission
-matrix gates. Covers the UI language (`app.i18n`) and saved machine-list
+matrix gates. Covers the UI language (`app.i18n`), network rate units
+(`app.services.network_units`) and saved machine-list
 views (`app.services.saved_views`); other self-service actions (display
 name, password, TOTP, WebAuthn/passkeys, sessions, API tokens themselves)
 stay web-UI-only for now — see `api_v1.py`'s module docstring for the
@@ -34,7 +35,7 @@ from app.db.models.saved_machine_view import SavedMachineView
 from app.db.models.user import User
 from app.db.session import get_db
 from app.i18n import Locale, available_locales, get_locale
-from app.services import dashboard_layout
+from app.services import dashboard_layout, network_units
 from app.services.saved_audit_views import (
     DuplicateViewNameError as DuplicateAuditViewNameError,
 )
@@ -94,6 +95,7 @@ async def get_account_api(user: User = Depends(get_api_token_user)) -> dict[str,
         # Read-only here: changing what the AI assistant may run is
         # web-only, like the assistant itself (see app/web/routes/ai.py).
         "ai_command_mode": user.ai_mode.value,
+        "network_units": network_units.of(user),
     }
 
 
@@ -126,6 +128,35 @@ async def update_own_locale_api(
         target_label=account.username,
     )
     return {"locale": resolved.code}
+
+
+class _NetworkUnitsUpdate(BaseModel):
+    units: str = Field(pattern="^(bytes|bits)$")
+
+
+@router.post("/account/network-units")
+async def update_own_network_units_api(
+    request: Request,
+    payload: _NetworkUnitsUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The API equivalent of `POST /account/network-units`: `bytes` or
+    `bits` per second, for this account's charts and cards only."""
+    account = await db.get(User, user.id)
+    assert account is not None
+    account.network_units = network_units.normalize(payload.units)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="user.account.update",
+        summary=f'"{account.username}" shows network rates in {account.network_units}',
+        target_type="user",
+        target_id=account.id,
+        target_label=account.username,
+    )
+    return {"network_units": account.network_units}
 
 
 def _saved_view_to_dict(view: SavedMachineView) -> dict[str, object]:

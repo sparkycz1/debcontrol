@@ -21,7 +21,7 @@ from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import monitoring_history
+from app.services import live_overview, monitoring_history
 from app.services.notifications import condition_thresholds_for_machine
 from app.tasks import jobs as tasks
 from app.web.messages import LocalizedText
@@ -75,6 +75,11 @@ async def machine_monitoring(
     ]
     last_checked_at = max(candidates) if candidates else None
 
+    recent = await live_overview.load_recent(db, machine_id)
+    interfaces = live_overview.interface_table(
+        machine, recent[0] if recent else None, recent[1] if len(recent) > 1 else None
+    )
+
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -91,6 +96,8 @@ async def machine_monitoring(
             "range_key": range_key,
             "window": window,
             "window_query": window_query(window),
+            # Every interface by kind, with rates and errors (V7).
+            "interfaces": interfaces,
             "service_counts": await _get_service_counts(machine_id, db),
             "services": await _get_services(machine_id, db, svc_q="", svc_state=""),
             # A configured condition-based notification's own trigger

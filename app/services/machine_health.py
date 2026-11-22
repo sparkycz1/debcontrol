@@ -1,5 +1,5 @@
 """Machine health: one verdict per machine — OK, info, warning or critical —
-from the readings debcontrol already collects, split into ten categories,
+from the readings debcontrol already collects, split into eleven categories,
 each problem with a stable key so it can be snoozed on its own.
 
 How it fits together:
@@ -59,6 +59,7 @@ _RANK: dict[str, int] = {"ok": 0, "info": 1, "warning": 2, "critical": 3}
 # In the order they are shown.
 CATEGORIES: tuple[str, ...] = (
     "connection",
+    "network",
     "cpu",
     "memory",
     "storage",
@@ -73,6 +74,11 @@ CATEGORIES: tuple[str, ...] = (
 # How many of the newest samples CPU use is averaged over, so one busy
 # minute does not turn a machine yellow.
 CPU_SAMPLES = 3
+# A clock further off than this (ms) is a warning — TLS, Kerberos, TOTP
+# and log correlation start to break well before a minute.
+NTP_OFFSET_WARN_MS = 1000
+# Internet packet loss (percent) from which it is a warning.
+PACKET_LOSS_WARN_PERCENT = 20
 # A failed backup task older than this is history, not a problem now.
 BACKUP_FAILURE_DAYS = 2
 # A guest's newest backup older than this many days is a warning.
@@ -110,6 +116,8 @@ class Thresholds:
     temperature_critical: int = 90
     disk_full_warn_days: int = 7
     disk_full_critical_days: int = 2
+    latency_warn: int = 150
+    latency_critical: int = 500
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> Thresholds:
@@ -124,6 +132,8 @@ class Thresholds:
             temperature_critical=settings.health_temperature_critical_celsius,
             disk_full_warn_days=settings.health_disk_full_warn_days,
             disk_full_critical_days=settings.health_disk_full_critical_days,
+            latency_warn=settings.health_latency_warn_ms,
+            latency_critical=settings.health_latency_critical_ms,
         )
 
 
@@ -202,6 +212,72 @@ def _cpu(samples: Sequence[MachineMonitoringSample], th: Thresholds) -> list[Fin
             findings.append(
                 Finding("cpu.temperature", "cpu", severity, "temperature_high",
                         {"celsius": round(hottest[0]), "sensor": hottest[1]}, "monitoring")
+            )
+    return findings
+
+
+def _network(
+    machine: Machine, samples: Sequence[MachineMonitoringSample], th: Thresholds
+) -> list[Finding]:
+    """Connectivity seen from the machine (app.ssh.connectivity) and bond
+    ports. A failure counts once it shows in the two newest samples (one
+    lost round of pings is not an outage); latency is averaged like CPU."""
+    findings: list[Finding] = []
+    recent = list(samples[:2])
+
+    def persistent(check: Any) -> bool:
+        return bool(recent) and all(check(s) for s in recent)
+
+    gateway_down = persistent(lambda s: (s.gateway_loss_percent or 0) >= 100)
+    if gateway_down:
+        findings.append(
+            Finding("network.gateway", "network", "warning", "gateway_unreachable",
+                    {"gateway": machine.default_gateway or "?"}, "monitoring")
+        )
+    if persistent(lambda s: (s.internet_loss_percent or 0) >= 100):
+        if not gateway_down:
+            findings.append(Finding("network.internet", "network", "warning",
+                                    "internet_unreachable", {}, "monitoring"))
+    else:
+        newest = samples[0] if samples else None
+        loss = newest.internet_loss_percent if newest else None
+        if loss is not None and loss >= PACKET_LOSS_WARN_PERCENT:
+            findings.append(
+                Finding("network.packet_loss", "network", "warning", "internet_packet_loss",
+                        {"percent": round(loss)}, "monitoring")
+            )
+        values = [
+            s.internet_latency_ms for s in samples[:CPU_SAMPLES]
+            if s.internet_latency_ms is not None
+        ]
+        if values:
+            average = sum(values) / len(values)
+            severity = _level(average, th.latency_warn, th.latency_critical)
+            if severity:
+                findings.append(
+                    Finding("network.latency", "network", severity, "internet_latency_high",
+                            {"ms": round(average)}, "monitoring")
+                )
+    if persistent(lambda s: s.dns_ok is False):
+        findings.append(Finding("network.dns", "network", "warning", "dns_failing",
+                                {}, "monitoring"))
+    if persistent(lambda s: s.ntp_synced is False):
+        findings.append(Finding("network.ntp", "network", "warning", "ntp_unsynced",
+                                {}, "monitoring"))
+    else:
+        offset = samples[0].ntp_offset_ms if samples else None
+        if offset is not None and abs(offset) >= NTP_OFFSET_WARN_MS:
+            findings.append(
+                Finding("network.ntp", "network", "warning", "ntp_offset",
+                        {"ms": round(offset)}, "monitoring")
+            )
+    links = {str(link.get("name")): link for link in machine.network_links or []}
+    for name, link in sorted(links.items()):
+        master = links.get(str(link.get("master") or ""))
+        if master and master.get("kind") == "bond" and link.get("state") == "down":
+            findings.append(
+                Finding(f"network.bond_port:{name}", "network", "warning", "bond_port_down",
+                        {"name": name, "bond": master.get("name")}, "monitoring")
             )
     return findings
 
@@ -423,6 +499,7 @@ def evaluate(
     if machine.host_key_changed_fingerprint:
         findings.append(Finding("connection.host_key", "connection", "critical",
                                 "host_key_changed", {}, None))
+    findings += _network(machine, samples, thresholds)
     findings += _cpu(samples, thresholds)
     findings += _memory(newest, thresholds)
     findings += _storage(machine, newest, thresholds)

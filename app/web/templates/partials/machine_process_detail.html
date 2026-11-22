@@ -1,0 +1,57 @@
+{#- One process (app.ssh.processes.parse_detail), in the processes popover.
+    The signal form carries the start time it was read with, so only this
+    very process can be hit (a reused PID is refused on the machine). -#}
+<div class="panel-header">
+  <button type="button" class="button button-secondary button-small"
+          hx-get="/machines/{{ machine.id }}/processes" hx-target="#processes-panel">← {{ t(request, "processes.back") }}</button>
+</div>
+{% if not answer.ok %}
+  <div class="alert alert-error"><p>{{ answer.error }}</p></div>
+{% elif not process %}
+  <p class="hint">{{ t(request, "processes.gone", pid=pid) }}</p>
+{% else %}
+  <h3>{{ process.name }} <span class="hint">PID {{ process.pid }}</span></h3>
+  <dl class="detail-list">
+    <dt>{{ t(request, "processes.user") }}</dt><dd>{{ process.user or '—' }}{% if process.uid is not none %} <span class="hint">(UID {{ process.uid }})</span>{% endif %}</dd>
+    <dt>{{ t(request, "processes.state") }}</dt><dd>{{ process.state or '—' }}</dd>
+    <dt>{{ t(request, "processes.parent") }}</dt>
+    <dd>{% if process.ppid %}<button type="button" class="link-button" hx-get="/machines/{{ machine.id }}/processes/{{ process.ppid }}" hx-target="#processes-panel">{{ process.ppid }}</button>{% else %}—{% endif %}</dd>
+    <dt>{{ t(request, "processes.started") }}</dt>
+    <dd>{% if process.started_at %}{{ process.started_at | from_epoch | local_time('%Y-%m-%d %H:%M:%S') }}{% else %}—{% endif %}{% if process.elapsed_seconds is not none %} <span class="hint">({{ process.elapsed_seconds | short_duration }})</span>{% endif %}</dd>
+    <dt>{{ t(request, "processes.cpu_time") }}</dt><dd>{{ process.cpu_seconds | short_duration if process.cpu_seconds is not none else '—' }}</dd>
+    <dt>{{ t(request, "processes.memory") }}</dt><dd>{{ process.memory_bytes | bytes }}{% if process.swap_bytes %} · {{ t(request, "processes.swap", size=(process.swap_bytes | bytes)) }}{% endif %}</dd>
+    <dt>{{ t(request, "processes.threads") }}</dt><dd>{{ process.threads or '—' }}</dd>
+    {% if process.owner %}
+      <dt>{{ t(request, "processes.belongs_to") }}</dt>
+      <dd>
+        {% if process.owner.kind == 'service' %}
+          {{ t(request, "processes.owner_service", name=process.owner.id) }}
+        {% elif process.owner.kind == 'container' %}
+          {% set container_name = containers.get(process.owner.id) %}
+          {% if container_name %}<a href="/machines/{{ machine.id }}/docker">{{ t(request, "processes.owner_container", name=container_name) }}</a>{% else %}{{ t(request, "processes.owner_container", name=process.owner.id) }}{% endif %}
+        {% elif process.owner.kind == 'lxc' %}
+          <a href="/machines/{{ machine.id }}/proxmox">{{ t(request, "processes.owner_lxc", vmid=process.owner.id) }}</a>
+        {% endif %}
+      </dd>
+    {% endif %}
+    {% if show_args %}
+      <dt>{{ t(request, "processes.command") }}</dt><dd><code class="process-command">{{ process.args or ('[' ~ process.name ~ ']') }}</code></dd>
+    {% endif %}
+  </dl>
+  {% if can_signal and process.start_ticks is not none and process.pid > 1 %}
+    <div class="process-signals" id="process-signal-result">
+      {% for sig in ('TERM', 'KILL') %}
+        <form class="inline-form" hx-post="/machines/{{ machine.id }}/processes/{{ process.pid }}/signal"
+              hx-target="#process-signal-result" hx-swap="innerHTML"
+              hx-confirm="{{ t(request, 'processes.signal_confirm_' ~ sig | lower, name=process.name, pid=process.pid) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="start_ticks" value="{{ process.start_ticks }}">
+          <input type="hidden" name="signal" value="{{ sig }}">
+          <input type="hidden" name="name" value="{{ process.name }}">
+          <button type="submit" class="button {{ 'button-secondary' if sig == 'TERM' else 'button-danger' }}">{{ t(request, "processes.signal_" ~ sig | lower) }}</button>
+        </form>
+      {% endfor %}
+      <p class="hint">{{ t(request, "processes.signal_hint") }}</p>
+    </div>
+  {% endif %}
+{% endif %}

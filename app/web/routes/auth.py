@@ -75,6 +75,7 @@ from app.db.models.webauthn_credential import WebAuthnCredential
 from app.db.session import get_db
 from app.i18n import available_locales, get_locale
 from app.schemas.user import MIN_PASSWORD_LENGTH, normalize_email
+from app.services import network_units
 from app.services.access_scope import groups_visible_to
 from app.web.redirects import safe_local_path
 from app.web.templating import t, templates
@@ -918,6 +919,31 @@ async def update_locale(
         request=request,
         action="user.account.update",
         summary=f'"{user.username}" changed their language to "{resolved.label}"',
+        target_type="user",
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return RedirectResponse(url="/account", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/account/network-units", dependencies=[Depends(verify_csrf)])
+async def update_network_units(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    units: str = Form(...),
+) -> Response:
+    """Network rates in bytes or bits per second — this account only
+    (`app.services.network_units`). Anything else means bytes."""
+    user = await db.get(User, current_user.id)
+    assert user is not None
+    user.network_units = network_units.normalize(units)
+    await db.commit()
+    await log_event(
+        db,
+        request=request,
+        action="user.account.update",
+        summary=f'"{user.username}" shows network rates in {user.network_units}',
         target_type="user",
         target_id=user.id,
         target_label=user.username,

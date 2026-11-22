@@ -1,0 +1,60 @@
+{#- The top processes (app.ssh.processes), the processes popover's body.
+    The wrapper asks again every few seconds while it is in the page;
+    closing the popover removes it (static/js/live-overview.js). Names and
+    command lines come from the machine: autoescaped like any text. -#}
+<div hx-get="/machines/{{ machine.id }}/processes?sort={{ sort }}"
+     hx-trigger="every {{ refresh_seconds }}s" hx-target="#processes-panel" hx-swap="innerHTML">
+  <div class="panel-header">
+    <div class="tab-switch">
+      <button type="button" class="button button-small {{ '' if sort == 'cpu' else 'button-secondary' }}"
+              hx-get="/machines/{{ machine.id }}/processes?sort=cpu" hx-target="#processes-panel">{{ t(request, "processes.by_cpu") }}</button>
+      <button type="button" class="button button-small {{ '' if sort == 'memory' else 'button-secondary' }}"
+              hx-get="/machines/{{ machine.id }}/processes?sort=memory" hx-target="#processes-panel">{{ t(request, "processes.by_memory") }}</button>
+    </div>
+    {% if answer.ok %}
+      <span class="hint">
+        {{ t(request, "processes.summary", total=(answer.total or '—'), cores=(answer.cores or '—'), seconds=refresh_seconds) }}
+      </span>
+    {% endif %}
+  </div>
+  {% if not answer.ok %}
+    <div class="alert alert-error"><p>{{ answer.error }}</p></div>
+  {% elif not answer.processes %}
+    <p class="hint">{{ t(request, "processes.none") }}</p>
+  {% else %}
+    <div class="table-scroll">
+      <table class="data-table data-table-compact">
+        <thead>
+          <tr>
+            <th class="num">PID</th>
+            <th>{{ t(request, "processes.user") }}</th>
+            <th class="num">CPU</th>
+            <th class="num">{{ t(request, "processes.memory") }}</th>
+            <th>{{ t(request, "processes.state") }}</th>
+            <th class="num">{{ t(request, "processes.running_for") }}</th>
+            <th>{{ t(request, "processes.command") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in answer.processes %}
+            <tr>
+              <td class="num">
+                <button type="button" class="link-button" hx-get="/machines/{{ machine.id }}/processes/{{ p.pid }}"
+                        hx-target="#processes-panel" title="{{ t(request, 'processes.open_detail') }}">{{ p.pid }}</button>
+              </td>
+              <td>{{ p.user or '—' }}</td>
+              <td class="num">{{ p.cpu_percent | chart_value('percent') }}</td>
+              <td class="num">{{ p.memory_bytes | bytes }}{% if p.memory_percent is not none %} <span class="hint">({{ p.memory_percent | chart_value('percent') }})</span>{% endif %}</td>
+              <td><code>{{ p.state or '—' }}</code></td>
+              <td class="num">{{ p.elapsed_seconds | short_duration }}</td>
+              <td class="process-command">
+                {% if show_args and p.args %}<code>{{ p.args }}</code>{% elif show_args %}<code>[{{ p.name }}]</code>{% else %}<code>{{ p.name }}</code>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not show_args %}<p class="hint">{{ t(request, "processes.args_hidden") }}</p>{% endif %}
+  {% endif %}
+</div>

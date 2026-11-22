@@ -22,7 +22,14 @@ from app.core.version import APP_VERSION, get_git_commit
 from app.db.models.role import Permission
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale
 from app.i18n import translate as _translate
-from app.services import acknowledgements, audit_subject, docker_overview, fleet_overview
+from app.services import (
+    acknowledgements,
+    audit_subject,
+    docker_overview,
+    fleet_overview,
+    live_overview,
+    network_units,
+)
 from app.ssh import proxmox
 from app.ssh.onboarding import SUDO_COMMAND_LIST
 from app.ssh.updates import reboot_hint_packages
@@ -392,6 +399,30 @@ def _permitted_for(permission: str, user: User) -> bool:
 
 
 templates.env.tests["permitted_for"] = _permitted_for
+
+
+def _net_units(request: Request) -> str:
+    return network_units.of(getattr(request.state, "user", None))
+
+
+def _net_rate(value: float | None, request: Request) -> str:
+    """`{{ bytes_per_second | net_rate(request) }}` — in the viewer's unit."""
+    return network_units.format_rate(value, _net_units(request))
+
+
+def _net_format(request: Request) -> str:
+    """The chart format for network rates, for the viewer."""
+    return network_units.chart_format(_net_units(request))
+
+
+def _net_series(values: list[float | None], request: Request) -> list[float | None]:
+    return network_units.series(values, _net_units(request))
+
+
+templates.env.globals["level_of"] = live_overview.level
+templates.env.filters["net_rate"] = _net_rate
+templates.env.filters["net_series"] = _net_series
+templates.env.globals["net_format"] = _net_format
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"

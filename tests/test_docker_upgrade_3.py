@@ -357,7 +357,7 @@ async def test_a_sample_notifies_container_incidents_and_moves_the_marker(
         ]
     )
 
-    async def fake_sample(m: Machine, *_args: Any) -> Any:
+    async def fake_sample(m: Machine, *_args: Any, **_kwargs: Any) -> Any:
         seen_commands.append(m.docker_events_since)
         return monitoring.parse_monitoring_output(raw, is_physical=False)
 
