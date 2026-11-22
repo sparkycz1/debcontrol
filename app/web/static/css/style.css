@@ -2994,7 +2994,8 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 
 .severity-counts { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
 
-.docker-fieldset {
+.docker-fieldset,
+.form-fieldset {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: var(--space-3) var(--space-4);
@@ -3003,7 +3004,10 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
   flex-direction: column;
   gap: var(--space-1);
 }
-.docker-fieldset legend { color: var(--color-muted); font-size: 0.88rem; font-weight: 500; padding: 0 var(--space-1); }
+.form-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.form-row > div { display: flex; flex-direction: column; gap: var(--space-1); }
+.docker-fieldset legend,
+.form-fieldset legend { color: var(--color-muted); font-size: 0.88rem; font-weight: 500; padding: 0 var(--space-1); }
 
 .docker-keep-grid {
   display: grid;

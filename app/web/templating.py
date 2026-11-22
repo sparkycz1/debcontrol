@@ -198,6 +198,7 @@ def short_duration(seconds: float | int | None) -> str:
 templates.env.filters["short_duration"] = short_duration
 templates.env.globals["reboot_hint_packages"] = reboot_hint_packages
 templates.env.globals["noise_interfaces"] = charts.noise_interfaces
+templates.env.globals["display_zone_name"] = lambda: get_settings().tz or "UTC"
 templates.env.globals["secondary_sensors"] = charts.secondary_sensors
 
 

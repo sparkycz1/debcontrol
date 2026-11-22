@@ -23,7 +23,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, String, func
+from sqlalchemy import JSON, Boolean, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -54,6 +54,11 @@ class NotificationDeliveryStatus(enum.StrEnum):
     # Not delivered on purpose: the rule already sent this event for this
     # source inside its `throttle_minutes` window.
     THROTTLED = "throttled"
+    # Not delivered yet on purpose: the rule is in its quiet hours, or
+    # collects this event for its daily summary — the event waits in
+    # `NotificationHeldItem` and goes out with the next summary
+    # (`app.services.notification_timing`).
+    HELD = "held"
 
 
 class NotificationLog(Base):
@@ -86,3 +91,29 @@ class NotificationLog(Base):
             f"NotificationLog(rule_name={self.rule_name!r}, channel={self.channel!r}, "
             f"status={self.status!r})"
         )
+
+
+class NotificationHeldItem(Base):
+    """One notification a rule held back — during its quiet hours, or
+    collected for its daily summary (`app.services.notification_timing`).
+    The event and its context are kept, not rendered text, so the summary
+    is written in each recipient's own language when it goes out. Deleted
+    once that summary was sent (or with its rule)."""
+
+    __tablename__ = "notification_held_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("notification_rules.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    machine_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The event's template context (strings only) — what the summary line
+    # is rendered from.
+    context: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    # "quiet" (held by quiet hours) or "digest" (collected for the summary).
+    reason: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return f"NotificationHeldItem(rule_id={self.rule_id!r}, event_type={self.event_type!r})"

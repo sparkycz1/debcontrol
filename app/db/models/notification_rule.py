@@ -54,6 +54,7 @@ from sqlalchemy import (
     Table,
     false,
     func,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -283,6 +284,29 @@ class NotificationRule(Base):
     ai_summary: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false(), nullable=False
     )
+
+    # Quiet hours ("HH:MM" to "HH:MM" in the instance's time zone, `TZ`;
+    # may cross midnight). Inside them only urgent events go out (or none,
+    # with `quiet_hours_urgent` off); the rest are held and arrive as one
+    # message when the quiet hours end, or in the daily summary. NULL = no
+    # quiet hours. See `app.services.notification_timing`.
+    quiet_hours_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    quiet_hours_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    quiet_hours_urgent: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    # Daily summary at "HH:MM" (instance time zone): events that aren't
+    # urgent are collected and sent once a day in one message instead of
+    # one by one. NULL = send each one as it happens.
+    digest_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # The summary also carries the state of the rule's machines (health,
+    # worst machines, pending security updates, snoozed problems) and is
+    # sent every day, even when nothing was collected.
+    digest_fleet_status: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    # When the last summary (daily or end of quiet hours) went out.
+    digest_last_sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     @property
     def event_type_enums(self) -> list[NotificationEventType]:

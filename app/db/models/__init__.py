@@ -48,6 +48,7 @@ from app.db.models.notification_condition import NotificationCondition, Notifica
 from app.db.models.notification_log import (
     NotificationDeliveryChannel,
     NotificationDeliveryStatus,
+    NotificationHeldItem,
     NotificationLog,
 )
 from app.db.models.notification_rule import (
@@ -132,6 +133,7 @@ __all__ = [
     "NotificationDeliveryChannel",
     "NotificationDeliveryStatus",
     "NotificationEventType",
+    "NotificationHeldItem",
     "NotificationLog",
     "NotificationRule",
     "NotificationTemplate",

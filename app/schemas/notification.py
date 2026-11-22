@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.models.notification_log import NotificationDeliveryChannel
 from app.db.models.notification_rule import NotificationEventType
 from app.services.condition_fields import CONDITION_FIELDS, operators_for
+from app.services.notification_timing import normalize_hhmm
 from app.services.push_channels import CHANNEL_NAMES, RECIPIENT_CHANNELS, URL_CHANNELS
 
 
@@ -58,6 +59,20 @@ class NotificationRuleCreate(BaseModel):
     # "update run failed" notifications. Sends the log excerpt to the
     # configured AI provider.
     ai_summary: bool = False
+    # Quiet hours and a daily summary ("HH:MM", instance time zone) — see
+    # `app.services.notification_timing`. Both quiet-hours ends or neither.
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    # Urgent events still go out during quiet hours.
+    quiet_hours_urgent: bool = True
+    digest_time: str | None = None
+    # The summary carries the state of the rule's machines, every day.
+    digest_fleet_status: bool = False
+
+    @field_validator("quiet_hours_start", "quiet_hours_end", "digest_time")
+    @classmethod
+    def _validate_hhmm(cls, value: str | None) -> str | None:
+        return normalize_hhmm(value)
 
     @field_validator("event_types")
     @classmethod
@@ -84,6 +99,12 @@ class NotificationRuleCreate(BaseModel):
             raise ValueError(f'Unknown delivery channel "{value}".') from None
 
     def model_post_init(self, __context: object) -> None:
+        if (self.quiet_hours_start is None) != (self.quiet_hours_end is None):
+            raise ValueError("Quiet hours need both a start and an end.")
+        if self.quiet_hours_start is not None and self.quiet_hours_start == self.quiet_hours_end:
+            raise ValueError("Quiet hours must start and end at different times.")
+        if self.digest_fleet_status and self.digest_time is None:
+            raise ValueError("The machines' state is part of the daily summary: set its time.")
         channel = self.delivery_channel
         if channel in URL_CHANNELS:
             if not self.webhook_url:

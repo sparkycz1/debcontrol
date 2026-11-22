@@ -186,6 +186,37 @@
       </label>
       <p class="hint">{{ t(request, "notifications.rule.ai_summary_hint") }}</p>
 
+      <fieldset class="form-fieldset" id="timing">
+        <legend>{{ t(request, "notifications.rule.timing_heading") }}</legend>
+        <p class="hint">{{ t(request, "notifications.rule.timing_hint", zone=display_zone_name()) }}</p>
+        <div class="form-row">
+          <div>
+            <label for="quiet_hours_start">{{ t(request, "notifications.rule.quiet_start_label") }}</label>
+            <input type="time" id="quiet_hours_start" name="quiet_hours_start" step="60"
+                   value="{{ selected_quiet_hours_start or '' }}">
+          </div>
+          <div>
+            <label for="quiet_hours_end">{{ t(request, "notifications.rule.quiet_end_label") }}</label>
+            <input type="time" id="quiet_hours_end" name="quiet_hours_end" step="60"
+                   value="{{ selected_quiet_hours_end or '' }}">
+          </div>
+        </div>
+        <label>
+          <input type="checkbox" name="quiet_hours_urgent" value="true" {{ 'checked' if selected_quiet_hours_urgent else '' }}>
+          {{ t(request, "notifications.rule.quiet_urgent_label") }}
+        </label>
+        <p class="hint">{{ t(request, "notifications.rule.quiet_hint") }}</p>
+
+        <label for="digest_time">{{ t(request, "notifications.rule.digest_time_label") }}</label>
+        <input type="time" id="digest_time" name="digest_time" step="60"
+               value="{{ selected_digest_time or '' }}">
+        <label>
+          <input type="checkbox" name="digest_fleet_status" value="true" {{ 'checked' if selected_digest_fleet_status else '' }}>
+          {{ t(request, "notifications.rule.digest_fleet_label") }}
+        </label>
+        <p class="hint">{{ t(request, "notifications.rule.digest_hint") }}</p>
+      </fieldset>
+
       <label for="custom_template_id">{{ t(request, "notifications.rule.template_label") }}</label>
       <select id="custom_template_id" name="custom_template_id">
         <option value="">{{ t(request, "notifications.rule.template_default") }}</option>

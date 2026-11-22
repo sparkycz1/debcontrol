@@ -13,6 +13,7 @@ for the full shape and an example.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -107,6 +108,17 @@ def rule_to_portable_dict(
         **({"template_name": rule.custom_template.name} if rule.custom_template else {}),
         **({"throttle_minutes": rule.throttle_minutes} if rule.throttle_minutes else {}),
         **({"ai_summary": True} if rule.ai_summary else {}),
+        **(
+            {
+                "quiet_hours_start": rule.quiet_hours_start,
+                "quiet_hours_end": rule.quiet_hours_end,
+                "quiet_hours_urgent": rule.quiet_hours_urgent,
+            }
+            if rule.quiet_hours_start
+            else {}
+        ),
+        **({"digest_time": rule.digest_time} if rule.digest_time else {}),
+        **({"digest_fleet_status": True} if rule.digest_fleet_status else {}),
     }
 
 
@@ -158,6 +170,11 @@ async def apply_portable_rule(
             ),
             throttle_minutes=data.get("throttle_minutes") or None,
             ai_summary=bool(data.get("ai_summary")),
+            quiet_hours_start=_optional_text(data.get("quiet_hours_start")),
+            quiet_hours_end=_optional_text(data.get("quiet_hours_end")),
+            quiet_hours_urgent=bool(data.get("quiet_hours_urgent", True)),
+            digest_time=_optional_text(data.get("digest_time")),
+            digest_fleet_status=bool(data.get("digest_fleet_status")),
         )
         apply_channel_settings(rule, payload)
     except ValueError as exc:
@@ -245,6 +262,16 @@ async def delete_custom_template(db: AsyncSession, template: NotificationCustomT
     await db.commit()
 
 
+def _optional_text(value: Any) -> str | None:
+    """A YAML/JSON value as text; YAML reads an unquoted 07:30 as text but
+    an unquoted 7:30 as a number of minutes (base 60), which is refused."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f'"{value}" is not a time (write it as "HH:MM" in quotes).')
+    return value
+
+
 def apply_channel_settings(rule: NotificationRule, payload: NotificationRuleCreate) -> None:
     """Delivery settings from a validated payload onto `rule`: the channel,
     its URL and recipient, its throttle window, and — only when a new one was given — its token
@@ -255,6 +282,15 @@ def apply_channel_settings(rule: NotificationRule, payload: NotificationRuleCrea
     rule.channel_recipient = (payload.channel_recipient or "").strip() or None
     rule.throttle_minutes = payload.throttle_minutes
     rule.ai_summary = payload.ai_summary
+    rule.quiet_hours_start = payload.quiet_hours_start
+    rule.quiet_hours_end = payload.quiet_hours_end
+    rule.quiet_hours_urgent = payload.quiet_hours_urgent
+    if payload.digest_time != rule.digest_time:
+        # A new summary time starts counting from now: the first summary
+        # goes out at the next such time, not right away.
+        rule.digest_last_sent_at = datetime.now(UTC).replace(tzinfo=None)
+    rule.digest_time = payload.digest_time
+    rule.digest_fleet_status = payload.digest_fleet_status
     token = (payload.channel_token or "").strip()
     if token:
         rule.channel_token_encrypted = encrypt_secret(token)

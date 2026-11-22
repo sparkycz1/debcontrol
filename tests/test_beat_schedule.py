@@ -60,6 +60,7 @@ _EXPECTED_PERIODIC_TASKS = {
     "app.tasks.docker_jobs.reconcile_docker_jobs",
     "app.tasks.docker_jobs.poll_git_stacks",
     "app.tasks.docker_jobs.purge_old_docker_jobs",
+    "app.tasks.jobs.send_due_notification_digests",
 }
 
 
