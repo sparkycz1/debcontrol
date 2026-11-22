@@ -1,6 +1,6 @@
 {% from "macros/health.html" import health_badge, severity_badge, finding_text with context %}
 {# A machine's health on its Overview tab (app.services.machine_health):
-   the verdict, the ten categories, the problems that count and the
+   the verdict, the eleven categories, the problems that count and the
    snoozed ones. Redrawn by GET /machines/{id}/health-panel. #}
 {% set base = "/machines/" ~ machine.id %}
 <div class="panel-header">

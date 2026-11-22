@@ -439,7 +439,7 @@ async def test_a_monitoring_sample_runs_autoheal_and_the_check_sync(
     raw = "\n".join(["===DOCKER===", "@@PS", json.dumps(ps_row), "@@EVENTS", "1767225660"])
     healed: list[str] = []
 
-    async def fake_sample(*_args: Any) -> Any:
+    async def fake_sample(*_args: Any, **_kwargs: Any) -> Any:
         return monitoring.parse_monitoring_output(raw, is_physical=False)
 
     async def fake_credential(*_args: Any) -> None:

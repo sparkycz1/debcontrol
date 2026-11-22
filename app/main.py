@@ -40,6 +40,7 @@ from app.web.routes import (
     api_v1_docker_shared,
     api_v1_docker_vulnerabilities,
     api_v1_health,
+    api_v1_machines_live,
     api_v1_metrics,
     api_v1_notifications,
     api_v1_roles,
@@ -323,6 +324,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_account.router)
     app.include_router(api_v1_checks.router)
     app.include_router(api_v1_health.router)
+    app.include_router(api_v1_machines_live.router)
     app.include_router(api_v1_notifications.router)
     app.include_router(api_v1_search.router)
     app.include_router(api_v1_metrics.router)

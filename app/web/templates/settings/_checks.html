@@ -67,6 +67,21 @@
             monitoring=timescaledb.compress_after_days.get("machine_monitoring_samples", "-"),
             other=timescaledb.compress_after_days.get("machine_reachability_samples", "-")) }}</p>
         {% endif %}
+
+        <h3>{{ t(request, "settings.checks.connectivity.heading") }}</h3>
+        <p class="hint">{{ t(request, "settings.checks.connectivity.hint") }}</p>
+        <input type="hidden" name="connectivity_checks_enabled_present" value="1">
+        <label>
+          <input type="checkbox" name="connectivity_checks_enabled" value="1" {% if app_settings.connectivity_checks_enabled %}checked{% endif %}>
+          {{ t(request, "settings.checks.connectivity.enabled") }}
+        </label>
+        <label for="connectivity_internet_target">{{ t(request, "settings.checks.connectivity.connectivity_internet_target") }}</label>
+        <input type="text" id="connectivity_internet_target" name="connectivity_internet_target" maxlength="253"
+               required value="{{ app_settings.connectivity_internet_target }}">
+        <label for="connectivity_dns_name">{{ t(request, "settings.checks.connectivity.connectivity_dns_name") }}</label>
+        <input type="text" id="connectivity_dns_name" name="connectivity_dns_name" maxlength="253"
+               required value="{{ app_settings.connectivity_dns_name }}">
+        <p class="hint">{{ t(request, "settings.checks.connectivity.targets_hint") }}</p>
       </div>
     </section>
 
@@ -83,6 +98,8 @@
           ("health_disk_critical_percent", "disk_critical", 1, 100),
           ("health_temperature_warn_celsius", "temperature_warn", 20, 150),
           ("health_temperature_critical_celsius", "temperature_critical", 20, 150),
+          ("health_latency_warn_ms", "latency_warn", 1, 10000),
+          ("health_latency_critical_ms", "latency_critical", 1, 10000),
           ("health_disk_full_warn_days", "disk_full_warn", 1, 365),
           ("health_disk_full_critical_days", "disk_full_critical", 0, 365),
         ] %}

@@ -30,7 +30,9 @@ the fleet `api_v1_docker_fleet.py` (containers) and `api_v1_docker_fleet_lists.p
 (stacks, images, volumes, networks, backups, hosts, jobs, clean-up,
 refresh), `api_v1_docker_vulnerabilities.py` and
 `api_v1_docker_shared.py` (registry logins, shared variables), Docker →
-Settings `api_v1_docker_settings.py`.)
+Settings `api_v1_docker_settings.py`; a machine's live cards, network
+interfaces, top processes (and signalling one) and the connectivity test
+`api_v1_machines_live.py`.)
 The interactive SSH terminal (and the Docker tab's shell inside a
 container, which runs over the same WebSocket terminal)
 (`app/web/routes/terminal_ws.py`, and likewise the Logs tab's live-follow

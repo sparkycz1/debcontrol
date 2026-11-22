@@ -43,9 +43,13 @@ PALETTE = (
 
 # Every value format the charts (and their tooltips, see
 # monitoring-chart.js's formatValue, which mirrors this) understand.
-FORMATS = ("percent", "bytes", "bytes_rate", "celsius", "watts", "rpm", "ms", "number")
+FORMATS = (
+    "percent", "bytes", "bytes_rate", "bits_rate", "celsius", "watts", "rpm", "ms", "number"
+)
 
 _BYTE_UNITS = ("B", "KB", "MB", "GB", "TB")
+# Network speeds in bits go by 1000, as link speeds do (1 Gbit/s).
+_BIT_UNITS = ("bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s")
 
 
 def _trim(value: float, decimals: int) -> str:
@@ -77,6 +81,18 @@ def format_bytes(value: float | None, suffix: str = "") -> str:
     return f"{_number(v)} {_BYTE_UNITS[unit]}{suffix}"
 
 
+def format_bits(value: float | None) -> str:
+    """A rate in bits per second (`value` is already in bits)."""
+    if value is None:
+        return "—"
+    v = float(value)
+    unit = 0
+    while abs(v) >= 1000 and unit < len(_BIT_UNITS) - 1:
+        v /= 1000
+        unit += 1
+    return f"{_number(v)} {_BIT_UNITS[unit]}"
+
+
 def format_value(value: float | None, fmt: str) -> str:
     """One number the way its chart's axis/tooltip shows it."""
     if value is None:
@@ -87,6 +103,8 @@ def format_value(value: float | None, fmt: str) -> str:
         return format_bytes(value)
     if fmt == "bytes_rate":
         return format_bytes(value, "/s")
+    if fmt == "bits_rate":
+        return format_bits(value)
     if fmt == "celsius":
         return f"{_number(value)} °C"
     if fmt == "watts":
@@ -111,9 +129,9 @@ def _nice_step(raw_step: float) -> float:
 def nice_range(lo: float, hi: float, fmt: str, *, intervals: int = 4) -> tuple[float, float, float]:
     """`(axis_min, axis_max, step)` covering `[lo, hi]` with round numbers —
     on a 1024-based scale for byte formats, so ticks land on "256 MB",
-    not "268.4 MB"."""
+    not "268.4 MB" (1000-based for bits: "200 Mbit/s")."""
     if hi <= lo:
-        if fmt in ("bytes", "bytes_rate"):
+        if fmt in ("bytes", "bytes_rate", "bits_rate"):
             pad = abs(hi) * 0.1 or 1024.0
         else:
             pad = max(abs(hi) * 0.001, 1.0)
@@ -121,6 +139,8 @@ def nice_range(lo: float, hi: float, fmt: str, *, intervals: int = 4) -> tuple[f
     scale = 1.0
     if fmt in ("bytes", "bytes_rate") and hi > 0:
         scale = 1024 ** min(math.floor(math.log(max(hi, 1), 1024)), len(_BYTE_UNITS) - 1)
+    elif fmt == "bits_rate" and hi > 0:
+        scale = 1000 ** min(math.floor(math.log(max(hi, 1), 1000)), len(_BIT_UNITS) - 1)
     step = _nice_step((hi - lo) / scale / intervals) * scale
     axis_min = math.floor(lo / step) * step
     axis_max = math.ceil(hi / step) * step

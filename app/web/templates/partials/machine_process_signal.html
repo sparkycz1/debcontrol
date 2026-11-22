@@ -1,0 +1,12 @@
+{#- What sending a signal did (machines_live.signal_machine_process). -#}
+{% if outcome == 'ok' %}
+  <div class="alert alert-ok"><p>{{ t(request, "processes.signal_sent", signal=signal, pid=pid) }}</p></div>
+{% elif outcome == 'gone' %}
+  <div class="alert alert-warn"><p>{{ t(request, "processes.signal_gone", pid=pid) }}</p></div>
+{% elif outcome == 'denied' %}
+  <div class="alert alert-error"><p>{{ t(request, "processes.signal_denied", pid=pid) }}</p></div>
+{% else %}
+  <div class="alert alert-error"><p>{{ error or t(request, "processes.signal_failed") }}</p></div>
+{% endif %}
+<button type="button" class="button button-secondary button-small"
+        hx-get="/machines/{{ machine.id }}/processes" hx-target="#processes-panel">← {{ t(request, "processes.back") }}</button>

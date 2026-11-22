@@ -40,9 +40,9 @@
                       chart(docker_mem, ts, fmt='bytes', stacked=true, time_format=tf),
                       filter=true, empty_text=t(request, "monitoring.no_data")) }}
         {% set docker_net = [] %}
-        {% for name, values in history.docker_net_by_container.items() %}{% set _ = docker_net.append((name, values)) %}{% endfor %}
+        {% for name, values in history.docker_net_by_container.items() %}{% set _ = docker_net.append((name, values | net_series(request))) %}{% endfor %}
         {{ chart_card(t(request, "monitoring.card.docker_network"), t(request, "monitoring.card.docker_network_hint"),
-                      chart(docker_net, ts, fmt='bytes_rate', stacked=true, time_format=tf),
+                      chart(docker_net, ts, fmt=net_format(request), stacked=true, time_format=tf),
                       filter=true, empty_text=t(request, "monitoring.no_data")) }}
         {% set docker_blkio = [] %}
         {% for name, values in history.docker_blkio_by_container.items() %}{% if values | select('number') | list %}{% set _ = docker_blkio.append((name, values)) %}{% endif %}{% endfor %}

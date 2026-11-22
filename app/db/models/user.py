@@ -120,6 +120,9 @@ class User(Base):
     # never having chosen one, instead of silently keying off a stale/missing
     # code. See app/i18n/__init__.py.
     locale: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # How network throughput is shown to this account: "bytes" (per
+    # second, the default, also for NULL) or "bits".
+    network_units: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # This account's own Dashboard: `{"order": [...], "hidden": [...]}` of
     # section keys, read through `app.services.dashboard_layout.resolve`.
     # None = the default order with everything shown.

@@ -39,6 +39,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import asyncssh
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,6 +102,7 @@ from app.services.fleet_stats import compute_fleet_stats
 from app.services.live_updates import (
     KIND_DOCKER,
     KIND_FACTS,
+    KIND_MONITORING,
     KIND_PACKAGES,
     KIND_SERVICES,
     KIND_STATUS,
@@ -110,7 +112,8 @@ from app.services.live_updates import (
 )
 from app.services.notifications import _rule_matches_scope, notify
 from app.services.remote_probes import probe_from_machine
-from app.ssh import detached_updates
+from app.ssh import connectivity as connectivity_probe
+from app.ssh import detached_updates, processes
 from app.ssh.client import test_connection
 from app.ssh.containers import ContainerActionError, run_container_action
 from app.ssh.credentials import resolve_machine_credential
@@ -1779,7 +1782,14 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
 
         try:
             sample = await gather_monitoring_sample(
-                machine, secret, app_settings.ssh_connect_timeout
+                machine,
+                secret,
+                app_settings.ssh_connect_timeout,
+                connectivity=(
+                    (app_settings.connectivity_internet_target, app_settings.connectivity_dns_name)
+                    if app_settings.connectivity_checks_enabled
+                    else None
+                ),
             )
         except SSHConnectionError as exc:
             logger.warning("sample_machine_monitoring failed for %s: %s", machine.name, exc)
@@ -1806,11 +1816,23 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         ).scalar_one_or_none()
         previous_failed_units = machine.failed_units
         previous_zfs_pools = machine.zfs_pools
+        reached: dict[str, Any] = dict(sample.get("connectivity") or {})
         session.add(
             MachineMonitoringSample(
                 machine_id=machine.id,
                 sampled_at=now,
                 cpu_percent=sample["cpu_percent"],
+                cpu_user_percent=sample.get("cpu_user_percent"),
+                cpu_system_percent=sample.get("cpu_system_percent"),
+                cpu_iowait_percent=sample.get("cpu_iowait_percent"),
+                gateway_latency_ms=reached.get("gateway_latency_ms"),
+                gateway_loss_percent=reached.get("gateway_loss_percent"),
+                internet_latency_ms=reached.get("internet_latency_ms"),
+                internet_loss_percent=reached.get("internet_loss_percent"),
+                dns_ok=reached.get("dns_ok"),
+                dns_ms=reached.get("dns_ms"),
+                ntp_synced=reached.get("ntp_synced"),
+                ntp_offset_ms=reached.get("ntp_offset_ms"),
                 load1=sample["load1"],
                 load5=sample["load5"],
                 load15=sample["load15"],
@@ -1844,6 +1866,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             )
         )
         machine.docker_status = sample["docker_status"]
+        machine.network_links = sample.get("network_links") or None
+        machine.default_gateway = reached.get("gateway")
         machine.zfs_pools = sample.get("zfs_pools")
         machine.pve_guests = sample.get("pve_guests")
         previous_cluster = machine.pve_cluster
@@ -1875,6 +1899,8 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             previous_cluster=previous_cluster,
         )
         await machine_health.refresh(session, machine)
+        # The Overview's live cards (no browser notification for this one).
+        await publish_machine_event(machine_id, KIND_MONITORING)
 
         return {"ok": True}
 
@@ -1923,6 +1949,141 @@ async def _after_docker_sample(
 )
 def sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
     return run_in_worker_loop(_sample_machine_monitoring(machine_id))
+
+
+async def _machine_and_secret(
+    session: AsyncSession, machine_id: str
+) -> tuple[Machine, str | None] | str:
+    """The machine and its credential, or why there's nothing to connect to."""
+    machine = await session.get(Machine, uuid.UUID(machine_id))
+    if machine is None:
+        return "Machine not found."
+    if not machine.host_key_fingerprint:
+        return "No pinned host key fingerprint yet."
+    return machine, await resolve_machine_credential(machine, session)
+
+
+async def _list_machine_processes(
+    machine_id: str, sort: str, limit: int, include_args: bool
+) -> dict[str, Any]:
+    """The Overview's top processes, read now (`app.ssh.processes`)."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        found = await _machine_and_secret(session, machine_id)
+        if isinstance(found, str):
+            return {"ok": False, "error": found}
+        machine, secret = found
+        try:
+            listing = await processes.read_processes(
+                machine,
+                secret,
+                app_settings.ssh_connect_timeout,
+                "memory" if sort == "memory" else "cpu",
+                limit,
+                include_args=include_args,
+            )
+        except (SSHConnectionError, asyncssh.Error, OSError, TimeoutError) as exc:
+            return {"ok": False, "error": str(exc) or type(exc).__name__}
+        return {"ok": True, **listing.as_dict()}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.list_machine_processes", time_limit=_SSH_TASK_TIME_LIMIT_SECONDS
+)
+def list_machine_processes(
+    machine_id: str, sort: str = "cpu", limit: int = 25, include_args: bool = False
+) -> dict[str, Any]:
+    return run_in_worker_loop(_list_machine_processes(machine_id, sort, limit, include_args))
+
+
+async def _machine_process_detail(
+    machine_id: str, pid: int, include_args: bool
+) -> dict[str, Any]:
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        found = await _machine_and_secret(session, machine_id)
+        if isinstance(found, str):
+            return {"ok": False, "error": found}
+        machine, secret = found
+        try:
+            detail = await processes.read_process(
+                machine, secret, app_settings.ssh_connect_timeout, pid, include_args=include_args
+            )
+        except (SSHConnectionError, asyncssh.Error, OSError, TimeoutError) as exc:
+            return {"ok": False, "error": str(exc) or type(exc).__name__}
+        return {"ok": True, "process": detail}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.machine_process_detail", time_limit=_SSH_TASK_TIME_LIMIT_SECONDS
+)
+def machine_process_detail(
+    machine_id: str, pid: int, include_args: bool = False
+) -> dict[str, Any]:
+    return run_in_worker_loop(_machine_process_detail(machine_id, pid, include_args))
+
+
+async def _signal_machine_process(
+    machine_id: str, pid: int, start_ticks: int, signal: str
+) -> dict[str, Any]:
+    """Send TERM or KILL to one process — only if it is still the one
+    shown (same start time). The caller audits the outcome."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        found = await _machine_and_secret(session, machine_id)
+        if isinstance(found, str):
+            return {"ok": False, "outcome": "error", "error": found}
+        machine, secret = found
+        try:
+            outcome = await processes.send_signal(
+                machine, secret, app_settings.ssh_connect_timeout, pid, start_ticks, signal
+            )
+        except (SSHConnectionError, asyncssh.Error, OSError, TimeoutError, ValueError) as exc:
+            return {"ok": False, "outcome": "error", "error": str(exc) or type(exc).__name__}
+        return {"ok": outcome == "ok", "outcome": outcome}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.signal_machine_process", time_limit=_SSH_TASK_TIME_LIMIT_SECONDS
+)
+def signal_machine_process(
+    machine_id: str, pid: int, start_ticks: int, signal: str
+) -> dict[str, Any]:
+    return asyncio.run(_signal_machine_process(machine_id, pid, start_ticks, signal))
+
+
+async def _test_machine_connectivity(machine_id: str) -> dict[str, Any]:
+    """The Overview's "Test connectivity": gateway, internet target, DNS
+    and NTP from the machine, now, with more pings than a sample."""
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        found = await _machine_and_secret(session, machine_id)
+        if isinstance(found, str):
+            return {"ok": False, "error": found}
+        machine, secret = found
+        try:
+            reading = await connectivity_probe.run_test(
+                machine,
+                secret,
+                app_settings.ssh_connect_timeout,
+                app_settings.connectivity_internet_target,
+                app_settings.connectivity_dns_name,
+            )
+        except (SSHConnectionError, asyncssh.Error, OSError, TimeoutError) as exc:
+            return {"ok": False, "error": str(exc) or type(exc).__name__}
+        return {
+            "ok": True,
+            "internet_target": app_settings.connectivity_internet_target,
+            "dns_name": app_settings.connectivity_dns_name,
+            **reading,
+        }
+
+
+@celery_app.task(
+    name="app.tasks.jobs.test_machine_connectivity", time_limit=_SSH_TASK_TIME_LIMIT_SECONDS
+)
+def test_machine_connectivity(machine_id: str) -> dict[str, Any]:
+    return run_in_worker_loop(_test_machine_connectivity(machine_id))
 
 
 async def _monitor_all_machines() -> None:

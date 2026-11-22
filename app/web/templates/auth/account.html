@@ -63,6 +63,21 @@
     </form>
   </section>
 
+  <section class="panel" id="network-units">
+    <h2>{{ t(request, "account.network_units.heading") }}</h2>
+    <form method="post" action="/account/network-units" class="form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="units">{{ t(request, "account.network_units.label") }}</label>
+      <select id="units" name="units">
+        {% for value in ('bytes', 'bits') %}
+          <option value="{{ value }}" {% if (user.network_units or 'bytes') == value %}selected{% endif %}>{{ t(request, "account.network_units." ~ value) }}</option>
+        {% endfor %}
+      </select>
+      <p class="hint">{{ t(request, "account.network_units.help") }}</p>
+      <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+    </form>
+  </section>
+
   {% if request.state.user.has_permission('ai.access') %}
     <section class="panel" id="ai-assistant">
       <h2>{{ t(request, "account.ai.heading") }}</h2>

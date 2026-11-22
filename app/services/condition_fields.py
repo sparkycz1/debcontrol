@@ -172,6 +172,30 @@ CONDITION_FIELDS: dict[str, ConditionField] = {
         "number",
         lambda m, s, mount: s.failed_services_count if s else None,
     ),
+    "monitoring.cpu_iowait_percent": ConditionField(
+        "cpu_iowait_percent", "number", lambda m, s, mount: s.cpu_iowait_percent if s else None
+    ),
+    # --- Connectivity seen from the machine (app.ssh.connectivity) ---
+    "monitoring.gateway_latency_ms": ConditionField(
+        "gateway_latency_ms", "number", lambda m, s, mount: s.gateway_latency_ms if s else None
+    ),
+    "monitoring.internet_latency_ms": ConditionField(
+        "internet_latency_ms", "number", lambda m, s, mount: s.internet_latency_ms if s else None
+    ),
+    "monitoring.internet_loss_percent": ConditionField(
+        "internet_loss_percent",
+        "number",
+        lambda m, s, mount: s.internet_loss_percent if s else None,
+    ),
+    "monitoring.dns_ms": ConditionField(
+        "dns_ms", "number", lambda m, s, mount: s.dns_ms if s else None
+    ),
+    # How far off the clock is, either way.
+    "monitoring.ntp_offset_ms": ConditionField(
+        "ntp_offset_ms",
+        "number",
+        lambda m, s, mount: abs(s.ntp_offset_ms) if s and s.ntp_offset_ms is not None else None,
+    ),
     # --- Hardware (bare metal only; unknown on a VM, so never matches) ---
     "monitoring.max_temperature_c": ConditionField(
         "max_temperature_c", "number", lambda m, s, mount: _max_temperature(s)

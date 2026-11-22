@@ -1,0 +1,55 @@
+{#- "Test connectivity" (machines_live.test_machine_connectivity): what
+    the machine itself sees, read just now. -#}
+{% macro ms(value) -%}{{ '—' if value is none else '%.1f ms' % value }}{%- endmacro %}
+{% if not answer.ok %}
+  <div class="alert alert-error"><p>{{ answer.error }}</p></div>
+{% else %}
+  {% set s = live_settings %}
+  <table class="data-table data-table-compact">
+    <thead><tr><th>{{ t(request, "connectivity.check") }}</th><th>{{ t(request, "connectivity.target") }}</th><th>{{ t(request, "connectivity.result") }}</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{{ t(request, "live_overview.gateway") }}</td>
+        <td><code>{{ answer.gateway or '—' }}</code></td>
+        <td>
+          {% if not answer.gateway %}<span class="hint">{{ t(request, "connectivity.no_gateway") }}</span>
+          {% elif answer.gateway_loss_percent is none %}<span class="hint">{{ t(request, "connectivity.no_ping") }}</span>
+          {% elif answer.gateway_loss_percent >= 100 %}<span class="badge badge-error">{{ t(request, "live_overview.no_answer") }}</span>
+          {% else %}<span class="badge {{ 'badge-ok' if not answer.gateway_loss_percent else 'badge-warn' }}">{{ ms(answer.gateway_latency_ms) }}</span>{% if answer.gateway_loss_percent %} {{ t(request, "live_overview.loss", percent=(answer.gateway_loss_percent | round(0) | int)) }}{% endif %}{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>{{ t(request, "live_overview.internet") }}</td>
+        <td><code>{{ answer.internet_target }}</code></td>
+        <td>
+          {% if answer.internet_loss_percent is none %}<span class="hint">{{ t(request, "connectivity.no_ping") }}</span>
+          {% elif answer.internet_loss_percent >= 100 %}<span class="badge badge-error">{{ t(request, "live_overview.no_answer") }}</span>
+          {% else %}
+            {% set lvl = level_of(answer.internet_latency_ms, s.health_latency_warn_ms, s.health_latency_critical_ms) %}
+            <span class="badge {{ 'badge-ok' if lvl == 'ok' else ('badge-warn' if lvl == 'warn' else 'badge-error') }}">{{ ms(answer.internet_latency_ms) }}</span>{% if answer.internet_loss_percent %} {{ t(request, "live_overview.loss", percent=(answer.internet_loss_percent | round(0) | int)) }}{% endif %}
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>DNS</td>
+        <td><code>{{ answer.dns_name }}</code></td>
+        <td>
+          {% if answer.dns_ok is none %}<span class="hint">{{ t(request, "connectivity.not_measured") }}</span>
+          {% elif answer.dns_ok %}<span class="badge badge-ok">{{ ms(answer.dns_ms) if answer.dns_ms is not none else t(request, "connectivity.resolved") }}</span>
+          {% else %}<span class="badge badge-error">{{ t(request, "live_overview.failed") }}</span>{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>NTP</td>
+        <td>—</td>
+        <td>
+          {% if answer.ntp_synced is none and answer.ntp_offset_ms is none %}<span class="hint">{{ t(request, "connectivity.not_measured") }}</span>
+          {% elif answer.ntp_synced is sameas false %}<span class="badge badge-warn">{{ t(request, "live_overview.not_synced") }}</span>
+          {% else %}<span class="badge badge-ok">{{ t(request, "live_overview.synced") }}</span>{% endif %}
+          {% if answer.ntp_offset_ms is not none %} {{ t(request, "connectivity.offset", offset=('%+.1f ms' % answer.ntp_offset_ms)) }}{% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="hint">{{ t(request, "connectivity.done") }}</p>
+{% endif %}

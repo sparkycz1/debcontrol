@@ -54,6 +54,9 @@ KIND_SERVICES = "services"
 KIND_UPDATES = "updates"
 # Docker: a job ended, so containers, images, stacks or backups changed.
 KIND_DOCKER = "docker"
+# A new monitoring sample: the Overview's live cards redraw. Frequent, so
+# the browser never turns it into a notification (live-updates.js).
+KIND_MONITORING = "monitoring"
 
 
 def channel_for(machine_id: str) -> str:

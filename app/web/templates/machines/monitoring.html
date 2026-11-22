@@ -62,7 +62,7 @@
         {% set cpu_threshold = condition_thresholds.get('monitoring.cpu_percent') %}
         {{ chart_card(
              t(request, "monitoring.card.cpu"), t(request, "monitoring.card.cpu_hint"),
-             chart([('CPU', history.cpu_percent)], ts, fmt='percent', time_format=tf,
+             chart([('CPU', history.cpu_percent)] + ([(t(request, "monitoring.series.iowait"), history.cpu_iowait_percent)] if history.cpu_iowait_percent | select('number') | list else []), ts, fmt='percent', time_format=tf,
                    threshold=cpu_threshold,
                    threshold_label=(t(request, "monitoring.threshold_percent", value=(cpu_threshold | round(0) | int)) if cpu_threshold is not none else none)),
              footer=t(request, "monitoring.current_value", value=(history.latest_cpu_percent | chart_value('percent'))),
@@ -143,12 +143,12 @@
         {% for iface, values in history.network_rx_by_iface.items() %}
           {% set rx_label = t(request, "monitoring.series.received", name=iface) %}
           {% set tx_label = t(request, "monitoring.series.sent", name=iface) %}
-          {% set _ = net.append((rx_label, values)) %}
-          {% set _ = net.append((tx_label, history.network_tx_by_iface.get(iface, []))) %}
+          {% set _ = net.append((rx_label, values | net_series(request))) %}
+          {% set _ = net.append((tx_label, history.network_tx_by_iface.get(iface, []) | net_series(request))) %}
           {% if iface in noisy %}{% set _ = net_hidden.append(rx_label) %}{% set _ = net_hidden.append(tx_label) %}{% endif %}
         {% endfor %}
         {{ chart_card(t(request, "monitoring.card.network"), t(request, "monitoring.card.network_hint"),
-                      chart(net, ts, fmt='bytes_rate', time_format=tf, hidden=net_hidden),
+                      chart(net, ts, fmt=net_format(request), time_format=tf, hidden=net_hidden),
                       filter=(net | length > 4), empty_text=t(request, "monitoring.network.none_found")) }}
 
 
@@ -158,6 +158,25 @@
              chart([('1 min', history.load1), ('5 min', history.load5), ('15 min', history.load15)], ts, fmt='number', time_format=tf,
                    colors=(chart_palette[4], chart_palette[0], chart_palette[2])),
              footer=(t(request, "monitoring.cpu.load_current_short", load1=('%.2f' % history.latest_load1), load5=('%.2f' % history.latest_load5), load15=('%.2f' % history.latest_load15)) if history.latest_load1 is not none else none),
+             empty_text=t(request, "monitoring.no_data")) }}
+      {% endif %}
+
+      {# --- Connectivity from the machine itself (app.ssh.connectivity) --- #}
+      {% if machine.monitoring_updated_at and (history.internet_latency_ms | select('number') | list or history.gateway_latency_ms | select('number') | list or history.dns_ms | select('number') | list) %}
+        {% set conn_series = [] %}
+        {% if history.gateway_latency_ms | select('number') | list %}{% set _ = conn_series.append((t(request, "live_overview.gateway"), history.gateway_latency_ms)) %}{% endif %}
+        {% if history.internet_latency_ms | select('number') | list %}{% set _ = conn_series.append((t(request, "live_overview.internet"), history.internet_latency_ms)) %}{% endif %}
+        {% if history.dns_ms | select('number') | list %}{% set _ = conn_series.append(("DNS", history.dns_ms)) %}{% endif %}
+        {% set latency_threshold = condition_thresholds.get('monitoring.internet_latency_ms') %}
+        {% set conn_footer = [] %}
+        {% if history.latest_internet_loss_percent %}{% set _ = conn_footer.append(t(request, "monitoring.connectivity.loss_now", percent=(history.latest_internet_loss_percent | round(0) | int))) %}{% endif %}
+        {% if history.latest_ntp_offset_ms is not none %}{% set _ = conn_footer.append(t(request, "monitoring.connectivity.ntp_offset", offset=('%+.1f ms' % history.latest_ntp_offset_ms))) %}{% endif %}
+        {{ chart_card(
+             t(request, "monitoring.card.connectivity"), t(request, "monitoring.card.connectivity_hint"),
+             chart(conn_series, ts, fmt='ms', time_format=tf, area=false,
+                   threshold=latency_threshold,
+                   threshold_label=(t(request, "monitoring.threshold_ms", value=(latency_threshold | round(0) | int)) if latency_threshold is not none else none)),
+             footer=(conn_footer | join(' · ')) or none,
              empty_text=t(request, "monitoring.no_data")) }}
       {% endif %}
 
@@ -224,6 +243,62 @@
         {% endfor %}
       {% endif %}
     </div>
+
+    {# --- Network interfaces (live_overview.interface_table) --- #}
+    {% if interfaces %}
+      <section class="chart-card chart-card-wide monitoring-section" id="interfaces">
+        <header class="chart-card-header">
+          <div>
+            <h3 class="chart-card-title">{{ t(request, "monitoring.interfaces.heading") }}</h3>
+            <p class="chart-card-subtitle">
+              {% for group in interfaces %}<span class="badge {{ 'badge-ok' if group.up == group.total else ('badge-warn' if group.kind != 'virtual' else '') }}">{{ t(request, "network.kind." ~ group.kind) }} {{ group.up }}/{{ group.total }}</span> {% endfor %}
+            </p>
+          </div>
+        </header>
+        {% for group in interfaces %}
+          <details class="netif-group" {% if group.kind != 'virtual' %}open{% endif %}>
+            <summary>{{ t(request, "network.kind." ~ group.kind) }} ({{ group.total }})</summary>
+            <div class="table-scroll">
+              <table class="data-table data-table-compact">
+                <thead>
+                  <tr>
+                    <th>{{ t(request, "monitoring.interfaces.name") }}</th>
+                    <th>{{ t(request, "monitoring.interfaces.state") }}</th>
+                    <th class="num">{{ t(request, "monitoring.interfaces.speed") }}</th>
+                    <th>{{ t(request, "monitoring.interfaces.addresses") }}</th>
+                    <th>{{ t(request, "monitoring.interfaces.part_of") }}</th>
+                    <th class="num">↓</th>
+                    <th class="num">↑</th>
+                    <th class="num">{{ t(request, "monitoring.interfaces.errors") }}</th>
+                    <th class="num">{{ t(request, "monitoring.interfaces.drops") }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for link in group.links %}
+                    <tr class="{{ '' if link.state == 'up' else 'netif-down' }}">
+                      <td><code>{{ link.name }}</code></td>
+                      <td><span class="badge {{ 'badge-ok' if link.state == 'up' else ('badge-warn' if link.state == 'down' and group.kind in ('physical', 'bond') and (link.master or group.kind == 'bond') else '') }}">{{ link.state }}</span></td>
+                      <td class="num">{% if link.speed_mbps %}{{ (link.speed_mbps / 1000) | round(1) ~ ' Gbit/s' if link.speed_mbps >= 1000 else link.speed_mbps ~ ' Mbit/s' }}{% else %}—{% endif %}</td>
+                      <td>{{ link.addresses | join(', ') or '—' }}</td>
+                      <td>
+                        {% if link.master %}<code>{{ link.master }}</code>{% endif %}
+                        {% if link.members %}{{ t(request, "monitoring.interfaces.members", names=(link.members | join(', '))) }}{% endif %}
+                        {% if not link.master and not link.members %}—{% endif %}
+                      </td>
+                      <td class="num">{{ link.rx | net_rate(request) }}</td>
+                      <td class="num">{{ link.tx | net_rate(request) }}</td>
+                      <td class="num">{{ link.errors if link.errors is not none else '—' }}</td>
+                      <td class="num">{{ link.drops if link.drops is not none else '—' }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        {% endfor %}
+        <p class="hint">{{ t(request, "monitoring.interfaces.hint") }}</p>
+      </section>
+    {% endif %}
 
     {# --- S.M.A.R.T. --- #}
     {% if machine.is_physical and machine.smart_devices is not none %}

@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, BigInteger, Float, ForeignKey, Index, Integer
+from sqlalchemy import JSON, BigInteger, Boolean, Float, ForeignKey, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -50,6 +50,11 @@ class MachineMonitoringSample(Base):
 
     # 0-100, None if it couldn't be computed (e.g. /proc/stat unreadable).
     cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Its user (with nice), system (with IRQ) and I/O-wait parts — None on
+    # samples older than 0.142.0.
+    cpu_user_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cpu_system_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cpu_iowait_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 1/5/15-minute load averages (`/proc/loadavg`) — a count of
     # runnable+uninterruptible processes, not a percentage; can exceed a
     # machine's own `cpu_cores`, unlike cpu_percent.
@@ -106,6 +111,22 @@ class MachineMonitoringSample(Base):
     # Each {"id", "name", "vendor", "util_percent", "vram_used_bytes",
     # "vram_total_bytes", "power_watts"} — one per GPU (app.ssh.monitoring).
     gpus: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+    # --- Connectivity seen from the machine (app.ssh.connectivity) — None
+    # when the probe is off, a tool is missing, or before 0.142.0. ---
+    # Average ping round trip and packet loss to the default gateway and
+    # to the internet target (Settings → Checks & retention).
+    gateway_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gateway_loss_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    internet_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    internet_loss_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # One lookup of the configured name: did it resolve, and how long it took.
+    dns_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    dns_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The clock: synchronised (systemd's view), and its offset (chrony or
+    # systemd-timesyncd; positive = ahead).
+    ntp_synced: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    ntp_offset_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Each {"name", "cpu_percent", "mem_bytes", "net_rx_bytes",
     # "net_tx_bytes", "block_read_bytes", "block_write_bytes"} — running

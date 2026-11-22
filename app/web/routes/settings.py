@@ -68,8 +68,10 @@ from app.services.settings_limits import (
     BOOLEAN_FIELDS,
     BOUNDED_FIELDS,
     SIGN_IN_POLICY_FIELDS,
+    TARGET_FIELDS,
     threshold_pairs_out_of_order,
 )
+from app.ssh import connectivity
 from app.ssh.identity import (
     activate_pending_identity,
     discard_pending_identity,
@@ -243,6 +245,8 @@ _CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
     ("health_disk_critical_percent", "settings.checks.health.disk_critical"),
     ("health_temperature_warn_celsius", "settings.checks.health.temperature_warn"),
     ("health_temperature_critical_celsius", "settings.checks.health.temperature_critical"),
+    ("health_latency_warn_ms", "settings.checks.health.latency_warn"),
+    ("health_latency_critical_ms", "settings.checks.health.latency_critical"),
     ("health_disk_full_warn_days", "settings.checks.health.disk_full_warn"),
     ("health_disk_full_critical_days", "settings.checks.health.disk_full_critical"),
 )
@@ -265,7 +269,7 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
     form = await request.form()
     app_settings = await get_or_create_app_settings(db)
     errors: list[str] = []
-    values: dict[str, int | bool | None] = {}
+    values: dict[str, int | bool | str | None] = {}
     for name, label_key in _CHECKS_TAB_BOUNDED:
         raw = form.get(name)
         if raw is None:
@@ -287,6 +291,20 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
             errors.append(error)
         else:
             values[name] = value
+    # The connectivity target and DNS name reach a shell (quoted), so only
+    # an IP address or a plain host name is taken.
+    for name in TARGET_FIELDS:
+        raw = form.get(name)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if connectivity.valid_target(text):
+            values[name] = text
+        else:
+            errors.append(
+                t(request, "settings.checks.connectivity.invalid_target",
+                  label=t(request, f"settings.checks.connectivity.{name}"))
+            )
     # Each health warning level must come before its critical one.
     labels = dict(_CHECKS_TAB_BOUNDED)
     merged = {
@@ -313,15 +331,15 @@ async def update_checks_tab(request: Request, db: AsyncSession = Depends(get_db)
             values[name] = form.get(name) == "1"
 
     changed = {f: v for f, v in values.items() if getattr(app_settings, f) != v}
-    for field, value in changed.items():
-        setattr(app_settings, field, value)
+    for field, new_value in changed.items():
+        setattr(app_settings, field, new_value)
     await db.commit()
     if "monitoring_downsample_after_days" in changed:
         await timescale.apply_policies(db, app_settings.monitoring_downsample_after_days)
 
-    by_action: dict[str, dict[str, int | bool | None]] = {}
-    for field, value in changed.items():
-        by_action.setdefault(AUDIT_ACTION_BY_FIELD[field], {})[field] = value
+    by_action: dict[str, dict[str, int | bool | str | None]] = {}
+    for field, new_value in changed.items():
+        by_action.setdefault(AUDIT_ACTION_BY_FIELD[field], {})[field] = new_value
     for action, details in by_action.items():
         await log_event(
             db,

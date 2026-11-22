@@ -31,7 +31,7 @@ is the one I/O helper — the DB query both the Monitoring tab and
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -374,6 +374,18 @@ class MonitoringHistory:
     docker_net_by_container: dict[str, list[float | None]]
     # Read + write bytes/sec of each container's block devices.
     docker_blkio_by_container: dict[str, list[float | None]]
+    # CPU time spent waiting for I/O (percent, since 0.142.0).
+    cpu_iowait_percent: list[float | None] = field(default_factory=list)
+    # Connectivity from the machine (app.ssh.connectivity), ms / percent.
+    gateway_latency_ms: list[float | None] = field(default_factory=list)
+    internet_latency_ms: list[float | None] = field(default_factory=list)
+    internet_loss_percent: list[float | None] = field(default_factory=list)
+    dns_ms: list[float | None] = field(default_factory=list)
+    latest_gateway_latency_ms: float | None = None
+    latest_internet_latency_ms: float | None = None
+    latest_internet_loss_percent: float | None = None
+    latest_dns_ms: float | None = None
+    latest_ntp_offset_ms: float | None = None
 
 
 def _gpu_history(
@@ -548,6 +560,24 @@ def build_monitoring_history(
             "name",
             ("block_read_bytes", "block_write_bytes"),
         ),
+        cpu_iowait_percent=_bucket_average(
+            [s.cpu_iowait_percent for s in samples], _TARGET_POINTS
+        ),
+        gateway_latency_ms=_bucket_average(
+            [s.gateway_latency_ms for s in samples], _TARGET_POINTS
+        ),
+        internet_latency_ms=_bucket_average(
+            [s.internet_latency_ms for s in samples], _TARGET_POINTS
+        ),
+        internet_loss_percent=_bucket_average(
+            [s.internet_loss_percent for s in samples], _TARGET_POINTS
+        ),
+        dns_ms=_bucket_average([s.dns_ms for s in samples], _TARGET_POINTS),
+        latest_gateway_latency_ms=latest.gateway_latency_ms if latest else None,
+        latest_internet_latency_ms=latest.internet_latency_ms if latest else None,
+        latest_internet_loss_percent=latest.internet_loss_percent if latest else None,
+        latest_dns_ms=latest.dns_ms if latest else None,
+        latest_ntp_offset_ms=latest.ntp_offset_ms if latest else None,
     )
 
 

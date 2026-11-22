@@ -102,6 +102,14 @@ async def seed() -> str:
             upgradable_count=4,
             security_upgradable_count=1,
             monitoring_updated_at=now,
+            cpu_cores=4,
+            default_gateway="192.0.2.1",
+            network_links=[
+                {"name": "eth0", "kind": "physical", "state": "up", "speed_mbps": 1000,
+                 "master": None, "mtu": 1500},
+                {"name": "docker0", "kind": "bridge", "state": "up", "speed_mbps": None,
+                 "master": None, "mtu": 1500},
+            ],
             # Two containers, so the Docker tab has a table to draw.
             docker_status="ok",
             docker_containers=[
@@ -193,9 +201,27 @@ async def seed() -> str:
                     machine_id=web.id,
                     sampled_at=at,
                     cpu_percent=5.0 + (k % 7) * 3,
+                    cpu_user_percent=3.0 + (k % 7) * 2,
+                    cpu_system_percent=1.5,
+                    cpu_iowait_percent=0.5,
                     load1=0.2,
                     load5=0.2,
                     load15=0.1,
+                    ram_used_bytes=(3 << 30) + k * (8 << 20),
+                    ram_total_bytes=8 << 30,
+                    ram_cache_bytes=2 << 30,
+                    filesystems=[{"mount": "/", "use_percent": 41, "used_bytes": 41 << 30,
+                                  "size_bytes": 100 << 30}],
+                    network_io=[{"iface": "eth0", "rx_bytes": k * 50_000_000,
+                                 "tx_bytes": k * 9_000_000}],
+                    gateway_latency_ms=0.4,
+                    gateway_loss_percent=0.0,
+                    internet_latency_ms=11.0 + k % 4,
+                    internet_loss_percent=0.0,
+                    dns_ok=True,
+                    dns_ms=8.0,
+                    ntp_synced=True,
+                    ntp_offset_ms=0.8,
                 )
             )
             db.add(

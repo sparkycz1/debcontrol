@@ -92,6 +92,56 @@
 
   <section
     class="panel"
+    id="live-panel"
+    hx-get="/machines/{{ machine.id }}/live-panel"
+    hx-trigger="load, every 120s, live-monitoring from:body"
+    hx-swap="innerHTML"
+  >
+    <h2>{{ t(request, "live_overview.heading") }}</h2>
+    <p class="hint">{{ t(request, "machine.loading") }}</p>
+  </section>
+
+  {# Top processes: the CPU and memory cards load the list here; it asks
+     again every few seconds only while open (static/js/live-overview.js
+     empties it on close, which stops that). #}
+  <div id="processes-modal" popover class="modal" data-clear-on-close="#processes-panel">
+    <div class="modal-dialog modal-dialog-wide">
+      <div class="modal-header">
+        <h2 class="modal-title">{{ t(request, "processes.title", name=machine.name) }}</h2>
+        <button type="button" class="modal-close" popovertarget="processes-modal"
+                popovertargetaction="hide" aria-label="{{ t(request, 'settings.ai.close') }}">&times;</button>
+      </div>
+      <div id="processes-panel" class="modal-body">
+        <p class="hint">{{ t(request, "machine.loading") }}</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="connectivity-modal" popover class="modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">{{ t(request, "connectivity.title") }}</h2>
+        <button type="button" class="modal-close" popovertarget="connectivity-modal"
+                popovertargetaction="hide" aria-label="{{ t(request, 'settings.ai.close') }}">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">{{ t(request, "connectivity.intro") }}</p>
+        <button type="button" class="button"
+                hx-post="/machines/{{ machine.id }}/connectivity-test"
+                hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+                hx-target="#connectivity-result" hx-swap="innerHTML"
+                hx-indicator="#connectivity-busy"
+                {% if not machine.host_key_fingerprint %}disabled{% endif %}>
+          {{ t(request, "connectivity.run") }}
+        </button>
+        <span id="connectivity-busy" class="htmx-indicator hint">{{ t(request, "connectivity.running") }}</span>
+        <div id="connectivity-result"></div>
+      </div>
+    </div>
+  </div>
+
+  <section
+    class="panel"
     id="health-panel"
     hx-get="/machines/{{ machine.id }}/health-panel"
     hx-trigger="every 60s, live-status from:body"
@@ -308,4 +358,5 @@
 
 {% block extra_scripts %}
   <script src="{{ static_url('js/live-updates.js') }}" defer></script>
+  <script src="{{ static_url('js/live-overview.js') }}" defer></script>
 {% endblock %}

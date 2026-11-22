@@ -19,6 +19,7 @@
 
 (function () {
   const UNITS = ["B", "KB", "MB", "GB", "TB"];
+  const BIT_UNITS = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
 
   function trim(value, decimals) {
     let text = value.toFixed(decimals);
@@ -44,12 +45,23 @@
     return `${number(v)} ${UNITS[i]}${suffix}`;
   }
 
+  function bits(value) {
+    let v = value;
+    let i = 0;
+    while (Math.abs(v) >= 1000 && i < BIT_UNITS.length - 1) {
+      v /= 1000;
+      i += 1;
+    }
+    return `${number(v)} ${BIT_UNITS[i]}`;
+  }
+
   function formatValue(value, fmt) {
     if (value === null || value === undefined) return "—";
     switch (fmt) {
       case "percent": return `${number(value)}%`;
       case "bytes": return bytes(value, "");
       case "bytes_rate": return bytes(value, "/s");
+      case "bits_rate": return bits(value);
       case "celsius": return `${number(value)} °C`;
       case "watts": return `${number(value)} W`;
       case "rpm": return trim(value, 0);

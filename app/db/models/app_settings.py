@@ -376,6 +376,26 @@ class AppSettings(Base):
     health_disk_full_critical_days: Mapped[int] = mapped_column(
         Integer, default=2, server_default="2", nullable=False
     )
+    # Internet round trip (ms, the machine's own ping to
+    # `connectivity_internet_target`) from which it is a warning / critical.
+    health_latency_warn_ms: Mapped[int] = mapped_column(
+        Integer, default=150, server_default="150", nullable=False
+    )
+    health_latency_critical_ms: Mapped[int] = mapped_column(
+        Integer, default=500, server_default="500", nullable=False
+    )
+    # --- Connectivity from the machine itself (app.ssh.connectivity) ---
+    # With every monitoring sample: ping to the default gateway and to the
+    # internet target, one DNS lookup of `connectivity_dns_name`, NTP state.
+    connectivity_checks_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    connectivity_internet_target: Mapped[str] = mapped_column(
+        String(253), default="1.1.1.1", server_default="1.1.1.1", nullable=False
+    )
+    connectivity_dns_name: Mapped[str] = mapped_column(
+        String(253), default="debian.org", server_default="debian.org", nullable=False
+    )
     # --- Docker → Settings (app.services.docker_daemon) ---
     # The daemon.json keys debcontrol keeps the same on the machines in
     # scope ({"log_driver": "local", "live_restore": true, ...}; a key left
