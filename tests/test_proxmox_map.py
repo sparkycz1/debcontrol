@@ -290,7 +290,8 @@ async def test_where_and_networks(db_session_factory: Any) -> None:
 async def test_map_pages(client: Any, db_session_factory: Any) -> None:
     await _seed(db_session_factory)
     where = await client.get("/map")
-    assert where.status_code == 200 and "web1" in where.text and "site.example.com" in where.text
+    assert where.status_code == 200 and "web1" in where.text
+    assert 'href="https://site.example.com"' in where.text
     networks = await client.get("/map/networks")
     assert networks.status_code == 200 and "10.0.0.0/24" in networks.text
     capacity = await client.get("/map/capacity?cores=2&memory_gb=8&disk_gb=20")

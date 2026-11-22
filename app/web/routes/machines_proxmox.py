@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from typing import Any
+from urllib.parse import urlencode
 
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import Depends, Form, HTTPException, Request, Response, status
@@ -155,12 +156,14 @@ async def proxmox_guest_notes(
     guest = guest_or_404(machine, vmid)
     error = await set_notes(request, db, machine, guest, notes)
     query = (
-        f"guest_error={sign_flash(error)}"
+        {"guest_error": sign_flash(error)}
         if error
-        else f"guest_notice={sign_flash(t(request, 'proxmox.guest.notes_saved'))}"
+        else {"guest_notice": sign_flash(t(request, "proxmox.guest.notes_saved"))}
     )
+    # Back to the guest's own page: the VMID as stored for that guest (an
+    # int), never the text of the request.
     return RedirectResponse(
-        url=f"/machines/{machine.id}/proxmox/guests/{vmid}?{query}",
+        url=f"/machines/{machine.id}/proxmox/guests/{int(guest['vmid'])}?{urlencode(query)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
