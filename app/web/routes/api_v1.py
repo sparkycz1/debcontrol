@@ -436,6 +436,12 @@ async def machine_proxmox_api(
         "pmg_version": machine.pmg_version,
         "mail_gateway": machine.pmg_data,
         "guests": machine.pve_guests,
+        # The cluster's nodes and storages with their usage (monitoring
+        # sample); see GET /api/v1/proxmox/capacity for what is allocated.
+        "resources": machine.pve_resources,
+        # Each local guest's configuration and IP addresses by VMID (facts
+        # refresh): notes, disks, mount points, network cards.
+        "guest_details": machine.pve_guest_details,
         "zfs_pools": machine.zfs_pools,
         "storage": machine.pve_storage,
         "backups": machine.pve_backups,

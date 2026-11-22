@@ -5,13 +5,16 @@ opening one of its own (see `app.ssh.pool` for why fewer logins matter):
 
 - `LIVE_COMMAND`, with every monitoring sample (`app.ssh.monitoring`):
   ZFS pool capacity/health (`zpool list`/`zpool status`, any host with
-  ZFS — not only Proxmox) and, on Proxmox VE, every VM/container with its
-  state (`pvesh get /cluster/resources --type vm`). Things that change
-  minute to minute.
+  ZFS — not only Proxmox) and, on Proxmox VE, everything the cluster
+  reports in one call (`pvesh get /cluster/resources`): every VM/container
+  with its state and I/O counters, every node's CPU and memory, and every
+  storage. Things that change minute to minute.
 - `INVENTORY_COMMAND`, with every facts refresh (`app.ssh.facts`): the
   Proxmox VE version (`pveversion`), storages (including Proxmox Backup
   Server ones) with their usage, backup jobs, the last backup tasks and
-  their result, and guests no backup job covers.
+  their result, guests no backup job covers, and each local guest's
+  configuration (notes, disks, mount points, network cards) with its IP
+  addresses (`/etc/pve`, `lxc-info`, the QEMU guest agent).
 
 `pvesh` talks to the local API as root — run through `sudo -n` like every
 other privileged read here (a no-op for a root account, see
@@ -25,9 +28,12 @@ an optional reading must never fail a whole sample.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
+import shlex
 from typing import Any
+from urllib.parse import unquote
 
 LIVE_MARKERS = ("ZFS_POOLS", "ZFS_STATUS", "PVE_GUESTS", "PVE_CLUSTER")
 INVENTORY_MARKERS = (
@@ -38,6 +44,7 @@ INVENTORY_MARKERS = (
     "PVE_NOT_BACKED_UP",
     "PVE_FAILED_TASKS",
     "PVE_GUEST_BACKUPS",
+    "PVE_GUEST_DETAILS",
     "PBS_VERSION",
     "PBS_USAGE",
     "PBS_GC",
@@ -61,8 +68,10 @@ LIVE_COMMAND = (
     "zpool list -H -p -o name,size,alloc,free,frag,cap,health 2>/dev/null; fi; "
     "echo ===ZFS_STATUS===; "
     "if command -v zpool >/dev/null 2>&1; then zpool status 2>/dev/null; fi; "
+    # Every resource type at once (guests, nodes, storages): one pvesh call
+    # instead of one per type. parse_guests / parse_resources pick theirs.
     "echo ===PVE_GUESTS===; "
-    f"if command -v pvesh >/dev/null 2>&1; then {_PVESH} /cluster/resources --type vm {_JSON}; fi; "
+    f"if command -v pvesh >/dev/null 2>&1; then {_PVESH} /cluster/resources {_JSON}; fi; "
     "echo ===PVE_CLUSTER===; "
     f"if command -v pvesh >/dev/null 2>&1; then {_PVESH} /cluster/status {_JSON}; fi"
 )
@@ -129,6 +138,35 @@ _GUEST_BACKUPS_COMMAND = (
     'END{for (v in m) print v, m[v], n[v]}\'; '
 )
 
+# Each guest of this node: its configuration file as Proxmox keeps it
+# (`/etc/pve/{qemu-server,lxc}/<vmid>.conf`, up to its first snapshot
+# section) and its IP addresses — `lxc-info` for a container, the QEMU
+# guest agent for a VM whose agent socket exists (so a VM without the
+# agent costs nothing). One `sudo` for all of them, at most MAX_GUEST_DETAILS
+# guests, 16 KiB of configuration and 5 seconds of agent per guest.
+MAX_GUEST_DETAILS = 300
+_GUEST_DETAILS_SCRIPT = (
+    "n=0; "
+    "for f in /etc/pve/qemu-server/*.conf /etc/pve/lxc/*.conf; do "
+    '[ -e "$f" ] || continue; '
+    f'n=$((n + 1)); [ "$n" -gt {MAX_GUEST_DETAILS} ] && break; '
+    'v="${f##*/}"; v="${v%.conf}"; '
+    'case "$v" in ""|*[!0-9]*) continue;; esac; '
+    'case "$f" in */lxc/*) t=lxc;; *) t=qemu;; esac; '
+    'echo "@@GUEST $t $v"; '
+    "sed '/^\\[/q' \"$f\" 2>/dev/null | head -c 16384; echo; "
+    "echo @@IPS; "
+    'if [ "$t" = lxc ]; then lxc-info -n "$v" -iH 2>/dev/null; '
+    'elif [ -S "/var/run/qemu-server/$v.qga" ]; then '
+    'timeout 5 qm guest cmd "$v" network-get-interfaces 2>/dev/null; fi; '
+    "echo; "
+    "done"
+)
+_GUEST_DETAILS_COMMAND = (
+    "echo ===PVE_GUEST_DETAILS===; "
+    f"if [ -d /etc/pve ]; then sudo -n sh -c {shlex.quote(_GUEST_DETAILS_SCRIPT)} 2>/dev/null; fi; "
+)
+
 INVENTORY_COMMAND = (
     "echo ===PVE_VERSION===; "
     "if command -v pveversion >/dev/null 2>&1; then pveversion 2>/dev/null; fi; "
@@ -141,6 +179,7 @@ INVENTORY_COMMAND = (
     "echo ===PVE_FAILED_TASKS===; "
     f"{_PVESH} /nodes/localhost/tasks --errors 1 --limit 15 {_JSON}; "
     f"{_GUEST_BACKUPS_COMMAND}"
+    f"{_GUEST_DETAILS_COMMAND}"
     "fi; "
     f"{_PBS_COMMAND}; "
     f"{_PMG_COMMAND}"
@@ -189,10 +228,12 @@ def _float(value: Any) -> float | None:
 
 
 def parse_guests(section: str) -> list[dict[str, Any]] | None:
-    """VMs and containers from `/cluster/resources --type vm`, sorted by
-    VMID: `{"vmid", "name", "type" ("qemu"/"lxc"), "node", "status",
-    "cpu_percent", "mem_bytes", "maxmem_bytes", "uptime_seconds",
-    "template", "tags"}`. None = not a Proxmox VE host (or no access)."""
+    """VMs and containers from `/cluster/resources`, sorted by VMID:
+    `{"vmid", "name", "type" ("qemu"/"lxc"), "node", "status",
+    "cpu_percent", "cores", "mem_bytes", "maxmem_bytes", "maxdisk_bytes",
+    "uptime_seconds", "template", "tags"}` and the I/O counters since the
+    guest started (`disk_read_bytes`, `disk_write_bytes`, `net_in_bytes`,
+    `net_out_bytes`). None = not a Proxmox VE host (or no access)."""
     rows = _json_list(section)
     if rows is None:
         return None
@@ -212,15 +253,305 @@ def parse_guests(section: str) -> list[dict[str, Any]] | None:
                 "node": str(row.get("node") or ""),
                 "status": str(row.get("status") or "unknown"),
                 "cpu_percent": round(cpu * 100, 1) if cpu is not None else None,
+                "cores": _int(row.get("maxcpu")),
                 "mem_bytes": _int(row.get("mem")),
                 "maxmem_bytes": _int(row.get("maxmem")),
+                "maxdisk_bytes": _int(row.get("maxdisk")),
                 "uptime_seconds": _int(row.get("uptime")),
+                "disk_read_bytes": _int(row.get("diskread")),
+                "disk_write_bytes": _int(row.get("diskwrite")),
+                "net_in_bytes": _int(row.get("netin")),
+                "net_out_bytes": _int(row.get("netout")),
                 "template": bool(_int(row.get("template")) or 0),
                 "tags": [t for t in re.split(r"[;, ]+", tags) if t],
             }
         )
     guests.sort(key=lambda g: g["vmid"])
     return guests
+
+
+def parse_resources(section: str) -> dict[str, list[dict[str, Any]]] | None:
+    """The nodes and storages in the same `/cluster/resources` answer as
+    the guests: `{"nodes": [{"node", "status", "cpu_percent", "cores",
+    "mem_bytes", "maxmem_bytes", "disk_bytes", "maxdisk_bytes",
+    "uptime_seconds"}], "storages": [{"storage", "node", "type",
+    "content", "shared", "status", "used_bytes", "total_bytes"}]}`, sorted.
+    None = not a Proxmox VE host (or no access)."""
+    rows = _json_list(section)
+    if rows is None:
+        return None
+    nodes: list[dict[str, Any]] = []
+    storages: list[dict[str, Any]] = []
+    for row in rows:
+        kind = row.get("type")
+        node = str(row.get("node") or "")
+        if not node:
+            continue
+        if kind == "node":
+            cpu = _float(row.get("cpu"))
+            nodes.append(
+                {
+                    "node": node,
+                    "status": str(row.get("status") or "unknown"),
+                    "cpu_percent": round(cpu * 100, 1) if cpu is not None else None,
+                    "cores": _int(row.get("maxcpu")),
+                    "mem_bytes": _int(row.get("mem")),
+                    "maxmem_bytes": _int(row.get("maxmem")),
+                    "disk_bytes": _int(row.get("disk")),
+                    "maxdisk_bytes": _int(row.get("maxdisk")),
+                    "uptime_seconds": _int(row.get("uptime")),
+                }
+            )
+        elif kind == "storage":
+            name = str(row.get("storage") or "")
+            if not name:
+                continue
+            storages.append(
+                {
+                    "storage": name,
+                    "node": node,
+                    "type": str(row.get("plugintype") or ""),
+                    "content": [c for c in str(row.get("content") or "").split(",") if c],
+                    "shared": bool(_int(row.get("shared")) or 0),
+                    "status": str(row.get("status") or "unknown"),
+                    "used_bytes": _int(row.get("disk")),
+                    "total_bytes": _int(row.get("maxdisk")),
+                }
+            )
+    nodes.sort(key=lambda n: n["node"])
+    storages.sort(key=lambda s: (s["node"], s["storage"]))
+    return {"nodes": nodes, "storages": storages}
+
+
+_GUEST_COUNTERS = (
+    ("disk_read_bytes", "disk_read_bps"),
+    ("disk_write_bytes", "disk_write_bps"),
+    ("net_in_bytes", "net_in_bps"),
+    ("net_out_bytes", "net_out_bps"),
+)
+
+
+def with_guest_rates(
+    previous: list[dict[str, Any]] | None,
+    current: list[dict[str, Any]] | None,
+    seconds: float | None,
+) -> list[dict[str, Any]] | None:
+    """`current` with each running guest's disk and network rates in bytes
+    per second since `previous` (`disk_read_bps`, `disk_write_bps`,
+    `net_in_bps`, `net_out_bps`). A counter that went down (the guest
+    restarted) or a guest new since then gets None."""
+    if current is None:
+        return None
+    before = {
+        (g.get("vmid"), g.get("node")): g for g in previous or [] if isinstance(g, dict)
+    }
+    for guest in current:
+        old = before.get((guest.get("vmid"), guest.get("node")))
+        for counter, rate in _GUEST_COUNTERS:
+            value = guest.get(counter)
+            old_value = old.get(counter) if old else None
+            guest[rate] = (
+                round((value - old_value) / seconds, 1)
+                if guest.get("status") == "running"
+                and seconds
+                and seconds > 0
+                and isinstance(value, int)
+                and isinstance(old_value, int)
+                and value >= old_value
+                else None
+            )
+    return current
+
+
+def local_node(
+    cluster: dict[str, Any] | None, resources: dict[str, Any] | None
+) -> str | None:
+    """The name of the node this machine is: the cluster's `local` node, or
+    the only node of a standalone host."""
+    for node in (cluster or {}).get("nodes") or []:
+        if node.get("local") and node.get("name"):
+            return str(node["name"])
+    nodes = [n for n in (resources or {}).get("nodes") or [] if n.get("node")]
+    return str(nodes[0]["node"]) if len(nodes) == 1 else None
+
+
+# --- Guest configuration (facts refresh) ------------------------------------------
+
+_DISK_KEY_RE = re.compile(r"^(?:scsi|virtio|sata|ide|efidisk|tpmstate)\d+$")
+_MOUNT_KEY_RE = re.compile(r"^(?:rootfs|mp\d+)$")
+_NET_KEY_RE = re.compile(r"^net\d+$")
+_CONF_LINE_RE = re.compile(r"^([a-z][a-z0-9_-]{0,31}):\s?(.*)$")
+_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}$")
+_MAX_NOTES = 8192
+
+
+def _conf_options(value: str) -> tuple[str, dict[str, str]]:
+    """`local-lvm:vm-101-disk-0,size=32G,ssd=1` -> ("local-lvm:vm-101-disk-0",
+    {"size": "32G", "ssd": "1"}). The first part without `=` is the volume."""
+    volume = ""
+    options: dict[str, str] = {}
+    for part in value.split(","):
+        key, sep, rest = part.partition("=")
+        if not sep:
+            if not volume:
+                volume = key.strip()
+            continue
+        options[key.strip()] = rest.strip()
+    return volume, options
+
+
+def _net_card(key: str, value: str, guest_type: str) -> dict[str, Any]:
+    """A `netN` line. A VM's starts with `<model>=<mac>`; a container's
+    has `name=eth0,hwaddr=...,ip=...`."""
+    _volume, options = _conf_options(value)
+    model = ""
+    mac = options.get("hwaddr") or options.get("macaddr") or ""
+    if guest_type == "qemu":
+        for name, option in options.items():
+            if _MAC_RE.match(option):
+                model, mac = name, option
+                break
+    return {
+        "key": key,
+        "name": options.get("name") or "",
+        "model": model,
+        "mac": mac.lower() if _MAC_RE.match(mac) else "",
+        "bridge": options.get("bridge") or "",
+        "vlan": options.get("tag") or "",
+        "firewall": options.get("firewall") == "1",
+        "ip": options.get("ip") or "",
+        "link_down": options.get("link_down") == "1",
+    }
+
+
+def _parse_conf(text: str, guest_type: str) -> dict[str, Any]:
+    notes: list[str] = []
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith("["):
+            break
+        if line.startswith("#"):
+            notes.append(unquote(line[1:]))
+            continue
+        match = _CONF_LINE_RE.match(line)
+        if match:
+            values[match.group(1)] = match.group(2).strip()
+    disks: list[dict[str, Any]] = []
+    mounts: list[dict[str, Any]] = []
+    nets: list[dict[str, Any]] = []
+    for key in sorted(values):
+        value = values[key]
+        if guest_type == "qemu" and _DISK_KEY_RE.match(key):
+            volume, options = _conf_options(value)
+            if options.get("media") == "cdrom":
+                continue
+            disks.append({"key": key, "volume": volume, "size": options.get("size") or ""})
+        elif guest_type == "lxc" and _MOUNT_KEY_RE.match(key):
+            volume, options = _conf_options(value)
+            mounts.append(
+                {
+                    "key": key,
+                    "volume": volume,
+                    "path": "/" if key == "rootfs" else options.get("mp") or "",
+                    "size": options.get("size") or "",
+                    "backup": options.get("backup", "1" if key == "rootfs" else "0") == "1",
+                    "read_only": options.get("ro") == "1",
+                }
+            )
+        elif _NET_KEY_RE.match(key):
+            nets.append(_net_card(key, value, guest_type))
+    mounts.sort(key=lambda m: (m["key"] != "rootfs", m["key"]))
+    memory = _int(values.get("memory"))
+    cores = _int(values.get("cores"))
+    sockets = _int(values.get("sockets")) or 1
+    agent = values.get("agent", "")
+    return {
+        "type": guest_type,
+        "name": values.get("name") or values.get("hostname") or "",
+        "notes": "\n".join(notes).strip()[:_MAX_NOTES],
+        "memory_mb": memory,
+        "cores": (cores or 1) * sockets if guest_type == "qemu" else cores,
+        "onboot": values.get("onboot") == "1",
+        "ostype": values.get("ostype") or "",
+        "agent": agent.split(",", 1)[0] in ("1", "enabled=1"),
+        "unprivileged": values.get("unprivileged") == "1" if guest_type == "lxc" else None,
+        "disks": disks,
+        "mounts": mounts,
+        "nets": nets,
+        "ips": [],
+    }
+
+
+def _usable_ip(value: str) -> str | None:
+    """An address worth showing: not loopback or link-local."""
+    try:
+        address = ipaddress.ip_address(value.strip().split("%", 1)[0])
+    except ValueError:
+        return None
+    if address.is_loopback or address.is_link_local or address.is_unspecified:
+        return None
+    return str(address)
+
+
+def _agent_ips(text: str) -> list[str]:
+    """IPs from `qm guest cmd <vmid> network-get-interfaces` (JSON)."""
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("result", [])
+    found: list[str] = []
+    for interface in data if isinstance(data, list) else []:
+        if not isinstance(interface, dict) or interface.get("name") == "lo":
+            continue
+        for entry in interface.get("ip-addresses") or []:
+            if isinstance(entry, dict):
+                address = _usable_ip(str(entry.get("ip-address") or ""))
+                if address and address not in found:
+                    found.append(address)
+    return found
+
+
+def _ips(text: str) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    if text.startswith(("[", "{")):
+        return _agent_ips(text)
+    found: list[str] = []
+    for line in text.splitlines():
+        address = _usable_ip(line)
+        if address and address not in found:
+            found.append(address)
+    return found
+
+
+def _ip_sort_key(address: str) -> tuple[int, str]:
+    return (1 if ":" in address else 0, address)
+
+
+def parse_guest_details(section: str) -> dict[str, dict[str, Any]] | None:
+    """Each local guest's configuration, by VMID (as a string, since it is
+    stored as JSON): `{"type", "name", "notes", "memory_mb", "cores",
+    "onboot", "ostype", "agent", "unprivileged", "disks": [{"key",
+    "volume", "size"}], "mounts": [{"key", "volume", "path", "size",
+    "backup", "read_only"}], "nets": [{"key", "name", "model", "mac",
+    "bridge", "vlan", "firewall", "ip", "link_down"}], "ips": [...]}`
+    (IPv4 first). None = not read (no Proxmox VE, or no root)."""
+    if "@@GUEST " not in section:
+        return None if not section.strip() else {}
+    details: dict[str, dict[str, Any]] = {}
+    for block in section.split("@@GUEST ")[1:]:
+        head, _sep, body = block.partition("\n")
+        parts = head.split()
+        if len(parts) != 2 or parts[0] not in ("qemu", "lxc") or not parts[1].isdecimal():
+            continue
+        conf, _sep, ips = body.partition("@@IPS")
+        guest = _parse_conf(conf, parts[0])
+        guest["ips"] = sorted(_ips(ips), key=_ip_sort_key)
+        details[str(int(parts[1]))] = guest
+    return details
 
 
 def _zfs_number(value: str) -> int | None:
@@ -827,6 +1158,41 @@ def build_guest_action_command(guest: dict[str, Any], action: str) -> str:
     if guest_type not in ("qemu", "lxc") or not isinstance(vmid, int) or not _NODE_RE.match(node):
         raise ValueError("Unknown guest.")
     return f"sudo -n pvesh create /nodes/{node}/{guest_type}/{vmid}/status/{action} 2>&1"
+
+
+def build_guest_notes_command(guest: dict[str, Any], notes: str) -> str:
+    """`pvesh set /nodes/<node>/<type>/<vmid>/config --description <notes>`
+    (an empty text deletes it). The notes are passed as one quoted word."""
+    guest_type = str(guest.get("type") or "")
+    node = str(guest.get("node") or "")
+    vmid = guest.get("vmid")
+    if guest_type not in ("qemu", "lxc") or not isinstance(vmid, int) or not _NODE_RE.match(node):
+        raise ValueError("Unknown guest.")
+    path = f"/nodes/{node}/{guest_type}/{vmid}/config"
+    if not notes.strip():
+        return f"sudo -n pvesh set {path} --delete description 2>&1"
+    return f"sudo -n pvesh set {path} --description {shlex.quote(notes)} 2>&1"
+
+
+def clean_notes(text: str) -> str:
+    """Notes as Proxmox keeps them: Unix line ends, no NUL or other control
+    characters but tab and newline, at most 8 KiB."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = "".join(ch for ch in text if ch in "\t\n" or ch.isprintable())
+    return text.strip()[:_MAX_NOTES]
+
+
+def build_guest_console_command(guest: dict[str, Any]) -> str:
+    """The guest's console in the terminal: `pct enter` for a container (a
+    root shell inside it), `qm terminal` for a VM (its serial console —
+    the VM needs a `serial0: socket` port; Ctrl+O leaves)."""
+    guest_type = str(guest.get("type") or "")
+    vmid = guest.get("vmid")
+    if guest_type not in ("qemu", "lxc") or not isinstance(vmid, int):
+        raise ValueError("Unknown guest.")
+    if guest_type == "lxc":
+        return f"sudo -n pct enter {vmid}"
+    return f"sudo -n qm terminal {vmid}"
 
 
 # --- Guests deliberately left out of backups ---

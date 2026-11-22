@@ -190,8 +190,72 @@ async def seed() -> str:
             is_reachable=False,
             os_id="ubuntu",
         )
+        gib = 1 << 30
+        # A Proxmox VE host running web1 as a VM: its Proxmox tab, the guest
+        # page, the network picture and the Map tabs have something to draw.
+        pve = Machine(
+            name="pve1",
+            ip_address="192.0.2.5",
+            port=22,
+            username="root",
+            auth_method=AuthMethod.PASSWORD,
+            host_key_fingerprint="SHA256:e2e-pve",
+            is_reachable=True,
+            os_id="debian",
+            pve_version="8.2.4",
+            default_gateway="192.0.2.1",
+            network_interfaces=[{"interface": "vmbr0", "address": "192.0.2.5/24"}],
+            network_links=[
+                {"name": "eno1", "kind": "physical", "state": "up", "speed_mbps": 1000,
+                 "master": "vmbr0", "mtu": 1500},
+                {"name": "vmbr0", "kind": "bridge", "state": "up", "speed_mbps": None,
+                 "master": None, "mtu": 1500},
+                {"name": "tap101i0", "kind": "virtual", "state": "up", "speed_mbps": None,
+                 "master": "vmbr0", "mtu": 1500},
+                {"name": "veth200i0", "kind": "virtual", "state": "up", "speed_mbps": None,
+                 "master": "vmbr0", "mtu": 1500},
+            ],
+            pve_guests=[
+                {"vmid": 101, "name": "web1", "type": "qemu", "node": "pve1",
+                 "status": "running", "cpu_percent": 4.0, "cores": 4, "mem_bytes": 3 * gib,
+                 "maxmem_bytes": 8 * gib, "maxdisk_bytes": 32 * gib, "uptime_seconds": 86400,
+                 "template": False, "tags": ["web"], "disk_read_bps": 12000.0,
+                 "disk_write_bps": 34000.0, "net_in_bps": 5600.0, "net_out_bps": 7800.0},
+                {"vmid": 200, "name": "dns", "type": "lxc", "node": "pve1",
+                 "status": "running", "cpu_percent": 0.5, "cores": 1, "mem_bytes": gib // 4,
+                 "maxmem_bytes": gib, "uptime_seconds": 86400, "template": False, "tags": []},
+            ],
+            pve_resources={
+                "nodes": [{"node": "pve1", "status": "online", "cpu_percent": 9.0, "cores": 8,
+                           "mem_bytes": 12 * gib, "maxmem_bytes": 32 * gib,
+                           "disk_bytes": 20 * gib, "maxdisk_bytes": 100 * gib,
+                           "uptime_seconds": 864000}],
+                "storages": [{"storage": "local-lvm", "node": "pve1", "type": "lvmthin",
+                              "content": ["images", "rootdir"], "shared": False,
+                              "status": "available", "used_bytes": 120 * gib,
+                              "total_bytes": 400 * gib}],
+            },
+            pve_guest_details={
+                "101": {"notes": "Web server\nowner: ops", "memory_mb": 8192, "cores": 4,
+                        "onboot": True, "ostype": "l26", "agent": True, "unprivileged": False,
+                        "disks": [{"key": "scsi0", "volume": "local-lvm:vm-101-disk-0",
+                                   "size": "32G"}],
+                        "mounts": [],
+                        "nets": [{"key": "net0", "bridge": "vmbr0", "vlan": None,
+                                  "mac": "bc:24:11:aa:bb:cc", "model": "virtio",
+                                  "firewall": True, "link_down": False, "name": None,
+                                  "ip": None}],
+                        "ips": ["192.0.2.10"]},
+                "200": {"notes": "", "memory_mb": 1024, "cores": 1, "onboot": True,
+                        "ostype": "debian", "agent": False, "unprivileged": True, "disks": [],
+                        "mounts": [{"key": "rootfs", "volume": "local-lvm:subvol-200-disk-0",
+                                    "path": "/", "size": "8G", "backup": True,
+                                    "read_only": False}],
+                        "nets": [], "ips": ["192.0.2.53"]},
+            },
+        )
         check = EndpointCheck(name="shop", kind="http", target="https://shop.example.com")
-        db.add_all([web, db_host, check])
+        db.add_all([web, db_host, pve, check])
         await db.flush()
 
         for k in range(60):

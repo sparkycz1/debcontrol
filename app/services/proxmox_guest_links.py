@@ -5,12 +5,15 @@ some of those guests are machines debcontrol manages too. This pairs them
 up, so a guest row can link to its machine and a machine can say "runs on
 pve1 as VM 111".
 
-Proxmox does not report a guest's address, so the pairing is by name: a
-guest's name equals the machine's name, its discovered hostname, or the
-first label of either (`web1` for `web1.example.com`), ignoring case. A
-pairing is only made when it is unambiguous — one machine for the guest,
-one guest for the machine. Every node of a cluster reports the same
-guests; then the node the guest runs on is the one named.
+The pairing is by name: a guest's name equals the machine's name, its
+discovered hostname, or the first label of either (`web1` for
+`web1.example.com`), ignoring case. A guest whose name pairs nothing is
+then paired by address: one of the IP addresses the host read for it
+(`Machine.pve_guest_details`, the QEMU guest agent or `lxc-info`) is the
+address debcontrol connects to. A pairing is only made when it is
+unambiguous — one machine for the guest, one guest for the machine.
+Every node of a cluster reports the same guests; then the node the guest
+runs on is the one named.
 """
 
 from __future__ import annotations
@@ -87,8 +90,7 @@ def find_host(
     None when no guest carries its name, or when guests with different ids
     do (two different guests with one name: not ours to guess)."""
     wanted = names_of(machine)
-    if not wanted:
-        return None
+    hypervisors = list(hypervisors)
     found: list[tuple[_Named, dict[str, Any]]] = []
     for host, guests in hypervisors:
         if host.id == machine.id:
@@ -98,6 +100,8 @@ def find_host(
             for guest in guests or []
             if not guest.get("template") and _guest_name(guest) in wanted
         )
+    if not found:
+        found = _by_address(machine, hypervisors)
     if not found:
         return None
     if len({(guest.get("vmid"), guest.get("type")) for _host, guest in found}) != 1:
@@ -118,12 +122,38 @@ def find_host(
     )
 
 
+def _by_address(
+    machine: _Named, hypervisors: list[tuple[_Named, list[dict[str, Any]] | None]]
+) -> list[tuple[_Named, dict[str, Any]]]:
+    """The guests whose addresses (as their host read them) include the
+    address debcontrol reaches `machine` at."""
+    address = str(getattr(machine, "ip_address", "") or "").strip().lower()
+    if not address:
+        return []
+    found: list[tuple[_Named, dict[str, Any]]] = []
+    for host, guests in hypervisors:
+        details = getattr(host, "pve_guest_details", None) or {}
+        if host.id == machine.id or not isinstance(details, dict):
+            continue
+        for guest in guests or []:
+            ips = (details.get(str(guest.get("vmid"))) or {}).get("ips") or []
+            if not guest.get("template") and address in [str(ip).lower() for ip in ips]:
+                found.append((host, guest))
+    return found
+
+
 def pair_guests[M: _Named](
-    host_id: uuid.UUID, guests: list[dict[str, Any]] | None, machines: Iterable[M]
+    host_id: uuid.UUID,
+    guests: list[dict[str, Any]] | None,
+    machines: Iterable[M],
+    details: dict[str, Any] | None = None,
 ) -> dict[int, M]:
     """`{vmid: machine}` for the guests of one host that are managed
     machines. A name shared by two guests, or by two machines, pairs
-    nothing."""
+    nothing; a guest left over is paired by one of its addresses in
+    `details` (`Machine.pve_guest_details`) when exactly one machine is
+    reached at it."""
+    machines = list(machines)
     by_name: dict[str, list[M]] = {}
     for machine in machines:
         if machine.id == host_id:
@@ -140,6 +170,24 @@ def pair_guests[M: _Named](
         candidates = {m.id: m for m in by_name.get(name, [])}
         if len(candidates) == 1 and guest_names.count(name) == 1:
             paired[vmid] = next(iter(candidates.values()))
+    if details:
+        by_address: dict[str, list[M]] = {}
+        for machine in machines:
+            address = str(getattr(machine, "ip_address", "") or "").strip().lower()
+            if address and machine.id != host_id:
+                by_address.setdefault(address, []).append(machine)
+        taken = {m.id for m in paired.values()}
+        for guest in guests or []:
+            vmid = guest.get("vmid")
+            if not isinstance(vmid, int) or vmid in paired or guest.get("template"):
+                continue
+            ips = (details.get(str(vmid)) or {}).get("ips") or []
+            found = {m.id: m for ip in ips for m in by_address.get(str(ip).lower(), [])}
+            if len(found) == 1:
+                machine = next(iter(found.values()))
+                if machine.id not in taken:
+                    paired[vmid] = machine
+                    taken.add(machine.id)
     return paired
 
 
@@ -173,6 +221,7 @@ class _Row:
     id: uuid.UUID
     name: str
     discovered_hostname: str | None
+    ip_address: str | None = None
 
 
 async def machines_for_guests(db: AsyncSession, user: User, host: Machine) -> dict[int, _Row]:
@@ -182,7 +231,11 @@ async def machines_for_guests(db: AsyncSession, user: User, host: Machine) -> di
         return {}
     query = await machines_visible_to(db, user)
     rows = await db.execute(
-        query.with_only_columns(Machine.id, Machine.name, Machine.discovered_hostname)
+        query.with_only_columns(
+            Machine.id, Machine.name, Machine.discovered_hostname, Machine.ip_address
+        )
     )
-    machines = [_Row(id=r[0], name=r[1], discovered_hostname=r[2]) for r in rows.all()]
-    return pair_guests(host.id, host.pve_guests, machines)
+    machines = [
+        _Row(id=r[0], name=r[1], discovered_hostname=r[2], ip_address=r[3]) for r in rows.all()
+    ]
+    return pair_guests(host.id, host.pve_guests, machines, host.pve_guest_details)

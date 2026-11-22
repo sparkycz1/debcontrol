@@ -236,6 +236,14 @@ class Machine(Base):
     # failed tasks of any kind (facts refresh) — Proxmox VE.
     pve_cluster: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     pve_failed_tasks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # The cluster's nodes and storages with their usage, `{"nodes": [...],
+    # "storages": [...]}` (monitoring sample; app.ssh.proxmox.parse_resources)
+    # — what the capacity overview and the over-commit check read.
+    pve_resources: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Each local guest's configuration (notes, disks, mount points, network
+    # cards) and IP addresses, by VMID as a string (facts refresh;
+    # app.ssh.proxmox.parse_guest_details).
+    pve_guest_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Snapshots debcontrol took of this host's guests before updating them
     # and that are still there — `{vmid, type, node, name, machine_name}`
     # (app.services.update_snapshots). Never deleted by debcontrol.

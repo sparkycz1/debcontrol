@@ -39,8 +39,11 @@ from app.services import (
     acknowledgements,
     docker_jobs,
     hardware_inventory,
+    live_overview,
     machine_health,
     machine_timeline,
+    network_topology,
+    proxmox_capacity,
     proxmox_guest_links,
     self_host,
     update_snapshots,
@@ -1077,6 +1080,7 @@ async def machine_proxmox(
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     now_epoch = int(datetime.now(UTC).timestamp())
     running, total = proxmox.guest_counts(machine.pve_guests)
+    recent = await live_overview.load_recent(db, machine.id)
     uncovered, signed_off = proxmox.split_not_backed_up(
         machine.pve_backups, machine.pve_backup_exempt, machine.pve_guests
     )
@@ -1113,6 +1117,12 @@ async def machine_proxmox(
             "now_epoch": now_epoch,
             "stale_seconds": proxmox.STALE_BACKUP_SECONDS,
             "queue_warn": proxmox.MAIL_QUEUE_WARN,
+            # This node's CPU and memory and what its guests were given.
+            "node": proxmox_capacity.local_capacity(machine),
+            "guest_details": machine.pve_guest_details or {},
+            "topology": network_topology.of_machine(
+                machine, recent[0] if recent else None, recent[1] if len(recent) > 1 else None
+            ),
         },
     )
     if new_cookie:

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+
+{% block title %}{{ t(request, "map.tab.capacity") }} — {{ t(request, "map.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro meter(percent, warn=85, critical=100) -%}
+  {% if percent is not none %}
+    <span class="capacity-meter capacity-{{ 'critical' if percent > critical else ('warn' if percent >= warn else 'ok') }}" title="{{ percent }} %">
+      <svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="capacity-track" width="100" height="6"></rect><rect class="capacity-fill" width="{{ [percent, 100] | min }}" height="6"></rect></svg>
+    </span>
+  {% endif %}
+{%- endmacro %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "map.title") }}</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "map.capacity.intro") }}</p>
+
+  {% if not nodes %}
+    <p class="hint">{{ t(request, "map.capacity.empty") }}</p>
+  {% else %}
+    <section class="panel">
+      <h2>{{ t(request, "map.capacity.fit_heading") }}</h2>
+      <form method="get" action="/map/capacity" class="search-form capacity-form">
+        <label>{{ t(request, "map.capacity.cores") }} <input type="number" name="cores" min="1" max="1024" value="{{ form.cores }}"></label>
+        <label>{{ t(request, "map.capacity.memory_gb") }} <input type="number" name="memory_gb" min="0" step="0.5" value="{{ form.memory_gb }}"></label>
+        <label>{{ t(request, "map.capacity.disk_gb") }} <input type="number" name="disk_gb" min="0" step="1" value="{{ form.disk_gb }}"></label>
+        <button type="submit" class="button">{{ t(request, "map.capacity.find") }}</button>
+      </form>
+      {% if fits is not none %}
+        {% if best %}
+          <div class="alert alert-ok"><p>{% if best.node.cluster %}{{ t(request, "map.capacity.best_in_cluster", node=best.node.node, cluster=best.node.cluster) }}{% else %}{{ t(request, "map.capacity.best", node=best.node.node) }}{% endif %}</p></div>
+        {% else %}
+          <div class="alert alert-warn"><p>{{ t(request, "map.capacity.none_fits") }}</p></div>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    <section class="chart-card chart-card-wide">
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="capacity-table">
+          <thead>
+            <tr>
+              <th data-sort="text">{{ t(request, "map.capacity.cluster") }}</th>
+              <th data-sort="text">{{ t(request, "proxmox.node") }}</th>
+              {% if fits is not none %}<th>{{ t(request, "map.capacity.fits") }}</th>{% endif %}
+              <th data-sort="number">CPU</th>
+              <th data-sort="number">{{ t(request, "map.capacity.vcpus") }}</th>
+              <th data-sort="number">{{ t(request, "map.capacity.memory_used") }}</th>
+              <th data-sort="number">{{ t(request, "map.capacity.memory_given") }}</th>
+              <th data-sort="number">{{ t(request, "map.capacity.storage_free") }}</th>
+              <th data-sort="number">{{ t(request, "proxmox.guests_running") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for n in nodes %}
+              {% set f = fit_of.get((n.cluster or '') ~ '/' ~ n.node) %}
+              <tr class="{{ 'row-muted' if not n.online else '' }}">
+                <td>{{ n.cluster or '—' }}</td>
+                <td>
+                  {% if n.machine_id %}<a href="/machines/{{ n.machine_id }}/proxmox">{{ n.node }}</a>{% else %}{{ n.node }}{% endif %}
+                  {% if not n.online %}<span class="badge badge-warn">{{ t(request, "map.capacity.offline") }}</span>{% endif %}
+                </td>
+                {% if fits is not none %}
+                  <td>
+                    {% if f and f.fits %}<span class="badge badge-ok">{{ t(request, "map.capacity.yes") }}</span>{% if f.mem_left_bytes is not none %} <span class="table-muted">{{ t(request, "map.capacity.left", size=(f.mem_left_bytes | bytes)) }}</span>{% endif %}
+                    {% elif f %}{% for reason in f.reasons %}<span class="badge badge-warn">{{ t(request, "map.capacity.reason." ~ reason) }}</span> {% endfor %}{% endif %}
+                  </td>
+                {% endif %}
+                <td data-sort-value="{{ n.cpu_percent if n.cpu_percent is not none else -1 }}">{{ ('%.0f %%' % n.cpu_percent) if n.cpu_percent is not none else '—' }}</td>
+                <td data-sort-value="{{ n.vcpu_ratio or 0 }}">
+                  {{ n.vcpus_running }} / {{ n.cores or '—' }}
+                  {% if n.vcpu_ratio is not none %}<span class="table-muted">({{ t(request, "proxmox.capacity.ratio", ratio=n.vcpu_ratio) }})</span>{% endif %}
+                </td>
+                <td data-sort-value="{{ n.mem_used_percent or 0 }}">
+                  {{ n.mem_used_bytes | bytes }} / {{ n.mem_total_bytes | bytes }}
+                  {{ meter(n.mem_used_percent) }}
+                </td>
+                <td data-sort-value="{{ n.mem_given_percent or 0 }}">
+                  {{ n.mem_running_bytes | bytes }}
+                  {% if n.overcommitted %}<span class="badge badge-warn">{{ t(request, "proxmox.capacity.overcommitted") }}</span>{% elif n.mem_given_percent is not none %}<span class="table-muted">({{ n.mem_given_percent | round | int }} %)</span>{% endif %}
+                  {{ meter(n.mem_given_percent, 90, 100) }}
+                  <br><span class="table-muted">{{ t(request, "map.capacity.all_guests", size=(n.mem_total_given_bytes | bytes)) }}</span>
+                </td>
+                <td data-sort-value="{{ n.storage_free_bytes or 0 }}">
+                  {{ n.storage_free_bytes | bytes }}
+                  {% if n.storages %}<br><span class="table-muted">{% for s in n.storages %}{{ s.name }} {{ s.free_bytes | bytes }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+                </td>
+                <td data-sort-value="{{ n.guests_running }}">{{ n.guests_running }} / {{ n.guests_total }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

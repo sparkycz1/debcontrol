@@ -45,7 +45,7 @@ from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.notification_rule import NotificationEventType
 from app.db.models.security_audit import SecurityAudit, SecurityAuditStatus
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale, translate
-from app.services import disk_history
+from app.services import disk_history, proxmox_capacity
 from app.services.disk_history import DEFAULT_THRESHOLDS as DEFAULT_DISK_THRESHOLDS
 from app.services.disk_history import DiskThresholds
 from app.ssh import proxmox
@@ -287,15 +287,31 @@ def _network(
     return findings
 
 
-def _memory(newest: MachineMonitoringSample | None, th: Thresholds) -> list[Finding]:
+def _memory(
+    machine: Machine, newest: MachineMonitoringSample | None, th: Thresholds
+) -> list[Finding]:
+    findings: list[Finding] = []
+    # A Proxmox VE node whose running guests were given more memory than
+    # it has (app.services.proxmox_capacity).
+    node = proxmox_capacity.local_capacity(machine)
+    if node is not None and node.overcommitted:
+        findings.append(
+            Finding("memory.overcommit", "memory", "warning", "memory_overcommitted",
+                    {"given": _gib(node.mem_running_bytes),
+                     "total": _gib(node.mem_total_bytes or 0)}, "proxmox")
+        )
     if newest is None or newest.ram_used_bytes is None or not newest.ram_total_bytes:
-        return []
+        return findings
     percent = newest.ram_used_bytes / newest.ram_total_bytes * 100
     severity = _level(percent, th.memory_warn, th.memory_critical)
-    if not severity:
-        return []
-    return [Finding("memory.usage", "memory", severity, "memory_high",
-                    {"percent": round(percent)}, "monitoring")]
+    if severity:
+        findings.append(Finding("memory.usage", "memory", severity, "memory_high",
+                                {"percent": round(percent)}, "monitoring"))
+    return findings
+
+
+def _gib(value: int) -> str:
+    return f"{value / 1024**3:.1f}".rstrip("0").rstrip(".")
 
 
 def _storage(
@@ -532,7 +548,7 @@ def evaluate(
                                 "host_key_changed", {}, None))
     findings += _network(machine, samples, thresholds)
     findings += _cpu(samples, thresholds)
-    findings += _memory(newest, thresholds)
+    findings += _memory(machine, newest, thresholds)
     findings += _storage(machine, newest, thresholds)
     findings += _disks(machine, newest, thresholds)
     findings += _services(machine)

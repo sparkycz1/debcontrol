@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% set title = (guest.name or guest.vmid) ~ '' %}
+{% block title %}{{ title }} — {{ machine.name }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+
+  {{ render_tabnav(tabs, active_tab) }}
+
+  {% set guest_notice = flash(request, 'guest_notice') %}
+  {% set guest_error = flash(request, 'guest_error') %}
+  {% if guest_notice %}<div class="alert alert-ok"><p>{{ guest_notice }}</p></div>{% endif %}
+  {% if guest_error %}<div class="alert alert-error"><p>{{ guest_error }}</p></div>{% endif %}
+
+  <div class="panel-header">
+    <h2>
+      {{ 'VM' if guest.type == 'qemu' else 'CT' }} {{ guest.vmid }} · {{ guest.name or '—' }}
+      <span class="badge {{ 'badge-ok' if guest.status == 'running' else ('badge-warn' if guest.status in ('paused', 'suspended') else '') }}">{{ guest.status }}</span>
+      {% if guest.template %}<span class="badge">{{ t(request, "proxmox.template") }}</span>{% endif %}
+    </h2>
+    <div class="page-header-actions">
+      {% if can_terminal and local and not guest.template and guest.status == 'running' %}
+        <a class="button" href="/machines/{{ machine.id }}/proxmox/guests/{{ guest.vmid }}/console">{{ t(request, "proxmox.console.open") }}</a>
+      {% endif %}
+      {% if managed %}<a class="button button-secondary" href="/machines/{{ managed.id }}">{{ t(request, "proxmox.guest.open_machine", name=managed.name) }}</a>{% endif %}
+      <a class="button button-secondary" href="/machines/{{ machine.id }}/proxmox">{{ t(request, "proxmox.guest.back_to_list") }}</a>
+    </div>
+  </div>
+
+  <div class="stat-grid stat-grid-wide">
+    <div class="stat-card">
+      <span class="stat-label">CPU</span>
+      <span class="stat-value">{{ ('%.1f %%' % guest.cpu_percent) if guest.cpu_percent is not none and guest.status == 'running' else '—' }}<small>{{ t(request, "proxmox.guest.cores", count=(guest.get('cores') or (details.cores if details else 0) or 0)) }}</small></span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">{{ t(request, "proxmox.memory") }}</span>
+      <span class="stat-value">{% if guest.status == 'running' and guest.mem_bytes is not none %}{{ guest.mem_bytes | bytes }} / {{ guest.maxmem_bytes | bytes }}{% else %}{{ guest.maxmem_bytes | bytes }}{% endif %}</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">{{ t(request, "proxmox.guest.disk_read") }}</span>
+      <span class="stat-value">{{ guest.get('disk_read_bps') | bytes('/s') }}</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">{{ t(request, "proxmox.guest.disk_write") }}</span>
+      <span class="stat-value">{{ guest.get('disk_write_bps') | bytes('/s') }}</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">{{ t(request, "proxmox.guest.net_in") }}</span>
+      <span class="stat-value">{{ guest.get('net_in_bps') | net_rate(request) }}</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">{{ t(request, "proxmox.guest.net_out") }}</span>
+      <span class="stat-value">{{ guest.get('net_out_bps') | net_rate(request) }}</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">{{ t(request, "proxmox.uptime") }}</span>
+      <span class="stat-value">{{ guest.uptime_seconds | format_uptime if guest.uptime_seconds else '—' }}<small>{{ t(request, "proxmox.node") }} {{ guest.node or '—' }}</small></span>
+    </div>
+  </div>
+
+  {% if details is none %}
+    <div class="alert alert-warn"><p>{{ t(request, "proxmox.guest.no_details") }}</p></div>
+  {% else %}
+    <div class="monitoring-grid">
+      <section class="chart-card">
+        <header class="chart-card-header"><div><h3 class="chart-card-title">{{ t(request, "proxmox.guest.overview") }}</h3></div></header>
+        <dl class="disk-facts">
+          <dt>{{ t(request, "proxmox.guest.ips") }}</dt>
+          <dd>
+            {% for ip in details.ips %}<code>{{ ip }}</code>{% if not loop.last %}<br>{% endif %}{% else %}
+              <span class="table-muted">{{ t(request, "proxmox.guest.no_ips_qemu") if guest.type == 'qemu' and not details.agent else '—' }}</span>
+            {% endfor %}
+          </dd>
+          <dt>{{ t(request, "proxmox.guest.cpu_memory") }}</dt>
+          <dd>{{ t(request, "proxmox.guest.cores", count=(details.cores or 0)) }}{% if details.memory_mb %} · {{ (details.memory_mb * 1048576) | bytes }}{% endif %}</dd>
+          {% if details.ostype %}<dt>{{ t(request, "proxmox.guest.ostype") }}</dt><dd>{{ details.ostype }}</dd>{% endif %}
+          <dt>{{ t(request, "proxmox.guest.onboot") }}</dt><dd>{{ t(request, "proxmox.guest.yes") if details.onboot else t(request, "proxmox.guest.no") }}</dd>
+          {% if guest.type == 'qemu' %}
+            <dt>{{ t(request, "proxmox.guest.agent") }}</dt><dd>{{ t(request, "proxmox.guest.yes") if details.agent else t(request, "proxmox.guest.no") }}</dd>
+          {% else %}
+            <dt>{{ t(request, "proxmox.guest.unprivileged") }}</dt><dd>{{ t(request, "proxmox.guest.yes") if details.unprivileged else t(request, "proxmox.guest.no") }}</dd>
+          {% endif %}
+          {% if guest.tags %}<dt>{{ t(request, "proxmox.tags") }}</dt><dd>{% for tag in guest.tags %}<span class="badge badge-tag">{{ tag }}</span> {% endfor %}</dd>{% endif %}
+        </dl>
+      </section>
+
+      <section class="chart-card" id="notes">
+        <header class="chart-card-header"><div><h3 class="chart-card-title">{{ t(request, "proxmox.guest.notes") }}</h3></div></header>
+        {% if can_manage %}
+          <form method="post" action="/machines/{{ machine.id }}/proxmox/guests/{{ guest.vmid }}/notes" class="guest-notes-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <textarea name="notes" rows="8" maxlength="8192" aria-label="{{ t(request, 'proxmox.guest.notes') }}">{{ details.notes }}</textarea>
+            <p class="hint">{{ t(request, "proxmox.guest.notes_hint") }}</p>
+            <button type="submit" class="button">{{ t(request, "common.save") }}</button>
+          </form>
+        {% elif details.notes %}
+          <pre class="guest-notes">{{ details.notes }}</pre>
+        {% else %}
+          <p class="hint">{{ t(request, "proxmox.guest.no_notes") }}</p>
+        {% endif %}
+      </section>
+    </div>
+
+    {% set volumes = details.disks if guest.type == 'qemu' else details.mounts %}
+    <section class="chart-card chart-card-wide">
+      <header class="chart-card-header"><div><h3 class="chart-card-title">{{ t(request, "proxmox.guest.disks") if guest.type == 'qemu' else t(request, "proxmox.guest.mounts") }}</h3></div></header>
+      {% if volumes %}
+        <div class="monitoring-table-wrap">
+          <table class="data-table data-table-compact">
+            <thead>
+              <tr>
+                <th>{{ t(request, "proxmox.guest.key") }}</th>
+                <th>{{ t(request, "proxmox.guest.volume") }}</th>
+                {% if guest.type == 'lxc' %}<th>{{ t(request, "proxmox.guest.path") }}</th>{% endif %}
+                <th class="num">{{ t(request, "proxmox.guest.size") }}</th>
+                {% if guest.type == 'lxc' %}<th>{{ t(request, "proxmox.guest.in_backup") }}</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for v in volumes %}
+                <tr>
+                  <td><code>{{ v.key }}</code></td>
+                  <td><code>{{ v.volume }}</code></td>
+                  {% if guest.type == 'lxc' %}<td><code>{{ v.path or '—' }}</code>{% if v.read_only %} <span class="badge">ro</span>{% endif %}</td>{% endif %}
+                  <td class="num">{{ v.size or '—' }}</td>
+                  {% if guest.type == 'lxc' %}<td>{{ t(request, "proxmox.guest.yes") if v.backup else t(request, "proxmox.guest.no") }}</td>{% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="hint">—</p>
+      {% endif %}
+    </section>
+
+    <section class="chart-card chart-card-wide">
+      <header class="chart-card-header"><div><h3 class="chart-card-title">{{ t(request, "proxmox.guest.network_cards") }}</h3></div></header>
+      {% if details.nets %}
+        <div class="monitoring-table-wrap">
+          <table class="data-table data-table-compact">
+            <thead>
+              <tr>
+                <th>{{ t(request, "proxmox.guest.key") }}</th>
+                <th>{{ t(request, "proxmox.guest.bridge") }}</th>
+                <th>VLAN</th>
+                <th>MAC</th>
+                <th>{{ t(request, "proxmox.guest.model") }}</th>
+                <th>{{ t(request, "proxmox.guest.firewall") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for n in details.nets %}
+                <tr class="{{ 'netif-down' if n.link_down else '' }}">
+                  <td><code>{{ n.key }}</code>{% if n.name %} <span class="table-muted">{{ n.name }}</span>{% endif %}</td>
+                  <td><code>{{ n.bridge or '—' }}</code></td>
+                  <td>{{ n.vlan or '—' }}</td>
+                  <td><code>{{ n.mac or '—' }}</code></td>
+                  <td>{{ n.model or (n.ip if n.ip else '—') }}</td>
+                  <td>{{ t(request, "proxmox.guest.yes") if n.firewall else t(request, "proxmox.guest.no") }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="hint">—</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if machine.facts_updated_at %}<p class="hint">{{ t(request, "proxmox.guest.as_of", when=(machine.facts_updated_at | local_time('%Y-%m-%d %H:%M'))) }}</p>{% endif %}
+{% endblock %}

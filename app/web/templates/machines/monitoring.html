@@ -2,6 +2,7 @@
 {% from "partials/range_picker.html" import range_picker with context %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 {% from "macros/charts.html" import chart_card with context %}
+{% from "macros/topology.html" import topology_svg %}
 
 {% block title %}{{ t(request, "monitoring.title") }} — {{ machine.name }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -297,6 +298,15 @@
           </details>
         {% endfor %}
         <p class="hint">{{ t(request, "monitoring.interfaces.hint") }}</p>
+      </section>
+    {% endif %}
+
+    {% if topology %}
+      <section class="chart-card chart-card-wide monitoring-section" id="topology">
+        <header class="chart-card-header">
+          <div><h3 class="chart-card-title">{{ t(request, "topology.heading") }}</h3></div>
+        </header>
+        {{ topology_svg(request, topology) }}
       </section>
     {% endif %}
 

@@ -1,0 +1,32 @@
+{# A machine's network picture (app.services.network_topology): network
+   cards → bonds → bridges/VLANs → guests and Docker, each line as thick
+   as its traffic. Laid out in Python; drawn here as plain SVG — no script,
+   no style attribute (stroke-width is an SVG presentation attribute and
+   colors come from the .topo-* classes in style.css). Needs `request`. #}
+{% macro topology_svg(request, topo) %}
+  <div class="topology-wrap">
+    <svg class="topology" viewBox="0 0 {{ topo.width }} {{ topo.height }}" width="{{ topo.width }}" height="{{ topo.height }}"
+         role="img" aria-label="{{ t(request, 'topology.aria') }}">
+      {% for edge in topo.edges %}
+        <path class="topo-edge{{ ' topo-edge-busy' if edge.rate and edge.rate > 1000000 else '' }}" d="{{ edge.path }}" stroke-width="{{ edge.width }}">
+          <title>{{ edge.source }} → {{ edge.target }}: {{ edge.rate | net_rate(request) }}</title>
+        </path>
+      {% endfor %}
+      {% for node in topo.nodes %}
+        {% if node.href %}<a href="{{ node.href }}">{% endif %}
+        <g class="topo-node topo-{{ node.kind }}{{ '' if node.up else ' topo-down' }}" transform="translate({{ node.x }},{{ node.y }})">
+          <title>{{ node.label }}{% if node.detail %} — {{ node.detail }}{% endif %}{% if node.rate is not none %} · {{ node.rate | net_rate(request) }}{% endif %}</title>
+          <rect width="160" height="36" rx="6"></rect>
+          <text class="topo-label" x="10" y="15">{{ node.label | truncate(20, true, '…') }}</text>
+          <text class="topo-detail" x="10" y="29">
+            {%- if node.kind == 'docker' -%}{{ t(request, "topology.containers", count=(node.detail | int)) }}
+            {%- elif node.kind in ('physical', 'wireless', 'bond', 'bridge', 'vlan', 'virtual') -%}{{ t(request, "topology.kind." ~ node.kind) }}{% if node.detail %} · {{ node.detail | truncate(18, true, '…') }}{% endif %}
+            {%- else -%}{{ node.detail }}{%- endif -%}
+          </text>
+        </g>
+        {% if node.href %}</a>{% endif %}
+      {% endfor %}
+    </svg>
+  </div>
+  <p class="hint">{{ t(request, "topology.hint") }}</p>
+{% endmacro %}

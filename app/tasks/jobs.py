@@ -141,8 +141,10 @@ from app.ssh.monitoring import gather_monitoring_sample
 from app.ssh.onboarding import ONBOARD_SUCCESS_MARKER, ONBOARD_USERNAME, build_onboarding_command
 from app.ssh.packages import gather_packages
 from app.ssh.power import PowerAction, send_power_command
+from app.ssh.proxmox import clean_notes as proxmox_clean_notes
 from app.ssh.proxmox import find_guest as proxmox_find_guest
-from app.ssh.proxmox_actions import run_guest_action
+from app.ssh.proxmox import with_guest_rates as proxmox_with_guest_rates
+from app.ssh.proxmox_actions import run_guest_action, run_guest_notes
 from app.ssh.reachability import ReachabilityResult, check_reachable
 from app.ssh.readiness import DIRECT_FIX_COMMAND, missing_requirements
 from app.ssh.readiness import check_machine_readiness as run_readiness_probes
@@ -1421,6 +1423,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.pve_backups = facts.get("pve_backups")
         machine.pve_failed_tasks = facts.get("pve_failed_tasks")
         machine.pve_guest_backups = facts.get("pve_guest_backups")
+        machine.pve_guest_details = facts.get("pve_guest_details")
         machine.pbs_version = facts.get("pbs_version")
         machine.pbs_data = facts.get("pbs_data")
         machine.pmg_version = facts.get("pmg_version")
@@ -1906,7 +1909,22 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         machine.network_links = sample.get("network_links") or None
         machine.default_gateway = reached.get("gateway")
         machine.zfs_pools = sample.get("zfs_pools")
-        machine.pve_guests = sample.get("pve_guests")
+        previous_sampled = machine.monitoring_updated_at
+        machine.pve_guests = proxmox_with_guest_rates(
+            machine.pve_guests,
+            sample.get("pve_guests"),
+            (
+                now
+                - (
+                    previous_sampled
+                    if previous_sampled.tzinfo
+                    else previous_sampled.replace(tzinfo=UTC)
+                )
+            ).total_seconds()
+            if previous_sampled is not None
+            else None,
+        )
+        machine.pve_resources = sample.get("pve_resources")
         previous_cluster = machine.pve_cluster
         machine.pve_cluster = sample.get("pve_cluster")
         machine.failed_units = sample.get("failed_units")
@@ -3700,6 +3718,45 @@ async def _run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> 
 )
 def run_proxmox_guest_action(machine_id: str, vmid: int, action: str) -> dict[str, Any]:
     return asyncio.run(_run_proxmox_guest_action(machine_id, vmid, action))
+
+
+async def _set_proxmox_guest_notes(machine_id: str, vmid: int, notes: str) -> dict[str, Any]:
+    """Write one Proxmox VE guest's notes (its `description`), then keep
+    them in `Machine.pve_guest_details` so the page shows them before the
+    next facts refresh."""
+    notes = proxmox_clean_notes(notes)
+    async with db_session.AsyncSessionLocal() as session:
+        app_settings = await get_or_create_app_settings(session)
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return {"ok": False, "error": "Machine not found."}
+        guest = proxmox_find_guest(machine.pve_guests, vmid)
+        if guest is None:
+            return {"ok": False, "error": f"No guest {vmid} on {machine.name}."}
+        secret = await resolve_machine_credential(machine, session)
+        try:
+            status, output = await run_guest_notes(
+                machine, secret, guest, notes, app_settings.ssh_connect_timeout
+            )
+        except (SSHConnectionError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        if status != 0:
+            return {"ok": False, "error": output or f"pvesh exited with status {status}."}
+        details = dict(machine.pve_guest_details or {})
+        entry = dict(details.get(str(vmid)) or {})
+        entry["notes"] = notes
+        details[str(vmid)] = entry
+        machine.pve_guest_details = details
+        await session.commit()
+    return {"ok": True, "notes": notes}
+
+
+@celery_app.task(
+    name="app.tasks.jobs.set_proxmox_guest_notes",
+    time_limit=_SSH_TASK_TIME_LIMIT_SECONDS,
+)
+def set_proxmox_guest_notes(machine_id: str, vmid: int, notes: str) -> dict[str, Any]:
+    return asyncio.run(_set_proxmox_guest_notes(machine_id, vmid, notes))
 
 
 async def _wake_machine(machine_id: str) -> dict[str, Any]:

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+
+{% block title %}{{ t(request, "map.tab.networks") }} — {{ t(request, "map.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "map.title") }}</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "map.networks.intro") }}</p>
+
+  {% if not networks and not unknown %}<p class="hint">{{ t(request, "map.networks.empty") }}</p>{% endif %}
+
+  <div class="map-networks">
+    {% for n in networks %}
+      <section class="panel map-network">
+        <h2><code>{{ n.cidr }}</code> <small class="table-muted">{{ t(request, "map.networks.machines", count=(n.members | length)) }}</small></h2>
+        <p class="map-gateway">
+          {{ t(request, "map.networks.gateway") }}:
+          {% if n.gateways %}
+            {% for gw in n.gateways %}<code>{{ gw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+            {% set router = n.gateway_member %}
+            {% if router %}→ <a href="/machines/{{ router.machine.id }}">{{ router.machine.name }}</a>{% endif %}
+          {% else %}—{% endif %}
+        </p>
+        <ul class="map-chips">
+          {% for member in n.members %}
+            {% set m = member.machine %}
+            <li class="map-chip map-chip-{{ 'down' if m.is_reachable is sameas false else (m.health_status or 'unknown') }}">
+              <a href="/machines/{{ m.id }}">{{ m.name }}</a>
+              <code>{{ member.address }}</code>
+              <span class="table-muted">{{ member.interface }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+  </div>
+
+  {% if unknown %}
+    <section class="panel">
+      <h2>{{ t(request, "map.networks.unknown") }}</h2>
+      <ul class="map-chips">
+        {% for m in unknown %}<li class="map-chip map-chip-unknown"><a href="/machines/{{ m.id }}">{{ m.name }}</a></li>{% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+{% endblock %}
