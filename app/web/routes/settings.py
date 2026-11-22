@@ -249,6 +249,14 @@ _CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
     ("health_latency_critical_ms", "settings.checks.health.latency_critical"),
     ("health_disk_full_warn_days", "settings.checks.health.disk_full_warn"),
     ("health_disk_full_critical_days", "settings.checks.health.disk_full_critical"),
+    ("health_disk_temp_hdd_warn_celsius", "settings.checks.health.disk_temp_hdd_warn"),
+    ("health_disk_temp_hdd_critical_celsius", "settings.checks.health.disk_temp_hdd_critical"),
+    ("health_disk_temp_ssd_warn_celsius", "settings.checks.health.disk_temp_ssd_warn"),
+    ("health_disk_temp_ssd_critical_celsius", "settings.checks.health.disk_temp_ssd_critical"),
+    ("health_disk_temp_nvme_warn_celsius", "settings.checks.health.disk_temp_nvme_warn"),
+    ("health_disk_temp_nvme_critical_celsius", "settings.checks.health.disk_temp_nvme_critical"),
+    ("health_disk_wear_warn_percent", "settings.checks.health.disk_wear_warn"),
+    ("health_disk_wear_critical_percent", "settings.checks.health.disk_wear_critical"),
 )
 _CHECKS_TAB_RETENTION: tuple[str, ...] = (
     "monitoring_history_retention_days",

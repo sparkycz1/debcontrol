@@ -288,7 +288,7 @@ async def send_digest(
     )
     for item in items:
         await db.delete(item)
-    rule.digest_last_sent_at = now.astimezone(UTC).replace(tzinfo=None)
+    rule.digest_last_sent_at = now.astimezone(UTC)
     db.add_all(logs)
     await db.commit()
     return logs

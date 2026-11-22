@@ -102,12 +102,21 @@
           ("health_latency_critical_ms", "latency_critical", 1, 10000),
           ("health_disk_full_warn_days", "disk_full_warn", 1, 365),
           ("health_disk_full_critical_days", "disk_full_critical", 0, 365),
+          ("health_disk_temp_hdd_warn_celsius", "disk_temp_hdd_warn", 20, 150),
+          ("health_disk_temp_hdd_critical_celsius", "disk_temp_hdd_critical", 20, 150),
+          ("health_disk_temp_ssd_warn_celsius", "disk_temp_ssd_warn", 20, 150),
+          ("health_disk_temp_ssd_critical_celsius", "disk_temp_ssd_critical", 20, 150),
+          ("health_disk_temp_nvme_warn_celsius", "disk_temp_nvme_warn", 20, 150),
+          ("health_disk_temp_nvme_critical_celsius", "disk_temp_nvme_critical", 20, 150),
+          ("health_disk_wear_warn_percent", "disk_wear_warn", 1, 200),
+          ("health_disk_wear_critical_percent", "disk_wear_critical", 1, 200),
         ] %}
           <label for="{{ name }}">{{ t(request, "settings.checks.health." ~ key) }}</label>
           <input type="number" id="{{ name }}" name="{{ name }}" min="{{ minimum }}" max="{{ maximum }}" step="1"
                  value="{{ app_settings[name] }}">
         {% endfor %}
         <p class="hint">{{ t(request, "settings.checks.health.disk_full_hint") }}</p>
+        <p class="hint">{{ t(request, "settings.checks.health.disk_temp_hint") }}</p>
       </div>
     </section>
 

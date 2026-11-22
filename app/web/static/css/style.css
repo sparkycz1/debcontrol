@@ -3328,3 +3328,21 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .netif-group summary { cursor: pointer; font-weight: 600; }
 .netif-down { color: var(--color-muted); }
 #processes-modal { max-width: min(96vw, 1100px); }
+
+/* --- Disks (app/web/templates/disks) --- */
+.disk-summary-grid { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-start; }
+.disk-wear { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); min-width: 140px; }
+.disk-wear-ring { width: 120px; height: 120px; }
+.disk-wear-track { fill: none; stroke: var(--color-border); stroke-width: 10; }
+.disk-wear-value { fill: none; stroke: var(--color-ok); stroke-width: 10; stroke-linecap: round; }
+.disk-wear-warning .disk-wear-value { stroke: var(--color-warn); }
+.disk-wear-critical .disk-wear-value { stroke: var(--color-danger); }
+.disk-wear-label { fill: var(--color-text); font-size: 18px; font-weight: 600; }
+.disk-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); margin: 0; flex: 1; min-width: 260px; }
+.disk-facts dt { color: var(--color-muted); }
+.disk-facts dd { margin: 0; }
+
+@media print {
+  .no-print, .site-header, nav { display: none !important; }
+  .disk-report .panel { break-inside: avoid; }
+}

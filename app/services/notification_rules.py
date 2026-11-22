@@ -288,7 +288,7 @@ def apply_channel_settings(rule: NotificationRule, payload: NotificationRuleCrea
     if payload.digest_time != rule.digest_time:
         # A new summary time starts counting from now: the first summary
         # goes out at the next such time, not right away.
-        rule.digest_last_sent_at = datetime.now(UTC).replace(tzinfo=None)
+        rule.digest_last_sent_at = datetime.now(UTC)
     rule.digest_time = payload.digest_time
     rule.digest_fleet_status = payload.digest_fleet_status
     token = (payload.channel_token or "").strip()

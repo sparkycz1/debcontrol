@@ -122,6 +122,11 @@ class NotificationEventType(enum.StrEnum):
     REBOOT_REQUIRED = "machine.reboot_required"
     # a disk's S.M.A.R.T. overall health turned FAILED (monitoring sample),
     SMART_FAILED = "machine.smart_failed"
+    # a disk got worse in its own history (facts refresh, see
+    # app.services.disk_history): an error counter grew (reallocated or
+    # pending sectors, CRC, media, I/O or ZFS errors), its ZFS state left
+    # ONLINE, wear or temperature crossed its level, or it dropped out,
+    DISK_WARNING = "machine.disk_warning"
     # a systemd unit entered the failed state (monitoring sample),
     SERVICE_FAILED = "machine.service_failed"
     # a filesystem is forecast to fill within DISK_FULL_WARN_DAYS (hourly

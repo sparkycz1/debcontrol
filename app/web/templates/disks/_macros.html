@@ -1,0 +1,39 @@
+{# Disks (app.services.disk_history). Imported `with context`. #}
+{% macro risk_badge(risk) %}
+  {% set risk = risk or 'low' %}
+  <span class="badge {{ {'failing': 'badge-error', 'high': 'badge-error', 'elevated': 'badge-warn', 'low': 'badge-ok'}.get(risk, '') }}">{{ t(request, "disks.risk." ~ risk) }}</span>
+{% endmacro %}
+
+{% macro event_text(event) -%}
+  {%- set detail = dict(event.detail or {}) -%}
+  {%- if event.kind == 'counter' -%}
+    {%- set _ = detail.update({'counter': t(request, "disks.counter." ~ (detail.counter or ''))}) -%}
+  {%- endif -%}
+  {%- set params = {} -%}
+  {%- for k, v in detail.items() -%}{%- set _ = params.update({k: ('—' if v is none else v)}) -%}{%- endfor -%}
+  {{- t(request, "disks.event." ~ event.kind, **params) -}}
+{%- endmacro %}
+
+{% macro reason_text(reason) -%}
+  {%- set params = {} -%}
+  {%- for k, v in reason.items() if k != 'key' -%}{%- set _ = params.update({k: ('—' if v is none else v)}) -%}{%- endfor -%}
+  {%- if reason.key == 'wear' and reason.days is not none -%}
+    {{- t(request, "disks.reason.wear_days", **params) -}}
+  {%- else -%}
+    {{- t(request, "disks.reason." ~ reason.key, **params) -}}
+  {%- endif -%}
+{%- endmacro %}
+
+{# The share of rated endurance used, as a ring: an SVG circle whose
+   dash length is the percentage (no inline style — CSP). #}
+{% macro wear_ring(percent, level) %}
+  {% set used = [[percent or 0, 0] | max, 100] | min %}
+  {% set circumference = 251.327 %}
+  <svg class="disk-wear-ring disk-wear-{{ level or 'ok' }}" viewBox="0 0 100 100" role="img"
+       aria-label="{{ t(request, 'disks.wear_used', percent=(percent | round(0) | int)) }}">
+    <circle class="disk-wear-track" cx="50" cy="50" r="40"></circle>
+    <circle class="disk-wear-value" cx="50" cy="50" r="40" transform="rotate(-90 50 50)"
+            stroke-dasharray="{{ '%.2f' | format(used / 100 * circumference) }} {{ circumference }}"></circle>
+    <text x="50" y="55" text-anchor="middle" class="disk-wear-label">{{ percent | round(0) | int }} %</text>
+  </svg>
+{% endmacro %}

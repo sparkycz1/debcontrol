@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "macros/charts.html" import chart_card with context %}
+
+{% block title %}{{ disk.model }} {{ disk.serial }} — {{ t(request, "disks.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ disk.model or t(request, "disks.title") }} <code>{{ disk.serial }}</code></h1>
+  </div>
+  <p class="hint"><a href="/disks">{{ t(request, "disks.back") }}</a></p>
+
+  <div class="monitoring-toolbar">
+    <form method="get" action="/disks/{{ disk.id }}" class="inline-form">
+      <select name="days" class="inline-select" data-autosubmit aria-label="{{ t(request, 'monitoring.range_label') }}">
+        {% for choice in day_choices %}
+          <option value="{{ choice }}" {% if choice == days %}selected{% endif %}>{{ t(request, "disks.days", days=choice) }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" class="button">{{ t(request, "monitoring.apply") }}</button></noscript>
+    </form>
+    <span class="monitoring-toolbar-spacer"></span>
+    <a class="button button-secondary" href="/disks/{{ disk.id }}/report">{{ t(request, "disks.report") }}</a>
+  </div>
+
+  {% set report = false %}
+  {% include "disks/_body.html" %}
+
+  <div class="monitoring-grid">
+    {{ chart_card(
+         t(request, "disks.temperature_chart"), t(request, "disks.temperature_chart_hint"),
+         chart([(t(request, "monitoring.smart.temperature"), temperatures)], sample_times, fmt='celsius',
+               time_format=('%d.%m.' if days > 7 else '%d.%m. %H:%M'),
+               threshold=temp_thresholds[0],
+               threshold_label=t(request, "disks.threshold_celsius", value=temp_thresholds[0])),
+         wide=true,
+         empty_text=t(request, "monitoring.no_data")) }}
+  </div>
+{% endblock %}

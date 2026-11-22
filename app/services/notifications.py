@@ -163,6 +163,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "S.M.A.R.T. reports a FAILED overall health for {devices} on "
             "{machine_name} ({machine_ip}) at {timestamp}. Back up and replace it.",
         ),
+        NotificationEventType.DISK_WARNING: (
+            "debcontrol: disk warning on {machine_name}",
+            "A disk on {machine_name} ({machine_ip}) got worse at {timestamp}:\n\n"
+            "{details}\n\nSee the disk's page under Disks for its history.",
+        ),
         NotificationEventType.SERVICE_FAILED: (
             "debcontrol: service failed on {machine_name}",
             "These systemd units failed on {machine_name} ({machine_ip}) at "
@@ -333,6 +338,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: na {machine_name} selhává disk",
             "S.M.A.R.T. hlásí stav FAILED pro {devices} na {machine_name} "
             "({machine_ip}) v {timestamp}. Zazálohujte data a disk vyměňte.",
+        ),
+        NotificationEventType.DISK_WARNING: (
+            "debcontrol: varování disku na {machine_name}",
+            "Disk na {machine_name} ({machine_ip}) se v {timestamp} zhoršil:\n\n"
+            "{details}\n\nHistorii disku najdete na jeho stránce v sekci Disky.",
         ),
         NotificationEventType.SERVICE_FAILED: (
             "debcontrol: na {machine_name} selhala služba",

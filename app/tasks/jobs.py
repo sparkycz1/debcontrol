@@ -50,6 +50,7 @@ from app.db import session as db_session
 from app.db import timescale
 from app.db.models.app_settings import AppSettings
 from app.db.models.audit_log import AuditLogEntry, AuditOutcome
+from app.db.models.disk import DiskSample
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
@@ -75,6 +76,7 @@ from app.services import (
     config_drift,
     container_events,
     disk_forecast,
+    disk_history,
     docker_daemon,
     docker_endpoint_checks,
     docker_host_check,
@@ -1342,6 +1344,25 @@ def check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
     return asyncio.run(_check_machine_reachability_now(machine_id))
 
 
+
+async def _record_disk_history(session: AsyncSession, machine: Machine) -> None:
+    """The facts' S.M.A.R.T. readings into each disk's own history
+    (`app.services.disk_history`), and one notification for what got
+    worse. A failure here never fails the facts refresh."""
+    try:
+        app_settings = await get_or_create_app_settings(session)
+        events = await disk_history.record(
+            session, machine, disk_history.DiskThresholds.from_settings(app_settings)
+        )
+        await session.commit()
+    except Exception:
+        logger.warning("Disk history for %s failed", machine.name, exc_info=True)
+        await session.rollback()
+        # The rollback expired it; the caller goes on with this machine.
+        await session.refresh(machine)
+        return
+    await health_events.notify_disk_events(session, machine, events)
+
 async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
     """Connect to one machine and refresh its OS/kernel/arch/CPU/RAM/disk/
     uptime/process-count facts. Requires a pinned host key — machines
@@ -1417,6 +1438,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
             previous_pbs=previous_pbs,
             previous_pmg=previous_pmg,
         )
+        await _record_disk_history(session, machine)
         await machine_health.refresh(session, machine)
         await publish_machine_event(machine_id, KIND_FACTS)
         has_snapshots = bool(machine.pve_debcontrol_snapshots)
@@ -2391,6 +2413,13 @@ async def _purge_old_monitoring_samples() -> None:
                 session,
                 EndpointCheckResult,
                 (EndpointCheckResult.checked_at < now - timedelta(days=default_retention_days),),
+            )
+            # A disk's readings follow the fleet-wide default too (a disk
+            # moves between machines); its events are kept for good.
+            total_deleted += await _delete_in_batches(
+                session,
+                DiskSample,
+                (DiskSample.sampled_at < now - timedelta(days=default_retention_days),),
             )
 
         # Detected configuration changes (the History tab) — a fixed year,

@@ -22,10 +22,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.disk import Disk, DiskEvent
 from app.db.models.machine import Machine
 from app.db.models.notification_rule import NotificationEventType
+from app.services import disk_history
 from app.services.disk_forecast import soonest_full_days
 from app.services.notifications import notify
 from app.ssh import proxmox
@@ -242,4 +245,47 @@ async def notify_forecast_change(
         NotificationEventType.DISK_FULL_PREDICTED,
         machine=machine,
         context={"mount": mount, "days": f"{days:.0f}", "details": ""},
+    )
+
+
+# Disk events that make a "disk warning" notification. A failing
+# S.M.A.R.T. has its own event (SMART_FAILED, from the monitoring sample).
+_DISK_NOTIFY_SKIP = frozenset({"smart_failed", "first_seen", "moved", "back", "smart_passed"})
+
+
+async def notify_disk_events(
+    db: AsyncSession, machine: Machine, events: Iterable[DiskEvent]
+) -> None:
+    """One DISK_WARNING for every disk event of this refresh that is a
+    warning or worse — a growing error counter, a ZFS problem, wear or
+    temperature crossing its level, a disk that dropped out."""
+    worse = [
+        e for e in events
+        if e.severity in ("warning", "critical") and e.kind not in _DISK_NOTIFY_SKIP
+    ]
+    if not worse:
+        return
+    disks = {
+        d.id: d
+        for d in (
+            await db.execute(select(Disk).where(Disk.id.in_({e.disk_id for e in worse})))
+        ).scalars().all()
+    }
+    lines: list[str] = []
+    devices: list[str] = []
+    for event in worse:
+        disk = disks.get(event.disk_id)
+        name = f"{disk.device or '?'} ({disk.model} {disk.serial})" if disk else "?"
+        if disk and (disk.device or disk.serial) not in devices:
+            devices.append(disk.device or disk.serial)
+        lines.append(f"{name}: {disk_history.event_text(event)}")
+    await notify(
+        db,
+        NotificationEventType.DISK_WARNING,
+        machine=machine,
+        context={
+            "devices": ", ".join(devices),
+            "details": "\n".join(lines),
+            "status": "critical" if any(e.severity == "critical" for e in worse) else "warning",
+        },
     )

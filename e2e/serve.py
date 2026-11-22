@@ -56,7 +56,7 @@ from app.db.models.terminal_recording import TerminalRecording
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
-from app.services import machine_health, terminal_recording
+from app.services import disk_history, machine_health, terminal_recording
 from tests.conftest import FakeRedis
 
 DEFAULT_PORT = 8765
@@ -293,6 +293,28 @@ async def seed() -> str:
                 ),
             )
         )
+        await db.commit()
+        # Disks (app.services.disk_history): web1's NVMe over a few days,
+        # its temperature moving and two sectors reallocated on the way.
+        web.is_physical = True
+        for k in range(48):
+            web.smart_devices = [
+                {
+                    "device": "/dev/nvme0n1", "model": "Samsung SSD 980", "serial": "S64DNX0R1",
+                    "firmware": "3B4QFXO7", "capacity_bytes": 1_000_204_886_016, "type": "nvme",
+                    "rotation_rpm": None, "passed": True, "power_on_hours": 9000 + k,
+                    "power_cycles": 120, "temperature_c": 40 + (k % 12),
+                    "wear_percent": 20 + k / 24, "written_bytes": 40_000_000_000_000,
+                    "read_bytes": 60_000_000_000_000,
+                    "counters": {"media_errors": 0 if k < 30 else 2, "error_log_entries": 3},
+                    "attributes": [{"id": None, "name": "PercentageUsed", "value": None,
+                                    "worst": None, "threshold": None, "raw": "21",
+                                    "failing": False}],
+                }
+            ]
+            await disk_history.record(
+                db, web, disk_history.DEFAULT_THRESHOLDS, now - timedelta(hours=47 - k)
+            )
         await db.commit()
         # Health (app.services.machine_health): web1 has a security update
         # pending (a warning), db1 is down (critical).

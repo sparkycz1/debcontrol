@@ -25,6 +25,7 @@ import json
 from typing import Any
 
 SMART_DEVICE_DELIMITER = "@@SMART_DEVICE@@"
+IO_ERRORS_PREFIX = "@@IOERR@@"
 
 SMART_FACTS_SECTION = (
     "echo ===SMART===; "
@@ -34,6 +35,9 @@ SMART_FACTS_SECTION = (
     "if sudo -n -l \"$S\" >/dev/null 2>&1; then R=\"sudo -n $S\"; else R=\"$S\"; fi; "
     "for d in $(lsblk -d -n -o NAME,TYPE 2>/dev/null | awk '$2==\"disk\"{print $1}'); do "
     f"echo \"{SMART_DEVICE_DELIMITER} $d\"; "
+    # The kernel's own I/O error count for the device since boot (hex,
+    # SCSI/SATA only, world-readable) — no root needed.
+    f"echo \"{IO_ERRORS_PREFIX} $(cat /sys/block/$d/device/ioerr_cnt 2>/dev/null)\"; "
     "$R -a -j \"/dev/$d\" 2>/dev/null; "
     "done; "
     "fi"
@@ -50,6 +54,103 @@ def _num(value: Any) -> int | float | None:
     if isinstance(value, (int, float)):
         return value
     return None
+
+
+# ATA attributes kept as counters for the disk's history: a rise in any of
+# them is recorded as an event (`app.services.disk_history`).
+_ATA_COUNTERS = {
+    5: "reallocated",
+    187: "uncorrectable_reported",
+    197: "pending",
+    198: "uncorrectable",
+    199: "crc_errors",
+}
+# ATA attributes whose normalized value is "life left" (100 = new): the
+# percent used is 100 minus it. In smartctl's order of preference.
+_ATA_LIFE_LEFT = (231, 233, 177, 202, 169)
+
+
+def _raw_number(row: dict[str, Any]) -> int | None:
+    raw = _dict(row.get("raw"))
+    value = raw.get("value")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _ata_rows(doc: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    ata = _dict(doc.get("ata_smart_attributes"))
+    rows: dict[int, dict[str, Any]] = {}
+    for row in ata.get("table") or []:
+        if isinstance(row, dict) and isinstance(row.get("id"), int):
+            rows[int(row["id"])] = row
+    return rows
+
+
+def _counters(doc: dict[str, Any]) -> dict[str, int]:
+    """Error counters that only ever grow on a healthy disk's lifetime —
+    reallocated/pending sectors, CRC errors, NVMe media errors, ..."""
+    counters: dict[str, int] = {}
+    rows = _ata_rows(doc)
+    for attr_id, name in _ATA_COUNTERS.items():
+        row = rows.get(attr_id)
+        value = _raw_number(row) if row else None
+        if value is not None:
+            # Some firmwares pack extra data in the upper bytes of the raw
+            # value; the low 32 bits hold the count.
+            counters[name] = value & 0xFFFFFFFF
+    nvme = _dict(doc.get("nvme_smart_health_information_log"))
+    for key, name in (
+        ("media_errors", "media_errors"),
+        ("num_err_log_entries", "error_log_entries"),
+        ("unsafe_shutdowns", "unsafe_shutdowns"),
+    ):
+        number = _num(nvme.get(key))
+        if number is not None:
+            counters[name] = int(number)
+    grown = _num(doc.get("scsi_grown_defect_list"))
+    if grown is not None:
+        counters["reallocated"] = int(grown)
+    return counters
+
+
+def _wear_percent(doc: dict[str, Any]) -> float | None:
+    """How much of an SSD's rated endurance is used, 0-100+ (NVMe
+    `percentage_used` may pass 100). None for a disk that doesn't say."""
+    nvme = _dict(doc.get("nvme_smart_health_information_log"))
+    used = _num(nvme.get("percentage_used"))
+    if used is not None:
+        return float(used)
+    endurance = _num(_dict(doc.get("endurance_used")).get("current_percent"))
+    if endurance is not None:
+        return float(endurance)
+    rows = _ata_rows(doc)
+    for attr_id in _ATA_LIFE_LEFT:
+        row = rows.get(attr_id)
+        value = _num(row.get("value")) if row else None
+        if value is not None and 0 <= value <= 100:
+            return float(100 - value)
+    return None
+
+
+def _written_bytes(doc: dict[str, Any], key_nvme: str, ata_id: int) -> int | None:
+    """Host data written (or read) over the disk's life, in bytes."""
+    nvme = _dict(doc.get("nvme_smart_health_information_log"))
+    units = _num(nvme.get(key_nvme))
+    if units is not None:
+        # An NVMe "data unit" is 1000 sectors of 512 bytes.
+        return int(units) * 512_000
+    row = _ata_rows(doc).get(ata_id)
+    lbas = _raw_number(row) if row else None
+    if lbas is None:
+        return None
+    name = str(row.get("name") or "") if row else ""
+    if "32MiB" in name:
+        return lbas * 32 * 1024 * 1024
+    if name.endswith("GiB") or "_GB" in name:
+        return lbas * 1024 * 1024 * 1024
+    block = _num(doc.get("logical_block_size"))
+    return lbas * int(block or 512)
 
 
 def _attributes(doc: dict[str, Any]) -> list[dict[str, Any]]:
@@ -134,6 +235,10 @@ def parse_smart_device(device: str, raw_json: str) -> dict[str, Any] | None:
         "power_on_hours": _num(power_on.get("hours")),
         "power_cycles": _num(doc.get("power_cycle_count")),
         "temperature_c": _num(temperature.get("current")),
+        "wear_percent": _wear_percent(doc),
+        "written_bytes": _written_bytes(doc, "data_units_written", 241),
+        "read_bytes": _written_bytes(doc, "data_units_read", 242),
+        "counters": _counters(doc),
         "attributes": _attributes(doc),
     }
 
@@ -149,10 +254,20 @@ def parse_smart_section(raw: str) -> list[dict[str, Any]] | None:
     buffer: list[str] = []
 
     def flush() -> None:
-        if current_device is not None and buffer:
-            parsed = parse_smart_device(current_device, "\n".join(buffer))
-            if parsed is not None:
-                devices.append(parsed)
+        if current_device is None or not buffer:
+            return
+        io_errors: int | None = None
+        lines: list[str] = []
+        for line in buffer:
+            if line.startswith(IO_ERRORS_PREFIX):
+                io_errors = _hex_count(line[len(IO_ERRORS_PREFIX) :])
+            else:
+                lines.append(line)
+        parsed = parse_smart_device(current_device, "\n".join(lines))
+        if parsed is not None:
+            if io_errors is not None:
+                parsed["counters"]["io_errors"] = io_errors
+            devices.append(parsed)
 
     for line in raw.splitlines():
         if line.startswith(SMART_DEVICE_DELIMITER):
@@ -163,3 +278,14 @@ def parse_smart_section(raw: str) -> list[dict[str, Any]] | None:
             buffer.append(line)
     flush()
     return devices
+
+
+def _hex_count(text: str) -> int | None:
+    """`/sys/block/<dev>/device/ioerr_cnt` ("0x1a") as a number."""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return int(text, 16)
+    except ValueError:
+        return None
