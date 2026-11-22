@@ -118,8 +118,9 @@ def test_connectivity_targets_are_validated_and_quoted() -> None:
     for bad in ("", "-c1", "a b", "x;rm -rf /", "$(id)", "a..b", "x" * 254):
         assert not connectivity.valid_target(bad), bad
     command = connectivity.command("1.1.1.1", "debian.org")
-    assert "ping -n -q -c 3" in command and "'debian.org'" not in command
-    assert "debian.org" in command
+    # A plain name needs no quotes and reaches the lookup as is.
+    assert "ping -n -q -c 3" in command
+    assert "getent ahosts debian.org >/dev/null" in command
     assert "'$(id)'" in connectivity.command("1.1.1.1", "$(id)")
 
 
