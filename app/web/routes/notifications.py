@@ -220,6 +220,12 @@ def _rule_form_context(
         "selected_channel_recipient": (rule.channel_recipient or "") if rule else "",
         "selected_throttle_minutes": (rule.throttle_minutes or "") if rule else "",
         "selected_ai_summary": bool(rule and rule.ai_summary),
+        "selected_quiet_hours_start": (rule.quiet_hours_start or "") if rule else "",
+        "selected_quiet_hours_end": (rule.quiet_hours_end or "") if rule else "",
+        # On for a new rule: urgent events keep coming through.
+        "selected_quiet_hours_urgent": rule.quiet_hours_urgent if rule else True,
+        "selected_digest_time": (rule.digest_time or "") if rule else "",
+        "selected_digest_fleet_status": bool(rule and rule.digest_fleet_status),
         "channel_token_set": bool(rule and rule.channel_token_encrypted),
         "condition_rows": _condition_rows_for_rule(rule),
         "condition_field_choices": [(k, f.label_key) for k, f in CONDITION_FIELDS.items()],
@@ -435,6 +441,11 @@ async def create_rule(
     channel_recipient: str = Form(""),
     throttle_minutes: str = Form(""),
     ai_summary: bool = Form(False),
+    quiet_hours_start: str = Form(""),
+    quiet_hours_end: str = Form(""),
+    quiet_hours_urgent: bool = Form(False),
+    digest_time: str = Form(""),
+    digest_fleet_status: bool = Form(False),
 ) -> Response:
     async def _rerender(
         errors: list[str], status_code: int, condition_rows: list[dict[str, Any]]
@@ -474,6 +485,11 @@ async def create_rule(
                 "selected_channel_recipient": channel_recipient,
                 "selected_throttle_minutes": throttle_minutes,
                 "selected_ai_summary": ai_summary,
+                "selected_quiet_hours_start": quiet_hours_start,
+                "selected_quiet_hours_end": quiet_hours_end,
+                "selected_quiet_hours_urgent": quiet_hours_urgent,
+                "selected_digest_time": digest_time,
+                "selected_digest_fleet_status": digest_fleet_status,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -522,6 +538,11 @@ async def create_rule(
             channel_recipient=channel_recipient or None,
             throttle_minutes=_parse_throttle_minutes(throttle_minutes),
             ai_summary=ai_summary,
+            quiet_hours_start=quiet_hours_start or None,
+            quiet_hours_end=quiet_hours_end or None,
+            quiet_hours_urgent=quiet_hours_urgent,
+            digest_time=digest_time or None,
+            digest_fleet_status=digest_fleet_status,
         )
     except ValueError as exc:
         rows = raw_conditions + [
@@ -686,6 +707,11 @@ async def update_rule(
     channel_recipient: str = Form(""),
     throttle_minutes: str = Form(""),
     ai_summary: bool = Form(False),
+    quiet_hours_start: str = Form(""),
+    quiet_hours_end: str = Form(""),
+    quiet_hours_urgent: bool = Form(False),
+    digest_time: str = Form(""),
+    digest_fleet_status: bool = Form(False),
 ) -> Response:
     rule = await _get_rule_or_404(rule_id, db)
 
@@ -727,6 +753,11 @@ async def update_rule(
                 "selected_channel_recipient": channel_recipient,
                 "selected_throttle_minutes": throttle_minutes,
                 "selected_ai_summary": ai_summary,
+                "selected_quiet_hours_start": quiet_hours_start,
+                "selected_quiet_hours_end": quiet_hours_end,
+                "selected_quiet_hours_urgent": quiet_hours_urgent,
+                "selected_digest_time": digest_time,
+                "selected_digest_fleet_status": digest_fleet_status,
                 "condition_rows": condition_rows,
                 "condition_field_choices": [
                     (k, f.label_key) for k, f in CONDITION_FIELDS.items()
@@ -773,6 +804,11 @@ async def update_rule(
             channel_recipient=channel_recipient or None,
             throttle_minutes=_parse_throttle_minutes(throttle_minutes),
             ai_summary=ai_summary,
+            quiet_hours_start=quiet_hours_start or None,
+            quiet_hours_end=quiet_hours_end or None,
+            quiet_hours_urgent=quiet_hours_urgent,
+            digest_time=digest_time or None,
+            digest_fleet_status=digest_fleet_status,
         )
     except ValueError as exc:
         rows = raw_conditions + [

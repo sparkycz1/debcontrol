@@ -857,6 +857,21 @@ def run_due_endpoint_checks() -> None:
     asyncio.run(_run_due_endpoint_checks())
 
 
+async def _send_due_notification_digests() -> int:
+    """Every minute — the summaries of rules with quiet hours or a daily
+    summary that are due (`app.services.notification_digest`). Rules are
+    few and admin-authored, so they are sent here, one after another."""
+    from app.services import notification_digest
+
+    async with db_session.AsyncSessionLocal() as session:
+        return await notification_digest.send_due_digests(session)
+
+
+@celery_app.task(name="app.tasks.jobs.send_due_notification_digests", time_limit=300)
+def send_due_notification_digests() -> int:
+    return asyncio.run(_send_due_notification_digests())
+
+
 async def _browse_machine_log_directory(machine_id: str, *, path: str) -> dict[str, Any]:
     """The Logs tab's "browse" picker — list what's directly inside an
     allowed directory instead of requiring the exact file path to already be

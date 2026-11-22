@@ -67,6 +67,7 @@ from app.db.models.notification_condition import NotificationCondition
 from app.db.models.notification_log import (
     NotificationDeliveryChannel,
     NotificationDeliveryStatus,
+    NotificationHeldItem,
     NotificationLog,
 )
 from app.db.models.notification_rule import (
@@ -76,7 +77,7 @@ from app.db.models.notification_rule import (
 )
 from app.db.models.user import User
 from app.i18n import DEFAULT_LOCALE_CODE
-from app.services import acknowledgements, ai_cause, push_channels
+from app.services import acknowledgements, ai_cause, notification_timing, push_channels
 from app.services.maintenance_windows import active_window_for
 
 logger = logging.getLogger(__name__)
@@ -847,6 +848,57 @@ async def _send_rule_emails(
     return logs
 
 
+
+
+def _source_key(machine: Machine | None, context: dict[str, Any]) -> str | None:
+    """What a notification is about, for a rule's throttle window."""
+    if machine is not None:
+        return f"machine:{machine.id}"
+    if context.get("endpoint_name"):
+        return f"check:{context['endpoint_name']}"[:300]
+    return None
+
+def _hold_for_later(
+    db: AsyncSession,
+    rule: NotificationRule,
+    event_type: NotificationEventType,
+    machine: Machine | None,
+    full_context: dict[str, Any],
+    rule_context: dict[str, Any],
+    source_key: str | None,
+    now: datetime,
+) -> NotificationLog | None:
+    """Keep the event for the rule's summary when its quiet hours or daily
+    summary say so (`notification_timing.hold_reason`); the history row
+    recording it, or None to send it now."""
+    reason = notification_timing.hold_reason(rule, event_type, full_context, now)
+    if reason is None:
+        return None
+    db.add(
+        NotificationHeldItem(
+            rule_id=rule.id,
+            event_type=event_type.value,
+            machine_name=machine.name if machine else None,
+            context={str(k): str(v)[:4000] for k, v in rule_context.items() if v is not None},
+            reason=reason,
+        )
+    )
+    return _delivery_log(
+        rule=rule,
+        rule_name=rule.name,
+        event_type=event_type.value,
+        channel=NotificationDeliveryChannel(rule.delivery_channel),
+        target=(
+            f"quiet hours until {rule.quiet_hours_end}"
+            if reason == notification_timing.REASON_QUIET
+            else f"daily summary at {rule.digest_time}"
+        ),
+        machine=machine,
+        status=NotificationDeliveryStatus.HELD,
+        error=None,
+        source_key=source_key,
+    )
+
 async def notify(
     db: AsyncSession,
     event_type: NotificationEventType,
@@ -920,11 +972,7 @@ async def notify(
             full_context.setdefault("machine_ip", machine.ip_address)
 
         # What this notification is about, for a rule's throttle window.
-        source_key: str | None = None
-        if machine is not None:
-            source_key = f"machine:{machine.id}"
-        elif full_context.get("endpoint_name"):
-            source_key = f"check:{full_context['endpoint_name']}"[:300]
+        source_key = _source_key(machine, full_context)
         now = datetime.now(UTC)
 
         logs: list[NotificationLog] = []
@@ -954,6 +1002,14 @@ async def notify(
             rule_context = (
                 {**full_context, "held_back": str(held_back)} if held_back else full_context
             )
+            # Quiet hours or a daily summary: kept for later
+            # (`app.services.notification_digest`), recorded as held.
+            held_log = _hold_for_later(
+                db, rule, event_type, machine, full_context, rule_context, source_key, now
+            )
+            if held_log is not None:
+                logs.append(held_log)
+                continue
             if rule.ai_summary and event_type in ai_cause.EVENTS:
                 # Asked once per event, however many rules want it.
                 if not ai_asked:

@@ -307,6 +307,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.run_due_endpoint_checks",
         "schedule": timedelta(seconds=60),
     },
+    # Quiet hours ending and daily summaries of notification rules
+    # (app.services.notification_digest) — minute-grained like the times.
+    "send-due-notification-digests": {
+        "task": "app.tasks.jobs.send_due_notification_digests",
+        "schedule": crontab(),
+    },
     "check-all-machine-image-updates": {
         "task": "app.tasks.jobs.check_all_machine_image_updates",
         # Hourly; each machine is checked once per Settings -> Checks &
