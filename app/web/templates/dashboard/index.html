@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "macros/charts.html" import chart_card with context %}
+{% from "macros/health.html" import health_badge, finding_text with context %}
 
 {% block title %}{{ t(request, "dashboard.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -69,6 +70,57 @@
       <a href="/machines">{{ t(request, "dashboard.all_machines") }}</a>{% if group_count is not none %} · <a href="/machine-groups">{{ t(request, "dashboard.group_count", count=group_count) }}</a>{% endif %}
       {% if machine_stats.pending_count %} · <a href="/machines">{{ t(request, "dashboard.pending_self_registrations", count=machine_stats.pending_count) }}</a>{% endif %}
     </p>
+  </section>
+  {% endif %}
+  {% elif section_key == 'health' %}
+  {% if fleet_health is defined %}
+  <section class="panel">
+    <h2>{{ t(request, "dashboard.section.health") }}</h2>
+    {% set score = fleet_health.score %}
+    <div class="stat-grid">
+      <a class="stat-card stat-card-link" href="/health">
+        <span class="stat-value health-score health-score-{{ 'ok' if score is none or score >= 90 else ('warning' if score >= 60 else 'critical') }}">{{ score if score is not none else '—' }}</span>
+        <span class="stat-label">{{ t(request, "health.score") }}</span>
+      </a>
+      <a class="stat-card stat-card-link{% if fleet_health.counts.critical %} stat-card-danger{% endif %}" href="/machines?status=critical">
+        <span class="stat-value">{{ fleet_health.counts.critical }}</span>
+        <span class="stat-label">{{ t(request, "health.status.critical") }}</span>
+      </a>
+      <a class="stat-card stat-card-link{% if fleet_health.counts.warning %} stat-card-warn{% endif %}" href="/machines?status=warning">
+        <span class="stat-value">{{ fleet_health.counts.warning }}</span>
+        <span class="stat-label">{{ t(request, "health.status.warning") }}</span>
+      </a>
+      <a class="stat-card stat-card-link" href="/health">
+        <span class="stat-value">{{ fleet_health.counts.ok + fleet_health.counts.info }}</span>
+        <span class="stat-label">{{ t(request, "health.status.ok") }}</span>
+      </a>
+    </div>
+    {% if health_worst %}
+      <table class="data-table">
+        <thead><tr><th>{{ t(request, "machines.table.name") }}</th><th>{{ t(request, "machines.table.status") }}</th><th>{{ t(request, "health.panel.problem") }}</th></tr></thead>
+        <tbody>
+          {% for machine, view in health_worst %}
+            {% set problems = view.active | rejectattr("severity", "equalto", "info") | list %}
+            <tr>
+              <td><a href="/machines/{{ machine.id }}#health-panel">{{ machine.name }}</a></td>
+              <td>{{ health_badge(view.status) }}</td>
+              <td>{% if problems %}{{ finding_text(problems[0]) }}{% if problems | length > 1 %} <span class="hint">{{ t(request, "health.more", count=problems | length - 1) }}</span>{% endif %}{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "health.no_problems") }}</p>
+    {% endif %}
+    {% if health_trend is defined %}
+      {% set health_label = t(request, "health.score") %}
+      <div class="monitoring-grid">
+        {{ chart_card(health_label, none,
+             chart([(health_label, health_trend)], trend_timestamps,
+                   fixed_max=100, time_format='%d.%m.', colors=(chart_palette[1],))) }}
+      </div>
+    {% endif %}
+    <p class="hint"><a href="/health">{{ t(request, "health.panel.fleet_link") }}</a></p>
   </section>
   {% endif %}
   {% elif section_key == 'summary' %}

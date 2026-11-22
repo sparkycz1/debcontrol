@@ -1,0 +1,21 @@
+{# Machine health (app.services.machine_health): a status badge and one
+   problem as text. Imported `with context` (t() needs the request). #}
+{% macro health_badge(status, quiet_ok=false) %}
+  {% if status == 'critical' %}
+    <span class="badge badge-error">{{ t(request, "health.status.critical") }}</span>
+  {% elif status == 'warning' %}
+    <span class="badge badge-warn">{{ t(request, "health.status.warning") }}</span>
+  {% elif status == 'info' and not quiet_ok %}
+    <span class="badge">{{ t(request, "health.status.info") }}</span>
+  {% elif status in ('ok', 'info') and not quiet_ok %}
+    <span class="badge badge-ok">{{ t(request, "health.status.ok") }}</span>
+  {% elif status is none and not quiet_ok %}
+    <span class="badge">{{ t(request, "health.status.unknown") }}</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro severity_badge(severity) %}
+  <span class="badge {{ {'critical': 'badge-error', 'warning': 'badge-warn'}.get(severity, '') }}">{{ t(request, "health.status." ~ severity) }}</span>
+{% endmacro %}
+
+{% macro finding_text(finding) %}{{ t(request, "health.finding." ~ finding.message, **finding.params) }}{% endmacro %}

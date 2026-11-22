@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 # In the order they appear when an account has not arranged anything.
-SECTIONS = ("machines", "summary", "trends", "scheduling", "activity", "fleet")
+SECTIONS = ("machines", "health", "summary", "trends", "scheduling", "activity", "fleet")
 
 
 class UnknownSectionError(ValueError):

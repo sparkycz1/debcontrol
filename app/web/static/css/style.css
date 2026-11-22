@@ -3220,3 +3220,33 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 }
 .ai-ask-form .hint { margin: 0; }
 .ai-ask-form .button { align-self: flex-end; }
+
+/* Machine health (app.services.machine_health): the ten categories as a
+   row of small tiles, each edged in its status color. */
+.health-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+}
+.health-category {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-ok);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+}
+.health-category-info { border-left-color: var(--color-muted); }
+.health-category-warning { border-left-color: var(--color-warn); }
+.health-category-critical { border-left-color: var(--color-danger); }
+.health-category-name { font-weight: 600; }
+.health-category-state { font-size: 0.85em; color: var(--color-muted); }
+.health-score { font-size: 2.4rem; font-weight: 700; line-height: 1; }
+.health-score-ok { color: var(--color-ok); }
+.health-score-warning { color: var(--color-warn); }
+.health-score-critical { color: var(--color-danger); }

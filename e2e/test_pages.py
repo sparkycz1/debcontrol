@@ -33,6 +33,7 @@ playwright_api = pytest.importorskip("playwright.sync_api")
 PAGES = [
     "/dashboard",
     "/machines",
+    "/health",
     "/machine-groups",
     "/machine-groups/batches",
     "/security/updates",

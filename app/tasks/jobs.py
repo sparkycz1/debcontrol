@@ -80,6 +80,7 @@ from app.services import (
     docker_jobs,
     health_events,
     image_versions,
+    machine_health,
     security_audit,
     update_snapshots,
     wake_on_lan,
@@ -1241,6 +1242,8 @@ async def _ping_all_machines() -> None:
                     )
                 )
             await session.commit()
+            for machine, _now_reachable in transitions:
+                await machine_health.refresh_status_only(session, machine)
             for machine, _outcome in results:
                 await publish_machine_event(str(machine.id), KIND_STATUS)
             if transitions:
@@ -1294,6 +1297,8 @@ async def _check_machine_reachability_now(machine_id: str) -> dict[str, Any]:
             )
         )
         await session.commit()
+        if was_reachable != outcome.reachable:
+            await machine_health.refresh_status_only(session, machine)
         await publish_machine_event(str(machine.id), KIND_STATUS)
         if was_reachable is not None and was_reachable != outcome.reachable:
             await publish_fleet_event(KIND_STATUS)
@@ -1394,6 +1399,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
             previous_pbs=previous_pbs,
             previous_pmg=previous_pmg,
         )
+        await machine_health.refresh(session, machine)
         await publish_machine_event(machine_id, KIND_FACTS)
         has_snapshots = bool(machine.pve_debcontrol_snapshots)
         has_watched_files = bool(await watched_files.list_files(session, machine.id))
@@ -1780,6 +1786,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             if _note_host_key_change(machine, exc):
                 await session.commit()
                 await publish_machine_event(machine_id, KIND_STATUS)
+            await machine_health.refresh(session, machine, error=str(exc) or type(exc).__name__)
             return {"ok": False, "error": str(exc)}
 
         # Connected with the pinned key — whatever answered differently
@@ -1867,6 +1874,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             previous_zfs_pools=previous_zfs_pools,
             previous_cluster=previous_cluster,
         )
+        await machine_health.refresh(session, machine)
 
         return {"ok": True}
 
@@ -3266,6 +3274,7 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
                     previous_packages, machine.apt_upgradable_packages
                 ),
             )
+            await machine_health.refresh(session, machine)
             await publish_machine_event(machine_id, KIND_UPDATES)
             return {"ok": True}
 
@@ -3282,6 +3291,7 @@ async def _check_machine_updates(machine_id: str) -> dict[str, Any]:
         tail = "\n".join(result.output.strip().splitlines()[-6:])
         machine.updates_check_error = f"{error}\n{tail}".strip()[:1024]
         await session.commit()
+        await machine_health.refresh(session, machine)
         await publish_machine_event(machine_id, KIND_UPDATES)
         logger.warning("check_machine_updates failed for %s: %s", machine.name, error)
         return {"ok": False, "error": error}
@@ -3627,6 +3637,7 @@ async def _run_security_audit(audit_id: str) -> None:
         await session.flush()
         await security_audit.prune(session, machine.id)
         await session.commit()
+        await machine_health.refresh(session, machine)
 
 
 @celery_app.task(
@@ -3816,6 +3827,7 @@ async def _record_fleet_snapshot() -> None:
                 needs_updates=stats["needs_updates"],
                 needs_security_updates=stats["needs_security_updates"],
                 needs_reboot=stats["needs_reboot"],
+                health_score=(await machine_health.fleet_health(session)).score,
             )
         )
         await session.commit()

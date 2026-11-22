@@ -300,6 +300,15 @@ class Machine(Base):
     # DockerBackup) last succeeded; None = never.
     docker_backup_ok_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # --- Health (app.services.machine_health) ---
+    # The problems found by the last evaluation, kept as found (snoozes and
+    # reachability are applied when read): {"at", "findings": [...],
+    # "error"}. None = never evaluated (before 0.141.0, or no sample yet).
+    health: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # "ok" / "info" / "warning" / "critical" after snoozes and reachability;
+    # None = unknown. Indexed: the machine list filters on it.
+    health_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+
     # --- Cheap per-minute reachability check (TCP connect to the SSH port) ---
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(nullable=True)

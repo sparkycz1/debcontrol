@@ -90,6 +90,17 @@
     </form>
   {% endif %}
 
+  <section
+    class="panel"
+    id="health-panel"
+    hx-get="/machines/{{ machine.id }}/health-panel"
+    hx-trigger="every 60s, live-status from:body"
+    hx-swap="innerHTML settle:600ms"
+  >
+    {% set can_manage = can_manage_machine %}
+    {% include "partials/machine_health.html" %}
+  </section>
+
   {% if hardware_applies %}
     <section class="panel" id="hardware">
       <h2>{{ t(request, "hardware.panel") }}</h2>

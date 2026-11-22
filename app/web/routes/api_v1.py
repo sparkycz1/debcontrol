@@ -220,6 +220,10 @@ def _machine_to_dict(machine: Machine) -> dict[str, object]:
         "is_reachable": machine.is_reachable,
         "last_ping_at": _isoformat(machine.last_ping_at),
         "acknowledgement": acknowledgements.as_dict(machine),
+        # The overall health after snoozes and reachability (ok / info /
+        # warning / critical, null = not evaluated yet); the problems
+        # themselves: GET /api/v1/machines/{id}/health.
+        "health_status": machine.health_status,
         "host_key_fingerprint": machine.host_key_fingerprint,
         "os_version": machine.os_version,
         "pve_version": machine.pve_version,

@@ -56,7 +56,7 @@ from app.db.models.terminal_recording import TerminalRecording
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
-from app.services import terminal_recording
+from app.services import machine_health, terminal_recording
 from tests.conftest import FakeRedis
 
 DEFAULT_PORT = 8765
@@ -222,6 +222,7 @@ async def seed() -> str:
                     needs_updates=1,
                     needs_security_updates=1,
                     needs_reboot=0,
+                    health_score=(50, 75, 25)[days_ago],
                 )
             )
         db.add(
@@ -267,6 +268,10 @@ async def seed() -> str:
             )
         )
         await db.commit()
+        # Health (app.services.machine_health): web1 has a security update
+        # pending (a warning), db1 is down (critical).
+        for machine in (web, db_host):
+            await machine_health.refresh(db, machine, notify_changes=False)
     return token
 
 

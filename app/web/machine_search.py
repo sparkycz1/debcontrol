@@ -16,7 +16,18 @@ from app.db.models.machine_tag import Tag
 
 # The machine list's "Status" filter (`?status=`), shared with
 # `GET /api/v1/machines` — see `apply_status_filter`.
-STATUS_FILTERS = ("online", "offline", "updates", "security", "reboot", "changed", "unconfirmed")
+STATUS_FILTERS = (
+    "online",
+    "offline",
+    "updates",
+    "security",
+    "reboot",
+    "changed",
+    "unconfirmed",
+    "unhealthy",
+    "warning",
+    "critical",
+)
 # "changed" = a configuration change detected within this many days.
 CHANGED_WITHIN_DAYS = 7
 
@@ -83,7 +94,9 @@ def apply_status_filter[S: Select[Machine]](query: S, status: str) -> S:
     flatpak/snap update), security (pending apt security updates), reboot
     (a newer kernel is installed than running), changed (a configuration
     change detected in the last `CHANGED_WITHIN_DAYS` days — see
-    `app.services.config_drift`), unconfirmed (no pinned host key yet)."""
+    `app.services.config_drift`), unconfirmed (no pinned host key yet),
+    unhealthy / warning / critical (`Machine.health_status` — see
+    `app.services.machine_health`; unhealthy is either of the two)."""
     if status == "online":
         return query.where(Machine.is_reachable.is_(True))
     if status == "offline":
@@ -109,6 +122,10 @@ def apply_status_filter[S: Select[Machine]](query: S, status: str) -> S:
         )
     if status == "unconfirmed":
         return query.where(Machine.host_key_fingerprint.is_(None))
+    if status == "unhealthy":
+        return query.where(Machine.health_status.in_(("warning", "critical")))
+    if status in ("warning", "critical"):
+        return query.where(Machine.health_status == status)
     return query
 
 

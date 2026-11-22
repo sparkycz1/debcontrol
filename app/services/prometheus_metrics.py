@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from app.core.version import APP_VERSION
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.machine import Machine
+from app.services import machine_health
 from app.services.fleet_overview import FleetRow
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
@@ -74,6 +75,10 @@ def _machine_metrics(machines: list[Machine], rows: list[FleetRow]) -> list[_Met
         "debcontrol_machine_temperature_celsius", "Hottest sensor in the newest sample."
     )
     uptime = _Metric("debcontrol_machine_uptime_seconds", "Uptime at the last facts refresh.")
+    health = _Metric(
+        "debcontrol_machine_health",
+        "Health after snoozes: 0 ok, 1 info, 2 warning, 3 critical (absent: not evaluated).",
+    )
     sampled = _Metric(
         "debcontrol_machine_sample_timestamp_seconds",
         "When the newest monitoring sample was taken (Unix time).",
@@ -92,9 +97,14 @@ def _machine_metrics(machines: list[Machine], rows: list[FleetRow]) -> list[_Met
             disk.add({**labels, "mount": row.disk_mount or ""}, row.disk_percent)
         temperature.add(labels, row.temperature_c)
         uptime.add(labels, row.uptime_seconds)
+        health.add(
+            labels,
+            machine_health.rank(machine.health_status) if machine.health_status else None,
+        )
         sampled.add(labels, int(row.sampled_at.timestamp()) if row.sampled_at else None)
     return [
-        up, updates, security, reboot, failed, cpu, ram, load, disk, temperature, uptime, sampled
+        up, updates, security, reboot, failed, cpu, ram, load, disk, temperature, uptime,
+        health, sampled,
     ]
 
 
