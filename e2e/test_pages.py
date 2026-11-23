@@ -34,6 +34,8 @@ PAGES = [
     "/dashboard",
     "/machines",
     "/health",
+    "/health/tune-up",
+    "/health/tune-up/01890000-0000-7000-8000-000000000001",
     "/disks",
     "/machine-groups",
     "/machine-groups/batches",

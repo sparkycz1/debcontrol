@@ -169,6 +169,7 @@ async def machine_detail(
             "warranty_soon_days": hardware_inventory.WARRANTY_SOON_DAYS,
             "asset_error": read_flash(request, "asset_error"),
             "can_manage_machine": current_user.has_permission(Permission.MACHINE_MANAGE),
+            "can_tune_up": current_user.has_permission(Permission.ACTION_UPDATES),
             "health": await machine_health.view_for(db, machine),
             "snooze_choices": machine_health.SNOOZE_CHOICES,
             "self_host_role": await self_host.role_of(db, machine),
@@ -224,6 +225,7 @@ async def machine_health_panel(
             "health": await machine_health.view_for(db, machine),
             "snooze_choices": machine_health.SNOOZE_CHOICES,
             "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
+            "can_tune_up": current_user.has_permission(Permission.ACTION_UPDATES),
         },
     )
 

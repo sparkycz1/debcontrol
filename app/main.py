@@ -50,6 +50,7 @@ from app.web.routes import (
     api_v1_scheduling,
     api_v1_search,
     api_v1_settings,
+    api_v1_tune_up,
     api_v1_users,
     audit,
     auth,
@@ -67,6 +68,7 @@ from app.web.routes import (
     fleet,
     fleet_map,
     health,
+    health_tune_up,
     impersonation,
     inform,
     live_ws,
@@ -303,6 +305,7 @@ def create_app() -> FastAPI:
     app.include_router(machine_groups.router)
     app.include_router(security.router)
     app.include_router(health.router)
+    app.include_router(health_tune_up.router)
     app.include_router(disks.router)
     app.include_router(fleet_map.router)
     app.include_router(search.router)
@@ -330,6 +333,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_account.router)
     app.include_router(api_v1_checks.router)
     app.include_router(api_v1_health.router)
+    app.include_router(api_v1_tune_up.router)
     app.include_router(api_v1_disks.router)
     app.include_router(api_v1_map.router)
     app.include_router(api_v1_machines_live.router)

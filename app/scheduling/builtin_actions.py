@@ -29,7 +29,7 @@ from app.scheduling.actions import (
     get_action,
     register_action,
 )
-from app.services import docker_actions
+from app.services import docker_actions, tune_up
 from app.services.docker_gate import GATES
 from app.services.machine_actions import (
     run_custom_command_on_machines,
@@ -206,6 +206,14 @@ def _docker_backup_runner(what: str) -> ActionRunFunc:
         return ActionRunResult(attempted=attempted, skipped=skipped)
 
     return run
+
+
+async def _run_tune_up(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    options = tune_up.Options(reboot=params.get("tune_up_reboot") == "if_required")
+    _batch_id, skipped = await tune_up.start(db, machines, options, started_by="schedule")
+    return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
 
 
 def register_builtin_actions() -> None:
@@ -458,6 +466,31 @@ def register_builtin_actions() -> None:
                 ),
             ],
             run=_run_docker_prune,
+            destructive=True,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="tune_up",
+            label="Tune-up (everything)",
+            description=(
+                "Every maintenance step on each machine in turn, as Health -> "
+                "Tune-up does: refresh, full-upgrade with autoremove/autoclean, "
+                "container updates, docker system prune -a (never volumes), "
+                "image scans, a security audit and a fresh health check."
+            ),
+            params=[
+                ScheduledActionParam(
+                    key="tune_up_reboot",
+                    label="Reboot afterwards",
+                    choices=[
+                        ("never", "Never"),
+                        ("if_required", "Only if the machine needs it"),
+                    ],
+                    default="never",
+                ),
+            ],
+            run=_run_tune_up,
             destructive=True,
         )
     )

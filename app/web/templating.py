@@ -132,6 +132,21 @@ def from_epoch(value: int | float | None) -> datetime | None:
 
 templates.env.filters["from_epoch"] = from_epoch
 
+
+def from_iso(value: str | None) -> datetime | None:
+    """An ISO 8601 string kept in a JSON column (a tune-up step's times)
+    -> an aware datetime for `local_time`; empty or unreadable is None."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+templates.env.filters["from_iso"] = from_iso
+
 templates.env.filters["os_badge"] = badge_for
 
 

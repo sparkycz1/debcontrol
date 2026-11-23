@@ -4,7 +4,7 @@ problem and its problems, and every snoozed problem — see
 `app.services.machine_health`. Snoozing and clearing go through the
 machine's own routes (`/machines/{id}/health/snooze`, `.../unsnooze`,
 `machine.manage`), back to this page. Scoped to the machines the account
-can see."""
+can see. The **Tune-up** tab next to it is `health_tune_up`."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.services import machine_health
 from app.services.access_scope import allowed_group_ids
+from app.web.routes.health_tune_up import health_tabs
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_permission(Permission.MACHINE_VIEW))])
@@ -38,5 +39,7 @@ async def fleet_health_page(
             "snoozes": await machine_health.all_snoozes(db, scope),
             "snooze_choices": machine_health.SNOOZE_CHOICES,
             "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
+            "tabs": health_tabs(request),
+            "active_tab": "health",
         },
     )

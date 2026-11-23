@@ -3398,3 +3398,9 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 /* --- One Proxmox guest (machines/proxmox_guest.html) --- */
 .guest-notes-form textarea { width: 100%; font-family: inherit; }
 .guest-notes { white-space: pre-wrap; margin: 0; }
+
+/* Health → Tune-up: every machine's step table lines up with the next. */
+.tune-up-steps { table-layout: fixed; }
+.tune-up-steps th:nth-child(1) { width: 28%; }
+.tune-up-steps th:nth-child(2) { width: 12%; }
+.tune-up-steps th:nth-child(4) { width: 12%; }

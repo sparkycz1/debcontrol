@@ -1,0 +1,30 @@
+{# Badges for the tune-up pages (app.services.tune_up). Import `with context`. #}
+{% macro status_badge(status) -%}
+  <span class="badge {{ 'badge-ok' if status in ('succeeded', 'ok') else ('badge-error' if status == 'failed' else ('badge-warn' if status in ('pending', 'running') else '')) }}">{{ t(request, "tune_up.status." ~ status) }}</span>
+{%- endmacro %}
+
+{% macro batch_status(view) -%}
+  {{ status_badge(view.status) }}
+  {%- set counts = view.counts %}
+  {%- if view.runs | length > 1 %} <span class="hint">{{ t(request, "tune_up.counts", done=(counts.succeeded or 0), failed=(counts.failed or 0), total=(view.runs | length)) }}</span>{% endif %}
+{%- endmacro %}
+
+{# One step's outcome in words. #}
+{% macro step_detail(step) -%}
+  {%- set detail = step.detail or {} -%}
+  {%- if detail.error -%}
+    {{ detail.error }}
+  {%- elif detail.code == 'reclaimed' -%}
+    {{ t(request, "tune_up.detail.reclaimed", size=(detail.bytes | bytes)) }}
+  {%- elif detail.code == 'containers' -%}
+    {{ t(request, "tune_up.detail.containers", updated=detail.updated, current=detail.current, blocked=detail.blocked, failed=detail.failed, protected=detail.protected) }}
+  {%- elif detail.code == 'image_updates' -%}
+    {{ t(request, "tune_up.detail.image_updates", count=detail.count) }}
+  {%- elif detail.code == 'audit' -%}
+    {{ t(request, "tune_up.detail.audit", index=(detail.index if detail.index is not none else '—'), warnings=detail.warnings) }}
+  {%- elif detail.code == 'health' -%}
+    {{ t(request, "tune_up.detail.health", status=t(request, "health.status." ~ (detail.status if detail.status in ('ok', 'info', 'warning', 'critical') else 'unknown'))) }}
+  {%- elif detail.code -%}
+    {{ t(request, "tune_up.detail." ~ detail.code) }}
+  {%- endif -%}
+{%- endmacro %}
