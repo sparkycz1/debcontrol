@@ -9,7 +9,7 @@ required on the target, and nothing here needs root. See the wiki page
 from __future__ import annotations
 
 import re
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from app.db.models.machine import Machine
 from app.ssh import proxmox
@@ -215,6 +215,8 @@ class MachineFacts(TypedDict):
     pve_backups: dict[str, Any] | None
     pve_guest_backups: dict[str, dict[str, int]] | None
     pve_failed_tasks: list[dict[str, Any]] | None
+    # Each local guest's configuration and IPs, by VMID (parse_guest_details).
+    pve_guest_details: NotRequired[dict[str, dict[str, Any]] | None]
     # Proxmox Backup Server / Mail Gateway (None elsewhere).
     pbs_version: str | None
     pbs_data: dict[str, Any] | None
@@ -385,6 +387,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
         ),
         pve_failed_tasks=proxmox.parse_failed_tasks(sections.get("PVE_FAILED_TASKS", "")),
         pve_guest_backups=proxmox.parse_guest_backups(sections.get("PVE_GUEST_BACKUPS", "")),
+        pve_guest_details=proxmox.parse_guest_details(sections.get("PVE_GUEST_DETAILS", "")),
         pbs_version=pbs_version,
         pbs_data=pbs_data,
         pmg_version=pmg_version,

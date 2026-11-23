@@ -90,12 +90,6 @@ router = APIRouter(
     prefix="/ai", dependencies=[Depends(require_permission(Permission.AI_ACCESS))]
 )
 
-# How long the web request waits for the background turn. Comfortably above
-# the provider client's own 90s per-call ceiling would mean holding a web
-# worker for minutes; 90s matches one slow call plus change, and a timeout
-# is reported honestly rather than hidden.
-_TURN_WAIT_SECONDS = 90
-
 
 async def _get_conversation(
     db: AsyncSession, conversation_id: uuid.UUID, user: User

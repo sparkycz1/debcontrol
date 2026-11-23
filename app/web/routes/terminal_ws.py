@@ -75,10 +75,12 @@ from app.db.models.role import Permission
 from app.db.models.user import User
 from app.services import terminal_recording
 from app.services.access_scope import can_see_machine
+from app.ssh import proxmox
 from app.ssh.client import open_shell_session
 from app.ssh.credentials import resolve_machine_credential
 from app.ssh.docker_cli import build_shell_command, is_container_name_valid
 from app.ssh.exceptions import SSHConnectionError
+from app.ssh.shell import with_root_shim
 
 router = APIRouter()
 
@@ -251,21 +253,49 @@ async def _log_terminal_event(
 @router.websocket("/machines/{machine_id}/terminal/ws")
 async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> None:
     """The machine's shell — or, with `?container=<name>`, a shell inside
-    that Docker container (`docker exec -it`, the Docker tab's "Shell"):
-    same permission, same limits, same recording, audited as
-    `machine.container.shell.open`/`.close`."""
+    that Docker container (`docker exec -it`, the Docker tab's "Shell"),
+    audited as `machine.container.shell.open`/`.close`; or, with
+    `?guest=<vmid>`, a Proxmox VE guest's console on this node (`pct
+    enter` / `qm terminal`), audited as `machine.guest.console.open`/
+    `.close`. Same permission, same limits, same recording."""
     container = websocket.query_params.get("container") or None
+    guest_param = websocket.query_params.get("guest") or None
     if container is not None and not is_container_name_valid(container):
         await websocket.close(code=_POLICY_VIOLATION, reason="Invalid container.")
+        return
+    if guest_param is not None and (
+        container is not None or not guest_param.isascii() or not guest_param.isdecimal()
+    ):
+        await websocket.close(code=_POLICY_VIOLATION, reason="Invalid guest.")
         return
     authenticated = await _authenticate(websocket, machine_id)
     if authenticated is None:
         return
     user, machine = authenticated
-    where = f'container "{container}" on "{machine.name}"' if container else f'"{machine.name}"'
-    open_action = "machine.container.shell.open" if container else "machine.terminal.open"
-    close_action = "machine.container.shell.close" if container else "machine.terminal.close"
-    audit_details: dict[str, object] = {"container": container} if container else {}
+    command: str | None = build_shell_command(container) if container else None
+    if guest_param is not None:
+        # A guest of this very node, as the latest sample lists it.
+        guest = proxmox.find_guest(machine.pve_guests, int(guest_param))
+        node = proxmox.local_node(machine.pve_cluster, machine.pve_resources)
+        if (
+            guest is None
+            or guest.get("template")
+            or (node and guest.get("node") and guest.get("node") != node)
+        ):
+            await websocket.close(code=_POLICY_VIOLATION, reason="Unknown guest.")
+            return
+        command = with_root_shim(proxmox.build_guest_console_command(guest))
+        label = f"{guest['vmid']} ({guest.get('name')})" if guest.get("name") else guest["vmid"]
+        where = f'guest {label} on "{machine.name}"'
+        open_action, close_action = "machine.guest.console.open", "machine.guest.console.close"
+        audit_details: dict[str, object] = {"vmid": guest["vmid"]}
+    else:
+        where = (
+            f'container "{container}" on "{machine.name}"' if container else f'"{machine.name}"'
+        )
+        open_action = "machine.container.shell.open" if container else "machine.terminal.open"
+        close_action = "machine.container.shell.close" if container else "machine.terminal.close"
+        audit_details = {"container": container} if container else {}
 
     db_session_factory = websocket.app.state.db_session_factory
     async with db_session_factory() as db:
@@ -291,7 +321,7 @@ async def terminal_websocket(websocket: WebSocket, machine_id: uuid.UUID) -> Non
                 app_settings.ssh_connect_timeout,
                 term_type=_TERM_TYPE,
                 term_size=_DEFAULT_TERM_SIZE,
-                command=build_shell_command(container) if container else None,
+                command=command,
             )
         except SSHConnectionError as exc:
             await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}))

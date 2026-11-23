@@ -1344,6 +1344,11 @@ p { margin: 0 0 var(--space-3); }
   margin: var(--space-3) 0;
 }
 
+/* Cards whose values are sizes or rates ("9 GB / 32 GB", "11.7 KB/s"). */
+.stat-grid-wide {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
 .stat-card {
   display: flex;
   flex-direction: column;
@@ -3346,3 +3351,50 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
   .no-print, .site-header, nav { display: none !important; }
   .disk-report .panel { break-inside: avoid; }
 }
+
+/* --- Network picture (macros/topology.html) --- */
+.topology-wrap { overflow-x: auto; }
+.topology { display: block; max-width: none; font-size: 12px; }
+.topo-edge { fill: none; stroke: var(--color-border-strong); }
+.topo-edge-busy { stroke: var(--color-accent); }
+.topo-node rect { fill: var(--color-surface-raised); stroke: var(--color-border-strong); stroke-width: 1; }
+.topo-node .topo-label { fill: var(--color-text); font-weight: 600; }
+.topo-node .topo-detail { fill: var(--color-muted); font-size: 11px; }
+.topo-physical rect, .topo-wireless rect { stroke: var(--color-accent); }
+.topo-bond rect { stroke: var(--color-accent); stroke-dasharray: 4 2; }
+.topo-bridge rect, .topo-vlan rect { stroke: var(--color-ok); }
+.topo-guest rect, .topo-docker rect { fill: var(--color-surface); }
+.topo-down rect { stroke: var(--color-danger); stroke-dasharray: 3 3; }
+.topology a:hover .topo-node rect, .topology a:focus .topo-node rect { stroke: var(--color-accent-hover); stroke-width: 2; }
+
+/* --- Map (map/*.html) --- */
+.map-tree { list-style: none; margin: 0.25rem 0 0.25rem 1.1rem; padding: 0; border-left: 1px solid var(--color-border); }
+.map-tree > li { padding: 0.2rem 0 0.2rem 0.75rem; }
+.map-tree summary { cursor: pointer; }
+.map-kind { color: var(--color-muted); font-size: 0.85em; margin-right: 0.25rem; }
+.map-dot { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--color-border-strong); vertical-align: middle; margin-right: 0.25rem; }
+.map-dot-ok { background: var(--color-ok); }
+.map-dot-info { background: var(--color-accent); }
+.map-dot-warning { background: var(--color-warn); }
+.map-dot-critical, .map-dot-down { background: var(--color-danger); }
+.map-networks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-3); }
+.map-gateway { color: var(--color-muted); margin: 0 0 0.5rem; }
+.map-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.map-chip { display: inline-flex; gap: 0.35rem; align-items: baseline; padding: 0.2rem 0.5rem; border: 1px solid var(--color-border); border-left: 4px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); }
+.map-chip-ok { border-left-color: var(--color-ok); }
+.map-chip-info { border-left-color: var(--color-accent); }
+.map-chip-warning { border-left-color: var(--color-warn); }
+.map-chip-critical, .map-chip-down { border-left-color: var(--color-danger); }
+.capacity-form { flex-wrap: wrap; align-items: flex-end; }
+.capacity-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9em; }
+.capacity-form input { width: 8rem; }
+.capacity-meter { display: block; width: 8rem; height: 6px; margin-top: 0.25rem; }
+.capacity-meter svg { display: block; width: 100%; height: 6px; }
+.capacity-track { fill: var(--color-border); }
+.capacity-ok .capacity-fill { fill: var(--color-ok); }
+.capacity-warn .capacity-fill { fill: var(--color-warn); }
+.capacity-critical .capacity-fill { fill: var(--color-danger); }
+
+/* --- One Proxmox guest (machines/proxmox_guest.html) --- */
+.guest-notes-form textarea { width: 100%; font-family: inherit; }
+.guest-notes { white-space: pre-wrap; margin: 0; }

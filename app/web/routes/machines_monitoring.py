@@ -21,7 +21,7 @@ from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import live_overview, monitoring_history
+from app.services import live_overview, monitoring_history, network_topology
 from app.services.notifications import condition_thresholds_for_machine
 from app.tasks import jobs as tasks
 from app.web.messages import LocalizedText
@@ -98,6 +98,10 @@ async def machine_monitoring(
             "window_query": window_query(window),
             # Every interface by kind, with rates and errors (V7).
             "interfaces": interfaces,
+            # The same interfaces as a picture, when there is a bridge or bond.
+            "topology": network_topology.of_machine(
+                machine, recent[0] if recent else None, recent[1] if len(recent) > 1 else None
+            ),
             "service_counts": await _get_service_counts(machine_id, db),
             "services": await _get_services(machine_id, db, svc_q="", svc_state=""),
             # A configured condition-based notification's own trigger

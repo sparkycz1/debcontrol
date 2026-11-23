@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/topology.html" import topology_svg %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 {% from "partials/_os_badge.html" import render as render_os_badge %}
 
@@ -14,7 +15,7 @@
 
   {# Every value here was reported by the managed machine itself —
      autoescaped like any other text. #}
-  <div class="stat-grid">
+  <div class="stat-grid stat-grid-wide">
     {% if machine.proxmox_product %}
       <div class="stat-card">
         <span class="stat-label">{{ machine.proxmox_product.rsplit(' ', 1)[0] }}</span>
@@ -35,6 +36,22 @@
       <div class="stat-card">
         <span class="stat-label">{{ t(request, "proxmox.guests_running") }}</span>
         <span class="stat-value">{{ guests_running }} / {{ guests_total }}</span>
+      </div>
+    {% endif %}
+    {% if node %}
+      <div class="stat-card {{ 'stat-card-warn' if node.overcommitted else '' }}">
+        <span class="stat-label">{{ t(request, "proxmox.capacity.memory_given") }}</span>
+        <span class="stat-value">
+          {{ node.mem_running_bytes | bytes }} / {{ node.mem_total_bytes | bytes }}
+          <small>{{ t(request, "proxmox.capacity.overcommitted") if node.overcommitted else t(request, "proxmox.capacity.percent_given", percent=(node.mem_given_percent | round | int)) }}</small>
+        </span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">{{ t(request, "proxmox.capacity.vcpus") }}</span>
+        <span class="stat-value">
+          {{ node.vcpus_running }} / {{ node.cores or '—' }}
+          {% if node.vcpu_ratio is not none %}<small>{{ t(request, "proxmox.capacity.ratio", ratio=node.vcpu_ratio) }}</small>{% endif %}
+        </span>
       </div>
     {% endif %}
     {% if machine.zfs_pools %}
@@ -87,6 +104,8 @@
                 <th data-sort="number">{{ t(request, "proxmox.memory") }}</th>
                 <th data-sort="number">{{ t(request, "proxmox.uptime") }}</th>
                 <th>{{ t(request, "proxmox.node") }}</th>
+                <th>{{ t(request, "proxmox.guest.ips") }}</th>
+                <th data-sort="number">{{ t(request, "proxmox.guest.io") }}</th>
                 {% if guest_backup_rows %}<th data-sort="number">{{ t(request, "proxmox.guest_last_backup") }}</th>{% endif %}
                 <th>{{ t(request, "proxmox.tags") }}</th>
                 {% if can_power %}<th><span class="visually-hidden">{{ t(request, "proxmox.actions") }}</span></th>{% endif %}
@@ -98,7 +117,8 @@
                   <td data-sort-value="{{ g.vmid }}">{{ g.vmid }}</td>
                   <td>
                     {% set managed = guest_machines.get(g.vmid) %}
-                    {% if managed %}<a href="/machines/{{ managed.id }}" title="{{ t(request, 'proxmox.guest_is_machine', name=managed.name) }}">{{ g.name or managed.name }}</a>{% else %}{{ g.name or '—' }}{% endif %}
+                    <a href="/machines/{{ machine.id }}/proxmox/guests/{{ g.vmid }}">{{ g.name or (managed.name if managed else '—') }}</a>
+                    {% if managed %}<a href="/machines/{{ managed.id }}" class="badge badge-tag" title="{{ t(request, 'proxmox.guest_is_machine', name=managed.name) }}">{{ t(request, "proxmox.guest.managed") }}</a>{% endif %}
                   </td>
                   <td>{{ 'VM' if g.type == 'qemu' else 'CT' }}{% if g.template %} · {{ t(request, "proxmox.template") }}{% endif %}</td>
                   <td><span class="badge {{ 'badge-ok' if g.status == 'running' else ('badge-warn' if g.status in ('paused', 'suspended') else '') }}">{{ g.status }}</span></td>
@@ -108,6 +128,15 @@
                   </td>
                   <td data-sort-value="{{ g.uptime_seconds or 0 }}">{{ g.uptime_seconds | format_uptime if g.uptime_seconds else '—' }}</td>
                   <td>{{ g.node or '—' }}</td>
+                  {% set gd = guest_details.get(g.vmid | string) %}
+                  <td class="cell-nowrap">{% if gd and gd.ips %}{{ gd.ips[0] }}{% if gd.ips | length > 1 %} <span class="table-muted">+{{ gd.ips | length - 1 }}</span>{% endif %}{% else %}—{% endif %}</td>
+                  {% set io = [g.get('disk_read_bps'), g.get('disk_write_bps'), g.get('net_in_bps'), g.get('net_out_bps')] | reject('none') | list %}
+                  <td class="cell-nowrap" data-sort-value="{{ io | sum if io else -1 }}">
+                    {% if io %}
+                      <span title="{{ t(request, 'proxmox.guest.disk_io_hint') }}">{{ t(request, "proxmox.guest.disk_short") }} {{ g.get('disk_read_bps') | bytes('/s') }} / {{ g.get('disk_write_bps') | bytes('/s') }}</span><br>
+                      <span class="table-muted" title="{{ t(request, 'proxmox.guest.net_io_hint') }}">{{ t(request, "proxmox.guest.net_short") }} {{ g.get('net_in_bps') | net_rate(request) }} / {{ g.get('net_out_bps') | net_rate(request) }}</span>
+                    {% else %}—{% endif %}
+                  </td>
                   {% if guest_backup_rows %}
                     {% set gb = guest_backup_rows.get(g.vmid) %}
                     <td class="cell-nowrap" data-sort-value="{{ gb.last if gb and gb.last else 0 }}">
@@ -144,6 +173,13 @@
         <p class="hint">{{ t(request, "proxmox.no_guests") }}</p>
       {% endif %}
       {% if machine.monitoring_updated_at %}<p class="hint">{{ t(request, "proxmox.as_of", when=(machine.monitoring_updated_at | local_time('%Y-%m-%d %H:%M'))) }}</p>{% endif %}
+    </section>
+  {% endif %}
+
+  {% if topology %}
+    <section class="panel" id="network">
+      <h2>{{ t(request, "topology.heading") }}</h2>
+      {{ topology_svg(request, topology) }}
     </section>
   {% endif %}
 

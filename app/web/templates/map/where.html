@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+
+{% block title %}{{ t(request, "map.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro health_dot(machine) -%}
+  <span class="map-dot map-dot-{{ 'down' if machine.is_reachable is sameas false else (machine.health_status or 'unknown') }}" title="{{ t(request, 'map.unreachable') if machine.is_reachable is sameas false else (machine.health_status or '—') }}"></span>
+{%- endmacro %}
+
+{% macro stacks_list(entry) -%}
+  {% if entry.stacks %}
+    <ul class="map-tree map-stacks">
+      {% for stack in entry.stacks %}
+        <li>
+          <details {% if stack.containers | length <= 6 %}open{% endif %}>
+            <summary>
+              <span class="map-kind">{{ t(request, "map.stack") if stack.name else t(request, "map.standalone_containers") }}</span>
+              {% if stack.name %}<a href="/machines/{{ entry.machine.id }}/docker/stacks">{{ stack.name }}</a>{% endif %}
+              <span class="table-muted">{{ t(request, "map.running_of", running=stack.running, total=(stack.containers | length)) }}</span>
+            </summary>
+            <ul class="map-tree">
+              {% for c in stack.containers %}
+                <li>
+                  <span class="badge {{ 'badge-ok' if c.state == 'running' else '' }}">{{ c.state or '—' }}</span>
+                  <a href="/machines/{{ entry.machine.id }}/docker/containers/{{ c.name | urlencode }}">{{ c.name }}</a>
+                  <span class="table-muted">{{ c.image }}</span>
+                  {% for link in c.links %}<a class="badge badge-tag" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>{% endfor %}
+                </li>
+              {% endfor %}
+            </ul>
+          </details>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{%- endmacro %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "map.title") }}</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "map.where.intro") }}</p>
+
+  <form method="get" action="/map" class="search-form">
+    <input type="search" name="q" value="{{ q }}" placeholder="{{ t(request, 'map.where.search') }}" aria-label="{{ t(request, 'map.where.search') }}">
+    <button type="submit" class="button">{{ t(request, "machines.search.submit") }}</button>
+  </form>
+
+  {% if not entries %}
+    <p class="hint">{{ t(request, "map.where.empty") }}</p>
+  {% endif %}
+
+  {% for entry in entries %}
+    {% set m = entry.machine %}
+    <section class="panel map-host">
+      <h2>
+        {{ health_dot(m) }}
+        <a href="/machines/{{ m.id }}">{{ m.name }}</a>
+        {% if m.pve_guests is not none %}<span class="badge">Proxmox VE{% if entry.node %} · {{ entry.node }}{% endif %}</span>{% endif %}
+        <small class="table-muted">{{ m.ip_address }}</small>
+      </h2>
+      {% if entry.guests %}
+        <ul class="map-tree">
+          {% for g in entry.guests %}
+            <li>
+              <span class="map-kind">{{ 'VM' if g.type == 'qemu' else 'CT' }} {{ g.vmid }}</span>
+              <a href="/machines/{{ m.id }}/proxmox/guests/{{ g.vmid }}">{{ g.name or g.vmid }}</a>
+              <span class="badge {{ 'badge-ok' if g.status == 'running' else '' }}">{{ g.status }}</span>
+              {% for ip in g.ips[:2] %}<code class="table-muted">{{ ip }}</code> {% endfor %}
+              {% if g.machine %}
+                → {{ health_dot(g.machine.machine) }}<a href="/machines/{{ g.machine.machine.id }}">{{ g.machine.machine.name }}</a>
+                {{ stacks_list(g.machine) }}
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {{ stacks_list(entry) }}
+      {% if not entry.guests and not entry.stacks %}<p class="hint">{{ t(request, "map.where.nothing") }}</p>{% endif %}
+    </section>
+  {% endfor %}
+{% endblock %}

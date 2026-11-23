@@ -67,6 +67,9 @@ PAGES = [
     "/docker/hosts",
     "/docker/jobs",
     "/docker/settings",
+    "/map",
+    "/map/networks",
+    "/map/capacity?cores=2&memory_gb=4&disk_gb=20",
     "/api",
 ]
 
@@ -194,6 +197,15 @@ def test_machine_tabs_load_without_browser_errors(page: Any) -> None:
     # Not Logs or Terminal: both open an SSH session to the machine.
     for tab in ("", "/monitoring", "/updates", "/history"):
         _open(page, machine + tab)
+
+
+def test_proxmox_pages_load_without_browser_errors(page: Any) -> None:
+    host = _first_href(page, "/machines?q=pve1", "/machines/")
+    # Not the guest's console: it opens an SSH session to the host.
+    _open(page, host + "/proxmox")
+    assert page.locator("svg.topology .topo-guest").count() == 2
+    for sub in ("/proxmox/guests/101", "/proxmox/guests/200", "/monitoring"):
+        _open(page, host + sub)
 
 
 def test_docker_tab_loads_without_browser_errors(page: Any) -> None:
