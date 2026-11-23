@@ -3404,3 +3404,83 @@ a.calendar-entry:hover { background: var(--color-surface-raised); }
 .tune-up-steps th:nth-child(1) { width: 28%; }
 .tune-up-steps th:nth-child(2) { width: 12%; }
 .tune-up-steps th:nth-child(4) { width: 12%; }
+
+/* --- Terminal panes (partials/terminal.html, js/terminal.js) --- */
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.terminal-pane-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: 2rem;
+}
+.terminal-pane-title { font-weight: 600; }
+.terminal-pane-status { flex: 1 1 12rem; margin: 0; }
+.terminal-keys {
+  display: none;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.terminal-keys button {
+  min-width: 2.6rem;
+  min-height: 2.4rem;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9rem;
+  touch-action: manipulation;
+}
+.terminal-keys button[aria-pressed="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+.terminal-pane.terminal-keys-shown .terminal-keys { display: flex; }
+.terminal-keys-toggle[aria-pressed="true"] { border-color: var(--color-accent); }
+
+/* --- Terminals page (/terminals): several panes as tabs or a grid --- */
+.terminals-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.terminals-toolbar select { max-width: 22rem; }
+.terminals-layout { margin-left: auto; display: flex; gap: var(--space-1); }
+.terminals-layout button[aria-pressed="true"] { border-color: var(--color-accent); color: var(--color-accent); }
+.terminal-tabs { margin-bottom: var(--space-3); }
+.terminal-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+.terminal-tabs button[aria-selected="true"] {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+.terminal-board.is-tabs .terminal-pane:not(.is-active) { display: none; }
+.terminal-board.is-tabs .terminal-shell { height: 65vh; }
+.terminal-board.is-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  gap: var(--space-4);
+}
+.terminal-board.is-grid .terminal-shell { height: 42vh; }
+.terminal-tabs[hidden] { display: none; }

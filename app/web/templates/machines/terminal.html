@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "partials/terminal.html" as terminal %}
 {% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "machine.terminal.title") }} — {{ machine.name }} — debcontrol{% endblock %}
@@ -12,6 +13,7 @@
 {% block content %}
   <div class="page-header">
     <h1>{{ machine.name }}</h1>
+    <a class="button button-secondary" href="/terminals?m={{ machine.id }}">{{ t(request, "terminals.open_here") }}</a>
   </div>
 
   {{ render_tabnav(tabs, active_tab) }}
@@ -22,19 +24,9 @@
   {% if recording %}
     <div class="alert alert-warn"><p>{{ t(request, "machine.terminal.recorded") }}</p></div>
   {% endif %}
-  <div id="terminal-status" class="hint" role="status"></div>
-  <div
-    id="terminal-container"
-    class="terminal-shell"
-    data-ws-path="/machines/{{ machine.id }}/terminal/ws"
-  ></div>
+  {{ terminal.pane(request, "/machines/" ~ machine.id ~ "/terminal/ws") }}
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{{ static_url('js/xterm.min.js') }}"></script>
-  <script src="{{ static_url('js/xterm-addon-fit.min.js') }}"></script>
-  <script src="{{ static_url('js/xterm-addon-webgl.min.js') }}"></script>
-  {% from "partials/_js_i18n.html" import js_i18n with context %}
-  {{ js_i18n(["terminal.status.connecting", "terminal.status.connected", "terminal.status.error", "terminal.status.disconnected_reason", "terminal.status.disconnected", "terminal.status.connection_error", "terminal.clipboard.need_https", "terminal.clipboard.unsupported", "terminal.clipboard.copy_failed", "terminal.clipboard.use_ctrl_v", "terminal.clipboard.read_failed"]) }}
-  <script src="{{ static_url('js/terminal.js') }}" defer></script>
+  {{ terminal.assets(request) }}
 {% endblock %}

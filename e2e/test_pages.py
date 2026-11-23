@@ -36,6 +36,7 @@ PAGES = [
     "/health",
     "/health/tune-up",
     "/health/tune-up/01890000-0000-7000-8000-000000000001",
+    "/terminals",
     "/disks",
     "/machine-groups",
     "/machine-groups/batches",
@@ -270,4 +271,72 @@ def test_chart_tooltip_legend_and_drag_zoom(page: Any) -> None:
         page.mouse.up()
     assert "start=" in page.url and "end=" in page.url
     assert page.locator("details.range-custom[open]").count() == 1
+    assert page.problems == []
+
+
+def test_terminals_page_tabs_grid_keys_and_reconnect(page: Any) -> None:
+    """The Terminals page against a stand-in for the terminal WebSocket
+    (no SSH here): panes as tabs and a grid, the key bar's bytes, and a
+    dropped session coming back by itself."""
+    sockets: list[Any] = []
+    received: list[Any] = []
+
+    def fake_terminal(ws: Any) -> None:
+        sockets.append(ws)
+        ws.on_message(lambda message: received.append(message))
+        ws.send(b"hello from the machine\r\n")
+
+    page.route_web_socket("**/terminal/ws", fake_terminal)
+    page.expected_noise.append(_XTERM_NOISE)
+    _open(page, "/terminals")
+    assert page.locator("#terminals-empty").is_visible()
+
+    page.select_option("#terminals-machine", label="web1")
+    page.click("#terminals-add")
+    first = page.locator(".terminal-pane").first
+    first.locator(".xterm-screen").wait_for()
+    page.wait_for_function(
+        "() => document.querySelector('[data-terminal-status]').textContent.length > 0"
+    )
+    page.wait_for_timeout(300)
+    assert len(sockets) == 1
+    assert any(isinstance(m, str) and '"resize"' in m for m in received)
+    assert first.locator(".terminal-keys").is_hidden()
+
+    # The key bar (shown by its button on a desktop): Esc, then a sticky Ctrl.
+    first.locator("[data-terminal-keys-toggle]").click()
+    first.locator('[data-key="esc"]').click()
+    first.locator('[data-mod="ctrl"]').click()
+    page.keyboard.type("c")
+    page.wait_for_timeout(300)
+    sent = [bytes(m) for m in received if isinstance(m, bytes | bytearray)]
+    assert b"\x1b" in sent and b"\x03" in sent
+
+    # Dropped (not ended): it reconnects by itself, into a new session.
+    sockets[0].close(code=1011, reason="SSH connection failed.")
+    page.wait_for_function("() => document.querySelectorAll('.xterm').length === 1")
+    page.wait_for_timeout(2500)
+    assert len(sockets) == 2
+
+    # Ended (exit, the time limit): only the Reconnect button starts again.
+    sockets[1].close(code=1000, reason="Session ended.")
+    first.locator("[data-terminal-reconnect]").wait_for()
+    page.wait_for_timeout(1500)
+    assert len(sockets) == 2
+    first.locator("[data-terminal-reconnect]").click()
+    page.wait_for_timeout(300)
+    assert len(sockets) == 3
+
+    # A second pane; tabs show one at a time, the grid both.
+    page.select_option("#terminals-machine", label="pve1")
+    page.click("#terminals-add")
+    assert page.locator(".terminal-tabs [role=tab]").count() == 2
+    assert page.locator(".terminal-pane:visible").count() == 1
+    page.click('[data-layout="grid"]')
+    assert page.locator(".terminal-pane:visible").count() == 2
+    assert page.url.count("m=") == 2 and "layout=grid" in page.url
+
+    page.locator(".terminal-pane").nth(1).get_by_role("button", name="Close").click()
+    assert page.locator(".terminal-pane").count() == 1
+    assert page.url.count("m=") == 1
     assert page.problems == []

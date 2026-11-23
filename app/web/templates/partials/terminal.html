@@ -1,0 +1,51 @@
+{# One browser terminal (static/js/terminal.js): its status line with a
+   Reconnect button, the xterm.js area and the key bar a phone has no keys
+   for. `pane(request, ws_path)` on a page with one terminal; the
+   Terminals page (/terminals) clones it from a <template> per machine.
+   `assets(request)` goes in the page's scripts block, once. #}
+{% set I18N_KEYS = ["terminal.status.connecting", "terminal.status.connected", "terminal.status.error", "terminal.status.disconnected_reason", "terminal.status.disconnected", "terminal.status.connection_error", "terminal.status.reconnecting", "terminal.status.waiting_visible", "terminal.status.gave_up", "terminal.status.new_session", "terminal.clipboard.need_https", "terminal.clipboard.unsupported", "terminal.clipboard.copy_failed", "terminal.clipboard.use_ctrl_v", "terminal.clipboard.read_failed", "terminals.close", "terminals.empty"] %}
+
+{% macro pane(request, ws_path, auto=true, title=none) -%}
+  <div class="terminal-pane"{% if ws_path %} data-ws-path="{{ ws_path }}"{% endif %}{% if auto %} data-terminal-auto{% endif %}>
+    <div class="terminal-pane-bar">
+      {% if title is not none %}<span class="terminal-pane-title" data-terminal-title>{{ title }}</span>{% endif %}
+      <span class="hint terminal-pane-status" data-terminal-status role="status"></span>
+      <button type="button" class="button button-secondary log-small-button" data-terminal-reconnect hidden>{{ t(request, "terminal.reconnect") }}</button>
+      <button type="button" class="button button-secondary log-small-button terminal-keys-toggle" data-terminal-keys-toggle aria-pressed="false">{{ t(request, "terminal.keys.toggle") }}</button>
+    </div>
+    <div class="terminal-shell" data-terminal-screen></div>
+    <div class="terminal-keys" data-terminal-keys role="toolbar" aria-label="{{ t(request, 'terminal.keys.label') }}">
+      <button type="button" data-key="esc">Esc</button>
+      <button type="button" data-key="tab">Tab</button>
+      <button type="button" data-mod="ctrl" aria-pressed="false">Ctrl</button>
+      <button type="button" data-mod="alt" aria-pressed="false">Alt</button>
+      <button type="button" data-key="left" aria-label="{{ t(request, 'terminal.keys.left') }}">←</button>
+      <button type="button" data-key="up" aria-label="{{ t(request, 'terminal.keys.up') }}">↑</button>
+      <button type="button" data-key="down" aria-label="{{ t(request, 'terminal.keys.down') }}">↓</button>
+      <button type="button" data-key="right" aria-label="{{ t(request, 'terminal.keys.right') }}">→</button>
+      <button type="button" data-key="home">Home</button>
+      <button type="button" data-key="end">End</button>
+      <button type="button" data-key="pgup">PgUp</button>
+      <button type="button" data-key="pgdn">PgDn</button>
+      <button type="button" data-text="|">|</button>
+      <button type="button" data-text="~">~</button>
+      <button type="button" data-text="/">/</button>
+      <button type="button" data-text="-">-</button>
+      <button type="button" data-key="ctrl-c">Ctrl+C</button>
+    </div>
+  </div>
+{%- endmacro %}
+
+{# `with_i18n=false` where the page's layout already emits js-i18n with
+   I18N_KEYS added (the Docker tab's js_keys). #}
+{% macro assets(request, with_i18n=true) -%}
+  <script src="{{ static_url('js/xterm.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-fit.min.js') }}"></script>
+  <script src="{{ static_url('js/xterm-addon-webgl.min.js') }}"></script>
+  {%- if with_i18n %}
+  {%- set strings = {} -%}
+  {%- for key in I18N_KEYS %}{% set _ = strings.update({key: t(request, key)}) %}{% endfor %}
+  <script type="application/json" id="js-i18n">{{ strings | tojson }}</script>
+  {%- endif %}
+  <script src="{{ static_url('js/terminal.js') }}" defer></script>
+{%- endmacro %}

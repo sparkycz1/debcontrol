@@ -65,6 +65,7 @@
           <a href="/machines/inventory.csv{% if request.url.query %}?{{ request.url.query }}{% endif %}">{{ t(request, 'machines.actions.export_inventory') }}</a>
           <a href="/machine-groups/batches">{{ t(request, 'batches.title') }}</a>
           <a href="/machines/hardware">{{ t(request, 'hardware.title') }}</a>
+          {% if request.state.user.has_permission('action.terminal') %}<a href="/terminals">{{ t(request, 'terminals.title') }}</a>{% endif %}
           <a href="/machines/import">{{ t(request, 'machines.actions.bulk_import') }}</a>
           <a href="/backup">{{ t(request, 'backup.title') }}</a>
         </div>

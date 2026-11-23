@@ -85,6 +85,7 @@ from app.web.routes import (
     status_page,
     terminal_recordings,
     terminal_ws,
+    terminals,
     theme,
     users,
 )
@@ -316,6 +317,7 @@ def create_app() -> FastAPI:
     app.include_router(scheduling.router)
     app.include_router(runbooks.router)
     app.include_router(terminal_recordings.router)
+    app.include_router(terminals.router)
     app.include_router(audit.router)
     app.include_router(backup.router)
     app.include_router(ai.router)

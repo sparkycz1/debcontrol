@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% import "partials/terminal.html" as terminal %}
+
+{% block title %}{{ t(request, "terminals.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ static_url('css/xterm.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/xterm-csp.css') }}">
+{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "terminals.title") }}</h1>
+  </div>
+  <p class="hint">{{ t(request, "terminals.intro", count=max_panes) }}</p>
+  {% if recording %}
+    <div class="alert alert-warn"><p>{{ t(request, "machine.terminal.recorded") }}</p></div>
+  {% endif %}
+
+  {% if machines %}
+    <div class="terminals-toolbar">
+      <select id="terminals-machine" class="inline-select" aria-label="{{ t(request, 'terminals.machine') }}">
+        {% for m in machines %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+      </select>
+      <button type="button" class="button" id="terminals-add">{{ t(request, "terminals.add") }}</button>
+      <div class="terminals-layout" role="group" aria-label="{{ t(request, 'terminals.layout') }}">
+        <button type="button" class="button button-secondary log-small-button" data-layout="tabs" aria-pressed="{{ 'true' if layout == 'tabs' else 'false' }}">{{ t(request, "terminals.layout.tabs") }}</button>
+        <button type="button" class="button button-secondary log-small-button" data-layout="grid" aria-pressed="{{ 'true' if layout == 'grid' else 'false' }}">{{ t(request, "terminals.layout.grid") }}</button>
+      </div>
+    </div>
+  {% else %}
+    <p class="hint">{{ t(request, "terminals.no_machines") }}</p>
+  {% endif %}
+
+  <nav class="tab-nav terminal-tabs" id="terminals-tabs" role="tablist" aria-label="{{ t(request, 'terminals.title') }}"></nav>
+  <p class="hint" id="terminals-empty">{{ t(request, "terminals.empty") }}</p>
+  <div class="terminal-board is-{{ layout }}" id="terminals-board" data-max="{{ max_panes }}"></div>
+
+  <template id="terminals-pane-template">
+    {{ terminal.pane(request, none, auto=false, title="") }}
+  </template>
+  <script type="application/json" id="terminals-initial">{{ initial | tojson }}</script>
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ terminal.assets(request) }}
+  <script src="{{ static_url('js/terminals.js') }}" defer></script>
+{% endblock %}
