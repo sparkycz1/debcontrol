@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from types import SimpleNamespace
 
@@ -342,7 +344,9 @@ async def test_terminal_page_loads_with_permission_and_pinned_fingerprint(
     # ACTION_TERMINAL.
     response = await client.get(f"/machines/{machine_id}/terminal")
     assert response.status_code == 200
-    assert "terminal-container" in response.text
+    assert f'data-ws-path="/machines/{machine_id}/terminal/ws"' in response.text
+    assert "data-terminal-keys" in response.text
+    assert f'href="/terminals?m={machine_id}"' in response.text
 
 
 async def test_terminal_page_loads_the_csp_safe_renderer(client, db_session_factory):
@@ -383,3 +387,28 @@ async def test_detail_page_shows_terminal_link_only_with_permission_and_pinned_k
     await login_as(client, permissions={Permission.MACHINE_VIEW})
     detail = await client.get(f"/machines/{machine_id}")
     assert "Terminal</h2>" not in detail.text
+
+
+async def test_terminals_page_lists_pinned_machines_and_opens_the_chosen(
+    client, db_session_factory
+):
+    await client.get("/machines/new")
+    csrf = client.cookies.get("csrftoken")
+    pinned = await _create_machine(client, csrf)
+    await _pin_host_key(db_session_factory, pinned)
+
+    page = await client.get(
+        f"/terminals?m={pinned}&m=not-a-uuid&m={uuid.uuid4()}&m={pinned}&layout=grid"
+    )
+    assert page.status_code == 200
+    assert f'<option value="{pinned}">' in page.text
+    assert 'class="terminal-board is-grid"' in page.text
+    # Unknown or malformed ids are dropped; the same machine twice is two panes.
+    initial = re.search(r'id="terminals-initial">([^<]*)<', page.text)
+    assert initial is not None
+    assert [m["id"] for m in json.loads(initial.group(1))] == [str(pinned), str(pinned)]
+
+
+async def test_terminals_page_needs_the_terminal_permission(client, login_as):
+    await login_as(client, permissions={Permission.MACHINE_VIEW})
+    assert (await client.get("/terminals")).status_code == 403

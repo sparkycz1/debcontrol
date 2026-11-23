@@ -1,5 +1,6 @@
 {% extends "machines/docker/_layout.html" %}
-{% set js_keys = ["terminal.status.connecting", "terminal.status.connected", "terminal.status.error", "terminal.status.disconnected_reason", "terminal.status.disconnected", "terminal.status.connection_error", "terminal.clipboard.need_https", "terminal.clipboard.unsupported", "terminal.clipboard.copy_failed", "terminal.clipboard.use_ctrl_v", "terminal.clipboard.read_failed"] %}
+{% import "partials/terminal.html" as terminal %}
+{% set js_keys = terminal.I18N_KEYS %}
 
 {% block docker_title %}{{ t(request, "docker.shell.title", name=name) }}{% endblock %}
 
@@ -17,13 +18,9 @@
   {% if recording %}
     <div class="alert alert-warn"><p>{{ t(request, "machine.terminal.recorded") }}</p></div>
   {% endif %}
-  <div id="terminal-status" class="hint" role="status"></div>
-  <div id="terminal-container" class="terminal-shell" data-ws-path="{{ ws_path }}"></div>
+  {{ terminal.pane(request, ws_path) }}
 {% endblock %}
 
 {% block docker_scripts %}
-  <script src="{{ static_url('js/xterm.min.js') }}"></script>
-  <script src="{{ static_url('js/xterm-addon-fit.min.js') }}"></script>
-  <script src="{{ static_url('js/xterm-addon-webgl.min.js') }}"></script>
-  <script src="{{ static_url('js/terminal.js') }}" defer></script>
+  {{ terminal.assets(request, with_i18n=false) }}
 {% endblock %}
