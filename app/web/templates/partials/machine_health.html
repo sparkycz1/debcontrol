@@ -6,6 +6,9 @@
 <div class="panel-header">
   <h2>{{ t(request, "health.panel.heading") }} {{ health_badge(health.status) }}</h2>
   {% if health.evaluated_at %}<span class="hint">{{ t(request, "health.panel.evaluated_at", when=(health.evaluated_at | local_time('%Y-%m-%d %H:%M'))) }}</span>{% endif %}
+  {% if can_tune_up is defined and can_tune_up %}
+    <a class="button button-secondary log-small-button" href="/health/tune-up?machine={{ machine.id }}">{{ t(request, "tune_up.button") }}</a>
+  {% endif %}
 </div>
 {% if health.status is none %}
   <p class="hint">{{ t(request, "health.panel.not_evaluated") }}</p>

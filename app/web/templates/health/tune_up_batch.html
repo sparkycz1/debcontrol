@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "tune_up.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "tune_up.batch_title") }}</h1>
+    <a class="button button-secondary" href="/health/tune-up">{{ t(request, "tune_up.back") }}</a>
+  </div>
+  {{ render_tabnav(tabs, active_tab) }}
+  {% if view.created_at %}
+    <p class="hint">{{ t(request, "tune_up.started_at", when=(view.created_at | local_time('%Y-%m-%d %H:%M %Z')), who=(view.started_by or '—')) }}</p>
+  {% endif %}
+  {% if notice %}<div class="alert alert-ok"><p>{{ notice }}</p></div>{% endif %}
+
+  {% if view.open and can_run %}
+    <form method="post" action="/health/tune-up/{{ view.batch_id }}/cancel" class="inline-form"
+          data-confirm="{{ t(request, 'tune_up.cancel_confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button button-danger">{{ t(request, "tune_up.cancel") }}</button>
+      <span class="hint">{{ t(request, "tune_up.cancel_hint") }}</span>
+    </form>
+  {% endif %}
+
+  <section class="panel">
+    {% include "health/_tune_up_runs.html" %}
+  </section>
+{% endblock %}

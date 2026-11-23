@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "macros/health.html" import health_badge, severity_badge, finding_text with context %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
 
 {% block title %}{{ t(request, "health.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -12,6 +13,7 @@
   <div class="page-header">
     <h1>{{ t(request, "health.title") }}</h1>
   </div>
+  {{ render_tabnav(tabs, active_tab) }}
   <p class="hint">{{ t(request, "health.intro") }}</p>
 
   <section class="panel">

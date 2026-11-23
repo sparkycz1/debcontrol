@@ -53,6 +53,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     Tag,
     TemporaryPermissionGrant,
     TotpRecoveryCode,
+    TuneUpRun,
     User,
     UserSession,
     WebAuthnCredential,

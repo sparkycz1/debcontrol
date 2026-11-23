@@ -238,6 +238,7 @@ celery_app = Celery(
         "app.tasks.ai_jobs",
         "app.tasks.docker_jobs",
         "app.tasks.docker_extras",
+        "app.tasks.tune_up",
         "app.scheduling.jobs",
     ],
 )
@@ -416,6 +417,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.docker_jobs.expire_vulnerability_acceptances",
         "schedule": crontab(minute=40),
     },
+    # Tune-ups ("Komplet", app.tasks.tune_up): a run whose task stopped
+    # goes on in a new one, waiting runs start as others finish.
+    "reconcile-tune-up-runs": {
+        "task": "app.tasks.tune_up.reconcile_tune_up_runs",
+        "schedule": timedelta(seconds=120),
+    },
     "reconcile-update-runs": {
         "task": "app.tasks.jobs.reconcile_update_runs",
         "schedule": timedelta(seconds=60),
@@ -560,5 +567,9 @@ def _reconcile_after_start(**kwargs: Any) -> None:
     )
     celery_app.send_task(
         "app.tasks.docker_jobs.reconcile_docker_jobs",
+        countdown=_RECONCILE_AFTER_START_SECONDS,
+    )
+    celery_app.send_task(
+        "app.tasks.tune_up.reconcile_tune_up_runs",
         countdown=_RECONCILE_AFTER_START_SECONDS,
     )

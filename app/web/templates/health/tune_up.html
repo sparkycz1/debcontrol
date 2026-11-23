@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+{% from "health/_tune_up_macros.html" import batch_status with context %}
+
+{% block title %}{{ t(request, "tune_up.title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "health.title") }}</h1>
+  </div>
+  {{ render_tabnav(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "tune_up.intro") }}</p>
+
+  {% if notice %}<div class="alert alert-ok"><p>{{ notice }}</p></div>{% endif %}
+  {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+
+  {% if can_run %}
+    <section class="panel">
+      <h2>{{ t(request, "tune_up.start_heading") }}</h2>
+      {% include "partials/self_host_note.html" %}
+      <form method="post" action="/health/tune-up" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <fieldset class="strategy-fields">
+          <legend>{{ t(request, "tune_up.target.legend") }}</legend>
+          <label><input type="radio" name="target" value="machine" {% if preselected or not groups %}checked{% endif %}> {{ t(request, "tune_up.target.machine") }}</label>
+          <select name="machine_id" aria-label="{{ t(request, 'tune_up.target.machine') }}">
+            {% for m in machines %}
+              <option value="{{ m.id }}" {% if preselected == (m.id | string) %}selected{% endif %}>{{ m.name }}</option>
+            {% endfor %}
+          </select>
+          {% if groups %}
+            <label><input type="radio" name="target" value="group"> {{ t(request, "tune_up.target.group") }}</label>
+            <select name="group_id" aria-label="{{ t(request, 'tune_up.target.group') }}">
+              {% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+            </select>
+          {% endif %}
+          <label><input type="radio" name="target" value="all" {% if not preselected and groups %}checked{% endif %}> {{ t(request, "tune_up.target.all", count=machines | length) }}</label>
+        </fieldset>
+
+        <fieldset class="strategy-fields">
+          <legend>{{ t(request, "tune_up.options.legend") }}</legend>
+          <p class="hint">{{ t(request, "tune_up.options.always") }}</p>
+          {% for key in ["system_update", "snapshot", "docker_update", "docker_prune", "image_scan", "security_audit", "reboot"] %}
+            {% if key != "reboot" or can_reboot %}
+              <label>
+                <input type="checkbox" name="{{ key }}" value="1" {% if defaults[key] %}checked{% endif %}>
+                {{ t(request, "tune_up.option." ~ key) }}
+                <span class="hint">{{ t(request, "tune_up.option." ~ key ~ "_hint") }}</span>
+              </label>
+            {% endif %}
+          {% endfor %}
+        </fieldset>
+        <button type="submit" class="button">{{ t(request, "tune_up.start") }}</button>
+      </form>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>{{ t(request, "tune_up.recent") }}</h2>
+    {% if batches %}
+      <table class="data-table">
+        <thead><tr>
+          <th>{{ t(request, "tune_up.col.started") }}</th>
+          <th>{{ t(request, "tune_up.col.machines") }}</th>
+          <th>{{ t(request, "tune_up.col.by") }}</th>
+          <th>{{ t(request, "machines.table.status") }}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+          {% for view in batches %}
+            <tr>
+              <td>{{ view.created_at | local_time('%Y-%m-%d %H:%M %Z') if view.created_at else '—' }}</td>
+              <td>{% if view.runs | length == 1 %}{{ view.runs[0].machine_name }}{% else %}{{ t(request, "tune_up.machine_count", count=view.runs | length) }}{% endif %}</td>
+              <td>{{ view.started_by or '—' }}</td>
+              <td>{{ batch_status(view) }}</td>
+              <td><a href="/health/tune-up/{{ view.batch_id }}">{{ t(request, "machine.updates.details") }}</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "tune_up.none_yet") }}</p>
+    {% endif %}
+  </section>
+{% endblock %}

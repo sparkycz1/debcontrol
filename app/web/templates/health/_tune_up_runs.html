@@ -1,0 +1,43 @@
+{% from "health/_tune_up_macros.html" import status_badge, batch_status, step_detail with context %}
+{# Every machine of one tune-up, step by step. Reloads itself while the
+   tune-up runs (GET /health/tune-up/{id}?partial=1). #}
+<div
+  id="tune-up-runs"
+  {% if view.open %}
+  hx-get="/health/tune-up/{{ view.batch_id }}?partial=1"
+  hx-trigger="every 5s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <p>{{ batch_status(view) }}</p>
+  {% for run in view.runs %}
+    <div class="panel-header">
+      <h3><a href="/machines/{{ run.machine_id }}">{{ run.machine_name }}</a> {{ status_badge(run.status) }}</h3>
+      {% if run.hold_order is not none and run.status == 'pending' %}<span class="hint">{{ t(request, "self_host.run_held") }}</span>{% endif %}
+    </div>
+    {% if run.error %}<p class="hint">{{ run.error }}</p>{% endif %}
+    <table class="data-table tune-up-steps">
+      <thead><tr>
+        <th>{{ t(request, "tune_up.col.step") }}</th>
+        <th>{{ t(request, "machines.table.status") }}</th>
+        <th>{{ t(request, "tune_up.col.result") }}</th>
+        <th>{{ t(request, "machine.updates.finished") }}</th>
+      </tr></thead>
+      <tbody>
+        {% for step in run.steps %}
+          <tr>
+            <td>{{ t(request, "tune_up.step." ~ step.key) }}</td>
+            <td>{{ status_badge(step.status) }}</td>
+            <td>
+              {{ step_detail(step) }}
+              {% if step.key == 'system_update' and step.ref and step.ref.update_run_id %}
+                <a href="/machines/{{ run.machine_id }}/updates/{{ step.ref.update_run_id }}">{{ t(request, "machine.updates.details") }}</a>
+              {% endif %}
+            </td>
+            <td>{{ (step.finished_at | from_iso | local_time('%H:%M:%S')) if step.finished_at else '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endfor %}
+</div>

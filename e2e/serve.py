@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 os.environ.setdefault("SECRET_KEY", "e2e-only-secret-key-not-for-real-use-0000000000")
 os.environ.setdefault("ENCRYPTION_KEY", "IYH8EiMlmjkDacPXmvWQgDjTojLMD6GDwD8STyL1x0Y=")
@@ -53,14 +55,17 @@ from app.db.models.notification_rule import (
 from app.db.models.role import Permission, Role, RolePermission
 from app.db.models.scheduled_task import ScheduledTask, ScheduleTargetType
 from app.db.models.terminal_recording import TerminalRecording
+from app.db.models.tune_up import TuneUpRun
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
-from app.services import disk_history, machine_health, terminal_recording
+from app.services import disk_history, machine_health, terminal_recording, tune_up
 from tests.conftest import FakeRedis
 
 DEFAULT_PORT = 8765
 STATUS_PAGE_TOKEN = "e2e-status-page-token"
+# A finished tune-up of web1 and a running one of db1 (Health → Tune-up).
+TUNE_UP_BATCH = uuid.UUID("01890000-0000-7000-8000-000000000001")
 
 engine = create_async_engine(
     "sqlite+aiosqlite:///:memory:",
@@ -384,7 +389,43 @@ async def seed() -> str:
         # pending (a warning), db1 is down (critical).
         for machine in (web, db_host):
             await machine_health.refresh(db, machine, notify_changes=False)
+        await _seed_tune_up(db, web, db_host, now)
     return token
+
+
+async def _seed_tune_up(db: AsyncSession, web: Machine, db_host: Machine, now: datetime) -> None:
+    def steps(state: dict[str, tuple[str, dict[str, Any] | None]]) -> list[dict[str, Any]]:
+        plan = tune_up.plan(tune_up.Options())
+        for step in plan:
+            if step["key"] in state:
+                step["status"], step["detail"] = state[step["key"]]
+                step["finished_at"] = now.isoformat()
+            elif step["status"] == "pending":
+                step["status"], step["detail"] = "skipped", {"code": "unreachable"}
+        return plan
+
+    done = {
+        "refresh": ("ok", None),
+        "system_update": ("ok", {"code": "updated"}),
+        "image_check": ("ok", {"code": "image_updates", "count": 2}),
+        "docker_update": ("ok", {"code": "containers", "updated": 2, "current": 5,
+                                 "blocked": 0, "failed": 0, "protected": 1}),
+        "docker_prune": ("ok", {"code": "reclaimed", "bytes": 3_400_000_000}),
+        "image_scan": ("ok", {"code": "scanned"}),
+        "security_audit": ("ok", {"code": "audit", "index": 72, "warnings": 3}),
+        "final_refresh": ("ok", {"code": "health", "status": "warning"}),
+    }
+    db.add_all([
+        TuneUpRun(batch_id=TUNE_UP_BATCH, machine_id=web.id, status="succeeded",
+                  options=tune_up.Options().as_dict(), steps=steps(done), started_by="admin",
+                  created_at=now - timedelta(minutes=40), finished_at=now - timedelta(minutes=5)),
+        TuneUpRun(batch_id=TUNE_UP_BATCH, machine_id=db_host.id, status="failed",
+                  options=tune_up.Options().as_dict(), error="Connection refused",
+                  steps=steps({"refresh": ("failed", {"error": "Connection refused"})}),
+                  started_by="admin", created_at=now - timedelta(minutes=40),
+                  finished_at=now - timedelta(minutes=39)),
+    ])
+    await db.commit()
 
 
 async def _get_db() -> AsyncGenerator[AsyncSession]:
