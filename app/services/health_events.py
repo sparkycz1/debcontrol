@@ -13,8 +13,8 @@ doesn't page anyone about problems that were already there.
 The comparisons are pure functions; `app.tasks.jobs` calls the `notify_*`
 wrappers from the facts refresh, the monitoring sample and the hourly
 disk forecast. Also: a Proxmox Backup Server job/task failing (reported
-as a failed backup), a Mail Gateway's queue backing up, and a Proxmox VE
-cluster losing quorum.
+as a failed backup), a Mail Gateway's queue backing up, a Proxmox VE
+cluster losing quorum, and a UPS going on battery or back on mains.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from app.db.models.notification_rule import NotificationEventType
 from app.services import disk_history
 from app.services.disk_forecast import soonest_full_days
 from app.services.notifications import notify
-from app.ssh import proxmox
+from app.ssh import proxmox, ups
 
 # "Disk will be full in X days" fires once a filesystem's forecast drops to
 # this many days or fewer (a condition rule on "days until a filesystem is
@@ -186,8 +186,24 @@ async def notify_monitoring_changes(
     current_smart_disks: list[dict[str, Any]] | None,
     previous_zfs_pools: list[dict[str, Any]] | None,
     previous_cluster: dict[str, Any] | None = None,
+    previous_ups: list[dict[str, Any]] | None = None,
 ) -> None:
     """After a monitoring sample has been stored."""
+    went, back = ups.power_changes(previous_ups, machine.ups_devices)
+    for device in went:
+        await notify(
+            db,
+            NotificationEventType.UPS_ON_BATTERY,
+            machine=machine,
+            context={"ups": str(device.get("name") or ""), "details": ups.describe(device)},
+        )
+    for device in back:
+        await notify(
+            db,
+            NotificationEventType.UPS_POWER_RESTORED,
+            machine=machine,
+            context={"ups": str(device.get("name") or ""), "details": ups.describe(device)},
+        )
     if lost_quorum(previous_cluster, machine.pve_cluster):
         cluster = machine.pve_cluster or {}
         offline = [n["name"] for n in cluster.get("nodes") or [] if not n.get("online")]

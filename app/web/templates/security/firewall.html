@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabs %}
+{% from "security/_firewall_macros.html" import protection_badge, backend_badges, fail2ban_badge %}
+
+{% block title %}{{ t(request, "firewall.tab") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "nav.security") }}</h1>
+  </div>
+  {{ render_tabs(tabs, active_tab) }}
+  <p class="hint">{{ t(request, "firewall.fleet_intro") }}</p>
+
+  {% if rows %}
+    <p>
+      <span class="badge badge-ok">{{ t(request, "firewall.protection.on") }}: {{ counts.on }}</span>
+      <span class="badge badge-warn">{{ t(request, "firewall.protection.off") }}: {{ counts.off }}</span>
+      <span class="badge">{{ t(request, "firewall.protection.unknown") }}: {{ counts.unknown }}</span>
+    </p>
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="firewall-table">
+        <thead>
+          <tr>
+            <th data-sort="text">{{ t(request, "machines.table.name") }}</th>
+            <th data-sort="text">{{ t(request, "firewall.packet_filter") }}</th>
+            <th data-sort="text">{{ t(request, "firewall.input_policy") }}</th>
+            <th data-sort="text">Fail2Ban</th>
+            <th data-sort="number">{{ t(request, "firewall.jails") }}</th>
+            <th data-sort="number">{{ t(request, "firewall.currently_banned") }}</th>
+            <th data-sort="number">{{ t(request, "firewall.total_banned") }}</th>
+            <th data-sort="text">{{ t(request, "firewall.last_ban") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set v = row.view %}
+            <tr>
+              <td><a href="/machines/{{ row.machine.id }}/security#firewall">{{ row.machine.name }}</a></td>
+              <td>{{ protection_badge(request, v.protection) }} {{ backend_badges(v.backends) }}</td>
+              <td>{% if v.input_policy %}<code>{{ v.input_policy }}</code>{% else %}—{% endif %}</td>
+              <td>{{ fail2ban_badge(request, v.fail2ban_status) }}</td>
+              <td>{{ v.fail2ban.jails if v.fail2ban_status == 'ok' else '—' }}</td>
+              <td data-sort-value="{{ v.fail2ban.currently_banned }}">{% if v.fail2ban.currently_banned %}<span class="badge badge-warn">{{ v.fail2ban.currently_banned }}</span>{% elif v.fail2ban_status == 'ok' %}0{% else %}—{% endif %}</td>
+              <td data-sort-value="{{ v.fail2ban.total_banned }}">{{ v.fail2ban.total_banned if v.fail2ban_status == 'ok' else '—' }}</td>
+              <td>{{ v.fail2ban.last_ban | replace('T', ' ') if v.fail2ban.last_ban else '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2>{{ t(request, "firewall.recent_bans") }}</h2>
+    {% if bans %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="fleet-bans">
+          <thead>
+            <tr>
+              <th>{{ t(request, "firewall.ban_since") }}</th>
+              <th>{{ t(request, "machines.table.name") }}</th>
+              <th>{{ t(request, "firewall.jail") }}</th>
+              <th>IP</th>
+              <th>{{ t(request, "firewall.ban_until") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for b in bans %}
+              <tr>
+                <td>{{ b.since | replace('T', ' ') if b.since else '—' }}</td>
+                <td><a href="/machines/{{ b.machine.id }}/security#firewall">{{ b.machine.name }}</a></td>
+                <td><code>{{ b.jail }}</code></td>
+                <td><code>{{ b.ip }}</code></td>
+                <td>{% if b.seconds is not none and b.seconds < 0 %}{{ t(request, "firewall.permanent") }}{% else %}{{ b.until | replace('T', ' ') if b.until else '—' }}{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="hint">{{ t(request, "firewall.no_bans") }}</p>
+    {% endif %}
+    <p class="hint">{{ t(request, "firewall.times_note") }}</p>
+  {% else %}
+    <div class="empty-state"><p>{{ t(request, "security_audit.no_machines") }}</p></div>
+  {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ static_url('js/monitoring-chart.js') }}" defer></script>
+{% endblock %}

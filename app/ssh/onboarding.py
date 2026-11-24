@@ -39,6 +39,7 @@ from __future__ import annotations
 import shlex
 
 from app.ssh.lynis import CISOFY_REPO_SETUP, MACHINE_LOGFILE
+from app.ssh.peripherals import IPMI_SDR_ARGS, IPMI_SEL_ARGS
 
 # The account debcontrol connects as afterwards — matches
 # `debcontrol_user` in ansible/debcontrol-onboard.yml.
@@ -57,6 +58,11 @@ ONBOARD_USERNAME = "debcontrol"
 # is harmless — `sudo -n ...` just fails and that one reading is skipped.
 # lynis — the security audit (app.ssh.lynis, 0.114.0+); without the grant
 # it runs unprivileged and skips the tests that need root.
+# 0.148.0+: read-only views, each scoped to the exact command line (sudoers
+# matches the arguments too, so nothing else of these tools is allowed):
+# IPMI sensors and event log (app.ssh.peripherals), the nftables ruleset
+# and ufw's status, and Fail2Ban's jail status and current bans
+# (app.ssh.firewall) — never `fail2ban-client set/unban/reload`.
 SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/apt-get",
     "/usr/sbin/shutdown",
@@ -72,6 +78,13 @@ SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/sbin/postqueue",
     "/usr/sbin/lynis",
     "/usr/bin/lynis",
+    f"/usr/bin/ipmitool {IPMI_SDR_ARGS}",
+    f"/usr/bin/ipmitool {IPMI_SEL_ARGS}",
+    "/usr/sbin/nft -j list ruleset",
+    "/usr/sbin/ufw status verbose",
+    "/usr/bin/fail2ban-client status",
+    "/usr/bin/fail2ban-client status *",
+    "/usr/bin/fail2ban-client get * banip --with-time",
 )
 SUDO_COMMAND_LIST = ", ".join(SUDO_COMMANDS)
 

@@ -131,6 +131,7 @@ from app.services.access_scope import (
     machines_visible_to,
     visible_machines_by_ids,
 )
+from app.services.firewall_overview import firewall_rows, fleet_recent_bans
 from app.services.fleet_overview import build_fleet_overview
 from app.services.machine_actions import (
     send_power_to_machines,
@@ -148,8 +149,8 @@ from app.services.machine_tags import (
     set_machine_tags,
 )
 from app.services.security_updates import load_security_overview
+from app.ssh import firewall, proxmox, proxmox_snapshots
 from app.ssh import logs as ssh_logs
-from app.ssh import proxmox, proxmox_snapshots
 from app.ssh.client import discover_host_key_fingerprint
 from app.ssh.containers import CONTAINER_ACTIONS
 from app.ssh.exceptions import SSHConnectionError
@@ -902,7 +903,8 @@ async def get_machine_hardware_api(
 ) -> dict[str, object]:
     """Everything the Monitoring tab shows beyond the trend graphs, as of
     the latest readings: S.M.A.R.T. detail (facts cadence), Docker
-    containers, and the most recent sample's sensors/fans/GPUs."""
+    containers, the most recent sample's sensors/fans/GPUs, PCIe and USB
+    devices, IPMI sensors and event log, and the UPSes NUT serves."""
     machine = await _get_machine_or_404(machine_id, db, user)
     latest = (
         await db.execute(
@@ -935,6 +937,11 @@ async def get_machine_hardware_api(
         "sensor_fans": latest.sensor_fans if latest else None,
         "gpus": latest.gpus if latest else None,
         "gpu_power_watts": latest.gpu_power_watts if latest else None,
+        # app.ssh.peripherals (with facts) and app.ssh.ups (every sample).
+        "pci_devices": machine.pci_devices,
+        "usb_devices": machine.usb_devices,
+        "ipmi": machine.ipmi,
+        "ups_devices": machine.ups_devices,
     }
 
 
@@ -3234,6 +3241,55 @@ async def security_audits_api(
         }
         for m in machines
     ]
+
+
+def _firewall_to_dict(machine: Machine) -> dict[str, object]:
+    return {
+        "machine_id": str(machine.id),
+        "machine_name": machine.name,
+        **firewall.overview(machine.firewall, machine.fail2ban),
+        "facts_updated_at": machine.facts_updated_at.isoformat()
+        if machine.facts_updated_at
+        else None,
+    }
+
+
+@router.get("/security/firewall", dependencies=[_view_machines])
+async def security_firewall_api(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_api_token_user)
+) -> dict[str, object]:
+    """The Security → Firewall page: every visible machine's packet filter
+    summary (`protection` on/off/unknown, `backends`, `input_policy`,
+    nftables `rules`) and Fail2Ban totals, plus the newest current bans
+    across them (`recent_bans`). Read-only; gathered with the facts."""
+    visible = await machines_visible_to(db, user)
+    machines = list((await db.execute(visible.order_by(Machine.name))).scalars().all())
+    return {
+        "machines": [_firewall_to_dict(r.machine) for r in firewall_rows(machines)],
+        "recent_bans": [
+            {**{k: v for k, v in ban.items() if k != "machine"},
+             "machine_id": str(ban["machine"].id), "machine_name": ban["machine"].name}
+            for ban in fleet_recent_bans(machines)
+        ],
+    }
+
+
+@router.get("/machines/{machine_id}/firewall", dependencies=[_view_machines])
+async def machine_firewall_api(
+    machine_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """The machine Security tab's firewall panel: the summary as in
+    `GET /security/firewall`, plus everything collected — `firewall`
+    (systemd units, nftables tables and input chains, ufw state and
+    rules, Proxmox VE firewall options) and `fail2ban` (each jail's counts
+    and current bans with their start times, in the machine's local time)."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    return {
+        **_firewall_to_dict(machine),
+        "firewall": machine.firewall,
+        "fail2ban": machine.fail2ban,
+    }
 
 
 @router.get("/machines/{machine_id}/security-audits", dependencies=[_view_machines])

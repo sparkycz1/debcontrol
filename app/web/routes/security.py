@@ -4,7 +4,9 @@ search — the two pages an operator opens right after a CVE announcement —
 the Lynis security audit of every machine (`/security/audit`, see
 `app.services.security_audit`), and the critical and high vulnerabilities
 in the machines' Docker images, with accepting one until a date
-(`/security/containers`, see `app.services.docker_acceptances`).
+(`/security/containers`, see `app.services.docker_acceptances`), and each
+machine's packet filter and Fail2Ban, read-only (`/security/firewall`,
+see `app.ssh.firewall`).
 
 They used to live under the Machines page's "More actions" menu
 (`/machines/security-updates`, `/machines/package-search`); those URLs
@@ -36,6 +38,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.services import docker_acceptances, docker_sbom, security_audit
 from app.services.access_scope import is_restricted, machines_visible_to
+from app.services.firewall_overview import PROTECTION_ORDER, firewall_rows, fleet_recent_bans
 from app.services.machine_actions import trigger_security_audits
 from app.services.security_updates import load_security_overview_with_gaps
 from app.ssh.packages import PackageSource
@@ -55,12 +58,39 @@ def _tabs(request: Request) -> list[tuple[str, str, str]]:
         ("packages", t(request, "machines.actions.package_search"), "/security/packages"),
         ("audit", t(request, "security_audit.tab"), "/security/audit"),
         ("containers", t(request, "security.containers.tab"), "/security/containers"),
+        ("firewall", t(request, "firewall.tab"), "/security/firewall"),
     ]
 
 
 @router.get("")
 async def security_index() -> Response:
     return RedirectResponse(url="/security/updates", status_code=303)
+
+
+@router.get("/firewall")
+async def security_firewall(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Read-only: each visible machine's packet filter (nftables, ufw,
+    firewalld, the Proxmox VE firewall) and Fail2Ban — jails, bans and the
+    newest bans across the fleet (`app.ssh.firewall`, with facts)."""
+    visible = await machines_visible_to(db, current_user)
+    machines = list((await db.execute(visible.order_by(Machine.name))).scalars().all())
+    rows = firewall_rows(machines)
+    counts = {key: sum(1 for r in rows if r.view["protection"] == key) for key in PROTECTION_ORDER}
+    return templates.TemplateResponse(
+        request,
+        "security/firewall.html",
+        {
+            "rows": rows,
+            "counts": counts,
+            "bans": fleet_recent_bans(machines),
+            "tabs": _tabs(request),
+            "active_tab": "firewall",
+        },
+    )
 
 
 @router.get("/updates")

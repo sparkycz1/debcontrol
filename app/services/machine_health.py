@@ -1,5 +1,5 @@
 """Machine health: one verdict per machine — OK, info, warning or critical —
-from the readings debcontrol already collects, split into eleven categories,
+from the readings debcontrol already collects, split into twelve categories,
 each problem with a stable key so it can be snoozed on its own.
 
 How it fits together:
@@ -48,7 +48,7 @@ from app.i18n import DEFAULT_LOCALE_CODE, get_locale, translate
 from app.services import disk_history, proxmox_capacity
 from app.services.disk_history import DEFAULT_THRESHOLDS as DEFAULT_DISK_THRESHOLDS
 from app.services.disk_history import DiskThresholds
-from app.ssh import proxmox
+from app.ssh import peripherals, proxmox
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ CATEGORIES: tuple[str, ...] = (
     "memory",
     "storage",
     "disks",
+    "hardware",
     "services",
     "updates",
     "security",
@@ -408,6 +409,41 @@ def _disks(
     return findings
 
 
+def _hardware(machine: Machine) -> list[Finding]:
+    """A UPS on battery or asking for a new battery, and the sensors the
+    BMC itself reports past a threshold (IPMI)."""
+    findings: list[Finding] = []
+    for device in machine.ups_devices or []:
+        if not isinstance(device, dict):
+            continue
+        name = str(device.get("name") or "")
+        if device.get("on_battery"):
+            low = bool(device.get("low_battery"))
+            findings.append(
+                Finding(f"hardware.ups:{name}", "hardware", "critical" if low else "warning",
+                        "ups_low_battery" if low else "ups_on_battery",
+                        {"name": name}, "monitoring")
+            )
+        if device.get("replace_battery"):
+            findings.append(
+                Finding(f"hardware.ups_battery:{name}", "hardware", "warning",
+                        "ups_replace_battery", {"name": name}, "monitoring")
+            )
+    for sensor in peripherals.ipmi_problems(machine.ipmi):
+        name = str(sensor.get("name") or "")
+        reading = sensor.get("value")
+        findings.append(
+            Finding(f"hardware.ipmi:{name}", "hardware",
+                    "critical" if sensor.get("status") == "critical" else "warning",
+                    "ipmi_sensor",
+                    {"sensor": name,
+                     "reading": f"{reading:g} {sensor.get('unit') or ''}".strip()
+                     if isinstance(reading, (int, float)) else (sensor.get("reading") or "?")},
+                    "monitoring")
+        )
+    return findings
+
+
 def _services(machine: Machine) -> list[Finding]:
     findings = [
         Finding(f"services.unit:{unit}", "services", "warning", "unit_failed",
@@ -551,6 +587,7 @@ def evaluate(
     findings += _memory(machine, newest, thresholds)
     findings += _storage(machine, newest, thresholds)
     findings += _disks(machine, newest, thresholds)
+    findings += _hardware(machine)
     findings += _services(machine)
     findings += _updates(machine)
     findings += _security(machine, audit)

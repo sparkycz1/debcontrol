@@ -60,6 +60,7 @@ from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
 from app.services import disk_history, machine_health, terminal_recording, tune_up
+from app.ssh import firewall, peripherals, ups
 from tests.conftest import FakeRedis
 
 DEFAULT_PORT = 8765
@@ -385,12 +386,51 @@ async def seed() -> str:
                 db, web, disk_history.DEFAULT_THRESHOLDS, now - timedelta(hours=47 - k)
             )
         await db.commit()
+        # Devices, UPS, firewall and Fail2Ban (app.ssh.peripherals / ups /
+        # firewall), as their parsers leave them.
+        _seed_devices(web)
+        await db.commit()
         # Health (app.services.machine_health): web1 has a security update
         # pending (a warning), db1 is down (critical).
         for machine in (web, db_host):
             await machine_health.refresh(db, machine, notify_changes=False)
         await _seed_tune_up(db, web, db_host, now)
     return token
+
+
+def _seed_devices(machine: Machine) -> None:
+    machine.pci_devices = peripherals.parse_pci_section(
+        "@@LSPCI\nSlot:\t0000:00:02.0\nClass:\tVGA compatible controller [0300]\n"
+        "Vendor:\tIntel Corporation [8086]\nDevice:\tUHD Graphics 630 [3e92]\n"
+        "Driver:\ti915\n\nSlot:\t0000:01:00.0\nClass:\tEthernet controller [0200]\n"
+        "Vendor:\tIntel Corporation [8086]\nDevice:\tI210 Gigabit Network Connection [1533]\n"
+        "Driver:\tigb\n@@IOMMU\n0000:00:02.0 1\n0000:01:00.0 14\n"
+    )
+    machine.usb_devices = peripherals.parse_usb_section(
+        "1-3\t1\t2\t051d\t0002\t12\t00\tAmerican Power Conversion\tBack-UPS ES 700"
+        "\tusbhid,\n"
+    )
+    machine.ipmi = peripherals.parse_ipmi_section(
+        "@@SDR\nCPU Temp | 45 degrees C | ok\nFAN1 | 1200 RPM | ok\n12V | 12.10 Volts | ok\n"
+        "@@SEL\n   1 | 11/20/2026 | 10:00:00 | Power Supply #0x51 | Power Supply AC lost"
+        " | Asserted\n"
+    )
+    machine.ups_devices = ups.parse_section(
+        "@@UPS apc\nbattery.charge: 100\nbattery.runtime: 1500\n"
+        "device.mfr: American Power Conversion\ndevice.model: Back-UPS ES 700\n"
+        "ups.load: 12\ninput.voltage: 231.0\nups.status: OL\n"
+    )
+    machine.firewall = firewall.parse_firewall_section(
+        "@@UNIT ufw active\n@@UFWCONF\nENABLED=yes\n@@UFW\nStatus: active\n"
+        "Default: deny (incoming), allow (outgoing), disabled (routed)\n\n"
+        "To                         Action      From\n--                         ------      ----\n"
+        "22/tcp                     ALLOW IN    Anywhere\n"
+    )
+    machine.fail2ban = firewall.parse_fail2ban_section(
+        "@@UNIT active\n@@OK\n@@JAIL sshd\n   |- Currently failed:\t1\n"
+        "   |- Total failed:\t40\n   |- Currently banned:\t1\n   |- Total banned:\t9\n"
+        "@@BANS\n192.0.2.7 \t2026-11-23 08:00:00 + 600 = 2026-11-23 08:10:00\n"
+    )
 
 
 async def _seed_tune_up(db: AsyncSession, web: Machine, db_host: Machine, now: datetime) -> None:

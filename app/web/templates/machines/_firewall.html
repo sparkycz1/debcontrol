@@ -1,0 +1,100 @@
+{#- A machine's packet filter and Fail2Ban, read-only (app.ssh.firewall,
+    gathered with the facts). `fw` is firewall.overview(...). -#}
+{% from "security/_firewall_macros.html" import protection_badge, backend_badges, fail2ban_badge %}
+{% set f2b = machine.fail2ban %}
+<section class="panel" id="firewall">
+  <h2>{{ t(request, "firewall.heading") }}</h2>
+  {% if machine.firewall is none and f2b is none %}
+    <p class="hint">{{ t(request, "firewall.not_collected") }}</p>
+  {% else %}
+    <dl class="detail-list">
+      <dt>{{ t(request, "firewall.packet_filter") }}</dt>
+      <dd>{{ protection_badge(request, fw.protection) }} {{ backend_badges(fw.backends) }}</dd>
+      {% if fw.input_policy %}
+        <dt>{{ t(request, "firewall.input_policy") }}</dt>
+        <dd><code>{{ fw.input_policy }}</code></dd>
+      {% endif %}
+      {% if fw.rules is not none %}
+        <dt>{{ t(request, "firewall.nft_rules") }}</dt>
+        <dd>{{ fw.rules }}</dd>
+      {% endif %}
+      {% set ufw = (machine.firewall or {}).get('ufw') %}
+      {% if ufw and ufw.defaults %}
+        <dt>ufw</dt>
+        <dd>{{ ufw.defaults }}</dd>
+      {% endif %}
+      <dt>Fail2Ban</dt>
+      <dd>{{ fail2ban_badge(request, fw.fail2ban_status) }}
+        {% if fw.fail2ban_status == 'ok' %}{{ t(request, "firewall.f2b_summary", jails=fw.fail2ban.jails, banned=fw.fail2ban.currently_banned, total=fw.fail2ban.total_banned) }}{% endif %}
+      </dd>
+    </dl>
+    {% if fw.protection == 'unknown' and machine.firewall is not none %}
+      <p class="hint">{{ t(request, "firewall.unreadable_hint") }}</p>
+    {% endif %}
+
+    {% if ufw and ufw.rules %}
+      <details>
+        <summary>{{ t(request, "firewall.ufw_rules", count=(ufw.rules | length)) }}</summary>
+        <div class="monitoring-table-wrap">
+          <table class="data-table" id="ufw-rules">
+            <thead><tr><th>{{ t(request, "firewall.rule_to") }}</th><th>{{ t(request, "firewall.rule_action") }}</th><th>{{ t(request, "firewall.rule_from") }}</th></tr></thead>
+            <tbody>
+              {% for r in ufw.rules %}<tr><td><code>{{ r.to }}</code></td><td>{{ r.action }}</td><td><code>{{ r['from'] }}</code></td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    {% endif %}
+
+    {% set nft = (machine.firewall or {}).get('nftables') %}
+    {% if nft and nft.tables %}
+      <details>
+        <summary>{{ t(request, "firewall.nft_tables", count=(nft.tables | length)) }}</summary>
+        <div class="monitoring-table-wrap">
+          <table class="data-table" id="nft-tables">
+            <thead><tr><th>{{ t(request, "firewall.family") }}</th><th>{{ t(request, "firewall.table") }}</th><th>{{ t(request, "firewall.chains") }}</th><th>{{ t(request, "firewall.rules") }}</th></tr></thead>
+            <tbody>
+              {% for tb in nft.tables %}<tr><td>{{ tb.family }}</td><td><code>{{ tb.name }}</code></td><td>{{ tb.chains }}</td><td>{{ tb.rules }}</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    {% endif %}
+
+    {% if f2b and f2b.jails %}
+      <h3>{{ t(request, "firewall.jails") }}</h3>
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="fail2ban-jails">
+          <thead>
+            <tr>
+              <th>{{ t(request, "firewall.jail") }}</th>
+              <th>{{ t(request, "firewall.currently_failed") }}</th>
+              <th>{{ t(request, "firewall.total_failed") }}</th>
+              <th>{{ t(request, "firewall.currently_banned") }}</th>
+              <th>{{ t(request, "firewall.total_banned") }}</th>
+              <th>{{ t(request, "firewall.banned_ips") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for j in f2b.jails %}
+              <tr>
+                <td><code>{{ j.name }}</code></td>
+                <td>{{ j.currently_failed if j.currently_failed is not none else '—' }}</td>
+                <td>{{ j.total_failed if j.total_failed is not none else '—' }}</td>
+                <td>{% if j.currently_banned %}<span class="badge badge-warn">{{ j.currently_banned }}</span>{% else %}{{ j.currently_banned if j.currently_banned is not none else '—' }}{% endif %}</td>
+                <td>{{ j.total_banned if j.total_banned is not none else '—' }}</td>
+                <td>
+                  {% for b in j.bans[:5] %}<code>{{ b.ip }}</code>{% if b.since %} <span class="table-muted">{{ b.since | replace('T', ' ') }}</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}
+                  {% if j.bans | length > 5 %}<div class="table-muted">{{ t(request, "firewall.more_bans", count=((j.bans | length) - 5)) }}</div>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+    {% if machine.facts_updated_at %}
+      <p class="hint">{{ t(request, "monitoring.updated_at", when=(machine.facts_updated_at | local_time('%Y-%m-%d %H:%M'))) }} · <a href="/security/firewall">{{ t(request, "firewall.fleet_link") }}</a></p>
+    {% endif %}
+  {% endif %}
+</section>

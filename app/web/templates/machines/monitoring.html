@@ -422,6 +422,9 @@
       </section>
     {% endif %}
 
+    {# --- UPS, IPMI, PCIe, USB --- #}
+    {% include "machines/_devices.html" %}
+
     {# --- systemd services --- #}
     <section class="chart-card chart-card-wide monitoring-section" id="services-section">
       <header class="chart-card-header">

@@ -41,6 +41,7 @@ PAGES = [
     "/machine-groups",
     "/machine-groups/batches",
     "/security/updates",
+    "/security/firewall",
     "/checks",
     "/checks/sla",
     "/checks/status-page",
@@ -339,4 +340,17 @@ def test_terminals_page_tabs_grid_keys_and_reconnect(page: Any) -> None:
     page.locator(".terminal-pane").nth(1).get_by_role("button", name="Close").click()
     assert page.locator(".terminal-pane").count() == 1
     assert page.url.count("m=") == 1
+    assert page.problems == []
+
+
+def test_device_cards_and_firewall_panel(page: Any) -> None:
+    machine = _first_href(page, "/machines?q=web1", "/machines/")
+    _open(page, machine + "/monitoring")
+    for card in ("#ups", "#ipmi", "#pci", "#usb"):
+        page.locator(card).wait_for()
+    assert "Back-UPS ES 700" in page.locator("#ups").inner_text()
+    _open(page, machine + "/security")
+    assert "192.0.2.7" in page.locator("#fail2ban-jails").inner_text()
+    _open(page, "/security/firewall")
+    assert page.locator("#firewall-table tbody tr").count() >= 1
     assert page.problems == []
