@@ -4,7 +4,8 @@ is unpacked safely in debcontrol (see `app.services.config_backup`).
 **Files.** One `tar` of `/etc` (on Proxmox VE that includes `/etc/pve`,
 the cluster file system) and `/var/spool/cron` (every user's crontab),
 streamed over SSH on standard output. Root reads everything through one
-sudoers grant scoped to that exact command line (`TAR_GRANT`) — sudoers
+sudoers grant scoped to that exact command line
+(`app.ssh.onboarding.TAR_GRANTS`) — sudoers
 matches the arguments, so the account can't make tar read anything else
 or run `--to-command`. Without the grant tar runs as the account itself
 and skips what it can't read; those paths are listed and the run counts
@@ -38,8 +39,6 @@ PATHS: tuple[str, ...] = ("etc", "var/spool/cron")
 # GNU tar's arguments — no `=`, `,` or `:`, which sudoers would need escaped.
 TAR_ARGS = "-c -f - --ignore-failed-read --warning no-file-changed -C / " + " ".join(PATHS)
 TAR_BINARIES: tuple[str, ...] = ("/usr/bin/tar", "/bin/tar")
-# The sudoers entries (app.ssh.onboarding.SUDO_COMMANDS).
-TAR_GRANTS: tuple[str, ...] = tuple(f"{binary} {TAR_ARGS}" for binary in TAR_BINARIES)
 
 # Through sudo when the grant (or root) allows it, else as the account.
 TAR_COMMAND = (

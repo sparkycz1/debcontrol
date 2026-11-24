@@ -30,14 +30,14 @@ from app.scheduling.actions import get_action
 from app.scheduling.builtin_actions import register_builtin_actions
 from app.services import config_backup, machine_health
 from app.ssh import config_backup as remote
-from app.ssh.onboarding import SUDO_COMMANDS
+from app.ssh.onboarding import SUDO_COMMANDS, TAR_GRANTS
 from tests.test_update_history import _api_token
 
 # --- What the machine runs ---------------------------------------------------
 
 
 def test_tar_runs_only_the_granted_command_line() -> None:
-    for grant in remote.TAR_GRANTS:
+    for grant in TAR_GRANTS:
         assert grant in SUDO_COMMANDS
         # sudoers would need these escaped; none may appear.
         assert not set(grant) & set("=,:\\")
@@ -45,7 +45,7 @@ def test_tar_runs_only_the_granted_command_line() -> None:
     assert f'sudo -n "$t" {remote.TAR_ARGS}' in remote.TAR_COMMAND
     playbook = Path(__file__).resolve().parent.parent / "ansible" / "debcontrol-onboard.yml"
     text = playbook.read_text(encoding="utf-8")
-    assert all(grant in text for grant in remote.TAR_GRANTS)
+    assert all(grant in text for grant in TAR_GRANTS)
 
 
 def test_package_sections_and_unreadable_paths() -> None:

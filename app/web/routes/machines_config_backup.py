@@ -278,16 +278,20 @@ async def backup_restore_file(
 ) -> Response:
     """Put one file back on the machine, next to (never over) the original."""
     machine = await _get_machine_or_404(machine_id, db, current_user)
-    back = f"{_page(machine)}/{quote(snapshot_id)}"
     if not machine.host_key_fingerprint:
-        return _redirect(back, error=t(request, "config_backup.error.host_key"))
+        return _redirect(_page(machine), error=t(request, "config_backup.error.host_key"))
     try:
         repo = await config_backup.current_repository(db)
         snapshot, _previous = await config_backup.find_snapshot(repo, machine.id, snapshot_id)
-        written = await config_backup.restore_to_machine(db, machine, repo, snapshot, path)
     except config_backup.ConfigBackupError as exc:
         if exc.key == "config_backup.error.snapshot":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+        return _redirect(_page(machine), error=_error_text(request, exc))
+    # Back to the snapshot by the id restic reported, not the one in the URL.
+    back = f"{_page(machine)}/{snapshot.short_id}"
+    try:
+        written = await config_backup.restore_to_machine(db, machine, repo, snapshot, path)
+    except config_backup.ConfigBackupError as exc:
         return _redirect(back, error=_error_text(request, exc))
     await log_event(
         db,

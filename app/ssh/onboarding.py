@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import shlex
 
-from app.ssh.config_backup import TAR_GRANTS
+from app.ssh.config_backup import TAR_ARGS, TAR_BINARIES
 from app.ssh.lynis import CISOFY_REPO_SETUP, MACHINE_LOGFILE
 from app.ssh.peripherals import IPMI_SDR_ARGS, IPMI_SEL_ARGS
 
@@ -67,6 +67,9 @@ ONBOARD_USERNAME = "debcontrol"
 # 0.149.0+: tar reading /etc and /var/spool/cron to standard output, for
 # the configuration backup (app.ssh.config_backup) — that one argument
 # list only, under both bin directories (no usrmerge on older systems).
+# The configuration backup's tar, one entry per bin directory.
+TAR_GRANTS: tuple[str, ...] = tuple(f"{binary} {TAR_ARGS}" for binary in TAR_BINARIES)
+
 SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/apt-get",
     "/usr/sbin/shutdown",
