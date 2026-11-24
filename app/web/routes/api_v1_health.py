@@ -6,7 +6,7 @@ machines the token's account can see.
 
 - `GET /api/v1/health` — the fleet: score, count per status, every
   machine with a warning or a critical problem, every snoozed problem.
-- `GET /api/v1/machines/{id}/health` — one machine: status, the eleven
+- `GET /api/v1/machines/{id}/health` — one machine: status, the twelve
   categories, its problems and its snoozed problems.
 - `POST /api/v1/machines/{id}/health/snoozes` — snooze one problem (by its
   `key`) for `hours`, or until it is gone (`hours` null).

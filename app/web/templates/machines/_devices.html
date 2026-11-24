@@ -1,0 +1,217 @@
+{#- The Monitoring tab's device cards: UPS (NUT, every sample), IPMI
+    sensors and event log, PCIe and USB devices (with facts). Each card
+    only appears when its data exists. -#}
+{% set facts_when = machine.facts_updated_at | local_time('%Y-%m-%d %H:%M') if machine.facts_updated_at else none %}
+
+{% if machine.ups_devices %}
+  <section class="chart-card chart-card-wide monitoring-section" id="ups">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "devices.ups.heading") }}</h3>
+        <p class="chart-card-subtitle">{{ t(request, "devices.ups.hint") }}</p>
+      </div>
+    </header>
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="ups-table">
+        <thead>
+          <tr>
+            <th>{{ t(request, "devices.ups.name") }}</th>
+            <th>{{ t(request, "devices.ups.model") }}</th>
+            <th>{{ t(request, "devices.ups.status") }}</th>
+            <th>{{ t(request, "devices.ups.charge") }}</th>
+            <th>{{ t(request, "devices.ups.runtime") }}</th>
+            <th>{{ t(request, "devices.ups.load") }}</th>
+            <th>{{ t(request, "devices.ups.input") }}</th>
+            <th>{{ t(request, "devices.ups.battery") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in machine.ups_devices %}
+            <tr class="{{ 'row-failed' if u.on_battery else '' }}">
+              <td><code>{{ u.name }}</code></td>
+              <td>{{ [u.manufacturer, u.model] | select | join(' ') or '—' }}</td>
+              <td>
+                {% if u.low_battery %}<span class="badge badge-error">{{ t(request, "devices.ups.low_battery") }}</span>
+                {% elif u.on_battery %}<span class="badge badge-warn">{{ t(request, "devices.ups.on_battery") }}</span>
+                {% elif u.on_battery is sameas false %}<span class="badge badge-ok">{{ t(request, "devices.ups.online") }}</span>
+                {% else %}<span class="badge">{{ t(request, "devices.ups.unknown") }}</span>{% endif %}
+                {% if u.overloaded %}<span class="badge badge-error">{{ t(request, "devices.ups.overloaded") }}</span>{% endif %}
+                {% if u.status %}<span class="table-muted">{{ u.status }}</span>{% endif %}
+              </td>
+              <td>{{ u.charge_percent | chart_value('percent') if u.charge_percent is not none else '—' }}</td>
+              <td>{{ t(request, "devices.ups.minutes", minutes=((u.runtime_seconds // 60) | int)) if u.runtime_seconds is not none else '—' }}</td>
+              <td>{{ u.load_percent | chart_value('percent') if u.load_percent is not none else '—' }}{% if u.power_watts is not none %} <span class="table-muted">({{ u.power_watts | round(0) | int }} W)</span>{% endif %}</td>
+              <td>{{ (u.input_voltage | round(0) | int) ~ ' V' if u.input_voltage is not none else '—' }}</td>
+              <td>
+                {% if u.replace_battery %}<span class="badge badge-error">{{ t(request, "devices.ups.replace_battery") }}</span>{% endif %}
+                {{ u.battery_date or '' }}
+                {% if u.test_result %}<div class="table-summary">{{ t(request, "devices.ups.self_test", result=u.test_result) }}</div>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+
+{% if machine.ipmi is not none %}
+  {% set ipmi = machine.ipmi %}
+  <section class="chart-card chart-card-wide monitoring-section" id="ipmi">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "devices.ipmi.heading") }}</h3>
+        <p class="chart-card-subtitle">
+          {{ t(request, "devices.ipmi.hint") }}
+          {% if facts_when %}— {{ t(request, "monitoring.updated_at", when=facts_when) }}{% endif %}
+        </p>
+      </div>
+      {% if ipmi.sensors %}
+        <div class="table-tools">
+          <input type="search" class="chart-filter" data-table-filter="ipmi-table"
+                 placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+        </div>
+      {% endif %}
+    </header>
+    {% if not ipmi.readable %}
+      <p class="hint">{{ t(request, "devices.ipmi.unreadable") }}</p>
+    {% endif %}
+    {% if ipmi.sensors %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="ipmi-table">
+          <thead>
+            <tr>
+              <th data-sort="text">{{ t(request, "devices.ipmi.sensor") }}</th>
+              <th data-sort="number">{{ t(request, "devices.ipmi.reading") }}</th>
+              <th data-sort="text">{{ t(request, "devices.ipmi.status") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in ipmi.sensors %}
+              <tr class="{{ 'row-failed' if s.status == 'critical' else '' }}">
+                <td>{{ s.name }}</td>
+                <td data-sort-value="{{ s.value if s.value is not none else -1 }}">{% if s.value is not none %}{{ '%g' | format(s.value) }} {{ s.unit or '' }}{% else %}<span class="table-muted">{{ s.reading or '—' }}</span>{% endif %}</td>
+                <td>
+                  {% if s.status == 'critical' %}<span class="badge badge-error">{{ t(request, "devices.ipmi.critical") }}</span>
+                  {% elif s.status == 'warning' %}<span class="badge badge-warn">{{ t(request, "devices.ipmi.warning") }}</span>
+                  {% elif s.status == 'ok' %}<span class="badge badge-ok">OK</span>
+                  {% else %}<span class="badge">?</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+    {% if ipmi.events %}
+      <h4>{{ t(request, "devices.ipmi.events") }}</h4>
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="ipmi-events">
+          <thead>
+            <tr>
+              <th>{{ t(request, "devices.ipmi.when") }}</th>
+              <th>{{ t(request, "devices.ipmi.sensor") }}</th>
+              <th>{{ t(request, "devices.ipmi.event") }}</th>
+              <th>{{ t(request, "devices.ipmi.direction") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in ipmi.events %}
+              <tr>
+                <td>{{ [e.date, e.time] | select | join(' ') or '—' }}</td>
+                <td>{{ e.sensor or '—' }}</td>
+                <td>{{ e.event or '—' }}</td>
+                <td>{{ e.direction or '' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+{% endif %}
+
+{% if machine.pci_devices %}
+  <section class="chart-card chart-card-wide monitoring-section" id="pci">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "devices.pci.heading") }}</h3>
+        <p class="chart-card-subtitle">
+          {{ t(request, "devices.pci.hint", count=(machine.pci_devices | length)) }}
+          {% if facts_when %}— {{ t(request, "monitoring.updated_at", when=facts_when) }}{% endif %}
+        </p>
+      </div>
+      <div class="table-tools">
+        <input type="search" class="chart-filter" data-table-filter="pci-table"
+               placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+      </div>
+    </header>
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="pci-table">
+        <thead>
+          <tr>
+            <th data-sort="text">{{ t(request, "devices.pci.slot") }}</th>
+            <th data-sort="text">{{ t(request, "devices.pci.class") }}</th>
+            <th data-sort="text">{{ t(request, "devices.pci.device") }}</th>
+            <th data-sort="text">ID</th>
+            <th data-sort="text">{{ t(request, "devices.driver") }}</th>
+            <th data-sort="number">{{ t(request, "devices.pci.iommu") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in machine.pci_devices %}
+            <tr>
+              <td><code>{{ d.slot }}</code></td>
+              <td>{{ d.class or '—' }}</td>
+              <td class="cell-truncate" title="{{ [d.vendor, d.device] | select | join(' ') }}">{{ [d.vendor, d.device] | select | join(' ') or '—' }}</td>
+              <td><code>{{ d.vendor_id or '????' }}:{{ d.device_id or '????' }}</code></td>
+              <td>{% if d.driver %}<code>{{ d.driver }}</code>{% else %}<span class="table-muted">{{ t(request, "devices.no_driver") }}</span>{% endif %}</td>
+              <td data-sort-value="{{ d.iommu_group if d.iommu_group is not none else -1 }}">{{ d.iommu_group if d.iommu_group is not none else '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not (machine.pci_devices | selectattr('iommu_group', 'number') | list) %}
+      <p class="chart-card-footer">{{ t(request, "devices.pci.no_iommu") }}</p>
+    {% endif %}
+  </section>
+{% endif %}
+
+{% if machine.usb_devices %}
+  <section class="chart-card chart-card-wide monitoring-section" id="usb">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "devices.usb.heading") }}</h3>
+        <p class="chart-card-subtitle">
+          {{ t(request, "devices.usb.hint", count=(machine.usb_devices | length)) }}
+          {% if facts_when %}— {{ t(request, "monitoring.updated_at", when=facts_when) }}{% endif %}
+        </p>
+      </div>
+    </header>
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="usb-table">
+        <thead>
+          <tr>
+            <th data-sort="text">{{ t(request, "devices.usb.bus") }}</th>
+            <th data-sort="text">{{ t(request, "devices.usb.device") }}</th>
+            <th data-sort="text">ID</th>
+            <th data-sort="number">{{ t(request, "devices.usb.speed") }}</th>
+            <th data-sort="text">{{ t(request, "devices.driver") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in machine.usb_devices %}
+            <tr>
+              <td><code>{{ '%03d' | format(d.bus or 0) }}:{{ '%03d' | format(d.device or 0) }}</code></td>
+              <td>{{ [d.manufacturer, d.product] | select | join(' ') or '—' }}{% if d.hub %} <span class="badge">{{ t(request, "devices.usb.hub") }}</span>{% endif %}</td>
+              <td><code>{{ d.vendor_id }}:{{ d.product_id or '????' }}</code></td>
+              <td data-sort-value="{{ d.speed_mbps or 0 }}">{{ ('%g' | format(d.speed_mbps)) ~ ' Mb/s' if d.speed_mbps else '—' }}</td>
+              <td>{% if d.drivers %}<code>{{ d.drivers | join(', ') }}</code>{% else %}<span class="table-muted">{{ t(request, "devices.no_driver") }}</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}

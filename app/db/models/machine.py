@@ -213,6 +213,17 @@ class Machine(Base):
     # Full per-disk S.M.A.R.T. detail (app.ssh.smart), refreshed with facts
     # — a snapshot, not a history. None = not applicable (VM / no smartctl).
     smart_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # PCIe / USB devices and IPMI sensors + event log (app.ssh.peripherals),
+    # the packet filter and Fail2Ban (app.ssh.firewall) — with facts, a
+    # snapshot each. None = not collected yet or not applicable.
+    pci_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    usb_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    ipmi: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    firewall: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    fail2ban: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Each UPS the machine's NUT serves (app.ssh.ups), with every monitoring
+    # sample. None = no NUT / no UPS.
+    ups_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # --- Proxmox VE / ZFS (app.ssh.proxmox). Version, storages and backups

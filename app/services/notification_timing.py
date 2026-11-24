@@ -13,8 +13,8 @@ instance's time zone (`TZ`, `app.core.timezones.display_zone`).
   (`app.services.notification_digest`).
 
 "Urgent" is a fixed set: a machine down, a failing disk or pool, a lost
-cluster quorum, an endpoint down, and health turning critical. Everything
-here is pure (no I/O), so it can be tested on its own.
+cluster quorum, a UPS on battery, an endpoint down, and health turning
+critical. Everything here is pure (no I/O), so it can be tested on its own.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ URGENT_EVENTS = frozenset(
         NotificationEventType.SMART_FAILED,
         NotificationEventType.ZFS_POOL_UNHEALTHY,
         NotificationEventType.CLUSTER_QUORUM_LOST,
+        NotificationEventType.UPS_ON_BATTERY,
         NotificationEventType.ENDPOINT_DOWN,
     }
 )

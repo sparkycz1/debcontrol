@@ -1,0 +1,16 @@
+{% macro protection_badge(request, protection) -%}
+  {%- if protection == 'on' -%}<span class="badge badge-ok">{{ t(request, "firewall.protection.on") }}</span>
+  {%- elif protection == 'off' -%}<span class="badge badge-warn">{{ t(request, "firewall.protection.off") }}</span>
+  {%- else -%}<span class="badge">{{ t(request, "firewall.protection.unknown") }}</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro backend_badges(backends) -%}
+  {%- for b in backends %} <span class="badge">{{ b }}</span>{% endfor -%}
+{%- endmacro %}
+
+{% macro fail2ban_badge(request, status) -%}
+  {%- if status == 'ok' -%}<span class="badge badge-ok">{{ t(request, "firewall.f2b.ok") }}</span>
+  {%- elif status == 'stopped' -%}<span class="badge badge-warn">{{ t(request, "firewall.f2b.stopped") }}</span>
+  {%- elif status == 'no_access' -%}<span class="badge">{{ t(request, "firewall.f2b.no_access") }}</span>
+  {%- else -%}<span class="table-muted">{{ t(request, "firewall.f2b.none") }}</span>{%- endif -%}
+{%- endmacro %}

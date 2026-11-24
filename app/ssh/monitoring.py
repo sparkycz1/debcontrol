@@ -26,7 +26,7 @@ from typing import Any, NotRequired, TypedDict
 
 from app.db.models.machine import Machine
 from app.ssh import connectivity as connectivity_probe
-from app.ssh import proxmox
+from app.ssh import proxmox, ups
 from app.ssh.connectivity import Connectivity
 from app.ssh.pool import machine_connection
 from app.ssh.shell import with_root_shim
@@ -42,6 +42,7 @@ _SECTION_MARKERS = (
     "FAILED_SERVICES",
     "DOCKER",
     "ZFS_ARC",
+    ups.MARKER,
     *proxmox.LIVE_MARKERS,
     "CONNECTIVITY",
 )
@@ -253,6 +254,8 @@ MONITORING_COMMAND = (
     "systemctl --failed --plain --no-legend --no-pager 2>/dev/null | awk '{print $1}'; "
     "fi; "
     f"{_DOCKER_COMMAND}; "
+    # UPS state through NUT — app.ssh.ups.
+    f"{ups.SECTION}; "
     f"{proxmox.LIVE_COMMAND}"
 )
 
@@ -314,6 +317,9 @@ class MonitoringSample(TypedDict):
     # absent when Docker wasn't readable.
     docker_clock: NotRequired[int | None]
     docker_events: NotRequired[list[dict[str, Any]]]
+    # One entry per UPS the machine's NUT serves (app.ssh.ups); None = no
+    # NUT or no UPS.
+    ups_devices: NotRequired[list[dict[str, Any]] | None]
     # --- Hardware — only ever populated for a physical machine
     # (Machine.is_physical); always [] / None on a VM, meaning "not
     # applicable", not "nothing found". ---
@@ -503,6 +509,7 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
         cpu_energy_uj=cpu_energy_uj,
         gpus=gpus,
         gpu_power_watts=gpu_power_watts,
+        ups_devices=ups.parse_section(sections.get(ups.MARKER, "")),
     )
 
 

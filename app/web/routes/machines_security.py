@@ -1,4 +1,5 @@
-"""A machine's Security tab: its security audits — Lynis and debcontrol's
+"""A machine's Security tab: its packet filter and Fail2Ban, read-only
+(`app.ssh.firewall`, with facts), its security audits — Lynis and debcontrol's
 own checks (`app.services.security_audit`) — "Run audit now", and marking
 a finding OK on this machine (or taking that back)."""
 
@@ -20,6 +21,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.services import security_audit
 from app.services.machine_actions import trigger_security_audits
+from app.ssh import firewall
 from app.web.flash import read_flash, sign_flash
 from app.web.routes.machines_common import (
     _get_machine_or_404,
@@ -80,6 +82,7 @@ async def machine_security(
                 **context,
                 "tabs": _machine_tabs(request, machine, current_user),
                 "active_tab": "security",
+                "fw": firewall.overview(machine.firewall, machine.fail2ban),
             },
         )
     if new_cookie:

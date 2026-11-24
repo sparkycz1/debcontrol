@@ -198,6 +198,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "{machine_name} ({machine_ip}) reports that cluster {cluster} is no longer "
             "quorate at {timestamp}.\n\n{details}",
         ),
+        NotificationEventType.UPS_ON_BATTERY: (
+            "debcontrol: UPS {ups} on {machine_name} is on battery",
+            "UPS {ups} on {machine_name} ({machine_ip}) switched to battery at "
+            "{timestamp} — mains power is out.\n\n{details}",
+        ),
+        NotificationEventType.UPS_POWER_RESTORED: (
+            "debcontrol: UPS {ups} on {machine_name} is back on mains",
+            "UPS {ups} on {machine_name} ({machine_ip}) is back on mains power at "
+            "{timestamp}.\n\n{details}",
+        ),
         NotificationEventType.HEALTH_DEGRADED: (
             "debcontrol: {machine_name} health is now {status}",
             "The health of {machine_name} ({machine_ip}) changed from {previous_status} "
@@ -373,6 +383,16 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: cluster Proxmoxu {cluster} ztratil quorum",
             "{machine_name} ({machine_ip}) hlásí v {timestamp}, že cluster {cluster} "
             "nemá quorum.\n\n{details}",
+        ),
+        NotificationEventType.UPS_ON_BATTERY: (
+            "debcontrol: UPS {ups} na {machine_name} běží z baterie",
+            "UPS {ups} na {machine_name} ({machine_ip}) v {timestamp} přešla na baterii "
+            "— výpadek proudu.\n\n{details}",
+        ),
+        NotificationEventType.UPS_POWER_RESTORED: (
+            "debcontrol: UPS {ups} na {machine_name} je zase na síti",
+            "UPS {ups} na {machine_name} ({machine_ip}) má v {timestamp} zase proud ze "
+            "sítě.\n\n{details}",
         ),
         NotificationEventType.HEALTH_DEGRADED: (
             "debcontrol: zdraví {machine_name} je teď {status}",

@@ -1418,6 +1418,11 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.hw_model = facts.get("hw_model") or machine.hw_model
         machine.hw_serial = facts.get("hw_serial") or machine.hw_serial
         machine.smart_devices = facts["smart_devices"]
+        machine.pci_devices = facts.get("pci_devices")
+        machine.usb_devices = facts.get("usb_devices")
+        machine.ipmi = facts.get("ipmi")
+        machine.firewall = facts.get("firewall")
+        machine.fail2ban = facts.get("fail2ban")
         machine.pve_version = facts.get("pve_version")
         machine.pve_storage = facts.get("pve_storage")
         machine.pve_backups = facts.get("pve_backups")
@@ -1856,6 +1861,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         ).scalar_one_or_none()
         previous_failed_units = machine.failed_units
         previous_zfs_pools = machine.zfs_pools
+        previous_ups = machine.ups_devices
         reached: dict[str, Any] = dict(sample.get("connectivity") or {})
         session.add(
             MachineMonitoringSample(
@@ -1909,6 +1915,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         machine.network_links = sample.get("network_links") or None
         machine.default_gateway = reached.get("gateway")
         machine.zfs_pools = sample.get("zfs_pools")
+        machine.ups_devices = sample.get("ups_devices")
         previous_sampled = machine.monitoring_updated_at
         machine.pve_guests = proxmox_with_guest_rates(
             machine.pve_guests,
@@ -1952,6 +1959,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             current_smart_disks=sample["smart_disks"],
             previous_zfs_pools=previous_zfs_pools,
             previous_cluster=previous_cluster,
+            previous_ups=previous_ups,
         )
         await machine_health.refresh(session, machine)
         # The Overview's live cards (no browser notification for this one).

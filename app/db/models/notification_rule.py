@@ -142,6 +142,10 @@ class NotificationEventType(enum.StrEnum):
     MAIL_QUEUE_BACKLOG = "machine.mail_queue_backlog"
     # a Proxmox VE cluster lost quorum (monitoring sample).
     CLUSTER_QUORUM_LOST = "machine.cluster_quorum_lost"
+    # a UPS the machine's NUT serves went on battery, or is back on mains
+    # (monitoring sample, app.ssh.ups).
+    UPS_ON_BATTERY = "machine.ups_on_battery"
+    UPS_POWER_RESTORED = "machine.ups_power_restored"
     # A machine's overall health (`app.services.machine_health`) got worse
     # (ok -> warning, warning -> critical, ...) or came back to ok — fired
     # from `machine_health.refresh` after each evaluation, only on a real

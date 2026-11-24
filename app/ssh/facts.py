@@ -12,7 +12,7 @@ import re
 from typing import Any, NotRequired, TypedDict
 
 from app.db.models.machine import Machine
-from app.ssh import proxmox
+from app.ssh import firewall, peripherals, proxmox
 from app.ssh.client import open_connection
 from app.ssh.hardware import parse_hardware
 from app.ssh.pool import machine_connection
@@ -45,6 +45,8 @@ _SECTION_MARKERS = (
     "HARDWARE",
     "SMART",
     "REBOOT_FLAG",
+    *peripherals.MARKERS,
+    *firewall.MARKERS,
     *proxmox.INVENTORY_MARKERS,
 )
 
@@ -163,6 +165,10 @@ FACTS_COMMAND = (
     # postinst scripts — libc, systemd, microcode, a kernel), on top of
     # the running-vs-installed kernel comparison.
     "echo ===REBOOT_FLAG===; [ -f /run/reboot-required ] && echo yes; "
+    # PCIe / USB devices and IPMI — app.ssh.peripherals.
+    f"{peripherals.FACTS_SECTIONS}; "
+    # Packet filter and Fail2Ban, read-only — app.ssh.firewall.
+    f"{firewall.FACTS_SECTIONS}; "
     # Proxmox VE version, storages and backups — app.ssh.proxmox.
     f"{proxmox.INVENTORY_COMMAND}"
 )
@@ -209,6 +215,13 @@ class MachineFacts(TypedDict):
     # One summary per readable disk (see app.ssh.smart.parse_smart_device);
     # None = not applicable (a VM, or no smartctl), [] = ran, nothing readable.
     smart_devices: list[dict[str, Any]] | None
+    # app.ssh.peripherals / app.ssh.firewall — None = not collected or not
+    # applicable (see each parser).
+    pci_devices: NotRequired[list[dict[str, Any]] | None]
+    usb_devices: NotRequired[list[dict[str, Any]] | None]
+    ipmi: NotRequired[dict[str, Any] | None]
+    firewall: NotRequired[dict[str, Any] | None]
+    fail2ban: NotRequired[dict[str, Any] | None]
     # Proxmox VE only (None elsewhere) — see app.ssh.proxmox.
     pve_version: str | None
     pve_storage: list[dict[str, Any]] | None
@@ -378,6 +391,11 @@ def parse_facts_output(raw: str) -> MachineFacts:
         hw_model=hardware["model"],
         hw_serial=hardware["serial"],
         smart_devices=parse_smart_section(sections.get("SMART", "")),
+        pci_devices=peripherals.parse_pci_section(sections.get(peripherals.PCI_MARKER, "")),
+        usb_devices=peripherals.parse_usb_section(sections.get(peripherals.USB_MARKER, "")),
+        ipmi=peripherals.parse_ipmi_section(sections.get(peripherals.IPMI_MARKER, "")),
+        firewall=firewall.parse_firewall_section(sections.get(firewall.FIREWALL_MARKER, "")),
+        fail2ban=firewall.parse_fail2ban_section(sections.get(firewall.FAIL2BAN_MARKER, "")),
         pve_version=proxmox.parse_pve_version(sections.get("PVE_VERSION", "")),
         pve_storage=proxmox.parse_storage(sections.get("PVE_STORAGE", "")),
         pve_backups=proxmox.parse_backups(
@@ -398,9 +416,10 @@ def parse_facts_output(raw: str) -> MachineFacts:
 async def gather_facts(machine: Machine, secret: str | None, timeout_seconds: int) -> MachineFacts:
     """Connect to a machine and gather its facts. Requires a pinned host key."""
     async with machine_connection(machine, secret, timeout_seconds) as conn:
-        # smartctl -a reads each disk's logs — allow for a few slow disks.
+        # smartctl -a reads each disk's logs — allow for a few slow disks,
+        # and for a slow BMC (app.ssh.peripherals caps IPMI at 30 s).
         result = await conn.run(
-            with_root_shim(FACTS_COMMAND), check=False, timeout=timeout_seconds + 30
+            with_root_shim(FACTS_COMMAND), check=False, timeout=timeout_seconds + 60
         )
 
     stdout = result.stdout or ""
