@@ -75,6 +75,8 @@ def _machine_tabs(request: Request, machine: Machine, user: User) -> list[tuple[
     # discover host key) already have, rather than a whole tab for two
     # buttons. `GET /{id}/power` itself still redirects there for anyone
     # with the old URL bookmarked/linked — see `power_tab`.
+    # Configuration backups (app.services.config_backup) — every machine.
+    tabs.append(("backup", t(request, "machine.tab.backup"), f"{base}/backup"))
     tabs.append(("history", t(request, "machine.tab.history"), f"{base}/history"))
     tabs.append(("settings", t(request, "machine.tab.settings"), f"{base}/edit"))
     return tabs

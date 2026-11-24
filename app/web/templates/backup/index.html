@@ -8,6 +8,10 @@
     <h1>{{ t(request, "backup.title") }}</h1>
   </div>
   <p class="hint">{{ t(request, "backup.intro") }}</p>
+  {% if request.state.user.has_permission('machine.view') %}
+    <p class="hint">{{ t(request, "config_backup.backup_page_hint") }}
+      <a href="/backup/machines">{{ t(request, "config_backup.fleet_title") }}</a></p>
+  {% endif %}
 
   {% if errors %}
     <div class="alert alert-error">

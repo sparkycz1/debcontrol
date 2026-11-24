@@ -15,6 +15,7 @@ The routes themselves live in one module per area, each with its own
 - `machines_live` — the Overview's live cards, top processes (and
   signalling one) and the connectivity test.
 - `machines_security` — the Security tab: Lynis security audits.
+- `machines_config_backup` — the Backup tab: configuration backups.
 - `machines_logs` — the Logs tab, saved log views, the file browser, and
   the Terminal page.
 - `machines_docker`, `machines_docker_adopt`, `machines_docker_stacks`,
@@ -28,6 +29,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.web.routes import (
+    machines_config_backup,
     machines_detail,
     machines_docker,
     machines_docker_adopt,
@@ -55,6 +57,7 @@ router.include_router(machines_files.router)
 router.include_router(machines_monitoring.router)
 router.include_router(machines_live.router)
 router.include_router(machines_security.router)
+router.include_router(machines_config_backup.router)
 router.include_router(machines_logs.router)
 router.include_router(machines_docker.router)
 # Before the stacks router: its `projects/{project}/{action}` matches `adopt`.

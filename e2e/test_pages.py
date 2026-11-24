@@ -60,6 +60,7 @@ PAGES = [
     "/audit/terminal-recordings",
     "/settings",
     "/backup",
+    "/backup/machines",
     "/account",
     "/search?q=web",
     "/docker/containers",
@@ -340,6 +341,18 @@ def test_terminals_page_tabs_grid_keys_and_reconnect(page: Any) -> None:
     page.locator(".terminal-pane").nth(1).get_by_role("button", name="Close").click()
     assert page.locator(".terminal-pane").count() == 1
     assert page.url.count("m=") == 1
+    assert page.problems == []
+
+
+def test_config_backup_pages(page: Any) -> None:
+    _open(page, "/backup/machines")
+    assert page.locator("#config-backup-machines tbody tr").count() >= 2
+    machine = _first_href(page, "/machines?q=web1", "/machines/")
+    _open(page, machine + "/backup")
+    assert page.locator("#config-backup-runs tbody tr").count() == 2
+    # The snapshot panel answers (with an error where restic is missing).
+    page.locator("#config-backup-snapshots table, #config-backup-snapshots .alert, "
+                 "#config-backup-snapshots .empty-state").first.wait_for()
     assert page.problems == []
 
 

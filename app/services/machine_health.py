@@ -86,6 +86,8 @@ PACKET_LOSS_WARN_PERCENT = 20
 # A failed backup task older than this is history, not a problem now.
 BACKUP_FAILURE_DAYS = 2
 # A guest's newest backup older than this many days is a warning.
+# A machine whose last good configuration backup is older than this.
+STALE_CONFIG_BACKUP_DAYS = 8
 STALE_GUEST_BACKUP_DAYS = 7
 
 # Snooze choices offered on the page; the API takes any number of hours.
@@ -563,6 +565,19 @@ def _backups(machine: Machine, now: datetime) -> list[Finding]:
     if pbs:
         findings.append(Finding("backups.pbs", "backups", "warning", "pbs_failures",
                                 {"count": len(pbs)}, "proxmox"))
+    # Configuration backup (app.services.config_backup): only once the
+    # machine has been backed up at all, so a fleet that doesn't use it
+    # stays green.
+    if machine.config_backup_status == "failed":
+        findings.append(Finding("backups.config_failed", "backups", "warning",
+                                "config_backup_failed", {}, "backup"))
+    last_ok = machine.config_backup_last_success_at
+    if last_ok is not None:
+        aware = last_ok if last_ok.tzinfo else last_ok.replace(tzinfo=UTC)
+        days = (now - aware).days
+        if days > STALE_CONFIG_BACKUP_DAYS:
+            findings.append(Finding("backups.config_stale", "backups", "warning",
+                                    "config_backup_stale", {"days": days}, "backup"))
     return findings
 
 

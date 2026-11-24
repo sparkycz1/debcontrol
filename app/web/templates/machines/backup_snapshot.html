@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+
+{% block title %}{{ t(request, "config_backup.snapshot_title", id=snapshot.short_id) }} — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <section class="panel">
+    <h2>{{ t(request, "config_backup.snapshot_title", id=snapshot.short_id) }}</h2>
+    <p class="hint">
+      {{ snapshot.time | local_time('%Y-%m-%d %H:%M') if snapshot.time else '' }}
+      — <a href="/machines/{{ machine.id }}/backup">{{ t(request, "config_backup.back") }}</a>
+    </p>
+    {% if notice %}<div class="alert alert-ok"><p>{{ notice }}</p></div>{% endif %}
+    {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+    {% if can_restore %}
+      <p><a class="button button-secondary" href="/machines/{{ machine.id }}/backup/{{ snapshot.short_id }}/archive">{{ t(request, "config_backup.download_archive") }}</a></p>
+      <p class="hint">{{ t(request, "config_backup.restore_hint", dir=restore_dir, mib=max_file_mib) }}</p>
+    {% else %}
+      <p class="hint">{{ t(request, "config_backup.restore_needs_terminal") }}</p>
+    {% endif %}
+  </section>
+
+  <section class="panel" id="changes">
+    <h2>{{ t(request, "config_backup.changes") }}</h2>
+    {% if changes is none %}
+      <p class="hint">{{ t(request, "config_backup.first_snapshot") }}</p>
+    {% elif not changes.total %}
+      <p class="hint">{{ t(request, "config_backup.no_changes", id=previous.short_id) }}</p>
+    {% else %}
+      <p class="hint">{{ t(request, "config_backup.changes_since", id=previous.short_id, count=changes.total) }}</p>
+      <ul class="plain-list" id="config-backup-changes">
+        {% for path in changes.added %}<li><span class="badge badge-ok">+</span> <code>{{ path }}</code></li>{% endfor %}
+        {% for path in changes.modified %}<li><span class="badge badge-warn">M</span> <code>{{ path }}</code></li>{% endfor %}
+        {% for path in changes.removed %}<li><span class="badge badge-error">−</span> <code>{{ path }}</code></li>{% endfor %}
+      </ul>
+      {% if changes.truncated %}<p class="hint">{{ t(request, "config_backup.changes_truncated") }}</p>{% endif %}
+    {% endif %}
+  </section>
+
+  <section class="chart-card chart-card-wide monitoring-section" id="files">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "config_backup.files") }}</h3>
+        <p class="chart-card-subtitle">{{ t(request, "config_backup.files_hint", count=(entries | selectattr('type', 'equalto', 'file') | list | length)) }}</p>
+      </div>
+      <div class="table-tools">
+        <input type="search" class="chart-filter" data-table-filter="config-backup-files"
+               placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+      </div>
+    </header>
+    <div class="monitoring-table-wrap">
+      <table class="data-table" id="config-backup-files">
+        <thead>
+          <tr>
+            <th data-sort="text">{{ t(request, "config_backup.path") }}</th>
+            <th data-sort="text">{{ t(request, "config_backup.permissions") }}</th>
+            <th data-sort="number">{{ t(request, "config_backup.size") }}</th>
+            <th data-sort="text">{{ t(request, "config_backup.modified") }}</th>
+            {% if can_restore %}<th>{{ t(request, "config_backup.actions") }}</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in entries if entry.type != 'dir' %}
+            <tr>
+              <td><code>{{ entry.path }}</code>{% if entry.type == 'symlink' %} <span class="badge">{{ t(request, "config_backup.symlink") }}</span>{% endif %}</td>
+              <td><code>{{ entry.mode }}</code></td>
+              <td data-sort-value="{{ entry.size or 0 }}">{{ entry.size | bytes if entry.size is not none else '—' }}</td>
+              <td>{{ entry.mtime | local_time('%Y-%m-%d %H:%M') if entry.mtime else '—' }}</td>
+              {% if can_restore %}
+                <td>
+                  {% if entry.type == 'file' %}
+                    <a href="/machines/{{ machine.id }}/backup/{{ snapshot.short_id }}/file?path={{ entry.path | urlencode }}">{{ t(request, "config_backup.download") }}</a>
+                    <form method="post" action="/machines/{{ machine.id }}/backup/{{ snapshot.short_id }}/restore" class="inline-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="path" value="{{ entry.path }}">
+                      <button type="submit" class="link-button">{{ t(request, "config_backup.restore") }}</button>
+                    </form>
+                  {% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

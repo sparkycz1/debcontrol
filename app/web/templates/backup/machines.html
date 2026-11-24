@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% from "machines/_backup_status.html" import backup_status %}
+
+{% block title %}{{ t(request, "config_backup.fleet_title") }} — debcontrol{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ t(request, "config_backup.fleet_title") }}</h1>
+  </div>
+  <p class="hint">{{ t(request, "config_backup.fleet_intro") }} <a href="/backup">{{ t(request, "backup.title") }}</a></p>
+  {% if notice %}<div class="alert alert-ok"><p>{{ notice }}</p></div>{% endif %}
+  {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+
+  <section class="panel" id="repository">
+    <h2>{{ t(request, "config_backup.repository") }}</h2>
+    {% if repo.configured %}
+      <p>{{ t(request, "config_backup.repository_line", repository=repo.repository) }}
+        {% if repo.is_default %}<span class="badge">{{ t(request, "config_backup.default_badge") }}</span>{% endif %}</p>
+      <p class="hint">{{ t(request, "config_backup.retention_line", daily=repo.keep_daily, weekly=repo.keep_weekly, monthly=repo.keep_monthly) }}</p>
+      {% if repo.maintenance_at %}
+        <p class="hint">{{ t(request, "config_backup.maintenance_line", when=(repo.maintenance_at | local_time('%Y-%m-%d %H:%M'))) }}
+          {% if repo.maintenance_error %}<span class="badge badge-error">{{ repo.maintenance_error }}</span>{% else %}<span class="badge badge-ok">OK</span>{% endif %}</p>
+      {% endif %}
+      {% if repo.is_default %}<div class="alert alert-warn"><p>{{ t(request, "config_backup.default_warning") }}</p></div>{% endif %}
+    {% else %}
+      <div class="alert alert-warn"><p>{{ t(request, "config_backup.not_configured") }}</p></div>
+    {% endif %}
+
+    {% if can_settings %}
+      <form method="post" action="/backup/machines/settings" class="form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="cb-repository">{{ t(request, "config_backup.repository") }}</label>
+        <input type="text" id="cb-repository" name="repository" maxlength="1024"
+               value="{{ '' if repo.is_default else repo.repository }}" placeholder="{{ default_repository }}">
+        <p class="hint">{{ t(request, "config_backup.repository_hint", default=default_repository) }}</p>
+        <label for="cb-password">{{ t(request, "config_backup.password") }}</label>
+        <input type="password" id="cb-password" name="password" minlength="8" autocomplete="new-password"
+               {% if not repo.configured %}required{% endif %}>
+        <p class="hint">{{ t(request, "config_backup.password_hint") if repo.configured else t(request, "config_backup.password_first") }}</p>
+        <label class="checkbox-row">
+          <input type="checkbox" name="change_environment" value="1">
+          {{ t(request, "config_backup.change_environment") }}{% if repo.has_env %} <span class="badge">{{ t(request, "config_backup.environment_set") }}</span>{% endif %}
+        </label>
+        <label for="cb-environment">{{ t(request, "config_backup.environment") }}</label>
+        <textarea id="cb-environment" name="environment" rows="3" spellcheck="false" placeholder="AWS_ACCESS_KEY_ID=...&#10;AWS_SECRET_ACCESS_KEY=..."></textarea>
+        <p class="hint">{{ t(request, "config_backup.environment_hint") }}</p>
+        <div class="form-row">
+          {% for name in ("daily", "weekly", "monthly") %}
+            <div>
+              <label for="cb-{{ name }}">{{ t(request, "config_backup.keep_" ~ name) }}</label>
+              <input type="number" id="cb-{{ name }}" name="keep_{{ name }}" min="0" max="{{ max_keep }}" value="{{ repo['keep_' ~ name] }}">
+            </div>
+          {% endfor %}
+        </div>
+        <button type="submit" class="button">{{ t(request, "config_backup.save") }}</button>
+      </form>
+      {% if repo.configured %}
+        <form method="post" action="/backup/machines/maintenance" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-secondary">{{ t(request, "config_backup.maintenance_now") }}</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="chart-card chart-card-wide monitoring-section" id="machines">
+    <header class="chart-card-header">
+      <div>
+        <h3 class="chart-card-title">{{ t(request, "config_backup.machines") }}</h3>
+        <p class="chart-card-subtitle">{{ t(request, "config_backup.machines_hint") }} <a href="/scheduling">{{ t(request, "nav.scheduling") }}</a></p>
+      </div>
+      <div class="table-tools">
+        <input type="search" class="chart-filter" data-table-filter="config-backup-machines"
+               placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
+      </div>
+    </header>
+    <form method="post" action="/backup/machines/run" id="config-backup-run-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="config-backup-machines">
+          <thead>
+            <tr>
+              {% if can_manage and repo.configured %}<th><span class="visually-hidden">{{ t(request, "config_backup.select") }}</span></th>{% endif %}
+              <th data-sort="text">{{ t(request, "machines.table.name") }}</th>
+              <th data-sort="text">{{ t(request, "config_backup.status") }}</th>
+              <th data-sort="text">{{ t(request, "config_backup.last_backup") }}</th>
+              <th data-sort="text">{{ t(request, "config_backup.last_success") }}</th>
+              <th data-sort="number">{{ t(request, "config_backup.files") }}</th>
+              <th data-sort="number">{{ t(request, "config_backup.size") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              {% set run = row.last_run %}
+              <tr class="{{ 'row-failed' if run and run.status == 'failed' else '' }}">
+                {% if can_manage and repo.configured %}
+                  <td><input type="checkbox" name="machine_id" value="{{ row.machine.id }}" aria-label="{{ row.machine.name }}"
+                             {% if row.running or not row.machine.host_key_fingerprint %}disabled{% endif %}></td>
+                {% endif %}
+                <td><a href="/machines/{{ row.machine.id }}/backup">{{ row.machine.name }}</a></td>
+                <td>{{ backup_status(request, run.status if run else none) }}{% if run and run.error %}<div class="table-summary">{{ run.error }}</div>{% endif %}</td>
+                <td>{{ run.created_at | local_time('%Y-%m-%d %H:%M') if run else '—' }}</td>
+                <td>{{ row.machine.config_backup_last_success_at | local_time('%Y-%m-%d %H:%M') if row.machine.config_backup_last_success_at else '—' }}</td>
+                <td data-sort-value="{{ run.file_count if run and run.file_count is not none else -1 }}">{{ run.file_count if run and run.file_count is not none else '—' }}</td>
+                <td data-sort-value="{{ run.size_bytes if run and run.size_bytes is not none else -1 }}">{{ run.size_bytes | bytes if run and run.size_bytes is not none else '—' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7">{{ t(request, "config_backup.no_machines") }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if can_manage and repo.configured and rows %}
+        <div class="panel-actions">
+          <button type="submit" class="button button-secondary">{{ t(request, "config_backup.run_selected") }}</button>
+          <button type="submit" class="button" name="scope" value="all">{{ t(request, "config_backup.run_all") }}</button>
+        </div>
+      {% endif %}
+    </form>
+  </section>
+{% endblock %}

@@ -31,6 +31,7 @@ from __future__ import annotations
 # order-dependent pass this test exists to not be.
 import app.scheduling.jobs
 import app.tasks.ai_jobs
+import app.tasks.config_backup
 import app.tasks.docker_jobs
 import app.tasks.jobs  # noqa: F401
 from app.tasks.celery_app import celery_app

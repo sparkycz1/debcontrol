@@ -239,6 +239,7 @@ celery_app = Celery(
         "app.tasks.docker_jobs",
         "app.tasks.docker_extras",
         "app.tasks.tune_up",
+        "app.tasks.config_backup",
         "app.scheduling.jobs",
     ],
 )
@@ -416,6 +417,13 @@ celery_app.conf.beat_schedule = {
     "expire-vulnerability-acceptances": {
         "task": "app.tasks.docker_jobs.expire_vulnerability_acceptances",
         "schedule": crontab(minute=40),
+    },
+    # Configuration backups (app.services.config_backup): retention
+    # (`restic forget --prune`) and a check of the repository, once a day;
+    # runs a lost worker left open are closed first.
+    "config-backup-maintenance": {
+        "task": "app.tasks.config_backup.config_backup_maintenance",
+        "schedule": crontab(hour=4, minute=30),
     },
     # Tune-ups ("Komplet", app.tasks.tune_up): a run whose task stopped
     # goes on in a new one, waiting runs start as others finish.

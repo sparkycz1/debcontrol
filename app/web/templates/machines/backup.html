@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "partials/_tabnav.html" import render as render_tabnav %}
+{% from "machines/_backup_status.html" import backup_status %}
+
+{% block title %}{{ t(request, "config_backup.title") }} — {{ machine.name }} — debcontrol{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{{ machine.name }}</h1>
+  </div>
+  {{ render_tabnav(tabs, active_tab) }}
+
+  <section class="panel" id="config-backup">
+    <h2>{{ t(request, "config_backup.title") }}</h2>
+    <p class="hint">{{ t(request, "config_backup.machine_intro") }}</p>
+    {% if notice %}<div class="alert alert-ok"><p>{{ notice }}</p></div>{% endif %}
+    {% if error %}<div class="alert alert-error"><p>{{ error }}</p></div>{% endif %}
+    {% if not repo.configured %}
+      <div class="alert alert-warn"><p>{{ t(request, "config_backup.not_configured") }}
+        <a href="/backup/machines">{{ t(request, "config_backup.fleet_link") }}</a></p></div>
+    {% else %}
+      <p class="hint">{{ t(request, "config_backup.repository_line", repository=repo.repository) }}
+        — <a href="/backup/machines">{{ t(request, "config_backup.fleet_link") }}</a></p>
+    {% endif %}
+    {% if can_manage and repo.configured %}
+      <form method="post" action="/machines/{{ machine.id }}/backup" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button" {% if running or not machine.host_key_fingerprint %}disabled{% endif %}>{{ t(request, "config_backup.run_now") }}</button>
+      </form>
+      {% if not machine.host_key_fingerprint %}<p class="hint">{{ t(request, "config_backup.error.host_key") }}</p>{% endif %}
+    {% endif %}
+  </section>
+
+  {% if repo.configured %}
+    <section class="panel">
+      <h2>{{ t(request, "config_backup.snapshots") }}</h2>
+      <p class="hint">{{ t(request, "config_backup.snapshots_hint") }}</p>
+      <div id="config-backup-snapshots" hx-get="/machines/{{ machine.id }}/backup/snapshots" hx-trigger="load" hx-swap="innerHTML">
+        <p class="hint">{{ t(request, "config_backup.loading") }}</p>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>{{ t(request, "config_backup.runs") }}</h2>
+    {% if runs %}
+      <div class="monitoring-table-wrap">
+        <table class="data-table" id="config-backup-runs">
+          <thead>
+            <tr>
+              <th>{{ t(request, "config_backup.started") }}</th>
+              <th>{{ t(request, "config_backup.status") }}</th>
+              <th>{{ t(request, "config_backup.files") }}</th>
+              <th>{{ t(request, "config_backup.size") }}</th>
+              <th>{{ t(request, "config_backup.added") }}</th>
+              <th>{{ t(request, "config_backup.snapshot") }}</th>
+              <th>{{ t(request, "config_backup.started_by") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in runs %}
+              <tr class="{{ 'row-failed' if run.status == 'failed' else '' }}">
+                <td>{{ run.created_at | local_time('%Y-%m-%d %H:%M') }}</td>
+                <td>
+                  {{ backup_status(request, run.status) }}
+                  {% if run.status == 'partial' %}<div class="table-summary">{{ t(request, "config_backup.unreadable", count=run.unreadable_count or 0) }}</div>{% endif %}
+                  {% if run.error %}<div class="table-summary">{{ run.error }}</div>{% endif %}
+                </td>
+                <td>{{ run.file_count if run.file_count is not none else '—' }}</td>
+                <td>{{ run.size_bytes | bytes if run.size_bytes is not none else '—' }}</td>
+                <td>{{ run.added_bytes | bytes if run.added_bytes is not none else '—' }}</td>
+                <td>{% if run.snapshot_id %}<a href="/machines/{{ machine.id }}/backup/{{ run.snapshot_id[:8] }}"><code>{{ run.snapshot_id[:8] }}</code></a>{% else %}—{% endif %}</td>
+                <td>{{ run.started_by or '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><p>{{ t(request, "config_backup.no_runs") }}</p></div>
+    {% endif %}
+    <p class="hint">{{ t(request, "config_backup.schedule_hint") }} <a href="/scheduling">{{ t(request, "nav.scheduling") }}</a></p>
+  </section>
+{% endblock %}
