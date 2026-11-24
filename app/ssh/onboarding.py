@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import shlex
 
+from app.ssh.config_backup import TAR_ARGS, TAR_BINARIES
 from app.ssh.lynis import CISOFY_REPO_SETUP, MACHINE_LOGFILE
 from app.ssh.peripherals import IPMI_SDR_ARGS, IPMI_SEL_ARGS
 
@@ -63,6 +64,12 @@ ONBOARD_USERNAME = "debcontrol"
 # IPMI sensors and event log (app.ssh.peripherals), the nftables ruleset
 # and ufw's status, and Fail2Ban's jail status and current bans
 # (app.ssh.firewall) — never `fail2ban-client set/unban/reload`.
+# 0.149.0+: tar reading /etc and /var/spool/cron to standard output, for
+# the configuration backup (app.ssh.config_backup) — that one argument
+# list only, under both bin directories (no usrmerge on older systems).
+# The configuration backup's tar, one entry per bin directory.
+TAR_GRANTS: tuple[str, ...] = tuple(f"{binary} {TAR_ARGS}" for binary in TAR_BINARIES)
+
 SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/apt-get",
     "/usr/sbin/shutdown",
@@ -85,6 +92,7 @@ SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/fail2ban-client status",
     "/usr/bin/fail2ban-client status *",
     "/usr/bin/fail2ban-client get * banip --with-time",
+    *TAR_GRANTS,
 )
 SUDO_COMMAND_LIST = ", ".join(SUDO_COMMANDS)
 

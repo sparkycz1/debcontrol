@@ -39,6 +39,7 @@ from sqlalchemy.pool import StaticPool
 from app.auth.sessions import create_session
 from app.core.app_settings import get_or_create_app_settings
 from app.db.base import Base
+from app.db.models.config_backup import ConfigBackupRun
 from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
@@ -59,7 +60,7 @@ from app.db.models.tune_up import TuneUpRun
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
-from app.services import disk_history, machine_health, terminal_recording, tune_up
+from app.services import config_backup, disk_history, machine_health, terminal_recording, tune_up
 from app.ssh import firewall, peripherals, ups
 from tests.conftest import FakeRedis
 
@@ -389,6 +390,7 @@ async def seed() -> str:
         # Devices, UPS, firewall and Fail2Ban (app.ssh.peripherals / ups /
         # firewall), as their parsers leave them.
         _seed_devices(web)
+        await _seed_config_backup(db, web, db_host, now)
         await db.commit()
         # Health (app.services.machine_health): web1 has a security update
         # pending (a warning), db1 is down (critical).
@@ -431,6 +433,34 @@ def _seed_devices(machine: Machine) -> None:
         "   |- Total failed:\t40\n   |- Currently banned:\t1\n   |- Total banned:\t9\n"
         "@@BANS\n192.0.2.7 \t2026-11-23 08:00:00 + 600 = 2026-11-23 08:10:00\n"
     )
+
+
+async def _seed_config_backup(
+    db: AsyncSession, web: Machine, db_host: Machine, now: datetime
+) -> None:
+    """A configured repository (the default local one), a good and a
+    partial backup of web1, a failed one of db1."""
+    settings = await get_or_create_app_settings(db)
+    config_backup.apply_settings(
+        settings, config_backup.SettingsChange(password="e2e-config-backup")
+    )
+    for machine, status, minutes, extra in (
+        (web, "succeeded", 600, {"snapshot_id": "a" * 64, "file_count": 1204,
+                                 "size_bytes": 3_400_000, "added_bytes": 3_100_000}),
+        (web, "partial", 30, {"snapshot_id": "b" * 64, "file_count": 1198,
+                              "size_bytes": 3_380_000, "added_bytes": 41_000,
+                              "unreadable_count": 6}),
+        (db_host, "failed", 20, {"error": "Could not connect: Connection refused"}),
+    ):
+        when = now - timedelta(minutes=minutes)
+        db.add(ConfigBackupRun(
+            machine_id=machine.id, status=status, started_by="admin", created_at=when,
+            started_at=when, finished_at=when + timedelta(seconds=40), **extra,
+        ))
+        machine.config_backup_at = when
+        machine.config_backup_status = status
+        if status != "failed":
+            machine.config_backup_last_success_at = when
 
 
 async def _seed_tune_up(db: AsyncSession, web: Machine, db_host: Machine, now: datetime) -> None:

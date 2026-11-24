@@ -1,0 +1,29 @@
+{#- The machine's snapshots in the repository (htmx panel of the Backup tab). -#}
+{% if error %}
+  <div class="alert alert-error"><p>{{ error }}</p></div>
+{% elif snapshots %}
+  <div class="monitoring-table-wrap">
+    <table class="data-table" id="config-backup-snapshots-table">
+      <thead>
+        <tr>
+          <th>{{ t(request, "config_backup.snapshot") }}</th>
+          <th>{{ t(request, "config_backup.time") }}</th>
+          <th>{{ t(request, "config_backup.files") }}</th>
+          <th>{{ t(request, "config_backup.size") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for snap in snapshots %}
+          <tr>
+            <td><a href="/machines/{{ machine.id }}/backup/{{ snap.short_id }}"><code>{{ snap.short_id }}</code></a></td>
+            <td>{{ snap.time | local_time('%Y-%m-%d %H:%M') if snap.time else '—' }}</td>
+            <td>{{ snap.files if snap.files is not none else '—' }}</td>
+            <td>{{ snap.size | bytes if snap.size is not none else '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state"><p>{{ t(request, "config_backup.no_snapshots") }}</p></div>
+{% endif %}

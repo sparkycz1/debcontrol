@@ -54,6 +54,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     MALLOC_ARENA_MAX=2
 
 COPY --from=builder /opt/venv /opt/venv
+# restic — configuration backups of machines (app.services.config_backup)
+# run here, in the worker, so a machine needs nothing installed: its files
+# come over SSH as a tar stream. The static binary from restic's own image.
+COPY --from=restic/restic:0.20.0@sha256:93999df80d4ac6cb148e82d2ef1fe6a81996f17ff535e772723538211b31555a /usr/bin/restic /usr/local/bin/restic
 
 WORKDIR /app
 COPY --chown=app:app app ./app

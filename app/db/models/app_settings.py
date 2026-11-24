@@ -462,6 +462,39 @@ class AppSettings(Base):
     auto_backup_last_at: Mapped[datetime | None] = mapped_column(nullable=True)
     auto_backup_last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
+    # --- Configuration backups of machines (app.services.config_backup) ---
+    # One restic repository for the whole fleet, each machine its own
+    # restic host. The address may carry credentials (`rest:https://u:p@`),
+    # so it is encrypted with a redacted copy for display; the password and
+    # any extra environment (S3 keys...) are write-only. NULL repository =
+    # the default local one on the data volume.
+    config_backup_repository_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    config_backup_repository_display: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )
+    config_backup_password_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    config_backup_env_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Retention, applied by the daily maintenance (`restic forget --prune`,
+    # per machine). 0 = that rule is not used.
+    config_backup_keep_daily: Mapped[int] = mapped_column(
+        Integer, default=7, server_default="7", nullable=False
+    )
+    config_backup_keep_weekly: Mapped[int] = mapped_column(
+        Integer, default=4, server_default="4", nullable=False
+    )
+    config_backup_keep_monthly: Mapped[int] = mapped_column(
+        Integer, default=12, server_default="12", nullable=False
+    )
+    # The last maintenance (forget/prune/check) and what it found.
+    config_backup_maintenance_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    config_backup_maintenance_error: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True
+    )
+
     # --- LDAP login (app.auth.ldap) ---
     ldap_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ldap_server_uri: Mapped[str | None] = mapped_column(String(255), nullable=True)

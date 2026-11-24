@@ -226,6 +226,13 @@ class Machine(Base):
     ups_devices: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     facts_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # --- Configuration backup (app.services.config_backup): the newest
+    # finished run, copied here so Health and the machine list need no
+    # join. None = never backed up. ---
+    config_backup_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    config_backup_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    config_backup_last_success_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     # --- Proxmox VE / ZFS (app.ssh.proxmox). Version, storages and backups
     # come with the facts refresh; guests and pools with every monitoring
     # sample. All None on a machine without Proxmox VE / ZFS. ---

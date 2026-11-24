@@ -1,0 +1,10 @@
+{#- A configuration backup run's status as a badge:
+    {{ backup_status(request, status) }} -#}
+{% macro backup_status(request, status) -%}
+  {%- if status == 'succeeded' -%}<span class="badge badge-ok">{{ t(request, "config_backup.status.succeeded") }}</span>
+  {%- elif status == 'partial' -%}<span class="badge badge-warn">{{ t(request, "config_backup.status.partial") }}</span>
+  {%- elif status == 'failed' -%}<span class="badge badge-error">{{ t(request, "config_backup.status.failed") }}</span>
+  {%- elif status == 'running' -%}<span class="badge badge-warn">{{ t(request, "config_backup.status.running") }}</span>
+  {%- elif status == 'pending' -%}<span class="badge">{{ t(request, "config_backup.status.pending") }}</span>
+  {%- else -%}<span class="badge">{{ t(request, "config_backup.status.never") }}</span>{%- endif -%}
+{%- endmacro %}

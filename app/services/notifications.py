@@ -208,6 +208,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "UPS {ups} on {machine_name} ({machine_ip}) is back on mains power at "
             "{timestamp}.\n\n{details}",
         ),
+        NotificationEventType.CONFIG_BACKUP_FAILED: (
+            "debcontrol: configuration backup of {machine_name} failed",
+            "The configuration backup of {machine_name} ({machine_ip}) failed at "
+            "{timestamp}.\n\n{details}",
+        ),
         NotificationEventType.HEALTH_DEGRADED: (
             "debcontrol: {machine_name} health is now {status}",
             "The health of {machine_name} ({machine_ip}) changed from {previous_status} "
@@ -393,6 +398,11 @@ _DEFAULT_TEMPLATES: dict[str, dict[NotificationEventType, tuple[str, str]]] = {
             "debcontrol: UPS {ups} na {machine_name} je zase na síti",
             "UPS {ups} na {machine_name} ({machine_ip}) má v {timestamp} zase proud ze "
             "sítě.\n\n{details}",
+        ),
+        NotificationEventType.CONFIG_BACKUP_FAILED: (
+            "debcontrol: záloha konfigurace {machine_name} selhala",
+            "Záloha konfigurace zařízení {machine_name} ({machine_ip}) v {timestamp} "
+            "selhala.\n\n{details}",
         ),
         NotificationEventType.HEALTH_DEGRADED: (
             "debcontrol: zdraví {machine_name} je teď {status}",

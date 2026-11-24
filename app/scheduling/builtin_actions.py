@@ -29,7 +29,7 @@ from app.scheduling.actions import (
     get_action,
     register_action,
 )
-from app.services import docker_actions, tune_up
+from app.services import config_backup, docker_actions, tune_up
 from app.services.docker_gate import GATES
 from app.services.machine_actions import (
     run_custom_command_on_machines,
@@ -214,6 +214,17 @@ async def _run_tune_up(
     options = tune_up.Options(reboot=params.get("tune_up_reboot") == "if_required")
     _batch_id, skipped = await tune_up.start(db, machines, options, started_by="schedule")
     return ActionRunResult(attempted=len(machines) - skipped, skipped=skipped)
+
+
+async def _run_config_backup(
+    db: AsyncSession, machines: list[Machine], params: dict[str, str]
+) -> ActionRunResult:
+    try:
+        runs, skipped = await config_backup.queue_backups(db, machines, started_by="schedule")
+    except config_backup.ConfigBackupError:
+        # No repository configured yet: nothing to do anywhere.
+        return ActionRunResult(attempted=0, skipped=len(machines))
+    return ActionRunResult(attempted=len(runs), skipped=skipped)
 
 
 def register_builtin_actions() -> None:
@@ -535,6 +546,18 @@ def register_builtin_actions() -> None:
             destructive=True,
             # The same permission as the Start/Stop/Restart buttons.
             extra_permission=Permission.ACTION_POWER,
+        )
+    )
+    register_action(
+        ScheduledActionSpec(
+            key="config_backup",
+            label="Configuration backup",
+            description=(
+                "Backs up /etc (with /etc/pve), the crontabs and the list of installed "
+                "packages of each machine into the restic repository set under Backup & "
+                "restore -> Machine configuration."
+            ),
+            run=_run_config_backup,
         )
     )
     register_action(

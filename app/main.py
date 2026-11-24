@@ -31,6 +31,7 @@ from app.web.routes import (
     api_v1_audit,
     api_v1_backup,
     api_v1_checks,
+    api_v1_config_backup,
     api_v1_dashboard,
     api_v1_disks,
     api_v1_docker,
@@ -58,6 +59,7 @@ from app.web.routes import (
     branding,
     check_push,
     checks,
+    config_backups,
     dashboard,
     disks,
     docker_fleet,
@@ -319,6 +321,8 @@ def create_app() -> FastAPI:
     app.include_router(terminal_recordings.router)
     app.include_router(terminals.router)
     app.include_router(audit.router)
+    # Before `backup`: `/backup/machines` is its own page.
+    app.include_router(config_backups.router)
     app.include_router(backup.router)
     app.include_router(ai.router)
     app.include_router(inform.router)
@@ -336,6 +340,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_checks.router)
     app.include_router(api_v1_health.router)
     app.include_router(api_v1_tune_up.router)
+    app.include_router(api_v1_config_backup.router)
     app.include_router(api_v1_disks.router)
     app.include_router(api_v1_map.router)
     app.include_router(api_v1_machines_live.router)

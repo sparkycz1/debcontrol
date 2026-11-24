@@ -146,6 +146,9 @@ class NotificationEventType(enum.StrEnum):
     # (monitoring sample, app.ssh.ups).
     UPS_ON_BATTERY = "machine.ups_on_battery"
     UPS_POWER_RESTORED = "machine.ups_power_restored"
+    # A configuration backup of the machine (app.services.config_backup)
+    # failed — scheduled or started by hand.
+    CONFIG_BACKUP_FAILED = "machine.config_backup_failed"
     # A machine's overall health (`app.services.machine_health`) got worse
     # (ok -> warning, warning -> critical, ...) or came back to ok — fired
     # from `machine_health.refresh` after each evaluation, only on a real
