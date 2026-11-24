@@ -172,6 +172,7 @@ async def machine_detail(
             "can_tune_up": current_user.has_permission(Permission.ACTION_UPDATES),
             "health": await machine_health.view_for(db, machine),
             "snooze_choices": machine_health.SNOOZE_CHOICES,
+            "usual": await machine_health.usual_now(db, machine),
             "self_host_role": await self_host.role_of(db, machine),
             # The package *rows* themselves are deliberately not fetched
             # here — a machine can easily have several hundred installed
@@ -224,6 +225,7 @@ async def machine_health_panel(
             "machine": machine,
             "health": await machine_health.view_for(db, machine),
             "snooze_choices": machine_health.SNOOZE_CHOICES,
+            "usual": await machine_health.usual_now(db, machine),
             "can_manage": current_user.has_permission(Permission.MACHINE_MANAGE),
             "can_tune_up": current_user.has_permission(Permission.ACTION_UPDATES),
         },

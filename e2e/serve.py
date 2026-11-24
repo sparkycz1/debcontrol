@@ -44,6 +44,7 @@ from app.db.models.endpoint_check import EndpointCheck
 from app.db.models.endpoint_check_result import EndpointCheckResult
 from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.machine import AuthMethod, Machine
+from app.db.models.machine_baseline import MachineBaseline
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.machine_reachability_sample import (
@@ -60,7 +61,15 @@ from app.db.models.tune_up import TuneUpRun
 from app.db.models.user import AuthProvider, User
 from app.db.session import get_db
 from app.main import app
-from app.services import config_backup, disk_history, machine_health, terminal_recording, tune_up
+from app.services import (
+    config_backup,
+    disk_history,
+    machine_baseline,
+    machine_health,
+    terminal_recording,
+    tune_up,
+)
+from app.services.machine_baseline import Bucket
 from app.ssh import firewall, peripherals, ups
 from tests.conftest import FakeRedis
 
@@ -391,6 +400,7 @@ async def seed() -> str:
         # firewall), as their parsers leave them.
         _seed_devices(web)
         await _seed_config_backup(db, web, db_host, now)
+        _seed_baseline(db, web, now)
         await db.commit()
         # Health (app.services.machine_health): web1 has a security update
         # pending (a warning), db1 is down (critical).
@@ -433,6 +443,23 @@ def _seed_devices(machine: Machine) -> None:
         "   |- Total failed:\t40\n   |- Currently banned:\t1\n   |- Total banned:\t9\n"
         "@@BANS\n192.0.2.7 \t2026-11-23 08:00:00 + 600 = 2026-11-23 08:10:00\n"
     )
+
+
+def _seed_baseline(db: AsyncSession, web: Machine, now: datetime) -> None:
+    """Four weeks of web1's usual behavior (app.services.machine_baseline):
+    a quiet machine, so its seeded readings stand out."""
+    def row(median: float, spread: float, low: float, high: float) -> list[Bucket | None]:
+        return [Bucket(320, median, spread, low, high)] * machine_baseline.HOURS
+
+    baseline = machine_baseline.Baseline(
+        since=now - timedelta(days=28), computed_at=now, sample_count=8000,
+        buckets={
+            "cpu": row(6, 2, 2, 14), "memory": row(38, 2, 33, 44), "load": row(0.3, 0.1, 0.1, 0.8),
+            "network": row(120_000, 40_000, 20_000, 400_000), "latency": row(14, 2, 10, 22),
+        },
+    )
+    db.add(MachineBaseline(machine_id=web.id, computed_at=now, since=baseline.since,
+                           sample_count=baseline.sample_count, data=baseline.as_data()))
 
 
 async def _seed_config_backup(

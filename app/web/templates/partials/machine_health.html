@@ -89,4 +89,35 @@
     </details>
   {% endif %}
 {% endif %}
+  {% if usual is defined and usual.enabled %}
+    {% macro shown(metric, value) %}{% if value is none %}—{% elif metric == 'network' %}{{ value | net_rate(request) }}{% elif metric == 'load' %}{{ '%.1f' | format(value) }}{% elif metric == 'latency' %}{{ value | round | int }} ms{% else %}{{ value | round | int }} %{% endif %}{% endmacro %}
+    <details class="form-advanced" id="usual-behavior">
+      <summary>{{ t(request, "health.usual.heading") }}</summary>
+      {% if usual.ranges %}
+        <p class="hint">{{ t(request, "health.usual.hint") }}</p>
+        <table class="data-table">
+          <thead><tr>
+            <th>{{ t(request, "health.usual.metric") }}</th>
+            <th>{{ t(request, "health.usual.now") }}</th>
+            <th>{{ t(request, "health.usual.range") }}</th>
+            <th>{{ t(request, "health.usual.median") }}</th>
+          </tr></thead>
+          <tbody>
+            {% for r in usual.ranges %}
+              <tr>
+                <td>{{ t(request, "health.usual.metric_" ~ r.metric) }}</td>
+                <td>{{ shown(r.metric, r.value) }}{% if r.verdict %} <span class="badge {{ 'badge-warn' if r.verdict == 'very_high' else '' }}">{{ t(request, "health.usual.verdict_" ~ r.verdict) }}</span>{% endif %}</td>
+                <td>{{ shown(r.metric, r.low) }} – {{ shown(r.metric, r.high) }}</td>
+                <td>{{ shown(r.metric, r.median) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% elif usual.ready_at %}
+        <p class="hint">{{ t(request, "health.usual.learning", when=(usual.ready_at | local_time('%Y-%m-%d'))) }}</p>
+      {% else %}
+        <p class="hint">{{ t(request, "health.usual.not_learned") }}</p>
+      {% endif %}
+    </details>
+  {% endif %}
 <p class="hint"><a href="/health">{{ t(request, "health.panel.fleet_link") }}</a></p>

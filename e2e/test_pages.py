@@ -356,6 +356,25 @@ def test_config_backup_pages(page: Any) -> None:
     assert page.problems == []
 
 
+def test_usual_behavior_and_dashboard_widgets(page: Any) -> None:
+    machine = _first_href(page, "/machines?q=web1", "/machines/")
+    _open(page, machine)
+    page.locator("#usual-behavior summary").click()
+    assert page.locator("#usual-behavior tbody tr").count() >= 3
+    _open(page, "/dashboard?arrange=1")
+    for key in ("unusual", "top_machines", "latency", "links"):
+        page.locator(
+            f'form:has(input[name="section"][value="{key}"]) button[value="show"]'
+        ).click()
+        page.wait_for_load_state()
+    for heading in ("Unusual behavior", "Busiest machines", "Internet latency", "Web interfaces"):
+        assert page.locator("section.panel h2", has_text=heading).count() == 1
+    assert page.problems == []
+    # Back to the default, for the other tests and the screenshots.
+    page.locator('button[value="reset"]').click()
+    page.wait_for_load_state()
+
+
 def test_device_cards_and_firewall_panel(page: Any) -> None:
     machine = _first_href(page, "/machines?q=web1", "/machines/")
     _open(page, machine + "/monitoring")

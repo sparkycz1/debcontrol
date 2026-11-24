@@ -31,9 +31,11 @@ from __future__ import annotations
 # order-dependent pass this test exists to not be.
 import app.scheduling.jobs
 import app.tasks.ai_jobs
+import app.tasks.baselines
 import app.tasks.config_backup
 import app.tasks.docker_jobs
-import app.tasks.jobs  # noqa: F401
+import app.tasks.jobs
+import app.tasks.tune_up  # noqa: F401
 from app.tasks.celery_app import celery_app
 
 # Every task this app expects to fire on its own, on a schedule, with no
@@ -62,6 +64,7 @@ _EXPECTED_PERIODIC_TASKS = {
     "app.tasks.docker_jobs.poll_git_stacks",
     "app.tasks.docker_jobs.purge_old_docker_jobs",
     "app.tasks.jobs.send_due_notification_digests",
+    "app.tasks.baselines.learn_all_baselines",
 }
 
 

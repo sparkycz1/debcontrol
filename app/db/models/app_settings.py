@@ -411,6 +411,21 @@ class AppSettings(Base):
     health_latency_critical_ms: Mapped[int] = mapped_column(
         Integer, default=500, server_default="500", nullable=False
     )
+    # --- Usual behavior (app.services.machine_baseline) ---
+    # Compare each machine with its own usual behavior at this hour of the
+    # week: something unusual is a finding of its own.
+    health_anomaly_detection: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    # How many times the usual spread a reading must be off to count.
+    health_anomaly_deviations: Mapped[int] = mapped_column(
+        Integer, default=4, server_default="4", nullable=False
+    )
+    # High CPU or memory that is usual for the machine at this hour is
+    # information, not a warning (a critical level always counts).
+    health_anomaly_mute_usual: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     # --- Connectivity from the machine itself (app.ssh.connectivity) ---
     # With every monitoring sample: ping to the default gateway and to the
     # internet target, one DNS lookup of `connectivity_dns_name`, NTP state.

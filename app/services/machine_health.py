@@ -45,9 +45,10 @@ from app.db.models.machine_monitoring_sample import MachineMonitoringSample
 from app.db.models.notification_rule import NotificationEventType
 from app.db.models.security_audit import SecurityAudit, SecurityAuditStatus
 from app.i18n import DEFAULT_LOCALE_CODE, get_locale, translate
-from app.services import disk_history, proxmox_capacity
+from app.services import disk_history, machine_baseline, proxmox_capacity
 from app.services.disk_history import DEFAULT_THRESHOLDS as DEFAULT_DISK_THRESHOLDS
 from app.services.disk_history import DiskThresholds
+from app.services.machine_baseline import Baseline
 from app.ssh import peripherals, proxmox
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,10 @@ class Thresholds:
     latency_warn: int = 150
     latency_critical: int = 500
     disks: DiskThresholds = DEFAULT_DISK_THRESHOLDS
+    # Against the machine's usual behavior (app.services.machine_baseline).
+    anomaly_detection: bool = True
+    anomaly_deviations: int = machine_baseline.DEFAULT_DEVIATIONS
+    mute_usual: bool = True
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> Thresholds:
@@ -142,6 +147,9 @@ class Thresholds:
             latency_warn=settings.health_latency_warn_ms,
             latency_critical=settings.health_latency_critical_ms,
             disks=DiskThresholds.from_settings(settings),
+            anomaly_detection=settings.health_anomaly_detection,
+            anomaly_deviations=settings.health_anomaly_deviations,
+            mute_usual=settings.health_anomaly_mute_usual,
         )
 
 
@@ -197,17 +205,47 @@ def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def _cpu(samples: Sequence[MachineMonitoringSample], th: Thresholds) -> list[Finding]:
+def _usual_bucket(
+    baseline: Baseline | None, metric: machine_baseline.Metric, th: Thresholds, now: datetime
+) -> machine_baseline.Bucket | None:
+    if baseline is None or not th.anomaly_detection:
+        return None
+    return baseline.usual(metric, now)
+
+
+def _threshold_finding(
+    key: str, category: str, value: float, warn: int, critical: int, message: str,
+    bucket: machine_baseline.Bucket | None, th: Thresholds,
+) -> Finding | None:
+    """A percentage over its warning or critical level — information
+    instead of a warning when the machine is usually this busy at this
+    hour (machine_baseline), never instead of critical."""
+    severity = _level(value, warn, critical)
+    if severity is None:
+        return None
+    if severity == "warning" and th.mute_usual and bucket and machine_baseline.is_usual(
+        value, bucket
+    ):
+        return Finding(key, category, "info", f"{message}_usual",
+                       {"percent": round(value), "usual": round(bucket.p95)}, "monitoring")
+    return Finding(key, category, severity, message, {"percent": round(value)}, "monitoring")
+
+
+def _cpu(
+    samples: Sequence[MachineMonitoringSample],
+    th: Thresholds,
+    baseline: Baseline | None = None,
+    now: datetime | None = None,
+) -> list[Finding]:
     findings: list[Finding] = []
     values = [s.cpu_percent for s in samples[:CPU_SAMPLES] if s.cpu_percent is not None]
     if values:
         average = sum(values) / len(values)
-        severity = _level(average, th.cpu_warn, th.cpu_critical)
-        if severity:
-            findings.append(
-                Finding("cpu.usage", "cpu", severity, "cpu_high",
-                        {"percent": round(average)}, "monitoring")
-            )
+        bucket = _usual_bucket(baseline, "cpu", th, now or datetime.now(UTC))
+        finding = _threshold_finding("cpu.usage", "cpu", average, th.cpu_warn,
+                                     th.cpu_critical, "cpu_high", bucket, th)
+        if finding:
+            findings.append(finding)
     newest = samples[0] if samples else None
     hottest: tuple[float, str] | None = None
     for sensor in (newest.sensor_temps or []) if newest else []:
@@ -291,7 +329,11 @@ def _network(
 
 
 def _memory(
-    machine: Machine, newest: MachineMonitoringSample | None, th: Thresholds
+    machine: Machine,
+    newest: MachineMonitoringSample | None,
+    th: Thresholds,
+    baseline: Baseline | None = None,
+    now: datetime | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
     # A Proxmox VE node whose running guests were given more memory than
@@ -306,10 +348,72 @@ def _memory(
     if newest is None or newest.ram_used_bytes is None or not newest.ram_total_bytes:
         return findings
     percent = newest.ram_used_bytes / newest.ram_total_bytes * 100
-    severity = _level(percent, th.memory_warn, th.memory_critical)
-    if severity:
-        findings.append(Finding("memory.usage", "memory", severity, "memory_high",
-                                {"percent": round(percent)}, "monitoring"))
+    bucket = _usual_bucket(baseline, "memory", th, now or datetime.now(UTC))
+    finding = _threshold_finding("memory.usage", "memory", percent, th.memory_warn,
+                                 th.memory_critical, "memory_high", bucket, th)
+    if finding:
+        findings.append(finding)
+    return findings
+
+
+# Where each unusual metric is shown: (finding key, category, message).
+_UNUSUAL: dict[str, tuple[str, str, str]] = {
+    "cpu": ("cpu.unusual", "cpu", "cpu_unusual"),
+    "load": ("cpu.load_unusual", "cpu", "load_unusual"),
+    "memory": ("memory.unusual", "memory", "memory_unusual"),
+    "network": ("network.traffic_unusual", "network", "traffic_unusual"),
+    "latency": ("network.latency_unusual", "network", "latency_unusual"),
+}
+# Every finding about unusual behavior (the Dashboard's widget lists them).
+UNUSUAL_KEYS: frozenset[str] = frozenset(
+    {key for key, _category, _message in _UNUSUAL.values()} | {"network.traffic_dropped"}
+)
+# A fixed-threshold finding that already says the same thing.
+_SAME_AS: dict[str, str] = {
+    "cpu": "cpu.usage",
+    "memory": "memory.usage",
+    "latency": "network.latency",
+}
+
+
+def _shown(metric: str, value: float) -> float:
+    """A reading as the finding text shows it: MB/s for traffic, one
+    decimal for load, whole numbers otherwise."""
+    if metric == "network":
+        return round(value / 1_000_000, 1)
+    if metric == "load":
+        return round(value, 1)
+    return round(value)
+
+
+def _unusual(
+    samples: Sequence[MachineMonitoringSample],
+    baseline: Baseline | None,
+    th: Thresholds,
+    now: datetime,
+    found: Sequence[Finding],
+) -> list[Finding]:
+    """What is out of the machine's usual behavior at this hour
+    (app.services.machine_baseline)."""
+    if baseline is None or not th.anomaly_detection or not baseline.ready(now):
+        return []
+    serious = {f.key for f in found if f.severity != "info"}
+    findings: list[Finding] = []
+    for metric, value in machine_baseline.current(samples).items():
+        bucket = baseline.usual(metric, now)
+        if bucket is None:
+            continue
+        verdict = machine_baseline.unusual(metric, value, bucket, th.anomaly_deviations)
+        if verdict is None or _SAME_AS.get(metric) in serious:
+            continue
+        key, category, message = _UNUSUAL[metric]
+        params = {"value": _shown(metric, value), "usual": _shown(metric, bucket.median)}
+        if verdict == "low":
+            findings.append(Finding("network.traffic_dropped", "network", "info",
+                                    "traffic_dropped", params, "monitoring"))
+            continue
+        severity: Severity = "warning" if verdict == "very_high" else "info"
+        findings.append(Finding(key, category, severity, message, params, "monitoring"))
     return findings
 
 
@@ -588,9 +692,11 @@ def evaluate(
     *,
     audit: AuditSummary | None = None,
     now: datetime | None = None,
+    baseline: Baseline | None = None,
 ) -> list[Finding]:
     """Every problem on `machine` right now, reachability aside. `samples`
-    are its newest monitoring samples, newest first."""
+    are its newest monitoring samples, newest first; `baseline` its usual
+    behavior, when learned."""
     now = now or datetime.now(UTC)
     newest = samples[0] if samples else None
     findings: list[Finding] = []
@@ -598,8 +704,9 @@ def evaluate(
         findings.append(Finding("connection.host_key", "connection", "critical",
                                 "host_key_changed", {}, None))
     findings += _network(machine, samples, thresholds)
-    findings += _cpu(samples, thresholds)
-    findings += _memory(machine, newest, thresholds)
+    findings += _cpu(samples, thresholds, baseline, now)
+    findings += _memory(machine, newest, thresholds, baseline, now)
+    findings += _unusual(samples, baseline, thresholds, now, findings)
     findings += _storage(machine, newest, thresholds)
     findings += _disks(machine, newest, thresholds)
     findings += _hardware(machine)
@@ -772,6 +879,48 @@ async def _newest_samples(db: AsyncSession, machine_id: uuid.UUID) -> list[Machi
     return list(result.scalars().all())
 
 
+@dataclass(frozen=True)
+class UsualNow:
+    """A machine's usual behavior at this hour next to its readings now
+    (the Health panel and `GET /api/v1/machines/{id}/health/usual`)."""
+
+    enabled: bool
+    baseline: Baseline | None
+    ranges: list[machine_baseline.Range]
+    now: datetime
+
+    @property
+    def ready_at(self) -> datetime | None:
+        """When a machine still learning starts being compared."""
+        if self.baseline is None or self.baseline.since is None:
+            return None
+        since = self.baseline.since
+        return (since if since.tzinfo else since.replace(tzinfo=UTC)) + machine_baseline.MIN_HISTORY
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            **machine_baseline.status_dict(self.baseline, self.now),
+            "hour_of_week": machine_baseline.hour_of_week(self.now),
+            "ranges": [r.as_dict() for r in self.ranges],
+        }
+
+
+async def usual_now(db: AsyncSession, machine: Machine) -> UsualNow:
+    from app.core.app_settings import get_or_create_app_settings
+
+    settings = await get_or_create_app_settings(db)
+    now = datetime.now(UTC)
+    baseline = await machine_baseline.load(db, machine.id)
+    ranges = machine_baseline.ranges_now(
+        baseline,
+        await _newest_samples(db, machine.id),
+        now,
+        settings.health_anomaly_deviations,
+    )
+    return UsualNow(settings.health_anomaly_detection, baseline, ranges, now)
+
+
 async def _audit_summary(db: AsyncSession, machine_id: uuid.UUID) -> AuditSummary | None:
     # Imported here: security_audit imports the SSH layer, which this
     # module (read by templates) does not otherwise need.
@@ -848,6 +997,7 @@ async def refresh(
                 Thresholds.from_settings(settings),
                 audit=await _audit_summary(db, machine.id),
                 now=now,
+                baseline=await machine_baseline.load(db, machine.id),
             )
             machine.health = {
                 "at": now.isoformat(),

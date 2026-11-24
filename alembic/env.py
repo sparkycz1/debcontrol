@@ -35,6 +35,7 @@ from app.db.models import (  # noqa: F401 - registers models with metadata
     FleetSnapshot,
     FleetSummary,
     Machine,
+    MachineBaseline,
     MachineChange,
     MachineGroup,
     MachineHealthSnooze,

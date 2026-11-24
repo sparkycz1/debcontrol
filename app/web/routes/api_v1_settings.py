@@ -9,7 +9,8 @@ What's exposed and why:
   unauthenticated-adjacent on the Settings page to any logged-in user with
   `settings.view`.
 - **Background-check intervals and timeouts, every retention window,
-  monitoring downsampling, the machine health thresholds, the
+  monitoring downsampling, the machine health thresholds (with the
+  comparison against usual behavior), the
   connectivity checks (on/off, internet target, DNS name), the AI token
   limits and the sign-in policy's
   session lifetime/lockout numbers** — operational facts, not secrets.
