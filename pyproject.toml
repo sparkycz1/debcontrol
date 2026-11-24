@@ -1,6 +1,6 @@
 [project]
 name = "debcontrol"
-version = "0.149.0"
+version = "0.150.0"
 description = "Web application for managing Debian machines over SSH"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -211,6 +211,7 @@ module = [
     "app.tasks.docker_extras",
     "app.tasks.tune_up",
     "app.tasks.config_backup",
+    "app.tasks.baselines",
     "app.scheduling.jobs",
 ]
 disallow_untyped_decorators = false

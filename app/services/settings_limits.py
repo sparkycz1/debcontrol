@@ -50,6 +50,9 @@ BOUNDED_FIELDS: dict[str, tuple[int, int]] = {
     "health_disk_temp_nvme_critical_celsius": (20, 150),
     "health_disk_wear_warn_percent": (1, 200),
     "health_disk_wear_critical_percent": (1, 200),
+    # Usual behavior (app.services.machine_baseline): how many times the
+    # usual spread a reading must be off.
+    "health_anomaly_deviations": (2, 20),
 }
 
 # (warning, critical) pairs that must stay in order: a percent or a
@@ -108,6 +111,9 @@ BOOLEAN_FIELDS: tuple[str, ...] = (
     "docker_endpoint_checks",
     # Connectivity from the machines (app.ssh.connectivity).
     "connectivity_checks_enabled",
+    # Usual behavior of each machine (app.services.machine_baseline).
+    "health_anomaly_detection",
+    "health_anomaly_mute_usual",
 )
 
 # A host name or IP address the machines ping or resolve
@@ -150,6 +156,8 @@ AUDIT_ACTION_BY_FIELD: dict[str, str] = {
     "connectivity_checks_enabled": "settings.background_checks.update",
     "connectivity_internet_target": "settings.background_checks.update",
     "connectivity_dns_name": "settings.background_checks.update",
+    "health_anomaly_detection": "settings.health_thresholds.update",
+    "health_anomaly_mute_usual": "settings.health_thresholds.update",
     "audit_log_retention_days": "settings.audit_retention.update",
     "dashboard_trends_retention_days": "settings.dashboard_trends_retention.update",
     "machine_update_run_retention_days": "settings.machine_update_run_retention.update",

@@ -2890,6 +2890,25 @@ a.htmx-request, .link-button.htmx-request { opacity: 0.6; cursor: progress; }
 }
 .dashboard-arrange-name { flex: 1; }
 .dashboard-arrange-list li.is-hidden .dashboard-arrange-name { color: var(--color-muted); }
+.dashboard-arrange-widget { font-size: 0.8rem; }
+
+/* Dashboard widgets (app.services.dashboard_widgets). */
+.dashboard-widget-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-3);
+}
+.dashboard-widget-columns h3 { margin: 0 0 var(--space-1); font-size: 1rem; }
+.dashboard-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-1) var(--space-3);
+}
+.dashboard-links li { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+.dashboard-links .link-chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 
 /* Audit -> Terminal recordings: the player's controls. */
 .player-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0 0 var(--space-2); }

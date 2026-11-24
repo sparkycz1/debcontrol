@@ -257,6 +257,7 @@ _CHECKS_TAB_BOUNDED: tuple[tuple[str, str], ...] = (
     ("health_disk_temp_nvme_critical_celsius", "settings.checks.health.disk_temp_nvme_critical"),
     ("health_disk_wear_warn_percent", "settings.checks.health.disk_wear_warn"),
     ("health_disk_wear_critical_percent", "settings.checks.health.disk_wear_critical"),
+    ("health_anomaly_deviations", "settings.checks.health.anomaly_deviations"),
 )
 _CHECKS_TAB_RETENTION: tuple[str, ...] = (
     "monitoring_history_retention_days",

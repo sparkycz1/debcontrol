@@ -10,6 +10,11 @@ layout saved long ago keeps working after an upgrade.
 
 Hiding a section is a matter of taste, not of access: a section the
 account may not see stays absent whatever its layout says.
+
+**Widgets** (`OPTIONAL`) are sections nobody gets until they pick them:
+hidden in the default layout, and hidden in a stored layout that does not
+name them yet (one saved before they existed). Showing one puts it in the
+stored order; their data comes from `app.services.dashboard_widgets`.
 """
 
 from __future__ import annotations
@@ -18,7 +23,21 @@ from dataclasses import dataclass
 from typing import Any
 
 # In the order they appear when an account has not arranged anything.
-SECTIONS = ("machines", "health", "summary", "trends", "scheduling", "activity", "fleet")
+SECTIONS = (
+    "machines",
+    "health",
+    "summary",
+    "trends",
+    "scheduling",
+    "activity",
+    "fleet",
+    "unusual",
+    "top_machines",
+    "latency",
+    "links",
+)
+# Widgets: hidden until the account shows them.
+OPTIONAL = frozenset({"unusual", "top_machines", "latency", "links"})
 
 
 class UnknownSectionError(ValueError):
@@ -36,18 +55,19 @@ class Layout:
 
     @property
     def is_default(self) -> bool:
-        return self.order == SECTIONS and not self.hidden
+        return self.order == SECTIONS and self.hidden == OPTIONAL
 
     def as_dict(self) -> dict[str, list[str]]:
         return {"order": list(self.order), "hidden": [k for k in self.order if k in self.hidden]}
 
 
-DEFAULT = Layout(order=SECTIONS, hidden=frozenset())
+DEFAULT = Layout(order=SECTIONS, hidden=OPTIONAL)
 
 
 def resolve(stored: Any) -> Layout:
     """The layout to use for whatever is stored: known sections in the
-    stored order, then any section the stored layout does not mention."""
+    stored order, then any section the stored layout does not mention
+    (a widget it does not mention hidden)."""
     if not isinstance(stored, dict):
         return DEFAULT
     raw_order = stored.get("order")
@@ -56,10 +76,11 @@ def resolve(stored: Any) -> Layout:
     for key in raw_order if isinstance(raw_order, list) else []:
         if key in SECTIONS and key not in order:
             order.append(key)
+    unmentioned = OPTIONAL - set(order)
     order.extend(key for key in SECTIONS if key not in order)
     hidden = frozenset(
         key for key in (raw_hidden if isinstance(raw_hidden, list) else []) if key in SECTIONS
-    )
+    ) | unmentioned
     return Layout(order=tuple(order), hidden=hidden)
 
 

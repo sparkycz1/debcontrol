@@ -20,11 +20,13 @@ def test_a_stored_layout_survives_added_and_removed_sections() -> None:
         {"order": ["fleet", "gone", "machines", "fleet"], "hidden": ["trends", "gone"]}
     )
 
-    # Known keys in the stored order, then every section it did not mention.
+    # Known keys in the stored order, then every section it did not mention
+    # — the widgets among them hidden, since this layout never picked them.
     assert layout.order == (
-        "fleet", "machines", "health", "summary", "trends", "scheduling", "activity"
+        "fleet", "machines", "health", "summary", "trends", "scheduling", "activity",
+        "unusual", "top_machines", "latency", "links",
     )
-    assert layout.hidden == frozenset({"trends"})
+    assert layout.hidden == frozenset({"trends"}) | dashboard_layout.OPTIONAL
     assert "trends" not in layout.visible and layout.visible[0] == "fleet"
     assert dashboard_layout.resolve(None) == dashboard_layout.DEFAULT
     assert dashboard_layout.resolve("nonsense") == dashboard_layout.DEFAULT
@@ -37,14 +39,28 @@ def test_moving_and_hiding() -> None:
     at_top = dashboard_layout.move(layout, "machines", up=True)
     hidden = dashboard_layout.set_hidden(moved, "summary", hidden=True)
 
-    assert moved.order[-2:] == ("fleet", "activity")
+    assert moved.order[5:7] == ("fleet", "activity")
     assert at_top == layout
-    assert hidden.hidden == frozenset({"summary"})
+    assert hidden.hidden == frozenset({"summary"}) | dashboard_layout.OPTIONAL
     assert dashboard_layout.to_store(layout) is None
     assert dashboard_layout.to_store(hidden) == {
         "order": list(moved.order),
-        "hidden": ["summary"],
+        "hidden": ["summary", "unusual", "top_machines", "latency", "links"],
     }
+
+
+def test_widgets_are_hidden_until_picked() -> None:
+    assert dashboard_layout.DEFAULT.hidden == dashboard_layout.OPTIONAL
+    shown = dashboard_layout.set_hidden(dashboard_layout.DEFAULT, "latency", hidden=False)
+    stored = dashboard_layout.to_store(shown)
+
+    assert "latency" in shown.visible and not shown.is_default
+    assert stored is not None and "latency" not in stored["hidden"]
+    # Saved, then read back: still shown; a layout saved before widgets
+    # existed keeps them hidden.
+    assert "latency" in dashboard_layout.resolve(stored).visible
+    old = dashboard_layout.resolve({"order": ["machines", "fleet"], "hidden": []})
+    assert not set(old.visible) & dashboard_layout.OPTIONAL
 
 
 async def test_arranging_the_dashboard(client: AsyncClient, db_session_factory: Any) -> None:
@@ -112,9 +128,10 @@ async def test_dashboard_layout_api(client: AsyncClient) -> None:
     bad = await client.put(url, headers=headers, json={"order": ["nope"]})
     reset = await client.put(url, headers=headers, json={})
 
-    assert default["order"] == default["sections"] and default["hidden"] == []
+    assert default["order"] == default["sections"]
+    assert set(default["hidden"]) == set(default["optional"])
     assert saved.status_code == 200
     assert saved.json()["order"][:2] == ["fleet", "machines"]
-    assert saved.json()["hidden"] == ["trends"]
+    assert saved.json()["hidden"] == ["trends", "unusual", "top_machines", "latency", "links"]
     assert bad.status_code == 422
     assert reset.json()["order"] == reset.json()["sections"]

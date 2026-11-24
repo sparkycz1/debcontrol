@@ -240,6 +240,7 @@ celery_app = Celery(
         "app.tasks.docker_extras",
         "app.tasks.tune_up",
         "app.tasks.config_backup",
+        "app.tasks.baselines",
         "app.scheduling.jobs",
     ],
 )
@@ -424,6 +425,12 @@ celery_app.conf.beat_schedule = {
     "config-backup-maintenance": {
         "task": "app.tasks.config_backup.config_backup_maintenance",
         "schedule": crontab(hour=4, minute=30),
+    },
+    # Each machine's usual behavior (app.services.machine_baseline),
+    # learned again from its last four weeks, once a night.
+    "learn-machine-baselines": {
+        "task": "app.tasks.baselines.learn_all_baselines",
+        "schedule": crontab(hour=3, minute=15),
     },
     # Tune-ups ("Komplet", app.tasks.tune_up): a run whose task stopped
     # goes on in a new one, waiting runs start as others finish.

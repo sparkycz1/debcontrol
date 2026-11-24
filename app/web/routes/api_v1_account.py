@@ -448,7 +448,11 @@ class _DashboardLayout(BaseModel):
 
 
 def _layout_response(layout: dashboard_layout.Layout) -> dict[str, object]:
-    return {**layout.as_dict(), "sections": list(dashboard_layout.SECTIONS)}
+    return {
+        **layout.as_dict(),
+        "sections": list(dashboard_layout.SECTIONS),
+        "optional": sorted(dashboard_layout.OPTIONAL),
+    }
 
 
 @router.get("/account/dashboard-layout")
@@ -467,7 +471,8 @@ async def set_dashboard_layout_api(
     user: User = Depends(get_api_token_user),
 ) -> dict[str, object]:
     """Replace the layout. An unknown section key is refused; an empty
-    `order` and `hidden` go back to the default."""
+    `order` and `hidden` go back to the default. A widget (`optional`) is
+    shown only when it is in `order` and not in `hidden`."""
     unknown = sorted(set(payload.order + payload.hidden) - set(dashboard_layout.SECTIONS))
     if unknown:
         raise HTTPException(

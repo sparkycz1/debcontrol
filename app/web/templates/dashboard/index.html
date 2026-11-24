@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "macros/charts.html" import chart_card with context %}
-{% from "macros/health.html" import health_badge, finding_text with context %}
+{% from "macros/health.html" import health_badge, severity_badge, finding_text with context %}
 
 {% block title %}{{ t(request, "dashboard.title") }} — debcontrol{% endblock %}
 {% block main_class %}container-wide{% endblock %}
@@ -20,6 +20,7 @@
         <li class="{{ 'is-hidden' if is_hidden else '' }}">
           <span class="dashboard-arrange-name">{{ t(request, "dashboard.section." ~ key) }}</span>
           {% if is_hidden %}<span class="badge">{{ t(request, "dashboard.arrange.hidden") }}</span>{% endif %}
+          {% if key in optional_sections %}<span class="badge badge-tag dashboard-arrange-widget">{{ t(request, "dashboard.arrange.widget") }}</span>{% endif %}
           <form method="post" action="/dashboard/layout" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="section" value="{{ key }}">
@@ -218,6 +219,111 @@
              placeholder="{{ t(request, 'monitoring.filter_placeholder') }}" aria-label="{{ t(request, 'monitoring.filter_placeholder') }}">
     </div>
     {% include "partials/fleet_grid.html" %}
+  </section>
+  {% endif %}
+
+  {# The widgets (app.services.dashboard_widgets), shown only when picked. #}
+  {% elif section_key == 'unusual' %}
+  {% if unusual_machines is defined %}
+  <section class="panel">
+    <h2>{{ t(request, "dashboard.section.unusual") }}</h2>
+    <p class="hint">{{ t(request, "dashboard.widget.unusual_hint") }}</p>
+    {% if unusual_machines %}
+      <table class="data-table">
+        <thead><tr><th>{{ t(request, "machines.table.name") }}</th><th>{{ t(request, "health.panel.problem") }}</th></tr></thead>
+        <tbody>
+          {% for machine, findings in unusual_machines %}
+            <tr>
+              <td><a href="/machines/{{ machine.id }}#usual-behavior">{{ machine.name }}</a></td>
+              <td>{% for f in findings %}{{ severity_badge(f.severity) }} {{ finding_text(f) }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "dashboard.widget.unusual_none") }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% elif section_key == 'top_machines' %}
+  {% if top_machines is defined %}
+  <section class="panel">
+    <h2>{{ t(request, "dashboard.section.top_machines") }}</h2>
+    <div class="dashboard-widget-columns">
+      {% for title_key, rows, attr in [("dashboard.widget.top_cpu", top_machines.cpu, "cpu_percent"), ("dashboard.widget.top_memory", top_machines.memory, "memory_percent")] %}
+        <div>
+          <h3>{{ t(request, title_key) }}</h3>
+          {% if rows %}
+            <table class="data-table">
+              <tbody>
+                {% for r in rows %}
+                  {% set value = r[attr] %}
+                  <tr>
+                    <td><a href="/machines/{{ r.machine_id }}/monitoring">{{ r.name }}</a></td>
+                    <td class="num"><span class="{{ 'fleet-danger' if value >= 90 else ('text-warn' if value >= 75 else '') }}">{{ value | round | int }} %</span>{% if attr == 'cpu_percent' and r.load1 is not none %} <span class="hint">{{ t(request, "dashboard.widget.load", load=('%.1f' | format(r.load1))) }}</span>{% endif %}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="hint">{{ t(request, "dashboard.widget.no_readings") }}</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% elif section_key == 'latency' %}
+  {% if fleet_latency is defined %}
+  <section class="panel">
+    <h2>{{ t(request, "dashboard.section.latency") }}</h2>
+    {% if fleet_latency.measured %}
+      <p class="hint">{{ t(request, "dashboard.widget.latency_average", ms=(fleet_latency.average_ms | round | int), count=fleet_latency.measured) }}</p>
+      <table class="data-table">
+        <thead><tr>
+          <th>{{ t(request, "machines.table.name") }}</th>
+          <th class="num">{{ t(request, "dashboard.widget.internet") }}</th>
+          <th class="num">{{ t(request, "dashboard.widget.loss") }}</th>
+          <th class="num">{{ t(request, "dashboard.widget.gateway") }}</th>
+        </tr></thead>
+        <tbody>
+          {% for r in fleet_latency.worst %}
+            <tr>
+              <td><a href="/machines/{{ r.machine_id }}/monitoring">{{ r.name }}</a></td>
+              <td class="num">{{ r.internet_latency_ms | round | int }} ms</td>
+              <td class="num">{% if r.internet_loss_percent %}<span class="text-warn">{{ r.internet_loss_percent | round | int }} %</span>{% else %}0 %{% endif %}</td>
+              <td class="num">{% if r.gateway_latency_ms is not none %}{{ '%.1f' | format(r.gateway_latency_ms) }} ms{% else %}—{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="hint">{{ t(request, "dashboard.widget.latency_none") }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% elif section_key == 'links' %}
+  {% if app_links is defined %}
+  <section class="panel">
+    <h2>{{ t(request, "dashboard.section.links") }}</h2>
+    {% if app_links %}
+      <ul class="dashboard-links">
+        {% for link in app_links %}
+          <li>
+            <a class="link-chip" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.stack or link.container }}{% if link.stack and link.stack != link.container %} · {{ link.container }}{% endif %} ↗</a>
+            <span class="hint">{{ link.machine_name }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+      {% if app_link_total > app_links | length %}
+        <p class="hint"><a href="/map">{{ t(request, "dashboard.widget.links_more", count=app_link_total - app_links | length) }}</a></p>
+      {% endif %}
+    {% else %}
+      <p class="hint">{{ t(request, "dashboard.widget.links_none") }}</p>
+    {% endif %}
   </section>
   {% endif %}
   {% endif %}

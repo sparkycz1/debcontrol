@@ -20,7 +20,8 @@ from app.db.models.fleet_summary import FleetSummary
 from app.db.models.role import Permission
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services.access_scope import is_restricted
+from app.services import dashboard_widgets, machine_health
+from app.services.access_scope import allowed_group_ids, is_restricted
 
 router = APIRouter(prefix="/api/v1/dashboard")
 
@@ -91,3 +92,36 @@ async def latest_fleet_summary_api(
     )
     summary = result.scalar_one_or_none()
     return {"summary": _fleet_summary_to_dict(summary) if summary is not None else None}
+
+
+@router.get("/widgets", dependencies=[_view])
+async def dashboard_widgets_api(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """What the Dashboard's widgets show (`app.services.dashboard_widgets`),
+    all of them, whichever this account has picked: machines behaving
+    unusually right now, the busiest machines by CPU and memory, the worst
+    internet latency, and the web links of running containers. Scoped to
+    the machines the account can see."""
+    scope = await allowed_group_ids(db, user)
+    unusual = await dashboard_widgets.unusual_machines(db, scope)
+    readings = await dashboard_widgets.latest_readings(db, scope)
+    links, total = await dashboard_widgets.app_links(db, scope)
+    return {
+        "unusual": [
+            {
+                "id": str(machine.id),
+                "name": machine.name,
+                "problems": [
+                    {**f.as_dict(), "text": machine_health.finding_text(f, user.locale)}
+                    for f in findings
+                ],
+            }
+            for machine, findings in unusual
+        ],
+        "top_machines": dashboard_widgets.top_machines(readings).as_dict(),
+        "latency": dashboard_widgets.latency(readings).as_dict(),
+        "links": [link.as_dict() for link in links],
+        "links_total": total,
+    }

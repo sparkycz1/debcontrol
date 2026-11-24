@@ -11,6 +11,9 @@ machines the token's account can see.
 - `POST /api/v1/machines/{id}/health/snoozes` — snooze one problem (by its
   `key`) for `hours`, or until it is gone (`hours` null).
 - `DELETE /api/v1/machines/{id}/health/snoozes/{key}` — clear a snooze.
+- `GET /api/v1/machines/{id}/health/usual` — the machine's usual behavior
+  at this hour of the week (`app.services.machine_baseline`) next to its
+  readings now; `?week=true` adds all 168 hours of each metric.
 
 Each problem carries its message key (`health.finding.<message>`) with
 its parameters, plus `text`: the sentence in the token owner's language.
@@ -85,6 +88,32 @@ async def machine_health_api(
 ) -> dict[str, object]:
     machine = await _get_machine_or_404(machine_id, db, user)
     return _view_dict(await machine_health.view_for(db, machine), user.locale)
+
+
+@router.get("/machines/{machine_id}/health/usual", dependencies=[_view])
+async def machine_usual_behavior_api(
+    machine_id: uuid.UUID,
+    week: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_api_token_user),
+) -> dict[str, object]:
+    """Usual behavior now: each metric's usual range (5th-95th percentile)
+    and median at this hour of the week (UTC), the reading now and whether
+    it is unusual. Network in bytes/second, latency in ms, CPU and memory
+    in percent, load as the 1-minute load average."""
+    machine = await _get_machine_or_404(machine_id, db, user)
+    usual = await machine_health.usual_now(db, machine)
+    data: dict[str, object] = usual.as_dict()
+    if week:
+        data["week"] = {
+            metric: [
+                None if b is None else {"samples": b.samples, "median": round(b.median, 3),
+                                        "low": round(b.p5, 3), "high": round(b.p95, 3)}
+                for b in buckets
+            ]
+            for metric, buckets in (usual.baseline.buckets if usual.baseline else {}).items()
+        }
+    return data
 
 
 @router.post(

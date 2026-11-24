@@ -34,6 +34,7 @@ from app.db.models.fleet_snapshot import FleetSnapshot
 from app.db.models.fleet_summary import FleetSummary
 from app.db.models.geoip_database import GeoipDatabase
 from app.db.models.machine import AuthMethod, Machine
+from app.db.models.machine_baseline import MachineBaseline
 from app.db.models.machine_change import MachineChange
 from app.db.models.machine_group import MachineGroup
 from app.db.models.machine_health_snooze import MachineHealthSnooze
@@ -123,6 +124,7 @@ __all__ = [
     "FleetSummaryFrequency",
     "GeoipDatabase",
     "Machine",
+    "MachineBaseline",
     "MachineChange",
     "MachineGroup",
     "MachineHealthSnooze",

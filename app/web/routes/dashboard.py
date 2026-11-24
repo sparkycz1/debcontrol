@@ -25,7 +25,7 @@ from app.db.models.scheduled_task import ScheduledTask
 from app.db.models.user import User
 from app.db.session import get_db
 from app.scheduling.targets import task_within_scope
-from app.services import dashboard_layout, machine_health
+from app.services import dashboard_layout, dashboard_widgets, machine_health
 from app.services.access_scope import allowed_group_ids, count_visible_groups
 from app.services.dashboard_cache import cached_fleet_stats
 from app.web.routes.fleet import fleet_grid_context
@@ -139,6 +139,21 @@ async def show_dashboard(
     # Which of those sections this account wants, and in what order.
     layout = dashboard_layout.resolve(user.dashboard_layout)
     context["layout"] = layout
+
+    # The widgets (app.services.dashboard_widgets): only the ones this
+    # account shows are worked out.
+    if "machine_stats" in context:
+        shown = set(layout.visible)
+        if "unusual" in shown:
+            context["unusual_machines"] = await dashboard_widgets.unusual_machines(db, scope)
+        if shown & {"top_machines", "latency"}:
+            readings = await dashboard_widgets.latest_readings(db, scope)
+            context["top_machines"] = dashboard_widgets.top_machines(readings)
+            context["fleet_latency"] = dashboard_widgets.latency(readings)
+        if "links" in shown:
+            context["app_links"], context["app_link_total"] = await dashboard_widgets.app_links(
+                db, scope
+            )
     # Only what this account can see at all is offered for arranging — a
     # section it has no permission for is not even named.
     present = {
@@ -149,8 +164,10 @@ async def show_dashboard(
         "trends": "fleet_snapshots" in context,
         "scheduling": "upcoming_tasks" in context,
         "activity": "recent_audit_entries" in context,
+        **dict.fromkeys(dashboard_layout.OPTIONAL, "machine_stats" in context),
     }
     context["arrangeable"] = [key for key in layout.order if present[key]]
+    context["optional_sections"] = dashboard_layout.OPTIONAL
     context["layout_open"] = request.query_params.get("arrange") == "1"
     csrf_token, new_cookie = get_or_create_csrf_token(request)
     context["csrf_token"] = csrf_token
