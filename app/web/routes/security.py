@@ -36,7 +36,7 @@ from app.db.models.role import Permission
 from app.db.models.security_audit import SecurityAudit
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import docker_acceptances, docker_sbom, security_audit
+from app.services import docker_acceptances, docker_sbom, platform_expectations, security_audit
 from app.services.access_scope import is_restricted, machines_visible_to
 from app.services.firewall_overview import PROTECTION_ORDER, firewall_rows, fleet_recent_bans
 from app.services.machine_actions import trigger_security_audits
@@ -201,7 +201,15 @@ async def security_audit_overview(
     rows = []
     for m in machines:
         audit = succeeded.get(m.id)
-        counts = security_audit.counts(audit, suppressed.get(m.id, set())) if audit else None
+        counts = (
+            security_audit.counts(
+                audit,
+                suppressed.get(m.id, set())
+                | set(platform_expectations.expected_audit_keys(m, audit)),
+            )
+            if audit
+            else None
+        )
         rows.append(_AuditRow(m, latest.get(m.id), audit, counts))
     rows.sort(
         key=lambda r: (

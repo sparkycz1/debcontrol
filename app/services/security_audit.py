@@ -139,10 +139,16 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def audit_to_dict(
-    audit: SecurityAudit, *, findings: bool = True, suppressed: set[str] | None = None
+    audit: SecurityAudit,
+    *,
+    findings: bool = True,
+    suppressed: set[str] | None = None,
+    expected: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """The REST API's view of one audit; with `suppressed` (the machine's
-    keys marked OK) also `active`, the counts of what still counts."""
+    keys marked OK) also `active`, the counts of what still counts.
+    `expected` (key -> reason, normal on this machine) is listed as
+    `expected` and left out of `active` too."""
     data: dict[str, Any] = {
         "id": str(audit.id),
         "machine_id": str(audit.machine_id),
@@ -160,8 +166,10 @@ def audit_to_dict(
         "started_at": _iso(audit.started_at),
         "finished_at": _iso(audit.finished_at),
     }
+    if expected:
+        data["expected"] = dict(expected)
     if suppressed is not None:
-        c = counts(audit, suppressed)
+        c = counts(audit, suppressed | set(expected or {}))
         data["active"] = {
             "failed_checks": c.failed_checks,
             "warned_checks": c.warned_checks,
@@ -421,10 +429,16 @@ def lynis_category(test: str) -> str:
     return test.split("-", 1)[0].upper() if test else "OTHER"
 
 
-def annotate(audit: SecurityAudit, suppressed: set[str]) -> dict[str, Any]:
+def annotate(
+    audit: SecurityAudit, suppressed: set[str], expected: dict[str, str] | None = None
+) -> dict[str, Any]:
     """What a page shows of one audit: checks, warnings and suggestions with
-    their keys, split into those that count and those marked OK; Lynis
-    findings grouped by category, each with the `details[]` of its test."""
+    their keys, split into those that count, those marked OK and those
+    normal on this machine (`expected`: key -> reason, from
+    `platform_expectations.expected_audit_keys`); Lynis findings grouped by
+    category, each with the `details[]` of its test."""
+    expected = {k: v for k, v in (expected or {}).items() if k not in suppressed}
+    expected_items: list[dict[str, Any]] = []
     details_by_test: dict[str, list[dict[str, Any]]] = {}
     for detail in audit.details or []:
         details_by_test.setdefault(str(detail.get("test", "")), []).append(detail)
@@ -433,7 +447,9 @@ def annotate(audit: SecurityAudit, suppressed: set[str]) -> dict[str, Any]:
     marked: list[dict[str, Any]] = []
     for check in audit.checks or []:
         item = {**check, "key": finding_key(CHECK, check), "kind": CHECK}
-        if item["key"] in suppressed and check.get("status") in FINDING_STATUSES:
+        if item["key"] in expected and check.get("status") in FINDING_STATUSES:
+            expected_items.append({**item, "reason": expected[item["key"]]})
+        elif item["key"] in suppressed and check.get("status") in FINDING_STATUSES:
             marked.append(item)
         else:
             checks.append(item)
@@ -451,6 +467,9 @@ def annotate(audit: SecurityAudit, suppressed: set[str]) -> dict[str, Any]:
                 "severity": name,
                 "details": details_by_test.get(test, []),
             }
+            if item["key"] in expected:
+                expected_items.append({**item, "reason": expected[item["key"]]})
+                continue
             if item["key"] in suppressed:
                 marked.append(item)
                 continue
@@ -461,7 +480,8 @@ def annotate(audit: SecurityAudit, suppressed: set[str]) -> dict[str, Any]:
         "warnings": sorted(groups["warnings"].values(), key=lambda g: g.category),
         "suggestions": sorted(groups["suggestions"].values(), key=lambda g: g.category),
         "marked": marked,
-        "counts": counts(audit, suppressed),
+        "expected": expected_items,
+        "counts": counts(audit, suppressed | set(expected)),
     }
 
 

@@ -94,7 +94,9 @@ def test_readings_turn_into_findings_by_threshold() -> None:
                 {"mount": "/", "use_percent": 96},
                 {"mount": "/boot", "use_percent": 50},
             ],
-            sensor_temps=[{"name": "cpu", "celsius": 82}, {"name": "nvme", "celsius": 40}],
+            # Only the CPU's own sensor counts: a hot NVMe controller is
+            # the disks' business (SMART), not the CPU's.
+            sensor_temps=[{"name": "cpu", "celsius": 92}, {"name": "nvme Sensor 2", "celsius": 99}],
             smart_disks=[{"device": "/dev/sda", "healthy": False}],
         ),
         _sample(minutes_ago=1, cpu_percent=90),
@@ -251,7 +253,11 @@ async def test_refresh_stores_notifies_and_drops_stale_snoozes(
         assert (await db.execute(select(MachineHealthSnooze))).scalars().all() == []
         assert posted == ["machine.health_degraded"]
 
-        # A failed sample keeps what was found and adds the SSH error.
+        # A failed sample keeps what was found and adds the SSH error:
+        # informational once, critical when it fails again.
+        await machine_health.refresh(db, machine, error="Connection refused")
+        assert machine.health_status == "info"
+        assert posted == ["machine.health_degraded"]
         await machine_health.refresh(db, machine, error="Connection refused")
         assert machine.health_status == "critical"
         assert posted == ["machine.health_degraded", "machine.health_degraded"]

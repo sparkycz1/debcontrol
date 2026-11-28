@@ -293,6 +293,37 @@
     </section>
   {% endif %}
 
+  {% if view and view.expected %}
+    <section class="panel" id="expected">
+      <h2>{{ t(request, "security_audit.expected_heading", count=view.expected | length) }}</h2>
+      <p class="hint">{{ t(request, "security_audit.expected_intro") }}</p>
+      <div class="monitoring-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t(request, "security_audit.finding") }}</th>
+              <th>{{ t(request, "security_audit.expected_reason") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in view.expected %}
+              <tr>
+                <td>
+                  {% if item.kind == 'check' %}
+                    {{ t(request, "security_audit.check." ~ item.id ~ ".title") }}
+                  {% else %}
+                    <code>{{ item.test }}</code> {{ item.text }}
+                  {% endif %}
+                </td>
+                <td>{{ t(request, "security_audit.expected." ~ item.reason) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
   {% if audits | length > 1 or logged_ids %}
     <section class="panel">
       <h2>{{ t(request, "security_audit.history") }}</h2>

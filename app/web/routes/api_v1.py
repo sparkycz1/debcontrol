@@ -114,6 +114,7 @@ from app.services import (
     machine_compare,
     machine_timeline,
     monitoring_history,
+    platform_expectations,
     power_estimate,
     proxmox_backup_exempt,
     proxmox_guest_links,
@@ -917,6 +918,8 @@ async def get_machine_hardware_api(
     ).scalar_one_or_none()
     return {
         "is_physical": machine.is_physical,
+        # systemd-detect-virt's kind ("none", "kvm", "lxc", ...; 0.152.0).
+        "virtualization": machine.virtualization,
         "smart_devices": machine.smart_devices,
         "docker_status": machine.docker_status,
         "docker_containers": machine.docker_containers,
@@ -3236,7 +3239,10 @@ async def security_audits_api(
             "machine_id": str(m.id),
             "machine_name": m.name,
             "audit": security_audit.audit_to_dict(
-                succeeded[m.id], findings=False, suppressed=suppressed.get(m.id, set())
+                succeeded[m.id],
+                findings=False,
+                suppressed=suppressed.get(m.id, set()),
+                expected=platform_expectations.expected_audit_keys(m, succeeded[m.id]),
             )
             if m.id in succeeded
             else None,
@@ -3312,7 +3318,11 @@ async def machine_security_audits_api(
     machine = await _get_machine_or_404(machine_id, db, user)
     suppressed = set(await security_audit.suppressions(db, machine.id))
     return [
-        security_audit.audit_to_dict(a, suppressed=suppressed)
+        security_audit.audit_to_dict(
+            a,
+            suppressed=suppressed,
+            expected=platform_expectations.expected_audit_keys(machine, a),
+        )
         for a in await security_audit.history(db, machine.id)
     ]
 

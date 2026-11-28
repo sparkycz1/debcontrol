@@ -31,6 +31,7 @@ is the one I/O helper — the DB query both the Monitoring tab and
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -56,8 +57,10 @@ DEFAULT_TIME_RANGE = "1h"
 
 # At most this many raw rows (plus the newest one) are pulled into memory
 # per series before downsampling; a window holding more is thinned evenly
-# (`load_spread_rows`), never cut short.
-MAX_RAW_SAMPLES = 20_000
+# (`load_spread_rows`), never cut short. About 13 rows per chart point
+# (`_TARGET_POINTS`) is plenty for an average; 20,000 (before 0.152.0) made
+# a 7-day view load and crunch seconds' worth of JSON for the same chart.
+MAX_RAW_SAMPLES = 2_000
 
 # How many points a downsampled series targets — enough resolution for a
 # ~560px-wide sparkline (see macros/charts.html) to look like a real trend
@@ -166,18 +169,20 @@ def _cumulative_series(
     """`list_attr` is `"network_io"` or `"disk_io"` — each sample's JSON
     list of `{key_field: ..., <value fields>: ...}` dicts. Returns (keys in
     first-seen order, {key: [entry-or-None per sample]})."""
-    keys: list[str] = []
+    rows: list[dict[Any, dict[str, Any]]] = []
+    seen: dict[str, None] = {}  # insertion-ordered set: first-seen order
     for s in samples:
-        for entry in getattr(s, list_attr) or []:
-            k = entry.get(key_field)
-            if k and k not in keys:
-                keys.append(k)
-
-    per_key: dict[str, list[dict[str, Any] | None]] = {k: [] for k in keys}
-    for s in samples:
-        entries = {e.get(key_field): e for e in (getattr(s, list_attr) or [])}
-        for k in keys:
-            per_key[k].append(entries.get(k))
+        entries = {
+            e.get(key_field): e for e in (getattr(s, list_attr) or []) if isinstance(e, dict)
+        }
+        rows.append(entries)
+        for k in entries:
+            if k and k not in seen:
+                seen[k] = None
+    keys = list(seen)
+    per_key: dict[str, list[dict[str, Any] | None]] = {
+        k: [entries.get(k) for entries in rows] for k in keys
+    }
     return keys, per_key
 
 
@@ -208,17 +213,22 @@ def _filesystem_usage_series(
     return keys, per_key
 
 
+_Cumulative = tuple[list[str], dict[str, list[dict[str, Any] | None]]]
+
+
 def _gauge_series(
     samples: list[MachineMonitoringSample],
     list_attr: str,
     key_field: str,
     value_field: str,
+    cumulative: _Cumulative | None = None,
 ) -> dict[str, list[float | None]]:
     """`{key: [value per sample]}` for a per-sample JSON list of gauges
     (temperatures, fan speeds, GPU utilization, container CPU/memory, ...)
     — one series per key seen anywhere in the window, first-seen order; a
-    sample that didn't report that key is a gap (`None`), never zero."""
-    keys, per_key = _cumulative_series(samples, list_attr, key_field)
+    sample that didn't report that key is a gap (`None`), never zero.
+    `cumulative`: `_cumulative_series`'s result when the caller has it."""
+    keys, per_key = cumulative or _cumulative_series(samples, list_attr, key_field)
     series: dict[str, list[float | None]] = {}
     for key in keys:
         values: list[float | None] = []
@@ -239,8 +249,9 @@ def _rate_series_by_key(
     list_attr: str,
     key_field: str,
     value_fields: tuple[str, ...],
+    cumulative: _Cumulative | None = None,
 ) -> dict[str, list[float | None]]:
-    keys, per_key = _cumulative_series(samples, list_attr, key_field)
+    keys, per_key = cumulative or _cumulative_series(samples, list_attr, key_field)
     return {
         key: _bucket_average(
             _combined_rate_series(per_key[key], timestamps, value_fields), _TARGET_POINTS
@@ -258,28 +269,23 @@ def _combined_rate_series(
     `("rx_bytes", "tx_bytes")` or `("read_bytes", "write_bytes")`) between
     each consecutive pair of cumulative-counter readings. The first point
     is always `None` — there's no prior sample to diff against yet."""
-    rates: list[float | None] = [None]
-    for i in range(1, len(entries)):
-        prev, cur = entries[i - 1], entries[i]
-        dt = (timestamps[i] - timestamps[i - 1]).total_seconds()
-        if prev is None or cur is None or dt <= 0:
-            rates.append(None)
-            continue
-        try:
-            prev_total = sum(prev[f] for f in value_fields)
-            cur_total = sum(cur[f] for f in value_fields)
-        except (KeyError, TypeError):
-            rates.append(None)
-            continue
-        if cur_total < prev_total:  # counter reset (reboot, interface replaced, ...)
-            rates.append(None)
-        else:
-            rates.append((cur_total - prev_total) / dt)
-    return rates
+
+    # Each reading is summed once, not once as "current" and again as
+    # "previous" (this runs for every interface, disk and container).
+    totals: list[float | None] = []
+    for entry in entries:
+        value: Any = None
+        if entry is not None:
+            try:
+                value = sum(entry[f] for f in value_fields)
+            except (KeyError, TypeError):
+                value = None
+        totals.append(value if type(value) in (int, float) else None)
+    return _scalar_rate_series(totals, timestamps)
 
 
 def _scalar_rate_series(
-    values: list[int | None], timestamps: list[datetime], *, divisor: float = 1.0
+    values: Sequence[float | None], timestamps: list[datetime], *, divisor: float = 1.0
 ) -> list[float | None]:
     """Same idea as `_combined_rate_series`, for a single cumulative
     counter (e.g. `cpu_energy_uj`) rather than a dict of named fields —
@@ -391,15 +397,18 @@ class MonitoringHistory:
 
 def _gpu_history(
     samples: list[MachineMonitoringSample],
+    cumulative: _Cumulative | None = None,
 ) -> dict[str, dict[str, Any]]:
-    util = _gauge_series(samples, "gpus", "id", "util_percent")
-    vram = _gauge_series(samples, "gpus", "id", "vram_used_bytes")
-    power = _gauge_series(samples, "gpus", "id", "power_watts")
+    cumulative = cumulative or _cumulative_series(samples, "gpus", "id")
+    util = _gauge_series(samples, "gpus", "id", "util_percent", cumulative)
+    vram = _gauge_series(samples, "gpus", "id", "vram_used_bytes", cumulative)
+    power = _gauge_series(samples, "gpus", "id", "power_watts", cumulative)
+    shown = set(cumulative[0])
     gpus: dict[str, dict[str, Any]] = {}
     for sample in samples:
         for entry in sample.gpus or []:
             gpu_id = entry.get("id")
-            if not gpu_id:
+            if not gpu_id or gpu_id not in shown:
                 continue
             info = gpus.setdefault(gpu_id, {"name": gpu_id, "vendor": None, "vram_total": None})
             info["name"] = entry.get("name") or info["name"]
@@ -407,8 +416,10 @@ def _gpu_history(
             info["pci_slot"] = entry.get("pci_slot") or info.get("pci_slot")
             if entry.get("vram_total_bytes"):
                 info["vram_total"] = entry["vram_total_bytes"]
-    # A card not in the newest sample was taken out (or swapped): its
-    # series ends where it was last seen, and the page says so.
+    # A card not in the newest sample but seen in the last few minutes
+    # (`CURRENT_WINDOW`) may have just dropped out: its series ends where
+    # it was last seen, and the page says so. One gone for longer is not
+    # shown at all (`_current_only`).
     current = {e.get("id") for e in (samples[-1].gpus or [])} if samples else set()
     for gpu_id, info in gpus.items():
         info["present"] = gpu_id in current
@@ -425,6 +436,49 @@ def _bucketed(series: dict[str, list[float | None]]) -> dict[str, list[float | N
     return {key: _bucket_average(values, _TARGET_POINTS) for key, values in series.items()}
 
 
+# A sensor, disk, interface, mount, container or GPU that no sample of the
+# last `CURRENT_WINDOW` (before the newest sample) reported no longer
+# exists on the machine: its history is left out of every chart and list,
+# so a removed card or container disappears instead of lingering as a
+# flat line until retention drops it. The window rides out one sample
+# where a sensor did not answer.
+CURRENT_WINDOW = timedelta(minutes=15)
+
+
+def _current_only(
+    samples: list[MachineMonitoringSample], cumulative: _Cumulative
+) -> _Cumulative:
+    keys, per_key = cumulative
+    if not samples:
+        return cumulative
+    since = samples[-1].sampled_at - CURRENT_WINDOW
+    start = len(samples)
+    while start > 0 and samples[start - 1].sampled_at >= since:
+        start -= 1
+    current = [k for k in keys if any(e is not None for e in per_key[k][start:])]
+    if len(current) == len(keys):
+        return cumulative
+    return current, {k: per_key[k] for k in current}
+
+
+class _SeriesCache:
+    """`_cumulative_series` once per (list, key) for one build, with the
+    items that are gone left out (`_current_only`)."""
+
+    def __init__(self, samples: list[MachineMonitoringSample]) -> None:
+        self.samples = samples
+        self._cache: dict[tuple[str, str], _Cumulative] = {}
+
+    def __call__(self, list_attr: str, key_field: str) -> _Cumulative:
+        found = self._cache.get((list_attr, key_field))
+        if found is None:
+            found = _current_only(
+                self.samples, _cumulative_series(self.samples, list_attr, key_field)
+            )
+            self._cache[(list_attr, key_field)] = found
+        return found
+
+
 def build_monitoring_history(
     samples: list[MachineMonitoringSample], range_key: str
 ) -> MonitoringHistory:
@@ -433,6 +487,7 @@ def build_monitoring_history(
     about `MAX_RAW_SAMPLES` rows) and hands the rows here."""
     truncated = False
     timestamps = [s.sampled_at for s in samples]
+    cum = _SeriesCache(samples)
     bucket_timestamps = _bucket_timestamps(timestamps, _TARGET_POINTS)
 
     cpu_series = _bucket_average([s.cpu_percent for s in samples], _TARGET_POINTS)
@@ -458,7 +513,7 @@ def build_monitoring_history(
         [_ram_share(s.ram_cache_bytes, s.ram_total_bytes) for s in samples], _TARGET_POINTS
     )
 
-    net_keys, net_by_key = _cumulative_series(samples, "network_io", "iface")
+    net_keys, net_by_key = cum("network_io", "iface")
     network_rate_by_iface = {
         iface: _bucket_average(
             _combined_rate_series(net_by_key[iface], timestamps, ("rx_bytes", "tx_bytes")),
@@ -467,7 +522,7 @@ def build_monitoring_history(
         for iface in net_keys
     }
 
-    disk_keys, disk_by_key = _cumulative_series(samples, "disk_io", "device")
+    disk_keys, disk_by_key = cum("disk_io", "device")
     disk_rate_by_device = {
         device: _bucket_average(
             _combined_rate_series(disk_by_key[device], timestamps, ("read_bytes", "write_bytes")),
@@ -476,7 +531,9 @@ def build_monitoring_history(
         for device in disk_keys
     }
 
+    fs_current = set(cum("filesystems", "mount")[0])
     fs_keys, fs_raw_by_mount = _filesystem_usage_series(samples)
+    fs_keys = [mount for mount in fs_keys if mount in fs_current]
     filesystem_usage_by_mount = {
         mount: _bucket_average(fs_raw_by_mount[mount], _TARGET_POINTS) for mount in fs_keys
     }
@@ -535,29 +592,44 @@ def build_monitoring_history(
         latest_smart_disks=(latest.smart_disks or []) if latest else [],
         latest_gpu_power_watts=latest.gpu_power_watts if latest else None,
         network_rx_by_iface=_rate_series_by_key(
-            samples, timestamps, "network_io", "iface", ("rx_bytes",)
+            samples, timestamps, "network_io", "iface", ("rx_bytes",), cum("network_io", "iface")
         ),
         network_tx_by_iface=_rate_series_by_key(
-            samples, timestamps, "network_io", "iface", ("tx_bytes",)
+            samples, timestamps, "network_io", "iface", ("tx_bytes",), cum("network_io", "iface")
         ),
         disk_read_by_device=_rate_series_by_key(
-            samples, timestamps, "disk_io", "device", ("read_bytes",)
+            samples, timestamps, "disk_io", "device", ("read_bytes",), cum("disk_io", "device")
         ),
         disk_write_by_device=_rate_series_by_key(
-            samples, timestamps, "disk_io", "device", ("write_bytes",)
+            samples, timestamps, "disk_io", "device", ("write_bytes",), cum("disk_io", "device")
         ),
-        temps_by_sensor=_bucketed(_gauge_series(samples, "sensor_temps", "name", "celsius")),
-        fans_by_sensor=_bucketed(_gauge_series(samples, "sensor_fans", "name", "rpm")),
+        temps_by_sensor=_bucketed(
+            _gauge_series(
+                samples, "sensor_temps", "name", "celsius", cum("sensor_temps", "name")
+            )
+        ),
+        fans_by_sensor=_bucketed(
+            _gauge_series(samples, "sensor_fans", "name", "rpm", cum("sensor_fans", "name"))
+        ),
         gpu_power_watts=_bucket_average([s.gpu_power_watts for s in samples], _TARGET_POINTS),
-        gpus=_gpu_history(samples),
+        gpus=_gpu_history(samples, cum("gpus", "id")),
         docker_cpu_by_container=_bucketed(
-            _gauge_series(samples, "docker_stats", "name", "cpu_percent")
+            _gauge_series(
+                samples, "docker_stats", "name", "cpu_percent", cum("docker_stats", "name")
+            )
         ),
         docker_mem_by_container=_bucketed(
-            _gauge_series(samples, "docker_stats", "name", "mem_bytes")
+            _gauge_series(
+                samples, "docker_stats", "name", "mem_bytes", cum("docker_stats", "name")
+            )
         ),
         docker_net_by_container=_rate_series_by_key(
-            samples, timestamps, "docker_stats", "name", ("net_rx_bytes", "net_tx_bytes")
+            samples,
+            timestamps,
+            "docker_stats",
+            "name",
+            ("net_rx_bytes", "net_tx_bytes"),
+            cum("docker_stats", "name"),
         ),
         docker_blkio_by_container=_rate_series_by_key(
             samples,
@@ -565,6 +637,7 @@ def build_monitoring_history(
             "docker_stats",
             "name",
             ("block_read_bytes", "block_write_bytes"),
+            cum("docker_stats", "name"),
         ),
         cpu_iowait_percent=_bucket_average(
             [s.cpu_iowait_percent for s in samples], _TARGET_POINTS

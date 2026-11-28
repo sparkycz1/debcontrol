@@ -190,6 +190,11 @@ class Machine(Base):
     # meaningful, and S.M.A.R.T. in particular is actively misleading,
     # against a virtual disk.
     is_physical: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # What `systemd-detect-virt` named — "none" on bare metal, "kvm",
+    # "lxc", "openvz", ... — so findings that are normal for one kind of
+    # machine (a failed /sys/kernel mount in a container) are not reported
+    # there (app.services.platform_expectations). None = not read yet.
+    virtualization: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # [{"interface", "mac"}] of the machine's real network cards, kept from
     # the last facts refresh that listed any — what it is woken by
     # (app.services.wake_on_lan).
@@ -278,6 +283,13 @@ class Machine(Base):
     # (None = unknown / no systemd) — the "service failed" notification
     # compares against it (app.services.health_events).
     failed_units: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # When each sensor/disk/interface/mount/GPU/container of the monitoring
+    # samples was last seen ({list: {key: unix seconds}}), so its history
+    # is deleted a day after it is gone (app.services.vanished_series).
+    # None = not built yet; the daily sweep reads it from history once.
+    monitoring_series_seen: Mapped[dict[str, dict[str, int]] | None] = mapped_column(
+        JSON, nullable=True
+    )
     zfs_pools: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     # {mount: {"bytes_per_day", "days_until_full", "used_bytes", "size_bytes"}}
     # — see app.services.disk_forecast; recomputed hourly.

@@ -84,8 +84,10 @@ from app.services import (
     health_events,
     image_versions,
     machine_health,
+    platform_expectations,
     security_audit,
     update_snapshots,
+    vanished_series,
     wake_on_lan,
     watched_files,
 )
@@ -1410,6 +1412,7 @@ async def _refresh_machine_facts(machine_id: str) -> dict[str, Any]:
         machine.admin_users = facts["admin_users"]
         machine.login_users = facts["login_users"]
         machine.is_physical = facts["is_physical"]
+        machine.virtualization = facts.get("virtualization") or machine.virtualization
         machine.boot_id = facts.get("boot_id")
         machine.mac_addresses = facts.get("mac_addresses") or machine.mac_addresses
         # A fact that stopped being readable keeps its last value: a serial
@@ -1860,57 +1863,65 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
             )
         ).scalar_one_or_none()
         previous_failed_units = machine.failed_units
+        # Units that fail in every container (a failed /sys/kernel mount)
+        # are not problems there (app.services.platform_expectations).
+        failed_units = platform_expectations.filter_failed_units(
+            machine, sample.get("failed_units")
+        )
+        failed_count = (
+            len(failed_units) if failed_units is not None else sample["failed_services_count"]
+        )
         previous_zfs_pools = machine.zfs_pools
         previous_ups = machine.ups_devices
         reached: dict[str, Any] = dict(sample.get("connectivity") or {})
-        session.add(
-            MachineMonitoringSample(
-                machine_id=machine.id,
-                sampled_at=now,
-                cpu_percent=sample["cpu_percent"],
-                cpu_user_percent=sample.get("cpu_user_percent"),
-                cpu_system_percent=sample.get("cpu_system_percent"),
-                cpu_iowait_percent=sample.get("cpu_iowait_percent"),
-                gateway_latency_ms=reached.get("gateway_latency_ms"),
-                gateway_loss_percent=reached.get("gateway_loss_percent"),
-                internet_latency_ms=reached.get("internet_latency_ms"),
-                internet_loss_percent=reached.get("internet_loss_percent"),
-                dns_ok=reached.get("dns_ok"),
-                dns_ms=reached.get("dns_ms"),
-                ntp_synced=reached.get("ntp_synced"),
-                ntp_offset_ms=reached.get("ntp_offset_ms"),
-                load1=sample["load1"],
-                load5=sample["load5"],
-                load15=sample["load15"],
-                ram_used_bytes=sample["ram_used_bytes"],
-                ram_total_bytes=sample["ram_total_bytes"],
-                ram_arc_bytes=sample.get("ram_arc_bytes"),
-                ram_cache_bytes=sample.get("ram_cache_bytes"),
-                network_io=sample["network_io"],
-                disk_io=sample["disk_io"],
-                filesystems=sample["filesystems"],
-                failed_services_count=sample["failed_services_count"],
-                sensor_temps=sample["sensor_temps"],
-                sensor_fans=sample["sensor_fans"],
-                smart_disks=sample["smart_disks"],
-                cpu_energy_uj=sample["cpu_energy_uj"],
-                gpu_power_watts=sample["gpu_power_watts"],
-                gpus=sample["gpus"],
-                docker_stats=[
-                    {
-                        "name": c["name"],
-                        "cpu_percent": c["cpu_percent"],
-                        "mem_bytes": c["mem_bytes"],
-                        "net_rx_bytes": c["net_rx_bytes"],
-                        "net_tx_bytes": c["net_tx_bytes"],
-                        "block_read_bytes": c.get("block_read_bytes"),
-                        "block_write_bytes": c.get("block_write_bytes"),
-                    }
-                    for c in sample["docker_containers"]
-                    if c["state"] == "running"
-                ],
-            )
+        new_sample = MachineMonitoringSample(
+            machine_id=machine.id,
+            sampled_at=now,
+            cpu_percent=sample["cpu_percent"],
+            cpu_user_percent=sample.get("cpu_user_percent"),
+            cpu_system_percent=sample.get("cpu_system_percent"),
+            cpu_iowait_percent=sample.get("cpu_iowait_percent"),
+            gateway_latency_ms=reached.get("gateway_latency_ms"),
+            gateway_loss_percent=reached.get("gateway_loss_percent"),
+            internet_latency_ms=reached.get("internet_latency_ms"),
+            internet_loss_percent=reached.get("internet_loss_percent"),
+            dns_ok=reached.get("dns_ok"),
+            dns_ms=reached.get("dns_ms"),
+            ntp_synced=reached.get("ntp_synced"),
+            ntp_offset_ms=reached.get("ntp_offset_ms"),
+            load1=sample["load1"],
+            load5=sample["load5"],
+            load15=sample["load15"],
+            ram_used_bytes=sample["ram_used_bytes"],
+            ram_total_bytes=sample["ram_total_bytes"],
+            ram_arc_bytes=sample.get("ram_arc_bytes"),
+            ram_cache_bytes=sample.get("ram_cache_bytes"),
+            network_io=sample["network_io"],
+            disk_io=sample["disk_io"],
+            filesystems=sample["filesystems"],
+            failed_services_count=failed_count,
+            sensor_temps=sample["sensor_temps"],
+            sensor_fans=sample["sensor_fans"],
+            smart_disks=sample["smart_disks"],
+            cpu_energy_uj=sample["cpu_energy_uj"],
+            gpu_power_watts=sample["gpu_power_watts"],
+            gpus=sample["gpus"],
+            docker_stats=[
+                {
+                    "name": c["name"],
+                    "cpu_percent": c["cpu_percent"],
+                    "mem_bytes": c["mem_bytes"],
+                    "net_rx_bytes": c["net_rx_bytes"],
+                    "net_tx_bytes": c["net_tx_bytes"],
+                    "block_read_bytes": c.get("block_read_bytes"),
+                    "block_write_bytes": c.get("block_write_bytes"),
+                }
+                for c in sample["docker_containers"]
+                if c["state"] == "running"
+            ],
         )
+        session.add(new_sample)
+        vanished_series.note(machine, new_sample, now)
         machine.docker_status = sample["docker_status"]
         machine.network_links = sample.get("network_links") or None
         machine.default_gateway = reached.get("gateway")
@@ -1934,7 +1945,7 @@ async def _sample_machine_monitoring(machine_id: str) -> dict[str, Any]:
         machine.pve_resources = sample.get("pve_resources")
         previous_cluster = machine.pve_cluster
         machine.pve_cluster = sample.get("pve_cluster")
-        machine.failed_units = sample.get("failed_units")
+        machine.failed_units = failed_units
         # To tell which containers are new (Docker → Settings defaults).
         previous_containers = machine.docker_containers
         machine.docker_containers = (
@@ -2480,6 +2491,51 @@ async def _purge_old_monitoring_samples() -> None:
 @celery_app.task(name="app.tasks.jobs.purge_old_monitoring_samples")
 def purge_old_monitoring_samples() -> None:
     asyncio.run(_purge_old_monitoring_samples())
+
+
+async def _purge_vanished_monitoring_series() -> int:
+    """Enqueue `purge_machine_vanished_series` for every machine that has
+    something gone for a day (or no record yet, `vanished_series`) — one
+    task per machine, never awaited inline. Returns how many."""
+    cutoff = int((datetime.now(UTC) - vanished_series.VANISHED_AFTER).timestamp())
+    async with db_session.AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(select(Machine.id, Machine.monitoring_series_seen))
+        ).all()
+    due = [
+        machine_id
+        for machine_id, seen in rows
+        if seen is None
+        or any(
+            isinstance(items, dict) and any(stamp < cutoff for stamp in items.values())
+            for items in seen.values()
+        )
+    ]
+    for machine_id in due:
+        purge_machine_vanished_series.delay(str(machine_id))
+    return len(due)
+
+
+@celery_app.task(name="app.tasks.jobs.purge_vanished_monitoring_series")
+def purge_vanished_monitoring_series() -> int:
+    return asyncio.run(_purge_vanished_monitoring_series())
+
+
+async def _purge_machine_vanished_series(machine_id: str) -> int:
+    """Delete one machine's history of items gone for a day
+    (`vanished_series.purge_machine`). Unattended upkeep like the
+    retention purge: logged, not audited per machine."""
+    async with db_session.AsyncSessionLocal() as session:
+        machine = await session.get(Machine, uuid.UUID(machine_id))
+        if machine is None:
+            return 0
+        return await vanished_series.purge_machine(session, machine, datetime.now(UTC))
+
+
+# The first run reads the machine's whole history once (no record yet).
+@celery_app.task(name="app.tasks.jobs.purge_machine_vanished_series", time_limit=3600)
+def purge_machine_vanished_series(machine_id: str) -> int:
+    return asyncio.run(_purge_machine_vanished_series(machine_id))
 
 
 async def _downsample_old_monitoring_samples() -> None:
