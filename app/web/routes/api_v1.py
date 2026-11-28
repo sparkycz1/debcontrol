@@ -114,6 +114,7 @@ from app.services import (
     machine_compare,
     machine_timeline,
     monitoring_history,
+    power_estimate,
     proxmox_backup_exempt,
     proxmox_guest_links,
     security_audit,
@@ -1013,13 +1014,17 @@ async def get_machine_monitoring_api(
     to ~150 points over `range_key` (`bucket_timestamps` is the shared X
     axis), plus the latest raw readings. `/hardware` has the rest of the
     tab (S.M.A.R.T., Docker, sensors)."""
-    await _get_machine_or_404(machine_id, db, user)
+    machine = await _get_machine_or_404(machine_id, db, user)
     window = monitoring_history.resolve_window(range_key, _as_utc(start), _as_utc(end))
     history, availability = await monitoring_history.load_machine_history(
         db, machine_id, window
     )
     encoded: dict[str, object] = jsonable_encoder(
-        {"monitoring": asdict(history), "availability": asdict(availability)}
+        {
+            "monitoring": asdict(history),
+            "availability": asdict(availability),
+            "power_estimate": asdict(power_estimate.estimate(history, machine)),
+        }
     )
     return {
         "range_key": window.range_key,

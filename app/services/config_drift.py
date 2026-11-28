@@ -4,6 +4,8 @@ tab) and announced through the `machine.config_changed` /
 `machine.security_updates` notification events.
 
 - **Facts** (`record_fact_changes`, from `app.tasks.jobs._refresh_machine_facts`):
+  configuration *and hardware* — the CPU model and core count, RAM size
+  and speed, drives by model and serial, graphics cards by PCI address —
   a snapshot of `TRACKED_FIELDS` is taken before the new facts are applied
   and compared with the one after. A value that was unknown before
   (never refreshed, or a fact this version started collecting) or is
@@ -42,8 +44,12 @@ TRACKED_FIELDS: dict[str, tuple[str, bool]] = {
     "os_version": ("Operating system", False),
     "kernel_version": ("Kernel", False),
     "cpu_cores": ("CPU cores", False),
+    "cpu_model": ("CPU", False),
     "ram": ("RAM", False),
+    "ram_speed": ("RAM speed", False),
     "disks": ("Disks", True),
+    "drives": ("Drives", True),
+    "graphics": ("Graphics cards", True),
     "filesystems": ("Mounted filesystems", True),
     "ip_addresses": ("IP addresses", True),
     "listening_ports": ("Listening TCP ports", True),
@@ -102,6 +108,32 @@ def _names(items: Iterable[Any] | None, key: Any) -> frozenset[str] | None:
     return frozenset(values)
 
 
+def _drive(item: Any) -> str | None:
+    """`Samsung SSD 870 EVO 1TB (S6PTNX0R123456)` — by model and serial, so
+    a drive swapped for one of the same size is still a change."""
+    if not isinstance(item, dict) or not item.get("model"):
+        return None
+    serial = item.get("serial")
+    return f"{item['model']} ({serial})" if serial else str(item["model"])
+
+
+def _graphics(item: Any) -> str | None:
+    """A display-class PCI device (class 03xx): `0000:03:00.0 Intel
+    Corporation DG2 [Arc A380]`, or its ids when lspci gave no names."""
+    if not isinstance(item, dict) or not str(item.get("class_id") or "").startswith("03"):
+        return None
+    name = " ".join(str(item[k]) for k in ("vendor", "device") if item.get(k))
+    if not name:
+        name = f"{item.get('vendor_id') or '?'}:{item.get('device_id') or '?'}"
+    return f"{item.get('slot') or '?'} {name}"
+
+
+def _non_empty(values: frozenset[str] | None) -> frozenset[str] | None:
+    # Nothing read (no smartctl/lspci, a failed read) is "couldn't tell",
+    # not "every drive/card was removed".
+    return values or None
+
+
 def snapshot(machine: Machine) -> Snapshot:
     """The tracked facts of `machine` as comparable values."""
     return {
@@ -109,7 +141,11 @@ def snapshot(machine: Machine) -> Snapshot:
         "os_version": machine.os_version,
         "kernel_version": machine.kernel_version,
         "cpu_cores": None if machine.cpu_cores is None else str(machine.cpu_cores),
+        "cpu_model": machine.cpu_model,
         "ram": _gib(machine.ram_bytes),
+        "ram_speed": None if not machine.ram_speed_mhz else f"{machine.ram_speed_mhz} MT/s",
+        "drives": _non_empty(_names(machine.smart_devices, _drive)),
+        "graphics": _non_empty(_names(machine.pci_devices, _graphics)),
         "disks": _names(
             machine.disks,
             lambda d: (

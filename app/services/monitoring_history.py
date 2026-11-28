@@ -366,7 +366,8 @@ class MonitoringHistory:
     temps_by_sensor: dict[str, list[float | None]]
     fans_by_sensor: dict[str, list[float | None]]
     gpu_power_watts: list[float | None]
-    # {gpu id: {"name", "vendor", "util": [...], "vram_used": [...],
+    # {gpu id: {"name", "vendor", "pci_slot", "present" (in the newest
+    # sample), "util": [...], "vram_used": [...],
     # "vram_total": latest total bytes or None, "power": [...]}}
     gpus: dict[str, dict[str, Any]]
     docker_cpu_by_container: dict[str, list[float | None]]
@@ -403,9 +404,14 @@ def _gpu_history(
             info = gpus.setdefault(gpu_id, {"name": gpu_id, "vendor": None, "vram_total": None})
             info["name"] = entry.get("name") or info["name"]
             info["vendor"] = entry.get("vendor") or info["vendor"]
+            info["pci_slot"] = entry.get("pci_slot") or info.get("pci_slot")
             if entry.get("vram_total_bytes"):
                 info["vram_total"] = entry["vram_total_bytes"]
+    # A card not in the newest sample was taken out (or swapped): its
+    # series ends where it was last seen, and the page says so.
+    current = {e.get("id") for e in (samples[-1].gpus or [])} if samples else set()
     for gpu_id, info in gpus.items():
+        info["present"] = gpu_id in current
         info["util"] = _bucket_average(util.get(gpu_id, []), _TARGET_POINTS)
         info["vram_used"] = _bucket_average(vram.get(gpu_id, []), _TARGET_POINTS)
         info["power"] = _bucket_average(power.get(gpu_id, []), _TARGET_POINTS)

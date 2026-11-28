@@ -51,7 +51,7 @@ _SECTION_MARKERS = (
 # True (app.ssh.facts's systemd-detect-virt probe) — none of this is
 # meaningful, and S.M.A.R.T. in particular actively misleading, against a
 # virtual disk.
-_HARDWARE_SECTION_MARKERS = ("SENSORS", "SMART", "CPU_ENERGY_UJ", "GPUS")
+_HARDWARE_SECTION_MARKERS = ("SENSORS", "SMART", "CPU_ENERGY_UJ", "GPUS", "GPU_COUNTERS")
 
 _ALL_MARKERS = frozenset(_SECTION_MARKERS + _HARDWARE_SECTION_MARKERS)
 _MARKER_RE = re.compile(r"^===([A-Z_]+)===[ \t]*$", re.MULTILINE)
@@ -59,7 +59,12 @@ _MARKER_RE = re.compile(r"^===([A-Z_]+)===[ \t]*$", re.MULTILINE)
 # SENSORS: `sensors -j` (lm-sensors, no root needed — reads hwmon sysfs
 # directly) — parsed in Python (_parse_sensors_json) rather than the
 # human-readable default output, since the JSON schema is documented and
-# stable while the plain-text layout varies by chip/version.
+# stable while the plain-text layout varies by chip/version. Without
+# lm-sensors (debcontrol never installs it) the same hwmon readings are
+# read straight from `/sys/class/hwmon` instead — `@@SYSFS`, one
+# `chip<TAB>device<TAB>file<TAB>label<TAB>raw value` line per reading —
+# so CPU (coretemp, k10temp, zenpower), drive and GPU temperatures and
+# fans show up on any machine (_parse_sensors_sysfs).
 #
 # SMART: per-whole-disk overall-health via smartctl -H — needs root on
 # most systems (see app.ssh.onboarding's sudoers grant); no grant just
@@ -70,19 +75,70 @@ _MARKER_RE = re.compile(r"^===([A-Z_]+)===[ \t]*$", re.MULTILINE)
 # CPU_ENERGY_UJ: RAPL's own cumulative package-energy counter (microjoules)
 # — read as a plain gauge here, same as network/disk-I/O's cumulative
 # byte counters; the *rate* (average watts) is computed downstream from
-# consecutive samples (app.services.monitoring_history). The glob covers
-# both `intel-rapl:*` (Intel) and `amd-rapl:*` (AMD Zen 2+, kernel 5.8+).
+# consecutive samples (app.services.monitoring_history). The powercap
+# zones are called `intel-rapl:N` on Intel *and* AMD (Zen, kernel 5.11+);
+# `amd-rapl:N` is kept for older out-of-tree drivers. Only the top-level
+# zones (packages, and `psys` on some laptops) are read — their sub-zones
+# (core, uncore, dram) are already inside a package's total. Since Linux 5.10
+# (CVE-2020-8694) `energy_uj` is readable by root only, so an
+# unprivileged account reads it through the exact-path sudoers grant
+# (`app.ssh.onboarding.RAPL_GRANTS`).
 #
 # GPUS: one tab-separated line per GPU. NVIDIA via `nvidia-smi` (MiB,
-# watts); AMD/Intel via the DRM driver's own sysfs files — `gpu_busy_percent`
-# and `mem_info_vram_*` (amdgpu; i915/xe expose neither), and the hwmon
-# `power1_average`/`power1_input` reading in microwatts when the driver
-# registers one. NVIDIA DRM entries are skipped there (nvidia-smi already
+# watts, °C, plus its PCI address); AMD/Intel via the DRM driver's own
+# sysfs files — `gpu_busy_percent` and `mem_info_vram_*` (amdgpu), the
+# hwmon `power1_average`/`power1_input` reading in microwatts when the
+# driver registers one (amdgpu), and for Intel (i915/xe), which exposes
+# neither: the VRAM size xe reports per tile, and — readable by root only —
+# the driver's own debugfs memory summary (`i915_gem_objects` /
+# `vram0_mm`). NVIDIA DRM entries are skipped there (nvidia-smi already
 # covers them). The card's name comes from its own `product_name` file
 # when present, else `lspci -mm` for that PCI slot, else just the card id.
+# Every line ends with the card's PCI address and device id — what a GPU's
+# history is keyed by, so a card swapped for another starts its own
+# series instead of continuing the old one's.
+#
+# GPU_COUNTERS: Intel GPUs report power and load only as cumulative
+# counters — the hwmon `energy1_input` (microjoules) and the render GT's
+# RC6/idle residency (milliseconds asleep) — and an Intel iGPU's power is
+# RAPL's `uncore` domain. `_GPU_COUNTERS_PRELUDE` reads them (with
+# `/proc/uptime`) before the sample's other work and this section again
+# after it, so `_parse_gpu_counters` gets watts and busy-percent over that
+# second or two without waiting on the previous sample.
+_GPU_COUNTERS_FUNCTION = (
+    "dc_gc() { "
+    "awk '{print \"T\", $1}' /proc/uptime 2>/dev/null; "
+    "for c in /sys/class/drm/card[0-9]*; do "
+    "case \"${c##*/}\" in *-*) continue;; esac; "
+    "d=\"$c/device\"; [ \"$(cat \"$d/vendor\" 2>/dev/null)\" = 0x8086 ] || continue; "
+    "e=\"$(cat \"$d\"/hwmon/hwmon*/energy1_input 2>/dev/null | head -n1)\"; "
+    "i=\"$(cat \"$c/gt/gt0/rc6_residency_ms\" \"$d/tile0/gt0/gtidle/idle_residency_ms\" "
+    "\"$c/power/rc6_residency_ms\" 2>/dev/null | head -n1)\"; "
+    "echo \"${c##*/} $e $i\"; "
+    "done; "
+    "for z in /sys/class/powercap/intel-rapl:0:[0-9]; do "
+    "[ \"$(cat \"$z/name\" 2>/dev/null)\" = uncore ] || continue; "
+    "echo \"uncore $(cat \"$z/energy_uj\" 2>/dev/null "
+    "|| sudo -n cat \"$z/energy_uj\" 2>/dev/null)\"; "
+    "done; "
+    "}"
+)
+_GPU_COUNTERS_PRELUDE = f'{_GPU_COUNTERS_FUNCTION}; DC_G0="$(dc_gc)"'
+
 _HARDWARE_COMMAND = (
     "echo ===SENSORS===; "
-    "if command -v sensors >/dev/null 2>&1; then sensors -j 2>/dev/null; fi; "
+    "if command -v sensors >/dev/null 2>&1; then sensors -j 2>/dev/null; else "
+    "echo @@SYSFS; "
+    "for h in /sys/class/hwmon/hwmon*; do "
+    "n=\"$(cat \"$h/name\" 2>/dev/null)\"; [ -n \"$n\" ] || continue; "
+    "v=\"$(basename \"$(readlink -f \"$h/device\" 2>/dev/null)\")\"; "
+    "for f in \"$h\"/temp*_input \"$h\"/fan*_input \"$h\"/power*_average \"$h\"/power*_input; do "
+    "[ -r \"$f\" ] || continue; r=\"$(cat \"$f\" 2>/dev/null)\" || continue; "
+    "k=\"${f##*/}\"; l=\"$(cat \"${f%_*}_label\" 2>/dev/null)\"; "
+    "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$n\" \"$v\" \"$k\" \"$l\" \"$r\"; "
+    "done; "
+    "done; "
+    "fi; "
     "echo ===SMART===; "
     "if command -v smartctl >/dev/null 2>&1; then "
     "for d in $(lsblk -d -n -o NAME,TYPE 2>/dev/null | awk '$2==\"disk\"{print $1}'); do "
@@ -92,35 +148,48 @@ _HARDWARE_COMMAND = (
     "done; "
     "fi; "
     "echo ===CPU_ENERGY_UJ===; "
-    "for f in /sys/class/powercap/*-rapl:*/energy_uj; do "
+    "for f in /sys/class/powercap/*-rapl:[0-9]/energy_uj; do "
     "[ -f \"$f\" ] || continue; "
     "d=\"$(dirname \"$f\")\"; "
     "printf '%s ' \"$(cat \"$d/name\" 2>/dev/null || basename \"$d\")\"; "
-    "cat \"$f\" 2>/dev/null || echo; "
+    "cat \"$f\" 2>/dev/null || sudo -n cat \"$f\" 2>/dev/null || echo; "
     "done; "
     "echo ===GPUS===; "
     "if command -v nvidia-smi >/dev/null 2>&1; then "
-    "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,name "
+    "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,"
+    "temperature.gpu,pci.bus_id,pci.device_id,name "
     "--format=csv,noheader,nounits 2>/dev/null "
-    "| awk -F', *' '{printf \"nvidia\\t%s\\t\\t%s\\t%s\\t%s\\t%s\\t%s\\n\", "
-    "$1, $2, $3, $4, $5, $6}'; "
+    "| awk -F', *' '{printf \"nvidia\\t%s\\t\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t\\n\", "
+    "$1, $2, $3, $4, $5, $9, $7, $8, $6}'; "
     "fi; "
     "for c in /sys/class/drm/card[0-9]*; do "
     "case \"${c##*/}\" in *-*) continue;; esac; "
     "d=\"$c/device\"; [ -r \"$d/vendor\" ] || continue; "
     "v=\"$(cat \"$d/vendor\" 2>/dev/null)\"; [ \"$v\" = 0x10de ] && continue; "
+    "s=\"$(basename \"$(readlink -f \"$d\")\")\"; "
     "b=\"$(cat \"$d/gpu_busy_percent\" 2>/dev/null)\"; "
     "u=\"$(cat \"$d/mem_info_vram_used\" 2>/dev/null)\"; "
     "t=\"$(cat \"$d/mem_info_vram_total\" 2>/dev/null)\"; "
+    "[ -n \"$t\" ] || t=\"$(cat \"$d\"/tile*/physical_vram_size_bytes 2>/dev/null "
+    "| awk '{s+=$1} END {if (s > 0) print s}')\"; "
+    "m=; for g in \"/sys/kernel/debug/dri/${c##*/card}\" \"/sys/kernel/debug/dri/$s\"; do "
+    "if [ -r \"$g/i915_gem_objects\" ]; then "
+    "m=\"$(grep -A8 '^local0' \"$g/i915_gem_objects\" 2>/dev/null | grep -m1 'total:')\"; break; "
+    "elif [ -r \"$g/vram0_mm\" ]; then "
+    "m=\"$(grep -m1 'total:' \"$g/vram0_mm\" 2>/dev/null)\"; break; fi; "
+    "done; "
     "p=\"$(cat \"$d\"/hwmon/hwmon*/power1_average 2>/dev/null | head -n1)\"; "
     "[ -n \"$p\" ] || p=\"$(cat \"$d\"/hwmon/hwmon*/power1_input 2>/dev/null | head -n1)\"; "
     "n=\"$(cat \"$d/product_name\" 2>/dev/null)\"; "
     "if [ -z \"$n\" ] && command -v lspci >/dev/null 2>&1; then "
-    "n=\"$(lspci -mm -s \"$(basename \"$(readlink -f \"$d\")\")\" 2>/dev/null | head -n1)\"; "
+    "n=\"$(lspci -mm -s \"$s\" 2>/dev/null | head -n1)\"; "
     "fi; "
-    "printf 'drm\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "
-    "\"${c##*/}\" \"$v\" \"$b\" \"$u\" \"$t\" \"$p\" \"$n\"; "
-    "done"
+    "printf 'drm\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "
+    "\"${c##*/}\" \"$v\" \"$b\" \"$u\" \"$t\" \"$p\" \"$n\" \"$s\" "
+    "\"$(cat \"$d/device\" 2>/dev/null)\" \"\" \"$m\"; "
+    "done; "
+    "echo ===GPU_COUNTERS===; "
+    "echo \"${DC_G0:-}\"; echo @@; dc_gc 2>/dev/null"
 )
 
 # CPU percent needs two samples of /proc/stat a moment apart — computed
@@ -461,12 +530,31 @@ def parse_monitoring_output(raw: str, *, is_physical: bool = False) -> Monitorin
     docker_status, docker_containers = _parse_docker(sections.get("DOCKER"))
     docker_clock, docker_events = _parse_docker_events(sections.get("DOCKER"))
 
-    sensor_temps, sensor_fans, sensor_gpu_power_watts = _parse_sensors_json(
+    sensor_temps, sensor_fans, sensor_gpu_power_watts = _parse_sensors(
         hardware_sections.get("SENSORS", "")
     )
     smart_disks = _parse_smart(hardware_sections.get("SMART", ""))
     cpu_energy_uj = _parse_cpu_energy(hardware_sections.get("CPU_ENERGY_UJ", ""))
-    gpus = _parse_gpus(hardware_sections.get("GPUS", ""))
+    gpus = _parse_gpus(
+        hardware_sections.get("GPUS", ""),
+        _parse_gpu_counters(hardware_sections.get("GPU_COUNTERS", "")),
+    )
+    # NVIDIA registers no hwmon chip, so its temperature joins the others
+    # here (lm-sensors and sysfs never see it).
+    taken = {t["name"] for t in sensor_temps}
+    for gpu in gpus:
+        celsius = gpu.pop("temp_celsius", None)
+        if celsius is None or gpu["vendor"] != "nvidia":
+            continue
+        # "GPU …" so the Temperature chart counts it among its primary
+        # series (app.web.charts' markers match "gpu").
+        base = f"GPU {gpu['name']}"
+        name, n = base, 1
+        while name in taken:
+            n += 1
+            name = f"{base} ({n})"
+        taken.add(name)
+        sensor_temps.append({"name": name, "celsius": celsius})
 
     gpu_powers = [g["power_watts"] for g in gpus if g["power_watts"] is not None]
     gpu_power_watts = round(sum(gpu_powers), 2) if gpu_powers else sensor_gpu_power_watts
@@ -604,9 +692,58 @@ def _parse_sensors_json(
                     fans.append(
                         {"name": unique(_sensor_label(chip_name, label)), "rpm": float(value)}
                     )
-                elif is_gpu_chip and gpu_power_watts is None and key.startswith("power"):
+                elif (
+                    is_gpu_chip
+                    and gpu_power_watts is None
+                    and _GPU_POWER_KEY_RE.match(key)
+                ):
                     gpu_power_watts = float(value)
     return temps, fans, gpu_power_watts
+
+
+# Only a *measured* draw counts — `power1_cap`/`power1_max`/`power1_crit`
+# are the card's limits (i915 lists `power1_max` first), not what it uses.
+_GPU_POWER_KEY_RE = re.compile(r"^power\d+_(average|input)$")
+# hwmon's raw sysfs units: millidegrees, RPM, microwatts.
+_SYSFS_SCALE = {"temp": 1000.0, "fan": 1.0, "power": 1_000_000.0}
+
+
+def _parse_sensors_sysfs(
+    raw: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float | None]:
+    """The `@@SYSFS` fallback (no lm-sensors): one `chip<TAB>device<TAB>
+    file<TAB>label<TAB>raw` line per hwmon reading, turned into the same
+    `sensors -j` shape — `{"coretemp-coretemp.0": {"Package id 0":
+    {"temp1_input": 45.0}}}` — so names, GPU power and de-duplication are
+    exactly `_parse_sensors_json`'s. A reading without a label is named
+    after its file (`temp1`), as lm-sensors does."""
+    chips: dict[str, dict[str, dict[str, float]]] = {}
+    for line in raw.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 5:
+            continue
+        chip, device, key, label, value = (f.strip() for f in fields)
+        kind = next((k for k in _SYSFS_SCALE if key.startswith(k)), None)
+        number = _parse_float(value)
+        if not chip or kind is None or number is None:
+            continue
+        if kind == "temp" and number <= -273_000:
+            continue  # a sensor the chip lists but never fills in
+        feature = label or key.split("_", 1)[0]
+        chips.setdefault(f"{chip}-{device}" if device else chip, {}).setdefault(feature, {})[
+            key
+        ] = number / _SYSFS_SCALE[kind]
+    return _parse_sensors_json(json.dumps(chips)) if chips else ([], [], None)
+
+
+def _parse_sensors(
+    raw: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float | None]:
+    """SENSORS: `sensors -j`'s JSON, or the `@@SYSFS` fallback."""
+    text = raw.strip()
+    if text.startswith("@@SYSFS"):
+        return _parse_sensors_sysfs(text[len("@@SYSFS") :])
+    return _parse_sensors_json(text)
 
 
 def _parse_smart(raw: str) -> list[dict[str, Any]]:
@@ -685,36 +822,158 @@ def _int_or_none(value: str) -> int | None:
     return int(value) if value.isdecimal() else None
 
 
-def _parse_gpus(raw: str) -> list[dict[str, Any]]:
+def _parse_gpu_counters(raw: str) -> dict[str, dict[str, float]]:
+    """GPU_COUNTERS: the `dc_gc` readings from before the sample (above
+    `@@`) and after it (below) → `{"card1": {"power_watts": ...,
+    "util_percent": ...}, "uncore": {"power_watts": ...}}`. Power is the
+    energy counter's growth over the elapsed `/proc/uptime` seconds; busy
+    is the share of that time the render GT was *not* in RC6/idle. A
+    counter that went backwards (wrapped, driver reloaded) or a missing
+    reading yields nothing for that metric rather than a wrong number."""
+    before_text, sep, after_text = raw.partition("@@")
+    if not sep:
+        return {}
+
+    def read(text: str) -> tuple[float | None, dict[str, list[str]]]:
+        uptime: float | None = None
+        rows: dict[str, list[str]] = {}
+        for line in text.splitlines():
+            fields = line.split(" ")
+            if not fields[0]:
+                continue
+            if fields[0] == "T" and len(fields) >= 2:
+                uptime = _parse_float(fields[1])
+            else:
+                rows[fields[0]] = fields[1:]
+        return uptime, rows
+
+    t0, rows0 = read(before_text)
+    t1, rows1 = read(after_text)
+    if t0 is None or t1 is None or t1 - t0 < 0.2:
+        return {}
+    elapsed = t1 - t0
+    result: dict[str, dict[str, float]] = {}
+    for name, fields1 in rows1.items():
+        fields0 = rows0.get(name)
+        if fields0 is None:
+            continue
+        metrics: dict[str, float] = {}
+        energy0 = _int_or_none(fields0[0]) if fields0 else None
+        energy1 = _int_or_none(fields1[0]) if fields1 else None
+        if energy0 is not None and energy1 is not None and energy1 >= energy0:
+            metrics["power_watts"] = round((energy1 - energy0) / 1_000_000 / elapsed, 2)
+        idle0 = _int_or_none(fields0[1]) if len(fields0) > 1 else None
+        idle1 = _int_or_none(fields1[1]) if len(fields1) > 1 else None
+        if idle0 is not None and idle1 is not None and idle1 >= idle0:
+            busy = 100.0 * (1.0 - (idle1 - idle0) / 1000.0 / elapsed)
+            metrics["util_percent"] = round(min(100.0, max(0.0, busy)), 1)
+        if metrics:
+            result[name] = metrics
+    return result
+
+
+# `drm_buddy_print`'s summary line, which i915's `i915_gem_objects` (under
+# `local0`) and xe's `vram0_mm` both print:
+# `chunk_size: 4KiB, total: 6064MiB, free: 5980MiB, clear_free: 0MiB`.
+_BUDDY_RE = re.compile(r"total:\s*(\d+)\s*([KMG]i?B)?,\s*free:\s*(\d+)\s*([KMG]i?B)?")
+_BUDDY_UNITS = {"": 1, "B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
+
+
+def _parse_vram_debug(text: str) -> tuple[int | None, int | None]:
+    """(used, total) bytes from a debugfs buddy-allocator summary."""
+    match = _BUDDY_RE.search(text)
+    if match is None:
+        return None, None
+    total = int(match.group(1)) * _BUDDY_UNITS.get(match.group(2) or "", 1)
+    free = int(match.group(3)) * _BUDDY_UNITS.get(match.group(4) or "", 1)
+    if total <= 0 or free > total:
+        return None, None
+    return total - free, total
+
+
+def _pci_slot(value: str) -> str | None:
+    """`0000:03:00.0` (sysfs) or `00000000:03:00.0` (nvidia-smi) → the
+    canonical 4-digit-domain form; None for anything else."""
+    match = _PCI_SLOT_RE.search(value.strip().lower())
+    return f"{match.group(1)[-4:]}:{match.group(2)}" if match else None
+
+
+_PCI_SLOT_RE = re.compile(r"([0-9a-f]{4,8}):([0-9a-f]{2}:[0-9a-f]{2}\.[0-7])$")
+
+
+def _gpu_key(card_id: str, vendor_id: str, device_id: str, slot: str) -> str:
+    """The id a GPU's history is kept under: vendor and device id at a PCI
+    address (`8086:56a5@0000:03:00.0`), so a card swapped for another — in
+    the same slot or not — starts a series of its own, and the kernel
+    numbering cards differently after a reboot (`card0` ↔ `card1`) does
+    not mix two cards up. Older output without the address keeps the card
+    id."""
+    pci = _pci_slot(slot)
+    vendor = vendor_id.strip().lower().removeprefix("0x")[-4:]
+    device = device_id.strip().lower().removeprefix("0x")
+    if pci is None or not vendor or not device:
+        return card_id
+    return f"{vendor}:{device[:4]}@{pci}"
+
+
+def _parse_gpus(
+    raw: str, counters: dict[str, dict[str, float]] | None = None
+) -> list[dict[str, Any]]:
+    """GPUS → one dict per GPU. `counters` (`_parse_gpu_counters`) fill in
+    what an Intel card reports only as counters: power from `energy1_input`
+    (a discrete Arc) or RAPL's `uncore` domain (an integrated GPU, at PCI
+    slot 00:02.0), and busy-percent from RC6 residency."""
+    counters = counters or {}
     gpus: list[dict[str, Any]] = []
     for line in raw.splitlines():
         fields = line.split("\t")
         if len(fields) < 8:
             continue
+        fields += [""] * (12 - len(fields))
         kind, card_id, vendor_id, busy, used, total, power, name = fields[:8]
+        slot, device_id, temp, mem_debug = fields[8:12]
         if kind == "nvidia":
             used_mib, total_mib = _parse_float(used), _parse_float(total)
+            # nvidia-smi's `pci.device_id` is `0x250410DE`: device, then vendor.
+            nv_device = device_id.strip().lower().removeprefix("0x")[:4]
             gpu = {
-                "id": f"nvidia{card_id.strip()}",
+                "id": (
+                    _gpu_key("", "10de", nv_device, slot) or f"nvidia{card_id.strip()}"
+                ),
                 "vendor": "nvidia",
                 "util_percent": _parse_float(busy),
                 "vram_used_bytes": int(used_mib * 1048576) if used_mib is not None else None,
                 "vram_total_bytes": int(total_mib * 1048576) if total_mib is not None else None,
                 "power_watts": _parse_float(power),
+                "temp_celsius": _parse_float(temp),
             }
             raw_name = name
         elif kind == "drm":
             vendor = _GPU_VENDORS.get(vendor_id.strip().lower())
             if vendor is None:
                 continue  # an emulated/virtual display adapter, not a GPU
+            card = card_id.strip()
             power_uw = _int_or_none(power)
+            vram_used, vram_total = _int_or_none(used), _int_or_none(total)
+            debug_used, debug_total = _parse_vram_debug(mem_debug)
+            if vram_used is None and debug_used is not None:
+                vram_used = debug_used
+                vram_total = vram_total or debug_total
+            counted = counters.get(card, {})
+            power_watts = round(power_uw / 1_000_000, 2) if power_uw is not None else None
+            if power_watts is None:
+                power_watts = counted.get("power_watts")
+            pci = _pci_slot(slot)
+            if power_watts is None and vendor == "intel" and pci and pci.endswith("00:02.0"):
+                power_watts = counters.get("uncore", {}).get("power_watts")
+            util = _parse_float(busy)
             gpu = {
-                "id": card_id.strip(),
+                "id": _gpu_key(card, vendor_id, device_id, slot),
                 "vendor": vendor,
-                "util_percent": _parse_float(busy),
-                "vram_used_bytes": _int_or_none(used),
-                "vram_total_bytes": _int_or_none(total),
-                "power_watts": round(power_uw / 1_000_000, 2) if power_uw is not None else None,
+                "util_percent": util if util is not None else counted.get("util_percent"),
+                "vram_used_bytes": vram_used,
+                "vram_total_bytes": vram_total,
+                "power_watts": power_watts,
             }
             raw_name = name
         else:
@@ -724,7 +983,9 @@ def _parse_gpus(raw: str) -> list[dict[str, Any]]:
             for k in ("util_percent", "vram_used_bytes", "vram_total_bytes", "power_watts")
         ):
             continue  # nothing measurable — e.g. an Intel iGPU on an older kernel
-        gpu["name"] = _gpu_display_name(raw_name, str(gpu["vendor"]), str(gpu["id"]))
+        if pci_slot := _pci_slot(slot):
+            gpu["pci_slot"] = pci_slot
+        gpu["name"] = _gpu_display_name(raw_name, str(gpu["vendor"]), str(card_id).strip())
         gpus.append(gpu)
     return gpus
 
@@ -997,7 +1258,11 @@ async def gather_monitoring_sample(
     (`Machine.docker_events_since`). `connectivity` is the internet target
     and DNS name for the connectivity probe (None = probe off)."""
     is_physical = bool(machine.is_physical)
-    command = f"{MONITORING_COMMAND}; {_HARDWARE_COMMAND}" if is_physical else MONITORING_COMMAND
+    command = (
+        f"{_GPU_COUNTERS_PRELUDE}; {MONITORING_COMMAND}; {_HARDWARE_COMMAND}"
+        if is_physical
+        else MONITORING_COMMAND
+    )
     if connectivity is not None:
         command = connectivity_wrapped(command, *connectivity)
     if machine.docker_events_since is not None:
