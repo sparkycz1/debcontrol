@@ -255,7 +255,21 @@ _DOCKER_COMMAND = (
     "fi"
 )
 
+# `docker stats --no-stream` alone takes about two seconds (it waits for
+# two cgroup readings): it runs in the background from the start, alongside
+# the CPU probe's `sleep 1`, and its output is collected where the DOCKER
+# section belongs. Without `mktemp` it runs in line, as before 0.152.0.
+_DOCKER_START = (
+    'DC_DK="$(mktemp 2>/dev/null)"; '
+    f'if [ -n "$DC_DK" ]; then ( {_DOCKER_COMMAND} ) > "$DC_DK" 2>/dev/null & DC_DK_PID=$!; fi; '
+)
+_DOCKER_COLLECT = (
+    'if [ -n "$DC_DK" ]; then wait "$DC_DK_PID"; cat "$DC_DK"; rm -f "$DC_DK"; '
+    f"else {_DOCKER_COMMAND}; fi"
+)
+
 MONITORING_COMMAND = (
+    f"{_DOCKER_START}"
     "echo ===CPU===; "
     "{ read -r _ u1 n1 s1 i1 w1 irq1 sirq1 _ < /proc/stat; "
     "sleep 1; "
@@ -317,12 +331,15 @@ MONITORING_COMMAND = (
     "df -B1 --output=target,size,used,avail,pcent "
     "-x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2; "
     # `@@OK` first — telling "systemd, nothing failed" apart from "no
-    # systemd" — then one failed unit name per line.
+    # systemd" — then one failed unit name per line. A unit whose file is
+    # gone (package removed, LOAD "not-found") is left out: it lingers in
+    # the failed list until `systemctl reset-failed`, but no longer exists.
     "echo ===FAILED_SERVICES===; "
     "if command -v systemctl >/dev/null 2>&1; then echo @@OK; "
-    "systemctl --failed --plain --no-legend --no-pager 2>/dev/null | awk '{print $1}'; "
+    "systemctl --failed --plain --no-legend --no-pager 2>/dev/null "
+    "| awk '$2 != \"not-found\" {print $1}'; "
     "fi; "
-    f"{_DOCKER_COMMAND}; "
+    f"{_DOCKER_COLLECT}; "
     # UPS state through NUT — app.ssh.ups.
     f"{ups.SECTION}; "
     f"{proxmox.LIVE_COMMAND}"
@@ -1269,8 +1286,8 @@ async def gather_monitoring_sample(
         command = f"DC_EVENTS_SINCE={int(machine.docker_events_since)}; {command}"
     async with machine_connection(machine, secret, timeout_seconds) as conn:
         # `docker stats --no-stream` alone takes a couple of seconds (it
-        # waits for two cgroup readings), on top of the CPU probe's own
-        # `sleep 1` — give the command itself more room than a bare connect.
+        # waits for two cgroup readings; it overlaps the CPU probe's own
+        # `sleep 1`) — give the command itself more room than a bare connect.
         result = await conn.run(with_root_shim(command), check=False, timeout=timeout_seconds + 15)
 
     stdout = result.stdout or ""

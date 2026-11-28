@@ -364,11 +364,14 @@ class AppSettings(Base):
     health_disk_critical_percent: Mapped[int] = mapped_column(
         Integer, default=95, server_default="95", nullable=False
     )
+    # CPU temperature (the CPU's own sensors only). Intel throttles at
+    # ~100 °C and recent AMD CPUs run up to 95 °C by design, so 80 °C
+    # (the default before 0.152.0) warned about normal load.
     health_temperature_warn_celsius: Mapped[int] = mapped_column(
-        Integer, default=80, server_default="80", nullable=False
+        Integer, default=90, server_default="90", nullable=False
     )
     health_temperature_critical_celsius: Mapped[int] = mapped_column(
-        Integer, default=90, server_default="90", nullable=False
+        Integer, default=97, server_default="97", nullable=False
     )
     health_disk_full_warn_days: Mapped[int] = mapped_column(
         Integer, default=7, server_default="7", nullable=False

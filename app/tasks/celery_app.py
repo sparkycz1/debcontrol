@@ -458,6 +458,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.purge_old_monitoring_samples",
         "schedule": crontab(hour=3, minute=15),
     },
+    # History of sensors, disks, containers... a machine no longer has
+    # (gone for a day) — app.services.vanished_series.
+    "purge-vanished-monitoring-series": {
+        "task": "app.tasks.jobs.purge_vanished_monitoring_series",
+        "schedule": crontab(hour=3, minute=25),
+    },
     # Thins out (not purges — see the task's own docstring) monitoring
     # samples old enough that a chart only ever renders them bucketed
     # anyway. Runs shortly before the purge above so a sample newly past

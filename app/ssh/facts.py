@@ -206,6 +206,8 @@ class MachineFacts(TypedDict):
     # be determined at all (no systemd-detect-virt) — see FACTS_COMMAND's
     # own VIRT comment.
     is_physical: bool | None
+    # systemd-detect-virt's own answer ("none", "kvm", "lxc", ...).
+    virtualization: NotRequired[str | None]
     # The kernel's boot id (app.services.self_host); None if unreadable.
     boot_id: str | None
     # Vendor / model / serial from the firmware; None where it says nothing.
@@ -386,6 +388,7 @@ def parse_facts_output(raw: str) -> MachineFacts:
         admin_users=admin_users,
         login_users=login_users,
         is_physical=is_physical,
+        virtualization=virt_raw.split()[0][:32] if virt_raw else None,
         boot_id=_parse_boot_id(sections.get("BOOT_ID", "")),
         hw_vendor=hardware["vendor"],
         hw_model=hardware["model"],

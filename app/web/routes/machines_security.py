@@ -19,7 +19,7 @@ from app.db.models.role import Permission
 from app.db.models.security_audit import SecurityAuditStatus
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import security_audit
+from app.services import platform_expectations, security_audit
 from app.services.machine_actions import trigger_security_audits
 from app.ssh import firewall
 from app.web.flash import read_flash, sign_flash
@@ -56,9 +56,15 @@ async def machine_security(
         "audits": audits,
         "current": current,
         "shown": shown,
-        "view": security_audit.annotate(shown, suppressed) if shown else None,
+        "view": security_audit.annotate(
+            shown, suppressed, platform_expectations.expected_audit_keys(machine, shown)
+        )
+        if shown
+        else None,
         "marked": marked,
-        "counts_of": lambda a: security_audit.counts(a, suppressed),
+        "counts_of": lambda a: security_audit.counts(
+            a, suppressed | set(platform_expectations.expected_audit_keys(machine, a))
+        ),
         "active": current is not None and security_audit.is_active(current),
         "display_status": security_audit.display_status,
         "control_url": security_audit.CONTROL_URL,

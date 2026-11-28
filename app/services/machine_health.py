@@ -119,8 +119,8 @@ class Thresholds:
     memory_critical: int = 95
     disk_warn: int = 85
     disk_critical: int = 95
-    temperature_warn: int = 80
-    temperature_critical: int = 90
+    temperature_warn: int = 90
+    temperature_critical: int = 97
     disk_full_warn_days: int = 7
     disk_full_critical_days: int = 2
     latency_warn: int = 150
@@ -246,12 +246,7 @@ def _cpu(
                                      th.cpu_critical, "cpu_high", bucket, th)
         if finding:
             findings.append(finding)
-    newest = samples[0] if samples else None
-    hottest: tuple[float, str] | None = None
-    for sensor in (newest.sensor_temps or []) if newest else []:
-        celsius = _number(sensor.get("celsius")) if isinstance(sensor, dict) else None
-        if celsius is not None and (hottest is None or celsius > hottest[0]):
-            hottest = (celsius, str(sensor.get("name") or ""))
+    hottest = _hottest(samples[:CPU_SAMPLES], is_cpu_sensor)
     if hottest:
         severity = _level(hottest[0], th.temperature_warn, th.temperature_critical)
         if severity:
@@ -260,6 +255,52 @@ def _cpu(
                         {"celsius": round(hottest[0]), "sensor": hottest[1]}, "monitoring")
             )
     return findings
+
+
+# The CPU's own sensors (lm-sensors / hwmon chip names and labels): Intel
+# coretemp, AMD k10temp/zenpower, ARM SoC thermal zones. Drives (NVMe
+# "Sensor 2" is the controller, which runs far hotter), GPUs, board chips
+# and ACPI zones are not the CPU — drives have their own limits (Disks),
+# GPUs theirs (Hardware).
+_CPU_CHIPS = ("coretemp", "k10temp", "zenpower", "k8temp", "cpu_thermal", "cpu-thermal",
+              "soc_thermal", "cpu")
+GPU_TEMP_WARN = 95
+GPU_TEMP_CRITICAL = 105
+_GPU_CHIPS = ("amdgpu", "i915", "xe ", "nouveau", "radeon", "gpu ")
+
+
+def is_cpu_sensor(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.startswith(_CPU_CHIPS) or lowered.startswith(("package id", "tctl", "tdie"))
+
+
+def is_gpu_sensor(name: str) -> bool:
+    return name.lower().startswith(_GPU_CHIPS)
+
+
+def _hottest(
+    samples: Sequence[MachineMonitoringSample], wanted: Any
+) -> tuple[float, str] | None:
+    """The hottest of the `wanted` sensors, each averaged over `samples`
+    (a one-minute spike is not a problem). AMD's Tdie, where the CPU
+    reports it, wins over Tctl (which carries an offset on some models)."""
+    readings: dict[str, list[float]] = {}
+    for sample in samples:
+        for sensor in sample.sensor_temps or []:
+            if not isinstance(sensor, dict):
+                continue
+            name = str(sensor.get("name") or "")
+            celsius = _number(sensor.get("celsius"))
+            if celsius is not None and wanted(name):
+                readings.setdefault(name, []).append(celsius)
+    if any("tdie" in name.lower() for name in readings):
+        readings = {k: v for k, v in readings.items() if "tctl" not in k.lower()}
+    hottest: tuple[float, str] | None = None
+    for name, values in readings.items():
+        average = sum(values) / len(values)
+        if hottest is None or average > hottest[0]:
+            hottest = (average, name)
+    return hottest
 
 
 def _network(
@@ -515,10 +556,21 @@ def _disks(
     return findings
 
 
-def _hardware(machine: Machine) -> list[Finding]:
-    """A UPS on battery or asking for a new battery, and the sensors the
-    BMC itself reports past a threshold (IPMI)."""
+def _hardware(
+    machine: Machine, samples: Sequence[MachineMonitoringSample] = ()
+) -> list[Finding]:
+    """A UPS on battery or asking for a new battery, the sensors the BMC
+    itself reports past a threshold (IPMI), and a GPU running hotter than
+    any card is meant to."""
     findings: list[Finding] = []
+    hottest = _hottest(samples[:CPU_SAMPLES], is_gpu_sensor)
+    if hottest:
+        severity = _level(hottest[0], GPU_TEMP_WARN, GPU_TEMP_CRITICAL)
+        if severity:
+            findings.append(
+                Finding("hardware.gpu_temperature", "hardware", severity, "temperature_high",
+                        {"celsius": round(hottest[0]), "sensor": hottest[1]}, "monitoring")
+            )
     for device in machine.ups_devices or []:
         if not isinstance(device, dict):
             continue
@@ -607,9 +659,12 @@ class AuditSummary:
 
 def _security(machine: Machine, audit: AuditSummary | None) -> list[Finding]:
     findings: list[Finding] = []
+    # A failed check is a warning; Lynis warnings alone (every machine has
+    # some) are information.
     if audit and (audit.failed_checks or audit.warnings):
         findings.append(
-            Finding("security.audit", "security", "warning", "audit_findings",
+            Finding("security.audit", "security",
+                    "warning" if audit.failed_checks else "info", "audit_findings",
                     {"failed": audit.failed_checks, "warnings": audit.warnings}, "security")
         )
     return findings
@@ -709,7 +764,7 @@ def evaluate(
     findings += _unusual(samples, baseline, thresholds, now, findings)
     findings += _storage(machine, newest, thresholds)
     findings += _disks(machine, newest, thresholds)
-    findings += _hardware(machine)
+    findings += _hardware(machine, samples)
     findings += _services(machine)
     findings += _updates(machine)
     findings += _security(machine, audit)
@@ -720,6 +775,9 @@ def evaluate(
 
 # --- Reading what is stored -------------------------------------------------
 
+# Failed samples in a row before "SSH failed" is critical.
+SSH_FAILURES_CRITICAL = 2
+
 
 def stored_findings(machine: Machine) -> list[Finding]:
     record = machine.health or {}
@@ -727,7 +785,16 @@ def stored_findings(machine: Machine) -> list[Finding]:
     result = [f for f in findings if f is not None]
     error = record.get("error")
     if error:
-        result.insert(0, Finding("connection.ssh", "connection", "critical", "ssh_failed",
+        # One failed sample is often a blip (a reboot, a busy sshd): only
+        # informational until it happens SSH_FAILURES_CRITICAL times in a
+        # row. A record from before the counter existed counts as critical.
+        failures = record.get("error_count")
+        severity: Severity = (
+            "info"
+            if isinstance(failures, int) and failures < SSH_FAILURES_CRITICAL
+            else "critical"
+        )
+        result.insert(0, Finding("connection.ssh", "connection", severity, "ssh_failed",
                                  {"error": str(error)[:300]}, None))
     return result
 
@@ -921,10 +988,12 @@ async def usual_now(db: AsyncSession, machine: Machine) -> UsualNow:
     return UsualNow(settings.health_anomaly_detection, baseline, ranges, now)
 
 
-async def _audit_summary(db: AsyncSession, machine_id: uuid.UUID) -> AuditSummary | None:
+async def _audit_summary(db: AsyncSession, machine: Machine) -> AuditSummary | None:
     # Imported here: security_audit imports the SSH layer, which this
     # module (read by templates) does not otherwise need.
-    from app.services import security_audit
+    from app.services import platform_expectations, security_audit
+
+    machine_id = machine.id
 
     audit = await db.scalar(
         select(SecurityAudit)
@@ -938,6 +1007,7 @@ async def _audit_summary(db: AsyncSession, machine_id: uuid.UUID) -> AuditSummar
     if audit is None:
         return None
     suppressed = set(await security_audit.suppressions(db, machine_id))
+    suppressed |= set(platform_expectations.expected_audit_keys(machine, audit))
     counts = security_audit.counts(audit, suppressed)
     return AuditSummary(failed_checks=counts.failed_checks, warnings=counts.warnings)
 
@@ -984,7 +1054,11 @@ async def refresh(
         now = datetime.now(UTC)
         if error is not None:
             record = dict(machine.health or {"findings": []})
+            previous_failures = record.get("error_count") if record.get("error") else 0
             record["error"] = error[:500]
+            record["error_count"] = (
+                previous_failures + 1 if isinstance(previous_failures, int) else 1
+            )
             record.setdefault("at", now.isoformat())
             machine.health = record
         else:
@@ -995,7 +1069,7 @@ async def refresh(
                 machine,
                 await _newest_samples(db, machine.id),
                 Thresholds.from_settings(settings),
-                audit=await _audit_summary(db, machine.id),
+                audit=await _audit_summary(db, machine),
                 now=now,
                 baseline=await machine_baseline.load(db, machine.id),
             )
