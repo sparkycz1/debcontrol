@@ -21,7 +21,7 @@ from app.core.csrf import get_or_create_csrf_token, set_csrf_cookie, verify_csrf
 from app.db.models.audit_log import AuditOutcome
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services import live_overview, monitoring_history, network_topology
+from app.services import live_overview, monitoring_history, network_topology, power_estimate
 from app.services.notifications import condition_thresholds_for_machine
 from app.tasks import jobs as tasks
 from app.web.messages import LocalizedText
@@ -90,6 +90,8 @@ async def machine_monitoring(
             "active_tab": "monitoring",
             "csrf_token": csrf_token,
             "history": history,
+            # The whole machine's estimated draw (app.services.power_estimate).
+            "power": power_estimate.estimate(history, machine),
             "availability": availability,
             "last_checked_at": last_checked_at,
             "time_ranges": monitoring_history.TIME_RANGES,

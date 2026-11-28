@@ -229,15 +229,38 @@
                       chart(gpu_power, ts, fmt='watts', time_format=tf),
                       empty_text=t(request, "monitoring.card.gpu_none")) }}
 
+        {# The whole machine's estimated draw (app.services.power_estimate). #}
+        {% if power.total | select('number') | list %}
+          {% set power_series = [(t(request, "monitoring.power.cpu"), power.cpu)] %}
+          {% if power.gpu | select('number') | select('>', 0) | list %}{% set _ = power_series.append((t(request, "monitoring.power.gpu"), power.gpu)) %}{% endif %}
+          {% set _ = power_series.append((t(request, "monitoring.power.other"), power.other)) %}
+          {% set _ = power_series.append((t(request, "monitoring.power.psu_loss"), power.psu_loss)) %}
+          {% set power_footer = [] %}
+          {% if power.latest_total is not none %}
+            {% set _ = power_footer.append(t(request, "monitoring.power.latest",
+                 total=(power.latest_total | chart_value('watts')), cpu=(power.latest.cpu | chart_value('watts')),
+                 gpu=(power.latest.gpu | chart_value('watts')), ram=(power.latest.ram | chart_value('watts')),
+                 drives=(power.latest.drives | chart_value('watts')), fans=(power.latest.fans | chart_value('watts')),
+                 network=(power.latest.network | chart_value('watts')), board=(power.latest.board | chart_value('watts')),
+                 psu_loss=(power.latest.psu_loss | chart_value('watts')))) %}
+          {% endif %}
+          {% if power.measured_watts is not none %}{% set _ = power_footer.append(t(request, "monitoring.power.measured", watts=(power.measured_watts | chart_value('watts')))) %}{% endif %}
+          {{ chart_card(t(request, "monitoring.card.total_power"),
+                        t(request, "monitoring.card.total_power_hint_cpu_guess" if power.cpu_estimated else "monitoring.card.total_power_hint"),
+                        chart(power_series, ts, fmt='watts', time_format=tf, stacked=true),
+                        footer=(power_footer | join(' · ')) or none,
+                        empty_text=t(request, "monitoring.no_data")) }}
+        {% endif %}
+
         {% for gpu_id, gpu in history.gpus.items() %}
           {% if gpu.util %}
-            {{ chart_card(t(request, "monitoring.card.gpu_util", name=gpu.name), t(request, "monitoring.card.gpu_util_hint", name=gpu.name),
+            {{ chart_card(t(request, "monitoring.card.gpu_util", name=gpu.name), (t(request, "monitoring.card.gpu_util_hint", name=gpu.name) if gpu.present is not false else t(request, "monitoring.card.gpu_gone")),
                           chart([(gpu.name, gpu.util)], ts, fmt='percent', time_format=tf),
                           empty_text=t(request, "monitoring.no_data")) }}
           {% endif %}
           {% if gpu.vram_used %}
             {{ chart_card(t(request, "monitoring.card.gpu_vram", name=gpu.name),
-                          (t(request, "monitoring.card.gpu_vram_hint", total=(gpu.vram_total | bytes)) if gpu.vram_total else none),
+                          (t(request, "monitoring.card.gpu_gone") if gpu.present is false else (t(request, "monitoring.card.gpu_vram_hint", total=(gpu.vram_total | bytes)) if gpu.vram_total else none)),
                           chart([('VRAM', gpu.vram_used)], ts, fmt='bytes', time_format=tf, colors=(chart_palette[1],)),
                           empty_text=t(request, "monitoring.no_data")) }}
           {% endif %}

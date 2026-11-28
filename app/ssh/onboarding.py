@@ -50,7 +50,8 @@ ONBOARD_USERNAME = "debcontrol"
 # this script's sudoers file and the machine edit page's manual snippet use.
 # smartctl (smartmontools) — S.M.A.R.T. health for physical disks, part of
 # the hardware-monitoring round trip (app.ssh.monitoring, gated on
-# Machine.is_physical); `sensors` and the RAPL powercap files need no root.
+# Machine.is_physical); `sensors` needs no root, the RAPL counters do (see
+# RAPL_GRANTS).
 # apt-mark — holding a package back (0.78.0+); pvesh — guests/storage/
 # backups on Proxmox VE; the Proxmox Backup Server / Mail Gateway read-outs
 # (app.ssh.proxmox, 0.79.0+), under both bin directories since the packages
@@ -69,6 +70,19 @@ ONBOARD_USERNAME = "debcontrol"
 # list only, under both bin directories (no usrmerge on older systems).
 # The configuration backup's tar, one entry per bin directory.
 TAR_GRANTS: tuple[str, ...] = tuple(f"{binary} {TAR_ARGS}" for binary in TAR_BINARIES)
+
+# 0.151.0+: `cat` of the RAPL energy counters the hardware monitoring reads
+# (app.ssh.monitoring) — since Linux 5.10 (CVE-2020-8694) `energy_uj` is
+# readable by root only. Exact paths, no wildcard (a sudoers `*` would also
+# match a second, unrelated file name): the CPU packages of up to two
+# sockets, and the sub-zones an Intel iGPU's `uncore` power is in. `:` is
+# escaped as sudoers requires; both bin directories, as for tar.
+RAPL_ZONES: tuple[str, ...] = ("intel-rapl:0", "intel-rapl:1", "intel-rapl:0:1", "intel-rapl:0:2")
+RAPL_GRANTS: tuple[str, ...] = tuple(
+    f"{binary} /sys/class/powercap/{zone.replace(':', chr(92) + ':')}/energy_uj"
+    for binary in ("/usr/bin/cat", "/bin/cat")
+    for zone in RAPL_ZONES
+)
 
 SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/apt-get",
@@ -93,6 +107,7 @@ SUDO_COMMANDS: tuple[str, ...] = (
     "/usr/bin/fail2ban-client status *",
     "/usr/bin/fail2ban-client get * banip --with-time",
     *TAR_GRANTS,
+    *RAPL_GRANTS,
 )
 SUDO_COMMAND_LIST = ", ".join(SUDO_COMMANDS)
 
